@@ -116,7 +116,7 @@ export class CommsMessages {
   /** Body reports use this for private digests: prepare encryption outside the
    * caller's transaction, then commit question, digest and rewrite retirement
    * together after that caller rechecks its current authority. */
-  async prepareDigest(input: DigestInput): Promise<() => typeof digests.$inferSelect> {
+  async prepareDigest(input: DigestInput & {ifAbsent?:boolean}): Promise<() => typeof digests.$inferSelect> {
     input = { ...input, items: input.items?.map(item => ({ ...item })),
       question: input.question ? { ...input.question, refs: input.question.refs ? [...input.question.refs] : undefined } : undefined };
     const cvs = this.threads.conversations, cv = cvs.conversation(input.conversation);
@@ -125,14 +125,17 @@ export class CommsMessages {
     const thread = privateThread ? this.db.select().from(threads).where(eq(threads.conversation, cv.id)).get() : undefined;
     if (privateThread && (!thread || input.question && input.question.to !== cv.member)) throw new Error('Private digest needs its member thread');
     const previous = () => this.db.select().from(digests).where(and(eq(digests.conversation, cv.id), eq(digests.run, input.run))).get();
-    const before = previous();
+    const before = previous(), ifAbsent=input.ifAbsent===true;
     const validate = () => {
       const current = cvs.conversation(cv.id);
       if (current.agent !== cv.agent || current.member !== cv.member || current.project !== cv.project || current.venue !== cv.venue || current.place !== cv.place
-        || JSON.stringify(previous()) !== JSON.stringify(before)
         || privateThread && (!thread || this.threads.thread(thread.id).conversation !== cv.id)) throw new Error('Digest changed during preparation');
+      const currentDigest=previous();
+      if(ifAbsent&&currentDigest)return currentDigest;
+      if(JSON.stringify(currentDigest)!==JSON.stringify(before))throw new Error('Digest changed during preparation');
+      return undefined;
     };
-    if (!input.question || !privateThread) return () => this.db.transaction(() => { validate(); return cvs.digest(input); });
+    if (!input.question || !privateThread) return () => this.db.transaction(() => { const kept=validate(); return kept??cvs.digest(input); });
     const question = input.question;
     const ask = await this.prepareAsk(thread!.id, cv.agent, `digest:${randomUUID()}`, {
       words: question.words, answers: question.answers, why: question.why ?? undefined,
@@ -141,7 +144,7 @@ export class CommsMessages {
       waitsOnId: question.waitsOnId ?? undefined, refs: question.refs,
     }, input.run);
     return () => this.db.transaction(() => {
-      validate();
+      const kept=validate();if(kept)return kept;
       const message = ask();
       return cvs.digest({ ...input, question: undefined }, message.inboxItem!);
     });

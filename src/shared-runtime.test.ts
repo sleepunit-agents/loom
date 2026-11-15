@@ -10,7 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns } from './core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns, digests, threads, messages } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 import { workerProgram } from './runtime/worker-program.js';
@@ -439,14 +439,19 @@ it('rejects ambiguous current model configuration without claiming a job or keep
  f.setRoles([roles[0]]);expect((await f.control.next())?.id).toBe(queued.id);
 });
 
-it('refuses a conversation without a Comms reply surface before any native execution',async()=>{
+it('enrolls and completes a handoff body without manufacturing a Comms reply surface',async()=>{
  const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR'),f=fixture(undefined,key);
  f.setRoles([{model:'model',provider:'provider',harness:'claude',series:'series'}]);
  const queued=f.send('handoff'),signal=new AbortController().signal;
  const assigned=(await f.control.next())!;expect(assigned.thread).toBeNull();const bootstrap=await f.control.enrollBody!(queued.id,signal);await f.control.started(queued.id,'image');
- const native=vi.fn(async()=>({text:'should not run',model:'observed',actions:[]})),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.fetch(new Request(url,init))),error=vi.fn();
+ const native=vi.fn(async()=>({text:'Handoff completed',model:'observed',actions:[]})),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.fetch(new Request(url,init))),error=vi.fn();
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),
-  stdin:async()=>Buffer.from(JSON.stringify(bodyInput(assigned,'image',bootstrap,true))),env:{},signal,fetch:fetcher,clock:f.clock,native,error})).toBe(1);
- expect(native).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();bootstrap.token.fill(0);bootstrap.erase?.();
- await f.control.finish(queued.id,1,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('failed');
+  stdin:async()=>Buffer.from(JSON.stringify(bodyInput(assigned,'image',bootstrap,true))),env:{},signal,fetch:fetcher,clock:f.clock,native,error})).toBe(0);
+ expect(native).toHaveBeenCalledWith(assigned,'Private work instructions',expect.any(AbortSignal));
+ expect(error).not.toHaveBeenCalled();expect(f.db.select().from(inbox).get()?.state).toBe('done');
+ expect(f.db.select().from(turns).where(eq(turns.run,queued.id)).get()).toMatchObject({kind:'reply',model:'observed'});
+ expect(f.db.select().from(digests).get()).toMatchObject({conversation:queued.conversation,run:queued.id,summary:'Completed this stretch of work.'});
+ expect(f.db.select().from(threads).all()).toEqual([]);expect(f.db.select().from(messages).all()).toEqual([]);
+ bootstrap.token.fill(0);bootstrap.erase?.();
+ await f.control.finish(queued.id,0,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('done');
 });
