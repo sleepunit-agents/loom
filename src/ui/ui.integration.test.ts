@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, chmod, readFile, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { request as httpRequest } from 'node:http';
@@ -742,7 +742,7 @@ describe('loom UI over HTTP', () => {
     const fields: Record<string, string> = { _csrf: csrf, _action: 'add', _path: '' };
     for (let i = 0; i < 20; i++) fields[`h${i}`] = 'hidden';
     for (let i = 0; i < 9; i++) fields[`f${i}`] = 'visible';
-    fields.constructor = 'kept';
+    Object.assign(fields, { constructor: 'kept' });
     fields.value = 'the-secret';
     expect((await post('/act/vault', cookie, fields)).status).toBe(303);
     const got = JSON.parse(await readFile(seen, 'utf-8')).fields as Record<string, string>;
@@ -787,7 +787,13 @@ describe('loom UI over HTTP', () => {
     expect([again.status, await again.text()]).toEqual([304, '']);
     // Someone else's fingerprint is no way in: signed out is still the sign-in page.
     expect((await fetch(`${base}/`, { headers: { accept: 'application/json', 'if-none-match': etag }, redirect: 'manual' })).status).toBe(303);
-    const js = /<script type="module"[^>]+src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
+    // Identical public entries can be tiny import facades. Exercise compression
+    // with an actual large emitted asset rather than assuming the facade is large.
+    const directory = new URL('../../dist/web/assets/', import.meta.url);
+    const assets = await Promise.all((await readdir(directory)).filter(name => name.endsWith('.js')).map(async name => ({ name, bytes: (await stat(new URL(name, directory))).size })));
+    const asset = assets.sort((a, b) => b.bytes - a.bytes)[0];
+    expect(asset?.bytes).toBeGreaterThan(1024);
+    const js = 'assets/' + asset.name;
     for (const [enc, want] of [['br', 'br'], ['gzip', 'gzip'], ['identity', null]] as const) {
       const r = await fetch(`${base}/app/${js}`, { headers: { 'accept-encoding': enc } });
       expect([r.status, r.headers.get('content-encoding'), r.headers.get('vary')], enc).toEqual([200, want, 'accept-encoding']);
