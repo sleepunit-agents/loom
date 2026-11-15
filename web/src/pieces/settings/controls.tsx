@@ -58,6 +58,6 @@ export function RuleControl({ secret, snapshot }: { secret: string; snapshot: Se
     <label>Automatic grant, minutes<Input name="minutes" type="number" min={1} max={525600} defaultValue={rule?.minutes ?? 30} required /></label>
     <label>When asked: agent names, separated by commas<Input name="on_request" defaultValue={assignments.filter(row => row.when === 'on_request').map(row => row.agent).join(', ')} /></label>
     <label>At startup: agent names, separated by commas<Input name="at_start" defaultValue={assignments.filter(row => row.when === 'at_start').map(row => row.agent).join(', ')} /></label>
-    <Button disabled={command.busy}>Save rule</Button><p role="status">{command.message}</p>
+    <Button type="submit" disabled={command.busy}>Save rule</Button><p role="status">{command.message}</p>
   </form>;
 }

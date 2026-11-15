@@ -38,7 +38,23 @@ export async function secretValueAction({page,tile,out,home}){
   if(!await holderValueEquals(home,name,replacement))throw Error('The encrypted holder did not retain the replacement');
   expectRecords(['add','replace']);
   phase='remove';await submit(form,'Remove value and revoke access','remove');
+  // Removal retains the named metadata; its new standing rule shares this
+  // case's final reload with value/history/default persistence checks.
+  phase='rule';await tile.getByText(/ · removed · alex$/).waitFor();const rule=tile.locator('form').filter({has:page.getByRole('button',{name:'Save rule',exact:true})});
+  await rule.getByRole('combobox',{name:/^Answer/}).selectOption('never');
+  await rule.getByLabel('Automatic grant, minutes',{exact:true}).fill('17');
+  await rule.getByLabel('When asked: agent names, separated by commas',{exact:true}).fill('fern');
+  await rule.getByLabel('At startup: agent names, separated by commas',{exact:true}).fill('fern');
+  const saved=page.waitForResponse(value=>new URL(value.url()).pathname==='/api/secrets/command'&&value.request().method()==='POST',{timeout:4000});void saved.catch(()=>{});
+  await rule.getByRole('button',{name:'Save rule',exact:true}).click();
+  const result=await saved,body=await result.json();
+  if(result.status()!==200||body.ok!==true||body.value?.saved!==true)throw Error('The standing rule was refused');
   tile=await reload();
+  const persistedRule=tile.locator('form').filter({has:page.getByRole('button',{name:'Save rule',exact:true})});
+  if(await persistedRule.getByRole('combobox',{name:/^Answer/}).inputValue()!=='never'
+   ||await persistedRule.getByLabel('Automatic grant, minutes',{exact:true}).inputValue()!=='17'
+   ||await persistedRule.getByLabel('When asked: agent names, separated by commas',{exact:true}).inputValue()!=='fern'
+   ||await persistedRule.getByLabel('At startup: agent names, separated by commas',{exact:true}).inputValue()!=='fern')throw Error('The standing rule did not persist after reload');
   // Named metadata/history remains after value removal; inspect its record.
   await tile.getByText(/ · removed · alex$/).waitFor();
   const cleared=tile.locator('form').filter({has:page.getByRole('button',{name:'Save replacement',exact:true})});
@@ -46,7 +62,7 @@ export async function secretValueAction({page,tile,out,home}){
   if(!await holderValueAbsent(home,name))throw Error('The holder still retained the removed value');
   expectRecords(['add','replace','removed']);
   const screenshot='action-secret-removed.png';await page.screenshot({path:join(out,screenshot),fullPage:true});
-  return {ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,holder:'Production openHolderStore code in an in-process test fixture; separate-process isolation is not exercised.',screenshot};
+  return {ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true,holder:'Production openHolderStore code in an in-process test fixture; separate-process isolation is not exercised.',screenshot};
  }catch(error){
   const screenshot='action-secret-value-failed.png';await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});
   return {ok:false,phase,error:String(error).replaceAll(initial,'[value redacted]').replaceAll(replacement,'[value redacted]'),screenshot};
