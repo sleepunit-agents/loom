@@ -21,7 +21,7 @@ function fixture(path:string){
  const generated=dataQueries(client,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...reader.fields}})});
  const query=(source:string,contextValue:MemoryQueryContext={viewer:{kind:'member',id:'owner'}})=>graphql({schema,source,contextValue});
- return {query,generated,sharing,at:(at:number)=>{now=at;}};
+ return {query,generated,sharing,reader,at:(at:number)=>{now=at;}};
 }
 it('lets a generated endpoint compose typed file-backed fields and return exactly the selected content',async()=>{
  const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
@@ -78,6 +78,26 @@ it('selects the newest ten prior versions without changing the current page',asy
  expect(result.errors).toBeUndefined();
  expect(result.data).toEqual({memoryKnowledgePage:{body:'Version 12',history:Array.from({length:10},(_,i)=>({body:`Version ${11-i}`,op:'write-replace',replacedAt:expect.any(String)}))}});
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { history { body } } }',{viewer:{kind:'member',id:'member'}})).toEqual({data:{memoryKnowledgePage:null}});
+});
+
+it('schedules the earliest future freshness boundary and recomputes from current metadata',async()=>{
+ const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ const writer=new Database(path);closes.push(()=>writer.close());
+ const f=fixture(path),now=Date.parse('2026-11-14T18:00:00Z'),day=86400_000;
+ expect(f.reader.nextDeadline()).toBeUndefined();
+ for(const slug of ['old','invalid','archived','recent','aging','due'])await store.writePage({slug,title:slug,domain:'fiction',body:'Fiction'});
+ const stamp=(slug:string,at:string)=>writer.prepare('UPDATE pages SET updated=?,verified_at=? WHERE slug=?').run(at,at,slug);
+ stamp('old',new Date(now-40*day).toISOString());stamp('invalid','invalid');
+ stamp('archived',new Date(now-7*day+1).toISOString());await store.archivePage({slug:'archived'});
+ stamp('recent',new Date(now-7*day+1000).toISOString());
+ stamp('aging',new Date(now-20*day+2000).toISOString());stamp('due',new Date(now-30*day+3000).toISOString());
+ expect(f.reader.nextDeadline()).toBe(now+1000);
+ f.at(now+1000);expect(f.reader.nextDeadline()).toBe(now+2000);
+ f.at(now+2000);expect(f.reader.nextDeadline()).toBe(now+3000);
+ // Rechecking moves a pending due boundary; it does not leave an old timer due.
+ stamp('due',new Date(now+2000).toISOString());
+ expect(f.reader.nextDeadline()).toBe(now+2000+7*day);
+ f.reader.close();expect(f.reader.nextDeadline()).toBeUndefined();
 });
 
 it('projects the same current capabilities without a legacy record subscription',async()=>{
