@@ -23,7 +23,7 @@ export function BarStatus({ boxes, roster, statuses, available, live, go }: { bo
   const working = roster.filter(a=>latestStatus(statuses,a.id)?.state==='working').length;
   const known = available && roster.every(a=>latestStatus(statuses,a.id)!==undefined);
   const agents = known ? `${working} of ${roster.length} agents at work` : 'Agent status unavailable';
-  const signal = live ? 'Live: connected to loom' : 'Live updates unavailable';
+  const signal = live ? 'Live desk data available' : 'Desk data unavailable';
   const boxWords = boxes===undefined ? 'Boxes unavailable' : `${boxes} enrolled box${boxes===1?'':'es'}; health unavailable`;
   return <span className="next-system-icons loom-sys__icons" role="group" aria-label="Status">
     <span role="img" tabIndex={0} className="loom-sys__icon" data-dim={!live?'':undefined} aria-label={signal}>
