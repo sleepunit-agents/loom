@@ -108,7 +108,7 @@ export function sharedRoot(options: {
     secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
-  if (options.workAnswerAuthority) registerSharedWorkCommands(operations, db, services.approvals, options.workAnswerAuthority);
+  registerSharedWorkCommands(operations, db, services.approvals, options.workAnswerAuthority);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,

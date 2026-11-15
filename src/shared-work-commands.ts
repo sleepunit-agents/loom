@@ -1,7 +1,8 @@
-/** Work command installation. The outside door supplies current authority;
- * these bindings never infer write permission from a readable projection. */
+/** Work command installation. Current household owners answer permission cards;
+ * optional trusted callbacks may narrow this rule, never broaden it. */
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { workAnswersAllowed } from './shared-work-access.js';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
 import { approvals, changes } from './core/data/schema.js';
@@ -18,7 +19,7 @@ export interface WorkAnswerAuthority {
 }
 const id = z.string().trim().min(1);
 export function registerSharedWorkCommands(operations: Operations, db: DataDatabase,
-  service: ReturnType<typeof approvalService>, authority: WorkAnswerAuthority) {
+  service: ReturnType<typeof approvalService>, authority?: WorkAnswerAuthority) {
   const approval = (id: string) => db.select().from(approvals).where(eq(approvals.id, id)).get();
   const change = (id: string) => db.select().from(changes).where(eq(changes.id, id)).get();
   const answers = changeAnswers(db, service);
@@ -33,7 +34,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   };
   const mayMerge = (viewer: Member, request: Approval, id: string) => {
     const row = change(id);
-    return !!row && authority.change(viewer, row, request);
+    return !!row && (authority?.change(viewer, row, request) ?? true);
   };
   const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
     if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
@@ -51,7 +52,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, answer: z.enum(['allow', 'deny']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
-      if (viewer.kind !== 'member' || !row || !authority.approval(viewer, row)) return false;
+      if (!workAnswersAllowed(db, viewer) || !row || (authority && !authority.approval(viewer, row))) return false;
       const merge = mergeTarget(row);
       return !merge || mayMerge(viewer, row, merge.id);
     },
@@ -82,7 +83,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const request = approval(input.approval);
-      return viewer.kind === 'member' && !!request && authority.approval(viewer, request) && mayMerge(viewer, request, input.id);
+      return workAnswersAllowed(db, viewer) && !!request && (authority?.approval(viewer, request) ?? true) && mayMerge(viewer, request, input.id);
     },
     validateReplay(_viewer, input) { currentHead(input); },
     run(ctx, input) {

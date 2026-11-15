@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, tokens, sessions, projects, changes, approvalRecord, operationResults, inbox } from './core/data/schema.js';
+import { members, agents, tokens, sessions, projects, changes, approvalRecord, operationResults, inbox, projectMembers, memberAgents, approvalRules } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { sharedSharing } from './shared-sharing.js';
 import { mayAct, type RecordScope } from './policy.js';
@@ -24,9 +24,9 @@ function fixture(install = true, permissive = false) {
   db.insert(tokens).values({ fingerprint: hash(token), label: 'Sam', kind: 'owner', member: 'sam', createdAt: at }).run();
   db.insert(sessions).values({ id: hash(cookie), token: hash(token), device: 'Browser', via: 'token', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
   const scope = (row: Approval): RecordScope => ({ type: 'approval', agent: row.agent, project: row.project ?? undefined, member: row.member ?? undefined });
-  // A fixture caller explicitly supplies the existing household authority rule.
-  // This is not a default policy for the new shared kinds.
+  // Optional fixture restrictions cannot broaden the built-in current-owner rule.
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {},
+    approvedOperations: new Map([['fixture.change', () => {}]]),
     workAnswerAuthority: install ? {
       approval: (viewer, row) => permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household'),
       change: (viewer, row, approval) => permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household'),
@@ -40,12 +40,35 @@ function fixture(install = true, permissive = false) {
   return { db, root, request, send, seedChange };
 }
 
-it('does not install an answer route without the caller-supplied authority gate', async () => {
-  const f = fixture(false), request = f.request(); f.seedChange();
-  expect((await f.send('approvals', { id: request.id, answer: 'allow' })).status).toBe(404);
-  expect((await f.send('changes', { id: changeId, head, approval: request.id, answer: 'yes' })).status).toBe(404);
-  expect(f.root.services.approvals.get(request.id).state).toBe('pending');
+it('installs the current-owner answer rule without custom authority callbacks', async () => {
+  for (const piece of ['approvals','changes']) {
+    const f = fixture(false), request = f.request();
+    const input = piece === 'approvals' ? {id:request.id,answer:'allow'} : {id:changeId,head,approval:request.id,answer:'yes'};
+    expect((await f.send(piece,input)).status).toBe(200);
+    expect(f.root.services.approvals.get(request.id).decidedBy).toBe('sam');
+  }
+});
+
+it('denies visible ordinary members for all kinds despite owned agents and execution grants, including replay after demotion', async () => {
+  const f = fixture(true, true), at = '2026-11-14T00:00:00.000Z';
+  const requests = [f.request(), ...(['command','setting','dangerous'] as const).map(kind => f.root.writes.run(() => f.root.services.approvals.request({kind,target:'fixture:target',agent:'art',project:'pond',what:'Fixture permission',why:'Proof',askedFrom:'loom',actingFor:'sam',ask:'Allow?',ifYes:'Apply',ifNo:'Wait',...((kind === 'setting' || kind === 'dangerous') ? {operation:'fixture.change',changeSummary:'Before: old; After: new'} : {})})).value)];
+  f.root.writes.run(() => {
+    f.db.insert(members).values({id:'lee',role:'owner',joinedAt:at}).run();
+    f.db.insert(projectMembers).values({project:'pond',member:'sam'}).run();
+    f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();
+    f.db.insert(approvalRules).values((['merge','command','setting','dangerous'] as const).map(kind => ({kind,scope:'*',person:'sam',tier:'do' as const,setBy:'lee',setAt:at}))).run();
+    f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run();
+  });
+  const visible = await (await f.root.http.request('http://loom/graphql', {method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({query:'{ approvals { id } }'})})).json();
+  expect(visible.errors).toBeUndefined(); expect(visible.data.approvals).toHaveLength(4);
+  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(403);
+  expect((await f.send('changes',{id:changeId,head,approval:requests[0].id,answer:'yes'})).status).toBe(403);
   expect(f.db.select().from(operationResults).all()).toEqual([]);
+  f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
+  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(200);
+  f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
+  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(403);
+  expect(f.db.select().from(operationResults).all()).toHaveLength(4);
 });
 
 it('binds approval answers to the current member, receipts and current supplied authority', async () => {
