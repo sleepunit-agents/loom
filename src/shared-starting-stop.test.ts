@@ -56,10 +56,10 @@ it('does not consume another conversation Stop while the same agent prepares thi
 });
 it('commits stopped state and observed Stop with its heartbeat receipt before notifying Tempo; rollback and replay do not notify',async()=>{
  const f=await fixture(),worker=control(f);await worker.next();await f.member('stop');
- const notify=f.root.services.tempo.sources.job.bind(f.root.services.tempo.sources),ended=vi.spyOn(f.root.services.tempo.sources,'job').mockImplementation(id=>{expect(f.db.$client.inTransaction).toBe(false);expect(f.db.select().from(s.operationResults).all().some(row=>row.id==='heartbeat-stop'&&row.operation==='runtime.heartbeat')).toBe(true);notify(id);});
+ const observed:{id:string;transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.sources.job.bind(f.root.services.tempo.sources),ended=vi.spyOn(f.root.services.tempo.sources,'job').mockImplementation(id=>{observed.push({id,transaction:f.db.$client.inTransaction,receipt:f.db.select().from(s.operationResults).all().some(row=>row.id==='heartbeat-stop'&&row.operation==='runtime.heartbeat')});notify(id);});
  f.db.$client.exec("CREATE TEMP TRIGGER fail_stop_receipt BEFORE INSERT ON operation_results WHEN NEW.id='heartbeat-rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
  expect((await heartbeat(f,'heartbeat-rollback')).status).toBe(503);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()?.state).toBe('starting');expect(f.db.select().from(s.conversations).get()?.job).toBe(f.job.id);expect(f.db.select().from(s.threads).get()).toMatchObject({working:true,stopRequested:true});expect(ended).not.toHaveBeenCalled();
- expect(await(await heartbeat(f,'heartbeat-stop')).json()).toMatchObject({value:{active:false}});expect(ended).toHaveBeenCalledExactlyOnceWith(f.job.id);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,stopRequested:false});
+ expect(await(await heartbeat(f,'heartbeat-stop')).json()).toMatchObject({value:{active:false}});expect(ended).toHaveBeenCalledExactlyOnceWith(f.job.id);expect(observed).toEqual([{id:f.job.id,transaction:false,receipt:true}]);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,stopRequested:false});
  expect((await heartbeat(f,'heartbeat-stop')).status).toBe(409);expect(await(await heartbeat(f,'terminal-heartbeat')).json()).toMatchObject({value:{active:false}});expect(ended).toHaveBeenCalledTimes(1);
 });
 it('refreshes preparation beats without resetting the original working-since time',async()=>{
