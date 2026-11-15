@@ -28,20 +28,20 @@ export function CreateTrigger({ timezone, submit, done }: { timezone: string; su
     <h1>Create trigger</h1>
     <fieldset disabled={busy} className="grid gap-3">
       <label>Label<Input name="note" required /></label>
-      <label>Source<select value={source} onChange={e => setSource(e.target.value as typeof source)}><option value="time">A time</option><option value="pull-request">A pull request changing</option><option value="answer">An answer arriving</option><option value="job">A job stopping</option></select></label>
+      <label>Source<select aria-label="Source" value={source} onChange={e => setSource(e.target.value as typeof source)}><option value="time">A time</option><option value="pull-request">A pull request changing</option><option value="answer">An answer arriving</option><option value="job">A job stopping</option></select></label>
       {source === 'time' ? <>
         <label>Time ({timezone})<Input name="times" required placeholder="08:31" /></label>
         <p>Use household times such as 08:31, 14:31, or a date with its offset such as 2026-11-20T08:31-06:00.</p>
         <label>Days<Input name="days" placeholder="weekdays, or leave empty for every day" /></label>
       </> : <label>{source === 'pull-request' ? 'Pull request' : source === 'job' ? 'Job' : 'Answer to'}<Input name="watches" required placeholder={source === 'pull-request' ? 'change:…' : source === 'job' ? 'job:…' : 'approval:… or question:…'} /></label>}
-      <label>Lifespan<select name="lifespan" defaultValue="once"><option value="once">The next time only</option><option value="today">For today</option><option value="until-stopped">Until stopped</option></select></label>
-      <label>Set by<select value={owner} onChange={e => setOwner(e.target.value as typeof owner)}><option value="member">A person</option><option value="agent">An agent</option><option value="household">The household</option></select></label>
+      <label>Lifespan<select aria-label="Lifespan" name="lifespan" defaultValue="once"><option value="once">The next time only</option><option value="today">For today</option><option value="until-stopped">Until stopped</option></select></label>
+      <label>Set by<select aria-label="Set by" value={owner} onChange={e => setOwner(e.target.value as typeof owner)}><option value="member">A person</option><option value="agent">An agent</option><option value="household">The household</option></select></label>
       {owner !== 'household' && <label>{owner === 'member' ? 'Person' : 'Agent'}<Input name="owner" required /></label>}
-      <label>Target<select value={target} onChange={e => setTarget(e.target.value as typeof target)}><option value="inbox">An inbox item</option><option value="operation">An operation</option></select></label>
-      <label>Recipient kind<select name="toKind"><option value="agent">Agent</option><option value="person">Person</option></select></label>
+      <label>Target<select aria-label="Target" value={target} onChange={e => setTarget(e.target.value as typeof target)}><option value="inbox">An inbox item</option><option value="operation">An operation</option></select></label>
+      <label>Recipient kind<select aria-label="Recipient kind" name="toKind"><option value="agent">Agent</option><option value="person">Person</option></select></label>
       <label>Recipient<Input name="to" required={target === 'inbox'} /></label>
       {target === 'operation' ? <label>Operation<Input name="target" required placeholder="tempo.sweep" /></label> : <>
-        <label>Content<select value={content} onChange={e => setContent(e.target.value)}><option value="words">Words</option><option value="file">Repository file</option></select></label>
+        <label>Content<select aria-label="Content" value={content} onChange={e => setContent(e.target.value)}><option value="words">Words</option><option value="file">Repository file</option></select></label>
         <label>{content === 'file' ? 'Repository file' : 'Words'}<Textarea name="words" required /></label>
       </>}
       <label>Project<Input name="project" /></label>
