@@ -130,9 +130,10 @@ describe.runIf(built && chrome)('a phone: the dock and the toasts', () => {
     toastIsAStrip(m);
   }, 60_000);
 
-  it('a desktop: no dock, and toasts bottom right', async () => {
+  it('a desktop without a dock keeps toasts in the bottom right corner', async () => {
     const m = await measure('desktop');
     expect(m.dock).toBeNull();
+    // Without a dock there is no reserved area for the toast to clear.
     expect(m.vh - m.viewport.bottom).toBe(24);
     expect(m.vw - m.viewport.right).toBe(24);
     toastIsAStrip(m);

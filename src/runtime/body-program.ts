@@ -6,6 +6,7 @@ import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient } from './conversation-client.js';
 import { claudeBody } from './claude-body.js';
+import { bodyStartupSecrets } from './body-secrets.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1) }).strict();
@@ -23,6 +24,9 @@ export async function bodyProgram(input: {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
   const context: string[] = [];
+  const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
+  let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
+  const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; };
   input.signal.addEventListener('abort', erase, { once: true });
@@ -38,30 +42,37 @@ export async function bodyProgram(input: {
     if (job.harness !== 'claude' || !job.conversation || !job.thread || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
-    await input.startup?.(job, bootstrap, signal);
-    if (input.signal.aborted) throw new Error();
-    const batch = await client.takeAndAccept(async (item, signal) => {
-      if (signal.aborted || input.signal.aborted) throw new Error();
+    let work='Preparing startup inputs';
+    let reporting:ReturnType<NonNullable<typeof client>['status']>|undefined;
+    const report=()=>reporting??(reporting=client!.status({state:'working',work}).finally(()=>{reporting=undefined;}));
+    const observe=(value:{stopRequested:boolean})=>{if(value.stopRequested){stopped=true;erase();nativeAbort.abort();}};
+    observe(await report());
+    if(stopped){await client.status({state:'idle',work:'',seenStop:true});return 0;}
+    const beat=()=>{
+      if(pending||signal.aborted)return;
+      pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
+    };
+    cancel=input.schedule?input.schedule.every(15_000,beat):(()=>{const timer=setInterval(beat,15_000);return()=>clearInterval(timer);})();
+    await (input.startup ?? secrets.startup)(job, bootstrap, signal);
+    if (signal.aborted) throw new Error();
+    work='Working on accepted mail';
+    const batch = await client.takeAndAccept(async (item, sinkSignal) => {
+      if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
       if (item.words !== null) context.push(item.words);
     });
-    if (batch.stopRequested) { erase(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
-    if (!context.length) return 0;
-    const report = () => client!.status({ state: 'working', work: 'Working on accepted mail' });
+    if (batch.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
+    if(signal.aborted)throw new Error();
+    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
+    await pending;
+    if(signal.aborted)throw new Error();
     const started = await report();
-    if (started.stopRequested) { erase(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    if (started.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     const native = input.native ?? claudeBody({ ...plan, env: input.env });
-    let pending: Promise<void> | undefined, stopped = false, unavailable = false;
-    const beat = () => {
-      if (pending || signal.aborted) return;
-      pending = report().then(value => { if(value.stopRequested) { stopped=true; erase(); nativeAbort.abort(); } },
-        () => { unavailable=true; erase(); nativeAbort.abort(); }).finally(() => { pending=undefined; });
-    };
-    const cancel = input.schedule ? input.schedule.every(15_000,beat) : (() => {const timer=setInterval(beat,15_000);return ()=>clearInterval(timer);})();
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal); }
     catch { if(!stopped) throw new Error(); }
-    finally { cancel(); await pending; nativeAbort.abort(); }
+    finally { await stopBeats(); nativeAbort.abort(); }
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
@@ -69,6 +80,13 @@ export async function bodyProgram(input: {
     await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
     await client.status({ state: 'idle', work: '' });
     return 0;
-  } catch { input.error('Body stopped: invalid input or unavailable execution\n'); return 1; }
-  finally { nativeAbort.abort(); client?.close(); input.signal.removeEventListener('abort', erase); erase(); }
+  } catch {
+    nativeAbort.abort(); secrets.close(); erase();
+    await stopBeats();
+    if(stopped&&!unavailable&&!input.signal.aborted&&client){
+      try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
+    }
+    input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
+  }
+  finally { nativeAbort.abort(); secrets.close(); erase(); await stopBeats(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

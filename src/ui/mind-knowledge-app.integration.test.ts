@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path';
 import { chromium, type Route } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
 import { SqliteKnowledgeBackend } from '../backends/sqlite-knowledge.js';
+import Database from 'better-sqlite3';
+import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
 if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new Error('Knowledge browser evidence requires Chrome and the built next app in CI');
@@ -17,6 +19,8 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
+  // This fixture owns new files; the server never upgrades existing sources.
+  const prepared=new Database(join(home,'commons/knowledge.db'));try{migrateMindReceipts(prepared);}finally{prepared.close();}
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
   const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art']}),{app}=fixture;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
