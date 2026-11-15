@@ -12,6 +12,7 @@ import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
+import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
@@ -40,6 +41,7 @@ export function sharedRoot(options: {
     approvals: approvalService(db, options.approvedOperations, now),
     conversations: new Conversations(db, now),
   };
+  registerSharedTaskCommands(operations, db, services.tasks);
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
