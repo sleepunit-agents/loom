@@ -32,7 +32,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   return {state:current.row.state,firedEvents:1};
  });
  const create=async(label,words)=>{
-  const back=tile.getByRole('button',{name:'Tempo',exact:true});if(await back.isVisible())await back.click();
+  const back=tile.getByRole('region',{name:'Tempo: the open item',exact:true}).getByRole('button',{name:'Tempo',exact:true});if(await back.isVisible())await back.click();
   await tile.getByRole('button',{name:'Create trigger',exact:true}).click();const form=tile.getByRole('form',{name:'Create trigger'});
   await form.getByLabel('Label',{exact:true}).fill(label);await form.getByLabel(/^Time \(/).fill(new Date(clock.now()+60_000).toISOString());
   await form.getByLabel('Set by',{exact:true}).selectOption('household');await form.getByLabel('Recipient kind',{exact:true}).selectOption('person');
