@@ -82,11 +82,12 @@ export async function createMeasuring(
       const name = span.name;
       if (!inventory.has(`${kind}:${name}`)) return;
       const ms = span.duration[0] * 1000 + span.duration[1] / 1e6;
-      const end = span.endTime[0] * 1000 + span.endTime[1] / 1e6;
-      if (!Number.isFinite(ms) || ms < 0 || !Number.isFinite(end)) return;
+      if (!Number.isFinite(ms) || ms < 0) return;
       writing = true;
       try {
-        const day = new Date(end).toISOString().slice(0, 10);
+        // Use the same calendar as retention, including under an injected clock.
+        // OpenTelemetry still supplies the monotonic elapsed duration.
+        const day = new Date(clock.now()).toISOString().slice(0, 10);
         // UTC calendar days, including today. Retention recovers after a long
         // idle interval or restart without issuing a DELETE for every span.
         prune(day);
