@@ -61,7 +61,7 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     const dir = join(home, 'pieces', 'runtime');
     mkdirSync(join(dir, 'current'), { recursive: true });
     writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name: 'runtime', source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: 'runtime', version: '1', installed: 'x',
-      bins: ['loom-runtime'], loom: { settings: [], services: [], ...loom } }));
+      bins: ['loom-runtime'], loom }));
     const cli = join(dir, 'current', 'cli');
     writeFileSync(cli, `#!${process.execPath}
 let input = '';
@@ -121,18 +121,15 @@ process.stdin.on('end', () => {
       && ['.comms', '.comms-band', '.comms-chat', '.comms-composer'].every((q) => document.querySelector(q)!.getBoundingClientRect().bottom <= tile.bottom + 1);
     // The side (or the work column) scrolls: overflow-y auto, and a scroll moves it (a clipped side, overflow hidden, would read 0).
     const before = side.scrollTop; side.scrollTop = 9999; const moved = side.scrollTop > before && getComputedStyle(side).overflowY === 'auto'; side.scrollTop = 0;
-    // The face: a pixel canvas drawn at a whole scale, its CSS size its own pixels (never stretched by layout).
-    const cv = document.querySelector<HTMLCanvasElement>(`${scr} .comms-screen__glass canvas`);
-    const face = cv ? { k: cv.getBoundingClientRect().width / cv.width, ky: cv.getBoundingClientRect().height / cv.height } : null;
     const list = document.querySelector('.comms > .comms-list')?.getBoundingClientRect();
     const thread = document.querySelector('.comms-thread')!.getBoundingClientRect();
     return { inRail, band: Math.round(b.height), side: { scroll: side.scrollHeight, client: side.clientHeight }, glass: [glass.width, glass.height],
       chatFills: Math.abs(chat.top - b.bottom) <= 2 && Math.abs(chat.bottom - composer.top) <= 2 && chat.height > 120, inside,
-      one: document.querySelector('.comms')!.hasAttribute('data-one'), list: !!list, listW: list ? Math.round(list.width) : 0, beside: !!list && thread.left >= list.right - 1, moved, face };
+      one: document.querySelector('.comms')!.hasAttribute('data-one'), list: !!list, listW: list ? Math.round(list.width) : 0, beside: !!list && thread.left >= list.right - 1, moved };
   });
 
   for (const [w, hgt, layout, ws] of [[1024, 768, 'mid', ''], [1280, 800, 'mid', 'needs'], [1920, 1080, 'wide', '']] as const) {
-    it(`the band: one fixed height with 0 and 20 work items, its side scrolling inside it; the face its own size; the chat the rest; nothing past the window, at ${w}×${hgt} (${layout}${ws ? ', beside the agents\' rail' : ''})`, async () => {
+    it(`the band: one fixed height with 0 and 20 work items, its side scrolling inside it; the screen its own size; the chat the rest; nothing past the window, at ${w}×${hgt} (${layout}${ws ? ', beside the agents\' rail' : ''})`, async () => {
       const t = thread('art', 3);
       const sizes: Record<number, Awaited<ReturnType<typeof band>>> = {};
       for (const n of [0, 20]) {
@@ -158,10 +155,7 @@ process.stdin.on('end', () => {
         // From 1280 the comm screen is the agents' rail's (the band drops it); narrower, the band's at its own 2x.
         expect(s.inRail).toBe(w >= 1280);
         if (s.inRail) expect(s.glass[1]).toBe(184); else expect(s.glass).toEqual([192, 168]);
-        expect(s.face).not.toBeNull();
-        // Sheet pixels to screen pixels: a whole number, 2 or more, the same both ways (never stretched).
-        expect(Number.isInteger(s.face!.k) && s.face!.k >= 2).toBe(true);
-        expect(s.face!.ky).toBe(s.face!.k);
+        // Versioned shared pixel rendering is checked by desk-shell evidence.
         expect(s.chatFills).toBe(true);
         expect(s.inside).toBe(true);
         // Mid-size (1024; 1280 beside the rail): one pane, the threads a drawer; wide: the list beside the thread.

@@ -86,7 +86,11 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('normal');
   await set({motion:'on',contrast:'on'},'access-restore');
   const painted=async(page:Page)=>page.locator('.desk-home-card .loom-pixel-face canvas').evaluateAll(nodes=>nodes.some(node=>{const canvas=node as HTMLCanvasElement,pixels=canvas.getContext('2d')?.getImageData(0,0,canvas.width,canvas.height).data;return pixels?.some((value,index)=>index%4===3&&value>0);}));
-  for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  for(const page of [a,b]){
+   await expect.poll(()=>painted(page)).toBe(true);
+   const scale=await page.locator('.desk-home-card .loom-pixel-face canvas').first().evaluate(node=>{const canvas=node as HTMLCanvasElement,box=canvas.getBoundingClientRect();return {x:box.width/canvas.width,y:box.height/canvas.height};});
+   expect(Number.isInteger(scale.x)&&scale.x>=1).toBe(true);expect(scale.y).toBe(scale.x);
+  }
   await set({pixel:false},'pixel-off');for(const page of [a,b]){await expect.poll(()=>page.locator('.desk-home-card .loom-pixel-face').count()).toBe(0);await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);}
   await set({pixel:true},'pixel-on');for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
   // Validly stored but undecodable bytes use the drawn fallback; a later valid
@@ -131,7 +135,17 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // Paths survive reload; minimizing and Home retain the existing tile state.
   await b.setViewportSize({width:1440,height:900});await b.goto(app.url+'/p/agents-preview/agent/art');
   await expect.poll(()=>b.locator('[data-tile=agents]').count()).toBe(1);
-  await b.getByRole('button',{name:'Open Tasks',exact:true}).click();
+  await b.getByRole('button',{name:'All apps',exact:true}).first().click();
+  const launcher=b.getByRole('dialog',{name:'Apps',exact:true});
+  for(const group of ['Work','People & agents','Library','System'])expect(await launcher.getByRole('region',{name:group,exact:true}).count()).toBe(1);
+  const inventory=await launcher.locator('.loom-lapp__nm').allTextContents();await b.keyboard.press('Escape');
+  await expect.poll(()=>launcher.count()).toBe(0);
+  for(const title of inventory)expect(await b.getByRole('button',{name:title==='Home'?'Home':`Open ${title}`,exact:true}).count()).toBeGreaterThan(0);
+  await b.getByRole('button',{name:'All apps',exact:true}).first().click();
+  const find=launcher.getByRole('textbox',{name:'Find an app',exact:true});
+  await find.fill('not-an-installed-app');await expect.poll(()=>launcher.getByRole('status').innerText()).toContain('No app called');
+  await find.fill('Tas');await expect.poll(()=>launcher.locator('.loom-lapp').allTextContents()).toEqual(['Tasks']);
+  await find.press('Enter');await expect.poll(()=>launcher.count()).toBe(0);
   await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   const paths=JSON.parse(new URL(b.url()).searchParams.get('paths')??'{}');expect(paths.agents).toBe('/p/agents-preview/agent/art');
   await b.reload();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
