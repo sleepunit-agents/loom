@@ -54,7 +54,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
 
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
-  const queryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus',
+  const queryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
@@ -66,6 +66,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
       // Reports have exactly the current visibility of their agent.
       agentStatus: fields => taskVisibility(viewer).agents!({ id: fields.agent }),
+      agentModels: fields => taskVisibility(viewer).agents!({ id: fields.agent }),
       members: fields => viewer.kind === 'member' ? sql`(exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner') or ${fields.id} = ${viewer.id})` : sql`false`,
       memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
