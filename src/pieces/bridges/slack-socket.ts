@@ -15,6 +15,7 @@ export interface SlackSocketOptions {
   clock: Clock;
   /** Composition's outside-effect gate, checked before acquisition AND dial. */
   beforeConnect(): boolean;
+  state?(state: 'connecting' | 'connected' | 'backoff' | 'disconnected'): void;
   /** Resolves only after durable receipt, even for a duplicate envelope.
    * Must durably retain or reject the payload before resolving. */
   receive(payload: Json, raw: Buffer): Promise<void>;
@@ -38,6 +39,7 @@ export function bridgeSlackSocket(options: SlackSocketOptions & { app: string })
 }
 function socketTransport(options: SlackSocketOptions & { app?: string }): { close(): Promise<void> } {
   const { clock, app } = options;
+  const state = (value: 'connecting' | 'connected' | 'backoff' | 'disconnected') => { try { options.state?.(value); } catch { /* discard reporting failures */ } };
   let closed = false, generation = 0, failures = 0;
   const active = new Set<Promise<unknown>>();
   function track<T>(promise: Promise<T>): Promise<T> {
@@ -51,7 +53,7 @@ function socketTransport(options: SlackSocketOptions & { app?: string }): { clos
   const dial = options.socket ?? (url => new WebSocket(url, { maxPayload: 1024 * 1024, followRedirects: false, handshakeTimeout: 15_000 }));
   function disconnect(epoch: number) {
     if (closed || epoch !== generation) return;
-    generation++;
+    generation++; state('backoff');
     cancelHeartbeat?.(); cancelDeadline?.(); abort?.abort();
     const old = current; current = undefined; old?.terminate();
     const delay = Math.min(60_000, 1000 * 2 ** Math.min(failures++, 6));
@@ -66,7 +68,7 @@ function socketTransport(options: SlackSocketOptions & { app?: string }): { clos
   }
   async function connect() {
     if (closed) return;
-    const epoch = ++generation;
+    const epoch = ++generation; state('connecting');
     try {
       if (!options.beforeConnect()) throw Error();
       abort = new AbortController();
@@ -126,7 +128,7 @@ function socketTransport(options: SlackSocketOptions & { app?: string }): { clos
           if (frame.type === 'disconnect') { disconnect(epoch); return; }
           if (frame.type === 'hello') {
             if (hello || (app !== undefined && (!object(frame.connection_info) || frame.connection_info.app_id !== app))) throw Error();
-            hello = true; cancelDeadline?.(); failures = 0; heartbeat(socket, epoch); return;
+            hello = true; cancelDeadline?.(); failures = 0; heartbeat(socket, epoch); state('connected'); return;
           }
           if (!hello) throw Error();
           if (typeof frame.envelope_id !== 'string' || !frame.envelope_id || frame.envelope_id.length > 200) throw Error();
@@ -153,7 +155,7 @@ function socketTransport(options: SlackSocketOptions & { app?: string }): { clos
   return { close() {
     if (closing) return closing;
     closed = true; generation++; cancelRetry?.(); cancelHeartbeat?.(); cancelDeadline?.(); abort?.abort();
-    const old = current; current = undefined; old?.terminate();
+    const old = current; current = undefined; old?.terminate(); state('disconnected');
     return closing = Promise.allSettled([...active]).then(() => {});
   } };
 }
