@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useDeadline } from './use-deadline';
 import { conversationOperation as mutate } from './operations';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
+import { LiveApprovalCard } from '../../data/work-views';
 import { InboxQuestionCard } from '../inbox-view';
 import type { InboxActions, InboxItem } from '../inbox-view/model';
 import { inboxSourcePath, retainedInboxItem } from '../attention/inbox-query';
@@ -22,6 +23,8 @@ export function InlineQuestion({ id, go, writable, readVisible }: { id: string; 
     answer: writable ? (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }) : undefined,
     openSource: inboxSourcePath(item) ? item => { const path = inboxSourcePath(item); if (path) go(path); } : undefined,
   } : undefined;
-  return <InboxQuestionCard id={id} inline actions={actions} snapshot={{ status: reading.status,
-    items: item ? [retainedInboxItem(item, now)] : [] }} />;
+  const retained = item ? retainedInboxItem(item, now) : null;
+  const approval = writable && retained?.body && retained.waitsOnKind === 'approval' ? retained.waitsOnId : undefined;
+  return <InboxQuestionCard sourceCard={approval ? <LiveApprovalCard id={approval} /> : undefined} id={id} inline actions={actions} snapshot={{ status: reading.status,
+    items: retained ? [retained] : [] }} />;
 }

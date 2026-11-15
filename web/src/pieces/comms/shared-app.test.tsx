@@ -5,7 +5,7 @@ import { act, create } from 'react-test-renderer';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
   f.requests.push({ query, variables });
-  return { status: f.status, data: f.status === 'live' ? query.includes('MentionedChange(') ? { changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
+  return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
@@ -26,7 +26,7 @@ function setup() {
     return { ok: result.ok, json: async () => result };
   }));
   for (const call of [f.call, f.queued]) call.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
-  f.data = { homeComms: { member: 'alice', agents: ['art'] }, commsFolders: { threads: 120, archived: 13 }, commsThreads: [thread()], commsThread: thread(), commsMessages: [message()], commsRefs: [] };
+  f.data = { approvals:[],approvalRules:[],approvalNotices:[],approvalRecord:[],questions:[], homeComms: { member: 'alice', agents: ['art'] }, commsFolders: { threads: 120, archived: 13 }, commsThreads: [thread()], commsThread: thread(), commsMessages: [message()], commsRefs: [] };
 }
 const named = (label: string) => tree.root.findAllByType('Button').find((b: { props: { children: ReactNode } }) => Children.toArray(b.props.children).join('') === label);
 const text = () => JSON.stringify(tree.toJSON());
@@ -172,4 +172,30 @@ it('marks an owner-visible inline question read for its reader without offering 
  setup();f.data.homeComms={member:'owner',agents:[]};f.data.commsMessages=[message({kind:'ask',inboxItem:'in-ask'})];
  f.data.item={id:'in-ask',source:'thread',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'OWNER VISIBLE QUESTION'},bodyKeepUntil:new Date(Date.now()+60000).toISOString()};
  await draw();expect(text()).toContain('OWNER VISIBLE QUESTION');expect(f.call).toHaveBeenCalledExactlyOnceWith('inbox.read',{item:'in-ask'});expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();expect(named('Record answer')).toBeUndefined();
+});
+
+function timingQuestion() {
+ const before={settleSeconds:5,dimDays:1,muteDays:7},after={...before,settleSeconds:60};
+ f.data.owner=true;
+ f.data.approvals=[{id:'a-tempo',kind:'setting',target:'tempo:person:alice',what:'Change Tempo',why:'Requested here',agent:'art',project:null,member:'alice',conversation:'cv-pump',state:'pending',ask:'Change timings?',ifYes:'Apply',ifNo:'Keep',details:JSON.stringify({who:{kind:'person',id:'alice'},before,after}),changeSummary:'Tempo for person alice: settle 5 → 60 seconds; dim 1 → 1 days; mute 7 → 7 days',askedAt:'2026-11-14T18:00:00Z',decidedBy:null,expiresAt:null}];
+ f.data.questions=[{id:'in-timing'}];
+ f.data.items={'in-timing':{id:'in-timing',source:'approval',sourceId:'a-tempo',waitsOnKind:'approval',waitsOnId:'a-tempo',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'Change timings?'},bodyKeepUntil:'2026-11-14T18:00:01Z'}};
+}
+it.each([['Allow',true],['Deny',false]])('answers actual source timing cards inside chat with %s, without a message copy',async(label,allow)=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));setup();timingQuestion();f.data.commsMessages=[];
+ f.call.mockImplementation((_name,input)=>({result:Promise.resolve({ok:true,value:{saved:true,id:input.id}})}));
+ await draw();
+ expect(text()).toContain('Tempo settings change');expect(text()).toContain('Before');expect(text()).toContain('After');
+ expect(f.requests.find(row=>row.query.includes('ConversationQuestions('))?.variables).toEqual({conversation:'cv-pump',offset:0});
+ expect(f.call).toHaveBeenCalledWith('inbox.read',{item:'in-timing'});
+ await act(async()=>{named(label).props.onClick();});
+ expect(f.call).toHaveBeenCalledWith('approvals.answer',{id:'a-tempo',answer:allow?'allow':'deny'});
+ expect(f.call).not.toHaveBeenCalledWith('inbox.answer',expect.anything());
+ await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});
+ expect(text()).not.toContain('Tempo settings change');expect(named('Allow')).toBeUndefined();
+});
+it('does not mount source question controls or read marks in another member’s thread',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));setup();timingQuestion();f.data.commsMessages=[];f.data.commsThread=thread({member:'bob'});
+ await draw();expect(named('Allow')).toBeUndefined();expect(f.call).not.toHaveBeenCalled();
+ expect(f.requests.some(row=>row.query.includes('ConversationQuestions('))).toBe(false);
 });
