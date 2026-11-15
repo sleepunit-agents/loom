@@ -164,3 +164,8 @@ it('inspects program routing without recording usage when transport checks rejec
  expect((await f.call('tasks.command',{action:'comment',id:'t-1',text:'Accepted program use'})).status).toBe(200);
  expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.program))).get()?.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
 });
+
+it('keeps an explicit read-only adapter enforcement-only without a hidden writable setup surface',async()=>{
+ const f=fixture();expect(f.root.services.programSetup).toBeUndefined();expect(f.root.operations.has('program.setGrants')).toBe(false);expect(await(await f.read('{ programSetup { owner } }','owner')).json()).toEqual({data:{programSetup:null}});
+ const refused=await f.root.http.request('http://loom/api/signin/program',{method:'POST',headers:{authorization:'Bearer '+raw.owner,'content-type':'application/json'},body:JSON.stringify({member:'owner',label:'No writer',records:['tasks'],operations:[]})});expect(refused.status).toBe(503);expect(f.db.select().from(tokens).all().some(token=>token.label==='No writer')).toBe(false);
+});

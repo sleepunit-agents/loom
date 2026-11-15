@@ -1,3 +1,4 @@
+import {programGrantStore} from './core/data/program-grants.js';
 import {sharedProgramSetup,programIssueInput} from './shared-program-setup.js';
 import {programSetupQueries,registerProgramSetup} from './shared-program-queries.js';
 import type {ProgramGrantStore,ProgramGrantReader} from './shared-program-access.js';
@@ -101,10 +102,11 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
-  /** Read-only programme grant adapter. Writable setup must supply programStore. */
+  /** Optional read-only enforcement adapter, without writable programme setup.
+   * Normal roots use canonical SQLite persistence when no adapter is supplied. */
   programGrants?: ProgramGrantReader;
   /** Writable setup and outside enforcement share this exact reader; it
-   * takes precedence over the read-only programGrants test/adapter port. */
+   * takes precedence over the read-only programGrants adapter. */
   programStore?: ProgramGrantStore;
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
@@ -149,7 +151,7 @@ export function sharedRoot(options: {
     // Synchronous outer writes have committed or rolled back before this runs.
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
-  const programStore=options.programStore;
+  const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action),programStore?(id=>programStore.read(id)):options.programGrants);
   let programOperations:()=>readonly string[]=()=>[];
