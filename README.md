@@ -159,7 +159,7 @@ an agent's persistent state:
 - **`conversation_digest`** — a body run's digest of its conversation (what was
   asked, decided and done; `needs_owner` puts it in the owner's Inbox), for the
   conversation and run given to `identity`. A conversation is core's record of who,
-  where and when, in any venue, and never holds text (docs/specs/conversations.md).
+  where and when, in any venue, and never holds text ([Conversations](docs/how-it-works/site/conversations.html)).
 - **`conversations`** — the agent's conversations, newest first, filtered by person,
   project, venue or `since`.
 - **`conversation`** — one conversation: its record, digests, findings and render
