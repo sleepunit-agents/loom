@@ -82,6 +82,10 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
   expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
+  // Inbox volume and Tempo controls are independent journeys in one browser.
+  // Keep each command sequence ordered and finish both before revocation.
+  await Promise.all([
+   (async()=>{
   mark('pause');await a.getByRole('button',{name:'Pause agent',exact:true}).click();
   await Promise.all([a,b].map(page=>expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0)));
   await b.getByRole('button',{name:'Resume agent',exact:true}).click();
@@ -104,23 +108,25 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   mark('run now');await a.getByRole('button',{name:'Run now',exact:true}).click();
   await Promise.all([a,b].map(page=>expect.poll(()=>page.getByText(/once · fired/).count()).toBe(1)));
   expect(client.prepare("SELECT words FROM inbox WHERE source='trigger' AND words='Created through Tempo'").all()).toHaveLength(1);
+   })(),
+   (async()=>{
   mark('recipient volume');
   const notice=client.prepare("SELECT id FROM inbox WHERE words='PRIVATE FIRST NOTICE'").get() as {id:string};
-  await a.goto(url+'/p/inbox-preview/ask/'+encodeURIComponent(notice.id));
-  await a.getByRole('button',{name:'Dim',exact:true}).click();
+  const volumePage=await context!.newPage();
+  await volumePage.goto(url+'/p/inbox-preview/ask/'+encodeURIComponent(notice.id));
+  await volumePage.getByRole('button',{name:'Dim',exact:true}).click();
   await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'dim'});
-  await expect.poll(()=>a.getByRole('button',{name:'Dim',exact:true}).isDisabled()).toBe(true);
-  await a.getByRole('button',{name:'Mute',exact:true}).click();
+  await expect.poll(()=>volumePage.getByRole('button',{name:'Dim',exact:true}).isDisabled()).toBe(true);
+  await volumePage.getByRole('button',{name:'Mute',exact:true}).click();
   await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'mute'});
-  await expect.poll(()=>a.getByRole('button',{name:'Mute',exact:true}).isDisabled()).toBe(true);
+  await expect.poll(()=>volumePage.getByRole('button',{name:'Mute',exact:true}).isDisabled()).toBe(true);
   expect(client.prepare('SELECT quiet_until AS until FROM inbox WHERE id=?').get(notice.id)).toEqual({until:new Date(clock.now()+7*86400000).toISOString()});
-  expect(await a.getByText(/returns to full/).count()).toBe(1);
-  await a.getByRole('button',{name:'Full',exact:true}).click();
+  expect(await volumePage.getByText(/returns to full/).count()).toBe(1);
+  await volumePage.getByRole('button',{name:'Full',exact:true}).click();
   await expect.poll(()=>client.prepare('SELECT volume,quiet_until AS quietUntil FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'full',quietUntil:null});
-  // Tempo settings Allow/Deny is exercised by approvals-app.integration.test.ts.
-  await a.getByRole('button',{name:'Open Tempo',exact:true}).click();
-  await a.getByRole('button',{name:/Recent history/}).click();
-  await a.getByRole('button',{name:/Browser-created trigger/}).click();
+  await volumePage.close();
+   })(),
+  ]);
   mark('revoke');app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
   for(const page of [a,b]){
    await expect.poll(()=>page.getByRole('heading',{name:'Browser-created trigger',exact:true}).count()).toBe(0);
