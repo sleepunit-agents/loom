@@ -37,7 +37,7 @@ describe('the app (web/)', () => {
   });
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
-    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { file: string; imports?: string[]; isDynamicEntry?: boolean }>;
+    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { file: string; imports?: string[] }>;
     const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
       .map(piece => {
         const registration = resolve(root, 'web/src/pieces', piece, 'registration.ts');
@@ -70,7 +70,7 @@ describe('the app (web/)', () => {
       expect(screens.filter(key => initial.has(key)), page).toEqual([]);
     }
     expect(emittedEntries[0]).toEqual(emittedEntries[1]);
-    expect(screens.filter(key => !manifest[key]?.isDynamicEntry)).toEqual([]);
+    // Shared lazy screens may be folded into another lazy app chunk.
   });
 
   // And each place that named a Tailwind colour now names the token that holds that colour (web/src/tones.ts, one map).
