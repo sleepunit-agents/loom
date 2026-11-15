@@ -92,7 +92,7 @@ export class Operations {
    * receipts then commit in one transaction without creating legacy tables.
    * Omit only while using the legacy bootstrap; never mix stores/connections.
    */
-  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void } = {}) {
+  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer) => boolean } = {}) {
     if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
     if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
     if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
@@ -282,6 +282,7 @@ export class Operations {
     try {
       result = this.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
+        if (door !== 'direct' && this.options.currentOutside && !this.options.currentOutside(viewer)) return failure('denied','Permission denied');
         if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
         const who = callerKey(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
