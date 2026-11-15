@@ -1,3 +1,4 @@
+import { RuleEditor, type SaveRule } from './rule-editor';
 import { useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
 import { folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
@@ -11,6 +12,7 @@ interface ChangePresentation { renderChange?: RenderApprovalChange }
  * Always is offered only when that door supplies its concrete scope and action.
  */
 export interface ApprovalActions {
+  setRule?: SaveRule;
   supports?(approval: Approval): boolean;
   allow(id: string): Promise<void>;
   deny(id: string): Promise<void>;
@@ -88,7 +90,7 @@ export default function Approvals({ snapshot, actions, renderChange, navigation 
     listTitle={folders.find(f => f.id === folder)?.label}
     listMeta={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
     list={!live ? <Unavailable status={snapshot.status} />
-      : rulesView ? <>{rules.length ? <List label="Standing rules">{rules.map(r => <Row key={`${r.kind}:${r.scope}:${r.person}`} title={r.scope} meta={`${r.kind}${r.person ? ` · for ${r.person}` : ''}`} status={r.tier === 'do' ? 'Just do it' : r.tier === 'tell' ? 'Tell me after' : 'Ask me'} />)}</List> : <Empty title="No matching rules" />}<p className="p-3">Ask an agent in chat to change a standing rule. Only a household owner can change rules.</p></>
+      : rulesView ? <>{rules.length ? <List label="Standing rules">{rules.map(r => <Row key={`${r.kind}:${r.scope}:${r.person}`} title={r.scope} meta={`${r.kind}${r.person ? ` · for ${r.person}` : ''}`} status={r.tier === 'do' ? 'Just do it' : r.tier === 'tell' ? 'Tell me after' : 'Ask me'} />)}</List> : <Empty title="No matching rules" />}{actions?.setRule ? <RuleEditor rules={snapshot.rules} save={actions.setRule}/> : <p className="p-3">Ask an agent in chat to change a standing rule. Only a household owner can change rules.</p>}</>
       : noticesView ? notices.length ? <List label="Reported steps">{notices.map(n => <Row key={n.id} title={n.what} meta={`${n.agent} · ${n.kind} · ${n.target}`} status={new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(n.at))} />)}</List> : <Empty title="No reported steps" />
       : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={a.what} meta={a.why} status={`${a.agent} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
     reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} /> : null}

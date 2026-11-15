@@ -1,3 +1,4 @@
+import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
 import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
@@ -30,7 +31,14 @@ import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
+import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
+import { pollChanges } from './apps/changes-polling.js';
+import { registerWorkRefresh } from './shared-work-refresh.js';
+import { workQueryFields } from './shared-work-queries.js';
+import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
+import { approvalRulesService } from './apps/approval-rules.js';
+import { registerSharedApprovalRules } from './shared-approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
 import { sameRequestOrigin } from './core/data/origin.js';
@@ -65,6 +73,8 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  changes?: {read:PullRequestReader;rule:MergeRuleReader};
+  workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
@@ -99,7 +109,7 @@ export function sharedRoot(options: {
   const credentials = sharedCredentials(db, clock, () => !closing);
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields }, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes) }, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
@@ -123,6 +133,7 @@ export function sharedRoot(options: {
   });
   const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
+  registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);
   const secretCommit = <T>(write: () => T): T => {
@@ -164,7 +175,13 @@ export function sharedRoot(options: {
   const services = {
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
+    changes: changeService(db,options.changes?.rule ?? (()=>undefined),now,run=>{
+      const result=data.writes.run(run);
+      for(const _error of result.notificationErrors){try{options.reportError(new Error('Changes source notification failed'));}catch{}}
+      return result.value;
+    }),
     household: householdService(db, now),
+    approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
@@ -187,6 +204,7 @@ export function sharedRoot(options: {
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
+  const changePolling=options.changes ? pollChanges(services.changes,options.changes.read,clock) : undefined;
   const authenticate = credentials.authenticate;
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -244,12 +262,15 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
+  registerSharedApprovalRules(operations,db,services.approvalRules);
+  if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {
     measuring: measuringReady,
     ready: measuringReady.then(() => undefined),
-    http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, credentials, refreshChanges:changePolling?.refresh, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -265,6 +286,7 @@ export function sharedRoot(options: {
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
       stopDeskTime();
+      const sourceStopped=changePolling?.stop();
       tempo.close();
       notices.close();
       cancelSecretRecovery?.(); values?.close();
@@ -274,7 +296,7 @@ export function sharedRoot(options: {
       const measured = measuringReady.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

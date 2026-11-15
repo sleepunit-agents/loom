@@ -3,7 +3,8 @@ import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../ki
 import { rows, summary, type Change, type ChangeSnapshot } from './model';
 export type { ChangeSnapshot } from './model';
 export interface ChangeActions {
-  refresh(): Promise<void>;
+  refresh?(): Promise<void>;
+  canAnswer?(id:string,head:string): boolean;
   answer(id: string, head: string, answer: 'yes' | 'no'): Promise<void>;
   always?: { change: string; head: string; project: string; run(id: string, head: string): Promise<void> };
 }
@@ -27,7 +28,7 @@ function MergeAnswer({ change: c, actions }: { change: Change; actions?: ChangeA
   }
   const always = actions?.always;
   return <section><h3>Merge answer</h3>
-    {c.state === 'open' && c.waitingOn === 'you' && actions ? <div role="group" aria-label="Merge answer" className="flex flex-wrap gap-2">
+    {c.state === 'open' && c.waitingOn === 'you' && actions && (actions.canAnswer?.(c.id,c.headCommit) ?? true) ? <div role="group" aria-label="Merge answer" className="flex flex-wrap gap-2">
       <Button disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'yes'))}>Yes, merge it</Button>
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'no'))}>Not yet</Button>
       {always?.change === c.id && always.head === c.headCommit && always.project === c.project && <Button variant="outline" disabled={busy} onClick={() => void send(() => always.run(c.id, c.headCommit))}>Always for {c.project}</Button>}
@@ -63,7 +64,7 @@ export default function Changes({ snapshot, actions, openTask, navigation }: { s
   const folders = [{ id: 'all', label: 'All changes' }, { id: 'you', label: 'Waiting on you' }, { id: 'lately', label: 'Lately' },
     ...(live ? [...new Set(snapshot.changes.flatMap(c => c.project ? [c.project] : []))].sort().map(id => ({ id: `project:${id}`, label: id })) : [])];
   async function refresh() {
-    if (!live || !actions || refreshActive.current) return;
+    if (!live || !actions?.refresh || refreshActive.current) return;
     refreshActive.current = true; setRefreshing(true); setError('');
     try { await actions.refresh(); } catch { setError('Could not refresh Changes.'); }
     finally { refreshActive.current = false; setRefreshing(false); }
@@ -72,7 +73,7 @@ export default function Changes({ snapshot, actions, openTask, navigation }: { s
     folder={folder} onFolder={id => { if (navigation?.openFolder) navigation.openFolder(id); else { setLocalFolder(id); setSelected(undefined); } }}
     search={<label>Search changes<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
     listTitle="Changes" listMeta={live ? shown.length : undefined}
-    listTop={<>{actions && <Button variant="outline" disabled={!live || refreshing} onClick={() => void refresh()}>Refresh</Button>}
+    listTop={<>{actions?.refresh && <Button variant="outline" disabled={!live || refreshing} onClick={() => void refresh()}>Refresh</Button>}
       {live && snapshot.sync?.readAt && <p>Last read {new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(snapshot.sync.readAt))} · {snapshot.timezone}</p>}
       {live && snapshot.sync?.failed && <Error text="GitHub read failed. Showing the last successful copy." />}{error && <Error text={error} />}</>}
     list={!live ? <Unavailable status={snapshot.status} /> : shown.length ? <List label="Pull requests">{shown.map(c => <Row key={c.id} title={c.title} meta={`${c.id}${c.project ? ` · ${c.project}` : ''}`} status={summary(c)} selected={selected === c.id} onClick={() => setSelected(c.id)} />)}</List> : <Empty title={query ? 'No matching changes' : 'No changes here'} />}

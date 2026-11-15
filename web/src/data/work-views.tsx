@@ -1,35 +1,24 @@
-import { readTempoChange, renderTempoChange } from '../pieces/tempo/settings';
-import { readMeasuringChange } from '../../../src/core/measuring/change';
-import { newId } from './id';
+import { renderTempoChange } from '../pieces/tempo/settings';
+import { renderMeasuringChange } from '../pieces/measuring/settings';
 import { useEffect, useState } from 'react';
 import Approvals, { ApprovalCard, type ApprovalActions } from '../pieces/approval-view';
 import Changes, { ChangeCard, type ChangeActions } from '../pieces/change-view';
-import { renderMeasuringChange } from '../pieces/measuring/settings';
 import { useDataQuery } from './graphql';
+import { refreshChanges } from './work-refresh';
+import { sendApprovalRule } from './work-rule';
+import { sendWorkAnswer } from './work-answer';
 import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
-/** The owner answers the same durable card through the authenticated API.
- * Visibility of a button never confers permission; root rechecks current owner.
- */
-function settingsPath(card: Parameters<typeof readTempoChange>[0]) {
-  return readTempoChange(card) ? '/api/tempo/answerSettings' : readMeasuringChange(card) ? '/api/measuring/answer' : undefined;
+const ownerQuery = 'query WorkAnswerOwner { workAnswerOwner workChangesRefresh }';
+const mergeRequestsQuery = 'query WorkMergeRequests { approvals { id kind target state agent project operation } }';
+interface MergeRequest { id:string;kind:string;target:string;state:string;agent:string;project:string|null;operation:string|null }
+function useWorkAccess() {
+  const snapshot = useDataQuery<{workAnswerOwner:boolean;workChangesRefresh:boolean}>(ownerQuery);
+  return {owner:snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true,
+    refresh:snapshot.status === 'live' && snapshot.data?.workChangesRefresh === true};
 }
-function settingsActions(snapshot: ReturnType<typeof useApprovalSnapshot>): ApprovalActions {
-  return { supports: approval => !!settingsPath(approval),
-    allow: id => answerSettings(snapshot.approvals.find(card => card.id === id), true),
-    deny: id => answerSettings(snapshot.approvals.find(card => card.id === id), false) };
-}
-async function answerSettings(card: ReturnType<typeof useApprovalSnapshot>['approvals'][number] | undefined, allow: boolean): Promise<void> {
-  if (!card) throw new Error('Approval unavailable');
-  const path = settingsPath(card);
-  if (!path) throw new Error('Approval unavailable');
-  const id = card.id;
-  const response = await fetch(path, {
-    method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ input: { id, allow }, id: newId() }),
-  });
-  const result = await response.json() as { ok: boolean };
-  if (!response.ok || !result.ok) throw new Error('Answer was refused');
+function ownerApprovalActions(owner: boolean): ApprovalActions | undefined {
+  return owner ? {setRule:sendApprovalRule,allow:id=>sendWorkAnswer({piece:'approvals',id,answer:'allow'}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
 }
 
 // The root may supply household time. The browser's own timezone is a display
@@ -44,6 +33,7 @@ export function useChangeSnapshot(timezone = localTimezone()) {
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
 export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ApprovalActions; go?(path: string): void } = {}) {
+  const defaultActions = ownerApprovalActions(useWorkAccess().owner);
   const base = '/p/approvals-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
@@ -66,14 +56,28 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       setLocalPath(next);
     }
   };
-  const snapshot = useApprovalSnapshot(timezone);
-  return <Approvals snapshot={snapshot} actions={actions ?? settingsActions(snapshot)} renderChange={approval => renderTempoChange(approval) ?? renderMeasuringChange(approval)}
+  return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
       folder: folder,
       openFolder: id => visit(id === 'pending' ? base : `${base}/${id}`) }} />;
 }
 export function ChangesApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
+  const snapshot = useChangeSnapshot(timezone), access = useWorkAccess(), owner = access.owner;
+  const requests = useDataQuery<{approvals:MergeRequest[]}>(mergeRequestsQuery);
+  const findRequest = (id:string,head:string) => {
+    const row = snapshot.changes.find(row => row.id === id && row.headCommit === head);
+    return row && requests.status === 'live' ? requests.data?.approvals?.find(request => request.kind === 'merge' && request.state === 'pending'
+      && request.target === `${id}@${head}` && request.agent === row.agent && request.project === row.project && request.operation === null) : undefined;
+  };
+  const defaultActions: ChangeActions | undefined = owner && requests.status === 'live' ? {
+    ...(access.refresh ? {refresh:refreshChanges} : {}),
+    canAnswer:(id,head)=>!!findRequest(id,head),
+    async answer(id,head,answer) {
+      const request = findRequest(id,head); if (!request) throw new Error('No approval is waiting for this commit.');
+      await sendWorkAnswer({piece:'changes',id,head,approval:request.id,answer});
+    },
+  } : undefined;
   const base = '/p/changes-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
@@ -103,15 +107,15 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
       setLocalPath(next);
     }
   };
-  return <Changes snapshot={useChangeSnapshot(timezone)} actions={actions}
+  return <Changes snapshot={snapshot} actions={actions ?? defaultActions}
     navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base), folder,
       openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
     openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;
 }
 /** Cards read the same current entities as the tiles, never copied payloads. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  const snapshot = useApprovalSnapshot(timezone);
-  return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? settingsActions(snapshot)} renderChange={approval => renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
+  const defaultActions = ownerApprovalActions(useWorkAccess().owner);
+  return <ApprovalCard id={id} snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   return <ChangeCard id={id} snapshot={useChangeSnapshot(timezone)} open={open} />;
