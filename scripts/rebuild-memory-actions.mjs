@@ -5,6 +5,7 @@ export async function knowledgeActions({page,tile,out,connections}){
  const screenshot='action-knowledge-verified.png';
  try{
   const initialConnections=[...connections];
+  const graphQL=initialConnections.filter(socket=>new URL(socket.url()).pathname==='/graphql');
   const title='Example pump hose width',words='The fictional garden pump takes a 25 mm hose.';
   const submit=async(verb,click)=>{
    const response=page.waitForResponse(value=>new URL(value.url()).pathname===`/api/mind/${verb}`&&value.request().method()==='POST',{timeout:4000});
@@ -27,13 +28,16 @@ export async function knowledgeActions({page,tile,out,connections}){
   await page.screenshot({path:join(out,'action-knowledge-due.png'),fullPage:true});
   phase='verify';await submit('knowledgeVerify',()=>reader.getByRole('button',{name:'Still true',exact:true}).click());
   await reader.locator('header p').filter({hasText:/^Fresh · verified /}).waitFor();
-  if(initialConnections.length!==1||connections.size!==1||!connections.has(initialConnections[0])||new URL(initialConnections[0].url()).pathname!=='/graphql')throw Error('Knowledge did not use the existing single GraphQL connection: '+JSON.stringify({before:initialConnections.map(socket=>new URL(socket.url()).pathname),after:[...connections].map(socket=>new URL(socket.url()).pathname)}));
+  // Earlier launcher visits may still own a legacy socket. Record that gap;
+  // this Memory probe requires one shared GraphQL socket and opens no new one.
+  const paths=sockets=>sockets.map(socket=>new URL(socket.url()).pathname);
+  if(graphQL.length!==1||!connections.has(graphQL[0])||[...connections].filter(socket=>new URL(socket.url()).pathname==='/graphql').length!==1||[...connections].some(socket=>!initialConnections.includes(socket)))throw Error('Knowledge did not reuse the existing GraphQL connection: '+JSON.stringify({before:paths(initialConnections),after:paths([...connections])}));
   await page.screenshot({path:join(out,screenshot),fullPage:true});
   phase='persisted';await page.reload();await page.locator('.next-shell').waitFor();
   const persisted=page.getByRole('region',{name:'Knowledge tile',exact:true}).locator('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   await persisted.getByText(words,{exact:true}).waitFor();
   await persisted.locator('header p').filter({hasText:/^Fresh · verified /}).waitFor();
-  return {ok:true,slug:added.slug,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql',screenshot};
+  return {ok:true,slug:added.slug,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql',preexistingOtherSockets:paths(initialConnections.filter(socket=>socket!==graphQL[0])),screenshot};
  }catch(error){
   const failed='action-knowledge-failed.png';await page.screenshot({path:join(out,failed),fullPage:true}).catch(()=>{});
   return {ok:false,phase,error:String(error),screenshot:failed};
