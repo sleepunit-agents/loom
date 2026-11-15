@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { httpWorkerControl, reportWorkerAccountUsage } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
 function client(fetcher: typeof fetch, signal = new AbortController().signal) {
@@ -132,4 +132,23 @@ for (const cancel of [false, true]) it(`bounds quota reporting by ${cancel ? 'wo
     if (cancel) abort.abort(); else await vi.advanceTimersByTimeAsync(100);
     await pending; expect(fetcher).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
+});
+it.each([30000,60000])('bounds stalled private input to fifteen seconds under worker timeout %s',async timeoutMs=>{
+ vi.useFakeTimers();const fetch=vi.fn<typeof globalThis.fetch>(()=>new Promise<Response>(()=>{}));const control=httpWorkerControl({url:'https://loom.example',token:'synthetic',signal:new AbortController().signal,timeoutMs,fetch});
+ try{let settled=false;const pending=control.repositoryInput!('job',new AbortController().signal);void pending.then(()=>{settled=true;},()=>{settled=true;});const refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);await vi.advanceTimersByTimeAsync(14999);expect(settled).toBe(false);await vi.advanceTimersByTimeAsync(1);await refused;expect(fetch).toHaveBeenCalledOnce();}finally{vi.useRealTimers();}
+});
+
+it('snapshots configured machine facts for each poll without caller-supplied machine identity', async () => {
+  const facts = ['gpu:5090'], fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response(null));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
+  facts[0] = 'changed'; await control.next(); await control.next();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
+});
+
+it('uses the existing bounded authenticated operation door for health without claiming work', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ ok: true }));
+  expect(await reportWorkerHealth({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts: ['os:linux'] })).toEqual({ ok: true });
+  expect(String(fetcher.mock.calls[0][0])).toBe('https://loom.example/api/runtime/health');
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).input).toEqual({ facts: ['os:linux'] });
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: 'error', headers: { authorization: 'Bearer machine-token' } });
 });

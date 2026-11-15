@@ -36,6 +36,16 @@ describe('worker command adapter (no child processes in tests)', () => {
     // A completed leader can leave descendants; cleanup still kills its group.
     expect(f.runtime.kill).toHaveBeenCalledOnce();
   });
+  it('gives the configured builder a repository credential only on private stdin', async () => {
+    const f = fixture(), bytes = Buffer.from('PRIVATE_REPO_VALUE');
+    const result = f.executor.build(job, new AbortController().signal, bytes), child = f.children[0];
+    child.child.emit('spawn'); await flush();
+    expect(JSON.parse(child.input())).toEqual({ job: 'j', house: job.house, repositoryInput: { encoding: 'base64', value: bytes.toString('base64') } });
+    expect(JSON.stringify(vi.mocked(f.runtime.spawn).mock.calls)).not.toContain(bytes.toString('base64'));
+    expect(JSON.stringify(job)).not.toContain('PRIVATE_REPO_VALUE');
+    child.child.stdout.emit('data', Buffer.from('{"build":"image@sha"}')); child.child.emit('close', 0, null);
+    expect(await result).toBe('image@sha'); bytes.fill(0);
+  });
   it('preserves UTF-8 build identities split between output chunks', async () => {
     const f = fixture(), result = f.executor.build(job, new AbortController().signal), child = f.children[0].child;
     child.emit('spawn'); await flush();

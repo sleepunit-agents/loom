@@ -7,14 +7,14 @@ export interface CommsThread {
 }
 export interface CommsMessage {
   thread: string; seq: number; kind: 'message' | 'reply' | 'card' | 'ask' | 'answer' | 'notice';
-  sender: string; at: string; words: string | null; inboxItem?: string | null;
+  sender: string; at: string; wordsKeepUntil?: string | null; words: string | null; inboxItem?: string | null;
   verdict?: 'yes' | 'no' | null; tool?: string | null; cardState?: 'running' | 'done' | 'failed' | null;
   delivery?: 'sending' | 'held' | 'failed' | 'delivered' | null;
 }
 export type Status = 'live' | 'loading' | 'offline' | 'denied';
-export interface CommsSnapshot { status: Status; member: string; threads: readonly CommsThread[]; agents: readonly { id: string; name: string }[] }
+export interface CommsSnapshot { folders?: { threads: number; archived: number }; status: Status; member: string; threads: readonly CommsThread[]; agents: readonly { id: string; name: string }[] }
 export interface CommsDetail { status: Status; thread: CommsThread | null; messages: readonly CommsMessage[]; refs: readonly { ref: string; messageSeq: number }[] }
-export type ThreadChange = { change: 'rename'; title: string } | { change: 'pin'; pinned: boolean } | { change: 'archive'; archived: boolean } | { change: 'stop' };
+export type ThreadChange = { change: 'rename'; title: string } | { change: 'pin'; pinned: boolean } | { change: 'archive'; archived: boolean } | { change: 'stop' } | { change: 'delete' };
 export interface CommsActions {
   open(agent: string, thread: string): Promise<void>;
   send(thread: string, words: string, clientId: string): Promise<void>;
@@ -26,5 +26,5 @@ export function threadRows(snapshot: CommsSnapshot, archived: boolean, query: st
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return snapshot.threads.filter(thread => !!thread.archivedAt === archived
     && terms.every(term => [thread.title, thread.agent, thread.project].filter(Boolean).join(' ').toLowerCase().includes(term)))
-    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.lastAt.localeCompare(a.lastAt) || a.id.localeCompare(b.id));
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || Date.parse(b.lastAt) - Date.parse(a.lastAt) || a.id.localeCompare(b.id));
 }

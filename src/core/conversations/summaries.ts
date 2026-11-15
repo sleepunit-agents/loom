@@ -2,7 +2,7 @@ import { wordsDeadline } from './retention.js';
 /** Small Home/People reads over the same conversations as Comms. Never uses
  * question answers as an agent's last reply or subscribes to whole threads. */
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
-import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, members, memberAgents, projectMembers, projectAgents, threads, messages, household } from '../data/schema.js';
@@ -28,10 +28,11 @@ function visible(viewer: Viewer): SQL {
 export class ConversationSummaries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly now: () => string = () => new Date().toISOString()) {}
 
-  recent(viewer: Viewer, agent: string, limit = 8): Conversation[] {
+  recent(viewer: Viewer, agent: string, limit = 8, answeredOnly = false): Conversation[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 25) throw new Error('Conversation limit must be 1–25');
-    return this.db.select().from(conversations).where(and(visible(viewer), eq(conversations.agent, agent)))
-      .orderBy(desc(sql`julianday(${conversations.lastAt})`), desc(conversations.id)).limit(limit).all();
+    const replyAt = sql`(select max(julianday(reply.at)) from messages reply join threads reply_thread on reply_thread.id=reply.thread where reply_thread.conversation=${conversations.id} and reply.kind='reply' and reply.sender=${conversations.agent})`;
+    return this.db.select().from(conversations).where(and(visible(viewer), eq(conversations.agent, agent), answeredOnly ? sql`${replyAt} is not null` : undefined))
+      .orderBy(desc(answeredOnly ? replyAt : sql`julianday(${conversations.lastAt})`), desc(conversations.id)).limit(limit).all();
   }
 
   /** Words are read only when the client selects lastAnswer. Recheck the exact
@@ -71,7 +72,7 @@ export function conversationSummaryFields(service: ConversationSummaries): Graph
   } });
   return { recentConversations: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(summary))),
-    args: { agent: { type: new GraphQLNonNull(GraphQLString) }, limit: { type: GraphQLInt, defaultValue: 8 } },
-    resolve: (_row, args, context) => service.recent(context.viewer, args.agent, args.limit),
+    args: { agent: { type: new GraphQLNonNull(GraphQLString) }, limit: { type: GraphQLInt, defaultValue: 8 }, answeredOnly: { type: GraphQLBoolean, defaultValue: false } },
+    resolve: (_row, args, context) => service.recent(context.viewer, args.agent, args.limit, args.answeredOnly),
   } };
 }
