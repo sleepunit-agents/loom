@@ -2,7 +2,7 @@
  * Reads inspect only its disposable example store; writes use visible controls. */
 import {join} from 'node:path';
 import {commsDeliveryEvidence} from '../dist/rebuild/comms-delivery-evidence.js';
-export async function conversationActions({page,app,example,out,open,actions=['commsSend','inboxAnswer','commsAnswer'],previous={}}){
+export async function conversationActions({page,app,example,out,open,actions=['commsSend','commsSendReload','inboxAnswer','commsAnswer'],previous={}}){
  const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
  const readyButton=async button=>{const enabled=button.and(page.locator(':enabled'));await enabled.waitFor({state:'visible'});await enabled.focus();return enabled;};
  const select=async tile=>{
@@ -19,21 +19,30 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   return await tile.isVisible()?tile:open('Comms');
  };
  let phase='';
+ const words='Fictitious walkthrough follow-up: compare the hose again.';
  const evidence={...previous},question='Spend up to 180 example dollars on the pump?';
  const attempt=async(name,run)=>{const start=performance.now();try{phase=name;evidence[name]={...await run(),durationMs:Math.round(performance.now()-start)};}catch(error){const screenshot='action-'+name+'-failed.png';await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});const panes=await page.locator('[aria-label="Comms tile"]').evaluateAll(tiles=>tiles.map(tile=>({hidden:tile.hidden,inert:tile.inert,headings:[...tile.querySelectorAll('h2')].map(h=>h.textContent),text:tile.innerText.slice(0,160)}))).catch(()=>[]);evidence[name]={ok:false,phase,error:String(error),screenshot,panes,durationMs:Math.round(performance.now()-start)};}};
  const response=path=>{const pending=page.waitForResponse(value=>new URL(value.url()).pathname===path&&value.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});return pending;};
  const result=async pending=>{const value=await pending,body=await value.json();if(value.status()!==200||body.ok!==true)throw Error('Browser action was not accepted');return {body:body.value,input:value.request().postDataJSON().input};};
  if(actions.includes('commsSend'))await attempt('commsSend',async()=>{
   phase='open-comms';let tile=await open('Comms');phase='select-conversation';await select(tile);
-  const words='Fictitious walkthrough follow-up: compare the hose again.';
   phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
   phase='prepare-send-button';const send=await readyButton(tile.getByRole('button',{name:'Send',exact:true}));
   phase='send-message';const pending=response('/api/comms/send');await send.press('Enter');const sent=await result(pending);
   phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
-  phase='reload';await page.reload();await page.locator('.next-shell').waitFor();phase='reopen-after-reload';tile=await visibleComms();phase='select-after-reload';await select(tile);phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
-  const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.body);
+  const receipt={thread:sent.body.thread,seq:sent.body.seq,item:sent.body.item};
+  const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},receipt);
+  const screenshot='action-comms-send-before-reload.png';await tile.screenshot({path:join(out,screenshot)});
+  return{ok:false,inconclusive:ok,reason:ok?'Send receipt verified; reload has not yet been observed.':'Send receipt differed from its delivery.',persistedAfterReload:false,receipt,inboxCopies,screenshot};
+ });
+ if(actions.includes('commsSendReload'))await attempt('commsSend',async()=>{
+  const sent=evidence.commsSend;if(!sent?.receipt)throw Error('Send did not return an accepted receipt');
+  phase='reload-send';await page.reload();await page.locator('.next-shell').waitFor();
+  phase='reopen-after-reload';const tile=await visibleComms();phase='select-after-reload';await select(tile);
+  phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
+  const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.receipt);
   const screenshot='action-comms-send.png';await tile.screenshot({path:join(out,screenshot)});
-  return{ok,persistedAfterReload:true,inboxCopies,screenshot};
+  return{ok,persistedAfterReload:true,receipt:sent.receipt,inboxCopies,screenshot,sendDurationMs:sent.durationMs};
  });
  if(actions.includes('inboxAnswer'))await attempt('inboxAnswer',async()=>{
   const tile=await open('Inbox');await activate(tile.getByRole('button',{name:'Go to Inbox',exact:true}));await activate(tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}));
