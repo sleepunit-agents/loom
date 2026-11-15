@@ -92,7 +92,12 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
   }finally{
    clearTimeout(cleanupDeadline);
    try{if(configurationCreated)rmSync(configuration);}catch{failures.push('private configuration cleanup');}
-   try{app.writes.run(()=>{if(runner)app.services.signin.revoke(runner.fingerprint);if(owner)app.services.signin.revoke(owner.fingerprint);});}catch{failures.push('credential retirement');}
+   try{app.writes.run(()=>{
+    // A refused finish must not leave body authority alive. These fingerprints
+    // came from normal SDK enrollment under this helper's unique runner.
+    if(runner)for(const row of db.prepare("SELECT fingerprint FROM tokens WHERE made_from=? AND kind='agent' AND job IS NOT NULL").all(runner.fingerprint))app.services.signin.revoke(row.fingerprint);
+    if(runner)app.services.signin.revoke(runner.fingerprint);if(owner)app.services.signin.revoke(owner.fingerprint);
+   });}catch{failures.push('credential retirement');}
   }
   if(failures.length)throw Error('Native fixture cleanup could not complete: '+failures.join(', '));
  }

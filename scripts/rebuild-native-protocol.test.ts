@@ -72,3 +72,13 @@ it('bounds a pending asynchronous provider without a caller abort',{timeout:20_0
  expect(reached).toBe(true);expect(context.db.prepare("SELECT id FROM jobs WHERE state IN ('starting','running','waiting')").all()).toEqual([]);
  restored(context.db,context.example.runtime.box);
 }));
+
+it('withdraws enrolled body authority even when normal HTTP job retirement is refused',{timeout:20_000},()=>household(async context=>{
+ const http=context.app.http,original=http.fetch;let refused=0;
+ http.fetch=(request,...args)=>{if(new URL(request.url).pathname==='/api/runtime/finish'){refused++;return Promise.resolve(new Response(JSON.stringify({ok:false}),{status:503,headers:{'content-type':'application/json'}}));}return Reflect.apply(original,http,[request,...args]);};
+ try{await expect(nativeProtocolSmoke({...context,native:async()=>{throw Error('Fictional provider rejected');}})).rejects.toThrow('cleanup could not complete');}finally{http.fetch=original;}
+ expect(refused).toBeGreaterThan(0);
+ const bodies=context.db.prepare("SELECT b.revoked_at FROM tokens b JOIN tokens r ON b.made_from=r.fingerprint WHERE r.label='Native protocol fixture worker' AND b.job IS NOT NULL").all();
+ expect(bodies.length).toBeGreaterThan(0);expect(bodies.every(row=>!!row.revoked_at)).toBe(true);
+ restored(context.db,context.example.runtime.box);
+}));
