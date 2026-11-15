@@ -37,7 +37,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
  }));
  const sockets=new Set<Socket>();server.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
  const mark=(phase:string)=>console.info('[Tempo browser]',phase);
- const detach=app.attach(server);let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
+ const detach=app.attach(server);server.on('upgrade',(request,socket)=>{if(new URL(request.url??'/','http://loom').pathname!=='/graphql')socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');});let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {
   await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));const address=server.address();if(!address||typeof address==='string')throw Error('No address');
   const url=`http://127.0.0.1:${address.port}`;
@@ -45,7 +45,11 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   const context=await browser.newContext({serviceWorkers:'block',timezoneId:'Asia/Tokyo',locale:'en-US'});context.setDefaultTimeout(10000);
   await context.addCookies([{name:'loom_ui',value:cookie,url}]);
   const a=await context.newPage(),b=await context.newPage();
-  for(const page of [a,b])page.on('pageerror',error=>console.error('[Tempo page error]',error.message));
+  for(const page of [a,b]){
+   page.on('pageerror',error=>console.error('[Tempo page error]',error.message));
+   page.on('console',message=>{if(message.type()==='error')console.error('[Tempo console]',message.text());});
+   page.on('websocket',socket=>socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload));if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify(value));}catch{}}));
+  }
   mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
   for(const page of [a,b]){
    mark('open trigger');try{await page.getByRole('button',{name:/Check pump delivery/}).click();}catch(error){console.error('[Tempo visible body]',await page.locator('body').innerText());throw error;}
