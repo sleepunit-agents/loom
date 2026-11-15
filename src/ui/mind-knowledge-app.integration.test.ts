@@ -69,6 +69,20 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     expect(await source.getVerifications('six-voices')).toHaveLength(1);
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByText(/Asked to be checked again/).count()).toBe(1);
+    // Trace only this fixture's citation, never arbitrary links or page words.
+    // A successful Playwright click can still lose its target between down/up.
+    await b.evaluate(()=>{
+      const link=document.querySelector('article a[href="https://loom.invalid/knowledge/clock-tempo"]');
+      const trace:string[]=[];
+      (window as unknown as {knowledgeClickTrace:string[]}).knowledgeClickTrace=trace;
+      for(const type of ['pointerdown','pointerup','click']){
+        document.addEventListener(type,event=>{
+          const target=event.target as Element;
+          trace.push(`${type}: citation=${target.closest('a')===link}, connected=${!!link?.isConnected}, prevented=${event.defaultPrevented}`);
+          if(type==='click')queueMicrotask(()=>trace.push(`after click: connected=${!!link?.isConnected}, prevented=${event.defaultPrevented}`));
+        },{capture:true});
+      }
+    });
     await b.locator('article a[href^="https://loom.invalid/knowledge/"]').click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/knowledge-preview/page/clock-tempo');
     await expect.poll(()=>b.getByRole('heading',{name:'Clock tempo',exact:true}).count()).toBe(1);
@@ -120,6 +134,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
           const savedTile=Array.isArray(saved?.tiles) ? saved.tiles.find((t:{id?:string})=>t.id==='knowledge') : undefined;
           const text=tile?.textContent ?? '';
           return {
+            clickTrace:(window as unknown as {knowledgeClickTrace?:string[]}).knowledgeClickTrace,
             path:knownPath(location.pathname),
             route:knownPath(savedTile?.trail?.[savedTile?.at]),
             shell:shell?.getAttribute('data-shell') ?? null,
