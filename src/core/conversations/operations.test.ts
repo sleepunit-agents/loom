@@ -186,7 +186,8 @@ it('uses authenticated read marks and the metadata services for rename, pin, arc
 it('requires signed-in window dispatch, rejects claimed senders and binds opens to the authenticated member', async () => {
   const f = fixture(), input = { thread: 'th:two', agent: 'art', title: 'Second' };
   expect(await f.operations.callAsync('socket', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'no-window', false)).toMatchObject({ code: 'denied' });
-  expect(await f.operations.callAsync('http', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'open', true)).toMatchObject({ code: 'denied' });
+  expect(await f.operations.callAsync('http', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'open-http', true)).toMatchObject({ ok: true });
+  expect(await f.operations.callAsync('http', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'open-no-window', false)).toMatchObject({ code: 'denied' });
   expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'comms.open', input, 'open', true)).toMatchObject({ code: 'denied' });
   expect(await f.call('comms.open', { ...input, member: 'other' }, 'spoof')).toMatchObject({ code: 'invalid' });
   expect(await f.call('comms.open', input, 'open')).toMatchObject({ ok: true, value: { thread: 'th:two' } });

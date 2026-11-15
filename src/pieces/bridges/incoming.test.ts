@@ -1,8 +1,12 @@
+import { graphql } from 'graphql/index.js';
+import { dataQueries } from '../../core/data/queries.js';
+import { workVisibility } from '../../core/data/work-visibility.js';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
+import { Conversations } from '../../core/conversations/index.js';
 import { BridgeIncoming, type IncomingMessage } from './incoming.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -148,4 +152,75 @@ describe('shared-schema bridge ingress', () => {
     f.client.exec('DROP TRIGGER fail_inbox');
     expect(f.ingress.receive(f.message).state).toBe('delivered');
   });
+});
+
+it('a changed DM person link opens a separate private conversation and never relabels prior history', () => {
+ const f=fixture();
+ f.db.insert(members).values({id:'other',role:'member',joinedAt:f.now()}).run();
+ const first=f.ingress.receive({...f.message,id:'private-first',isDm:true,channel:'direct'});
+ f.db.update(bridgePeople).set({member:'other'}).run();
+ const second=f.ingress.receive({...f.message,id:'private-second',isDm:true,channel:'direct'});
+ expect(second.conversation).not.toBe(first.conversation);
+ expect(f.db.select().from(conversations).where(eq(conversations.id,first.conversation!)).get()?.member).toBe('jonathan');
+ expect(f.db.select().from(conversations).where(eq(conversations.id,second.conversation!)).get()?.member).toBe('other');
+ expect(f.db.select().from(inbox).where(eq(inbox.conversation,first.conversation!)).get()?.member).toBe('jonathan');
+ expect(f.db.select().from(inbox).where(eq(inbox.conversation,second.conversation!)).get()?.member).toBe('other');
+});
+it('group DMs never use one participant private-member context or a prior single-DM history', () => {
+ const f=fixture();
+ const first=f.ingress.receive({...f.message,id:'private-first',isDm:true,channel:'direct'});
+ const group=f.ingress.receive({...f.message,id:'group-message',isDm:true,groupDm:true,channel:'direct'});
+ expect(group.conversation).not.toBe(first.conversation);
+ expect(group.member).toBe('jonathan');
+ expect(f.db.select().from(conversations).where(eq(conversations.id,group.conversation!)).get()?.member).toBeNull();
+ expect(f.db.select().from(conversations).where(eq(conversations.id,first.conversation!)).get()?.member).toBe('jonathan');
+});
+
+it('ordinary members read only their own DM generation after a person-link reassignment', async () => {
+ const f=fixture();
+ f.db.insert(members).values(['alice','bob'].map(id=>({id,role:'member' as const,joinedAt:f.now()}))).run();
+ f.db.update(bridgePeople).set({member:'alice'}).run();
+ const first=f.ingress.receive({...f.message,id:'alice-private',isDm:true,channel:'direct'});
+ f.db.update(bridgePeople).set({member:'bob'}).run();
+ const second=f.ingress.receive({...f.message,id:'bob-private',isDm:true,channel:'direct'});
+ for(const [member,id] of [['alice',first.conversation],['bob',second.conversation]]){
+  const schema=dataQueries(f.client,{tables:['conversations'],visibility:{conversations:workVisibility({kind:'member',id:member!}).approvals}});
+  const result=await graphql({schema,source:'{ conversations { id member } }'});expect(result.errors).toBeUndefined();
+  expect(result.data?.conversations).toEqual([{id,member}]);
+ }
+});
+
+it('a delayed duplicate on a second connection preserves the original DM actor and conversation after relinking', () => {
+ const f=fixture();f.db.insert(members).values(['alice','bob'].map(id=>({id,role:'member' as const,joinedAt:f.now()}))).run();f.db.update(bridgePeople).set({member:'alice'}).run();
+ const connection=f.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,'c')).get()!;
+ f.db.insert(bridgeConnections).values({...connection,id:'second'}).run();
+ const first=f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct'});
+ f.db.update(bridgePeople).set({member:'bob'}).run();
+ const again=f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second'});
+ expect(again).toMatchObject({conversation:first.conversation,member:'alice',state:'delivered'});
+ expect(f.db.select().from(conversations).all()).toHaveLength(1);expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+it('a newly linked single-DM member gets a private conversation without adopting unknown-actor history', () => {
+ const f=fixture();f.db.delete(bridgePeople).run();
+ const first=f.ingress.receive({...f.message,id:'unknown-private',isDm:true,channel:'direct'});
+ f.db.insert(members).values({id:'alice',role:'member',joinedAt:f.now()}).run();
+ f.db.insert(bridgePeople).values({platform:'discord',workspace:'w',user:'outside',member:'alice'}).run();
+ const next=f.ingress.receive({...f.message,id:'known-private',isDm:true,channel:'direct'});
+ expect(next.conversation).not.toBe(first.conversation);expect(next.member).toBe('alice');
+ expect(f.db.select().from(conversations).where(eq(conversations.id,first.conversation!)).get()?.member).toBeNull();
+ expect(f.db.select().from(conversations).where(eq(conversations.id,next.conversation!)).get()?.member).toBe('alice');
+});
+
+it('rejects a conflicting cross-connection copy without creating a second receipt or changing history', () => {
+ const f=fixture(),connection=f.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,'c')).get()!;f.db.insert(bridgeConnections).values({...connection,id:'second'}).run();
+ const first=f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct'});
+ expect(()=>f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second',text:'Changed words'})).toThrow('identity changed');
+ expect(()=>f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second',user:'different-sender'})).toThrow('identity changed');
+ expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(1);expect(f.db.select().from(conversations).all()).toHaveLength(1);expect(f.db.select().from(inbox).get()?.conversation).toBe(first.conversation);
+});
+
+it('reuses the original public channel place key',()=>{
+ const f=fixture(),prior=new Conversations(f.db,f.now).open({agent:'art',venue:'discord',place:JSON.stringify(['w','room',null]),label:'Existing public room'});
+ const row=f.ingress.receive(f.message);
+ expect(row.conversation).toBe(prior.id);expect(f.db.select().from(conversations).all()).toHaveLength(1);
 });

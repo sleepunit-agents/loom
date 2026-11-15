@@ -1250,10 +1250,10 @@ export const measuringSettings = sqliteTable('measuring_settings', {
   check('measuring_settings_singleton', sql`${t.singleton} = 1`),
   check('measuring_settings_on_boolean', sql`${t.on} in (0, 1)`),
   check('measuring_settings_send_outside_boolean', sql`${t.sendOutside} in (0, 1)`),
-  check('measuring_settings_keep_days_range', sql`${t.keepDays} between 1 and 3650`),
+  check('measuring_settings_keep_days_range', sql`${t.keepDays} between 0 and 3650`),
 ]);
 
-export const membersRelations = relations(members, ({ one, many }) => ({
+export const membersRelations = relations(members, ({ many }) => ({
   memberAgentsByMember: many(memberAgents, { relationName: 'member_agents_member' }),
   projectMembersByMember: many(projectMembers, { relationName: 'project_members_member' }),
   memberPreferencesByMember: many(memberPreferences, { relationName: 'member_preferences_member' }),
@@ -1277,7 +1277,7 @@ export const membersRelations = relations(members, ({ one, many }) => ({
   secretChangesByBy: many(secretChanges, { relationName: 'secret_changes_by' }),
 }));
 
-export const agentsRelations = relations(agents, ({ one, many }) => ({
+export const agentsRelations = relations(agents, ({ many }) => ({
   memberAgentsByAgent: many(memberAgents, { relationName: 'member_agents_agent' }),
   projectAgentsByAgent: many(projectAgents, { relationName: 'project_agents_agent' }),
   agentAccountsByAgent: many(agentAccounts, { relationName: 'agent_accounts_agent' }),
@@ -1309,12 +1309,12 @@ export const agentsRelations = relations(agents, ({ one, many }) => ({
   secretUsesByAgent: many(secretUses, { relationName: 'secret_uses_agent' }),
 }));
 
-export const memberAgentsRelations = relations(memberAgents, ({ one, many }) => ({
+export const memberAgentsRelations = relations(memberAgents, ({ one }) => ({
   memberRow: one(members, { fields: [memberAgents.member], references: [members.id], relationName: 'member_agents_member' }),
   agentRow: one(agents, { fields: [memberAgents.agent], references: [agents.id], relationName: 'member_agents_agent' }),
 }));
 
-export const projectsRelations = relations(projects, ({ one, many }) => ({
+export const projectsRelations = relations(projects, ({ many }) => ({
   projectMembersByProject: many(projectMembers, { relationName: 'project_members_project' }),
   projectAgentsByProject: many(projectAgents, { relationName: 'project_agents_project' }),
   projectRepositoriesByProject: many(projectRepositories, { relationName: 'project_repositories_project' }),
@@ -1327,33 +1327,33 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   jobsByProject: many(jobs, { relationName: 'jobs_project' }),
 }));
 
-export const projectMembersRelations = relations(projectMembers, ({ one, many }) => ({
+export const projectMembersRelations = relations(projectMembers, ({ one }) => ({
   projectRow: one(projects, { fields: [projectMembers.project], references: [projects.id], relationName: 'project_members_project' }),
   memberRow: one(members, { fields: [projectMembers.member], references: [members.id], relationName: 'project_members_member' }),
 }));
 
-export const projectAgentsRelations = relations(projectAgents, ({ one, many }) => ({
+export const projectAgentsRelations = relations(projectAgents, ({ one }) => ({
   projectRow: one(projects, { fields: [projectAgents.project], references: [projects.id], relationName: 'project_agents_project' }),
   agentRow: one(agents, { fields: [projectAgents.agent], references: [agents.id], relationName: 'project_agents_agent' }),
 }));
 
-export const projectRepositoriesRelations = relations(projectRepositories, ({ one, many }) => ({
+export const projectRepositoriesRelations = relations(projectRepositories, ({ one }) => ({
   projectRow: one(projects, { fields: [projectRepositories.project], references: [projects.id], relationName: 'project_repositories_project' }),
 }));
 
-export const agentAccountsRelations = relations(agentAccounts, ({ one, many }) => ({
+export const agentAccountsRelations = relations(agentAccounts, ({ one }) => ({
   agentRow: one(agents, { fields: [agentAccounts.agent], references: [agents.id], relationName: 'agent_accounts_agent' }),
 }));
 
-export const agentSpritesRelations = relations(agentSprites, ({ one, many }) => ({
+export const agentSpritesRelations = relations(agentSprites, ({ one }) => ({
   agentRow: one(agents, { fields: [agentSprites.agent], references: [agents.id], relationName: 'agent_sprites_agent' }),
 }));
 
-export const householdRelations = relations(household, ({ one, many }) => ({
+export const householdRelations = relations(household, ({ one }) => ({
   defaultAgentRow: one(agents, { fields: [household.defaultAgent], references: [agents.id], relationName: 'household_default_agent' }),
 }));
 
-export const memberPreferencesRelations = relations(memberPreferences, ({ one, many }) => ({
+export const memberPreferencesRelations = relations(memberPreferences, ({ one }) => ({
   memberRow: one(members, { fields: [memberPreferences.member], references: [members.id], relationName: 'member_preferences_member' }),
 }));
 
@@ -1374,15 +1374,15 @@ export const sessionsRelations = relations(sessions, ({ one, many }) => ({
   notificationDevicesBySession: many(notificationDevices, { relationName: 'notification_devices_session' }),
 }));
 
-export const signinLinksRelations = relations(signinLinks, ({ one, many }) => ({
+export const signinLinksRelations = relations(signinLinks, ({ one }) => ({
   tokenRow: one(tokens, { fields: [signinLinks.token], references: [tokens.fingerprint], relationName: 'signin_links_token' }),
 }));
 
-export const passkeysRelations = relations(passkeys, ({ one, many }) => ({
+export const passkeysRelations = relations(passkeys, ({ one }) => ({
   tokenRow: one(tokens, { fields: [passkeys.token], references: [tokens.fingerprint], relationName: 'passkeys_token' }),
 }));
 
-export const notificationDevicesRelations = relations(notificationDevices, ({ one, many }) => ({
+export const notificationDevicesRelations = relations(notificationDevices, ({ one }) => ({
   memberRow: one(members, { fields: [notificationDevices.member], references: [members.id], relationName: 'notification_devices_member' }),
   sessionRow: one(sessions, { fields: [notificationDevices.session], references: [sessions.id], relationName: 'notification_devices_session' }),
 }));
@@ -1395,12 +1395,12 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   changeTasksByTask: many(changeTasks, { relationName: 'change_tasks_task' }),
 }));
 
-export const taskLinksRelations = relations(taskLinks, ({ one, many }) => ({
+export const taskLinksRelations = relations(taskLinks, ({ one }) => ({
   taskRow: one(tasks, { fields: [taskLinks.task], references: [tasks.id], relationName: 'task_links_task' }),
   dependsOnRow: one(tasks, { fields: [taskLinks.dependsOn], references: [tasks.id], relationName: 'task_links_depends_on' }),
 }));
 
-export const taskCommentsRelations = relations(taskComments, ({ one, many }) => ({
+export const taskCommentsRelations = relations(taskComments, ({ one }) => ({
   taskRow: one(tasks, { fields: [taskComments.task], references: [tasks.id], relationName: 'task_comments_task' }),
 }));
 
@@ -1422,11 +1422,11 @@ export const conversationsRelations = relations(conversations, ({ one, many }) =
   secretRequestsByConversation: many(secretRequests, { relationName: 'secret_requests_conversation' }),
 }));
 
-export const conversationPeopleRelations = relations(conversationPeople, ({ one, many }) => ({
+export const conversationPeopleRelations = relations(conversationPeople, ({ one }) => ({
   conversationRow: one(conversations, { fields: [conversationPeople.conversation], references: [conversations.id], relationName: 'conversation_people_conversation' }),
 }));
 
-export const turnsRelations = relations(turns, ({ one, many }) => ({
+export const turnsRelations = relations(turns, ({ one }) => ({
   conversationRow: one(conversations, { fields: [turns.conversation], references: [conversations.id], relationName: 'turns_conversation' }),
 }));
 
@@ -1436,19 +1436,19 @@ export const digestsRelations = relations(digests, ({ one, many }) => ({
   digestItemsByDigest: many(digestItems, { relationName: 'digest_items_digest' }),
 }));
 
-export const digestItemsRelations = relations(digestItems, ({ one, many }) => ({
+export const digestItemsRelations = relations(digestItems, ({ one }) => ({
   digestRow: one(digests, { fields: [digestItems.digest], references: [digests.id], relationName: 'digest_items_digest' }),
 }));
 
-export const agentStatusRelations = relations(agentStatus, ({ one, many }) => ({
+export const agentStatusRelations = relations(agentStatus, ({ one }) => ({
   agentRow: one(agents, { fields: [agentStatus.agent], references: [agents.id], relationName: 'agent_status_agent' }),
 }));
 
-export const conversationDaysRelations = relations(conversationDays, ({ one, many }) => ({
+export const conversationDaysRelations = relations(conversationDays, ({ one }) => ({
   conversationRow: one(conversations, { fields: [conversationDays.conversation], references: [conversations.id], relationName: 'conversation_days_conversation' }),
 }));
 
-export const findingsRelations = relations(findings, ({ one, many }) => ({
+export const findingsRelations = relations(findings, ({ one }) => ({
   conversationRow: one(conversations, { fields: [findings.conversation], references: [conversations.id], relationName: 'findings_conversation' }),
 }));
 
@@ -1466,16 +1466,16 @@ export const inboxRelations = relations(inbox, ({ one, many }) => ({
   messagesByInboxItem: many(messages, { relationName: 'messages_inbox_item' }),
 }));
 
-export const inboxRefsRelations = relations(inboxRefs, ({ one, many }) => ({
+export const inboxRefsRelations = relations(inboxRefs, ({ one }) => ({
   itemRow: one(inbox, { fields: [inboxRefs.item], references: [inbox.id], relationName: 'inbox_refs_item' }),
 }));
 
-export const inboxReadsRelations = relations(inboxReads, ({ one, many }) => ({
+export const inboxReadsRelations = relations(inboxReads, ({ one }) => ({
   itemRow: one(inbox, { fields: [inboxReads.item], references: [inbox.id], relationName: 'inbox_reads_item' }),
   memberRow: one(members, { fields: [inboxReads.member], references: [members.id], relationName: 'inbox_reads_member' }),
 }));
 
-export const actionResultsRelations = relations(actionResults, ({ one, many }) => ({
+export const actionResultsRelations = relations(actionResults, ({ one }) => ({
   memberRow: one(members, { fields: [actionResults.member], references: [members.id], relationName: 'action_results_member' }),
 }));
 
@@ -1486,12 +1486,12 @@ export const threadsRelations = relations(threads, ({ one, many }) => ({
   threadRefsByThread: many(threadRefs, { relationName: 'thread_refs_thread' }),
 }));
 
-export const messagesRelations = relations(messages, ({ one, many }) => ({
+export const messagesRelations = relations(messages, ({ one }) => ({
   threadRow: one(threads, { fields: [messages.thread], references: [threads.id], relationName: 'messages_thread' }),
   inboxItemRow: one(inbox, { fields: [messages.inboxItem], references: [inbox.id], relationName: 'messages_inbox_item' }),
 }));
 
-export const threadRefsRelations = relations(threadRefs, ({ one, many }) => ({
+export const threadRefsRelations = relations(threadRefs, ({ one }) => ({
   threadRow: one(threads, { fields: [threadRefs.thread], references: [threads.id], relationName: 'thread_refs_thread' }),
 }));
 
@@ -1506,15 +1506,15 @@ export const approvalsRelations = relations(approvals, ({ one, many }) => ({
   approvalRecordByApproval: many(approvalRecord, { relationName: 'approval_record_approval' }),
 }));
 
-export const approvalRulesRelations = relations(approvalRules, ({ one, many }) => ({
+export const approvalRulesRelations = relations(approvalRules, ({ one }) => ({
   setByRow: one(members, { fields: [approvalRules.setBy], references: [members.id], relationName: 'approval_rules_set_by' }),
 }));
 
-export const approvalNoticesRelations = relations(approvalNotices, ({ one, many }) => ({
+export const approvalNoticesRelations = relations(approvalNotices, ({ one }) => ({
   agentRow: one(agents, { fields: [approvalNotices.agent], references: [agents.id], relationName: 'approval_notices_agent' }),
 }));
 
-export const approvalRecordRelations = relations(approvalRecord, ({ one, many }) => ({
+export const approvalRecordRelations = relations(approvalRecord, ({ one }) => ({
   approvalRow: one(approvals, { fields: [approvalRecord.approval], references: [approvals.id], relationName: 'approval_record_approval' }),
   agentRow: one(agents, { fields: [approvalRecord.agent], references: [agents.id], relationName: 'approval_record_agent' }),
 }));
@@ -1524,11 +1524,11 @@ export const triggersRelations = relations(triggers, ({ one, many }) => ({
   triggerLogByTrigger: many(triggerLog, { relationName: 'trigger_log_trigger' }),
 }));
 
-export const triggerLogRelations = relations(triggerLog, ({ one, many }) => ({
+export const triggerLogRelations = relations(triggerLog, ({ one }) => ({
   triggerRow: one(triggers, { fields: [triggerLog.trigger], references: [triggers.id], relationName: 'trigger_log_trigger' }),
 }));
 
-export const agentPausesRelations = relations(agentPauses, ({ one, many }) => ({
+export const agentPausesRelations = relations(agentPauses, ({ one }) => ({
   agentRow: one(agents, { fields: [agentPauses.agent], references: [agents.id], relationName: 'agent_pauses_agent' }),
 }));
 
@@ -1540,15 +1540,15 @@ export const changesRelations = relations(changes, ({ one, many }) => ({
   changeTasksByChange: many(changeTasks, { relationName: 'change_tasks_change' }),
 }));
 
-export const changeChecksRelations = relations(changeChecks, ({ one, many }) => ({
+export const changeChecksRelations = relations(changeChecks, ({ one }) => ({
   changeRow: one(changes, { fields: [changeChecks.change], references: [changes.id], relationName: 'change_checks_change' }),
 }));
 
-export const changePeopleRelations = relations(changePeople, ({ one, many }) => ({
+export const changePeopleRelations = relations(changePeople, ({ one }) => ({
   changeRow: one(changes, { fields: [changePeople.change], references: [changes.id], relationName: 'change_people_change' }),
 }));
 
-export const changeTasksRelations = relations(changeTasks, ({ one, many }) => ({
+export const changeTasksRelations = relations(changeTasks, ({ one }) => ({
   changeRow: one(changes, { fields: [changeTasks.change], references: [changes.id], relationName: 'change_tasks_change' }),
   taskRow: one(tasks, { fields: [changeTasks.task], references: [tasks.id], relationName: 'change_tasks_task' }),
 }));
@@ -1563,12 +1563,12 @@ export const boxesRelations = relations(boxes, ({ one, many }) => ({
   modelAccountBoxesByBox: many(modelAccountBoxes, { relationName: 'model_account_boxes_box' }),
 }));
 
-export const boxAgentsRelations = relations(boxAgents, ({ one, many }) => ({
+export const boxAgentsRelations = relations(boxAgents, ({ one }) => ({
   boxRow: one(boxes, { fields: [boxAgents.box], references: [boxes.id], relationName: 'box_agents_box' }),
   agentRow: one(agents, { fields: [boxAgents.agent], references: [agents.id], relationName: 'box_agents_agent' }),
 }));
 
-export const boxFactsRelations = relations(boxFacts, ({ one, many }) => ({
+export const boxFactsRelations = relations(boxFacts, ({ one }) => ({
   boxRow: one(boxes, { fields: [boxFacts.box], references: [boxes.id], relationName: 'box_facts_box' }),
 }));
 
@@ -1591,34 +1591,34 @@ export const jobsRelations = relations(jobs, ({ one, many }) => ({
   secretUsesByJob: many(secretUses, { relationName: 'secret_uses_job' }),
 }));
 
-export const jobNeedsRelations = relations(jobNeeds, ({ one, many }) => ({
+export const jobNeedsRelations = relations(jobNeeds, ({ one }) => ({
   jobRow: one(jobs, { fields: [jobNeeds.job], references: [jobs.id], relationName: 'job_needs_job' }),
 }));
 
-export const agentRunSettingsRelations = relations(agentRunSettings, ({ one, many }) => ({
+export const agentRunSettingsRelations = relations(agentRunSettings, ({ one }) => ({
   agentRow: one(agents, { fields: [agentRunSettings.agent], references: [agents.id], relationName: 'agent_run_settings_agent' }),
   repositorySecretRow: one(secrets, { fields: [agentRunSettings.repositorySecret], references: [secrets.name], relationName: 'agent_run_settings_repository_secret' }),
 }));
 
-export const agentBoxesRelations = relations(agentBoxes, ({ one, many }) => ({
+export const agentBoxesRelations = relations(agentBoxes, ({ one }) => ({
   agentRow: one(agents, { fields: [agentBoxes.agent], references: [agents.id], relationName: 'agent_boxes_agent' }),
   boxRow: one(boxes, { fields: [agentBoxes.box], references: [boxes.id], relationName: 'agent_boxes_box' }),
 }));
 
-export const agentHouseSecretsRelations = relations(agentHouseSecrets, ({ one, many }) => ({
+export const agentHouseSecretsRelations = relations(agentHouseSecrets, ({ one }) => ({
   agentRow: one(agents, { fields: [agentHouseSecrets.agent], references: [agents.id], relationName: 'agent_house_secrets_agent' }),
   secretRow: one(secrets, { fields: [agentHouseSecrets.secret], references: [secrets.name], relationName: 'agent_house_secrets_secret' }),
 }));
 
-export const agentHousePortsRelations = relations(agentHousePorts, ({ one, many }) => ({
+export const agentHousePortsRelations = relations(agentHousePorts, ({ one }) => ({
   agentRow: one(agents, { fields: [agentHousePorts.agent], references: [agents.id], relationName: 'agent_house_ports_agent' }),
 }));
 
-export const agentPeopleRelations = relations(agentPeople, ({ one, many }) => ({
+export const agentPeopleRelations = relations(agentPeople, ({ one }) => ({
   agentRow: one(agents, { fields: [agentPeople.agent], references: [agents.id], relationName: 'agent_people_agent' }),
 }));
 
-export const agentDeniedToolsRelations = relations(agentDeniedTools, ({ one, many }) => ({
+export const agentDeniedToolsRelations = relations(agentDeniedTools, ({ one }) => ({
   agentRow: one(agents, { fields: [agentDeniedTools.agent], references: [agents.id], relationName: 'agent_denied_tools_agent' }),
 }));
 
@@ -1633,12 +1633,12 @@ export const modelAccountWindowsRelations = relations(modelAccountWindows, ({ on
   accountRow: one(modelAccounts, { fields: [modelAccountWindows.account], references: [modelAccounts.id], relationName: 'model_account_windows_account' }),
 }));
 
-export const modelAccountBoxesRelations = relations(modelAccountBoxes, ({ one, many }) => ({
+export const modelAccountBoxesRelations = relations(modelAccountBoxes, ({ one }) => ({
   accountRow: one(modelAccounts, { fields: [modelAccountBoxes.account], references: [modelAccounts.id], relationName: 'model_account_boxes_account' }),
   boxRow: one(boxes, { fields: [modelAccountBoxes.box], references: [boxes.id], relationName: 'model_account_boxes_box' }),
 }));
 
-export const agentModelsRelations = relations(agentModels, ({ one, many }) => ({
+export const agentModelsRelations = relations(agentModels, ({ one }) => ({
   agentRow: one(agents, { fields: [agentModels.agent], references: [agents.id], relationName: 'agent_models_agent' }),
 }));
 
@@ -1652,15 +1652,15 @@ export const bridgeConnectionsRelations = relations(bridgeConnections, ({ one, m
   bridgeFilesByConnection: many(bridgeFiles, { relationName: 'bridge_files_connection' }),
 }));
 
-export const bridgeChannelFiltersRelations = relations(bridgeChannelFilters, ({ one, many }) => ({
+export const bridgeChannelFiltersRelations = relations(bridgeChannelFilters, ({ one }) => ({
   connectionRow: one(bridgeConnections, { fields: [bridgeChannelFilters.connection], references: [bridgeConnections.id], relationName: 'bridge_channel_filters_connection' }),
 }));
 
-export const bridgeChannelsRelations = relations(bridgeChannels, ({ one, many }) => ({
+export const bridgeChannelsRelations = relations(bridgeChannels, ({ one }) => ({
   answersRow: one(agents, { fields: [bridgeChannels.answers], references: [agents.id], relationName: 'bridge_channels_answers' }),
 }));
 
-export const bridgePeopleRelations = relations(bridgePeople, ({ one, many }) => ({
+export const bridgePeopleRelations = relations(bridgePeople, ({ one }) => ({
   memberRow: one(members, { fields: [bridgePeople.member], references: [members.id], relationName: 'bridge_people_member' }),
 }));
 
@@ -1672,12 +1672,12 @@ export const bridgeIncomingRelations = relations(bridgeIncoming, ({ one, many })
   bridgeFilesByIncoming: many(bridgeFiles, { relationName: 'bridge_files_incoming' }),
 }));
 
-export const bridgeSendsRelations = relations(bridgeSends, ({ one, many }) => ({
+export const bridgeSendsRelations = relations(bridgeSends, ({ one }) => ({
   incomingRow: one(bridgeIncoming, { fields: [bridgeSends.incoming], references: [bridgeIncoming.id], relationName: 'bridge_sends_incoming' }),
   connectionRow: one(bridgeConnections, { fields: [bridgeSends.connection], references: [bridgeConnections.id], relationName: 'bridge_sends_connection' }),
 }));
 
-export const bridgeFilesRelations = relations(bridgeFiles, ({ one, many }) => ({
+export const bridgeFilesRelations = relations(bridgeFiles, ({ one }) => ({
   connectionRow: one(bridgeConnections, { fields: [bridgeFiles.connection], references: [bridgeConnections.id], relationName: 'bridge_files_connection' }),
   incomingRow: one(bridgeIncoming, { fields: [bridgeFiles.incoming], references: [bridgeIncoming.id], relationName: 'bridge_files_incoming' }),
 }));
@@ -1696,7 +1696,7 @@ export const secretsRelations = relations(secrets, ({ one, many }) => ({
   secretChangesBySecret: many(secretChanges, { relationName: 'secret_changes_secret' }),
 }));
 
-export const secretGrantsRelations = relations(secretGrants, ({ one, many }) => ({
+export const secretGrantsRelations = relations(secretGrants, ({ one }) => ({
   secretRow: one(secrets, { fields: [secretGrants.secret], references: [secrets.name], relationName: 'secret_grants_secret' }),
   agentRow: one(agents, { fields: [secretGrants.agent], references: [agents.id], relationName: 'secret_grants_agent' }),
   jobRow: one(jobs, { fields: [secretGrants.job], references: [jobs.id], relationName: 'secret_grants_job' }),
@@ -1716,19 +1716,19 @@ export const secretRulesRelations = relations(secretRules, ({ one, many }) => ({
   secretRow: one(secrets, { fields: [secretRules.secret], references: [secrets.name], relationName: 'secret_rules_secret' }),
 }));
 
-export const secretRuleAgentsRelations = relations(secretRuleAgents, ({ one, many }) => ({
+export const secretRuleAgentsRelations = relations(secretRuleAgents, ({ one }) => ({
   ruleRow: one(secretRules, { fields: [secretRuleAgents.secret], references: [secretRules.secret], relationName: 'secret_rule_assignments' }),
   secretRow: one(secrets, { fields: [secretRuleAgents.secret], references: [secrets.name], relationName: 'secret_rule_agents_secret' }),
   agentRow: one(agents, { fields: [secretRuleAgents.agent], references: [agents.id], relationName: 'secret_rule_agents_agent' }),
 }));
 
-export const secretUsesRelations = relations(secretUses, ({ one, many }) => ({
+export const secretUsesRelations = relations(secretUses, ({ one }) => ({
   secretRow: one(secrets, { fields: [secretUses.secret], references: [secrets.name], relationName: 'secret_uses_secret' }),
   agentRow: one(agents, { fields: [secretUses.agent], references: [agents.id], relationName: 'secret_uses_agent' }),
   jobRow: one(jobs, { fields: [secretUses.job], references: [jobs.id], relationName: 'secret_uses_job' }),
 }));
 
-export const secretChangesRelations = relations(secretChanges, ({ one, many }) => ({
+export const secretChangesRelations = relations(secretChanges, ({ one }) => ({
   secretRow: one(secrets, { fields: [secretChanges.secret], references: [secrets.name], relationName: 'secret_changes_secret' }),
   byRow: one(members, { fields: [secretChanges.by], references: [members.id], relationName: 'secret_changes_by' }),
 }));
