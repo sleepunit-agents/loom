@@ -193,5 +193,15 @@ it.each(['lost','5xx','invalid'] as const)('never retries programme issuance aft
 });
 it('routes programme commands through the primary CLI and refuses the legacy local door',async()=>{
  const f=fixture();vi.stubGlobal('fetch',f.transport);let out='',err='';const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner'),LOOM_HOME:'/must-not-open'},stdout:(value:string)=>out+=value,stderr:(value:string)=>err+=value};
- expect(await runCli(['program','create',JSON.stringify({member:'sam',label:'Primary programme',records:['tasks'],operations:[]})],io)).toBe(0);expect(out).toMatch(/^loom_\S+\n$/);out='';expect(await runCli(['program','list'],io)).toBe(0);expect(JSON.parse(out)[0].label).toBe('Primary programme');expect(await runCliLocal(['program','list'],io)).toBe(2);expect(err).toContain('cannot run through the legacy');
+ const before=[vi.mocked(readFileSync).mock.calls.length,vi.mocked(openSync).mock.calls.length,vi.mocked(readFile).mock.calls.length];
+ expect(await runCli(['program','create',JSON.stringify({member:'sam',label:'Primary programme',records:['tasks'],operations:[]})],io)).toBe(0);expect(out).toMatch(/^loom_\S+\n$/);out='';expect(await runCli(['--json','program','list','--url','http://loom'],io)).toBe(0);expect(JSON.parse(out)[0].label).toBe('Primary programme');expect(await runCliLocal(['program','list'],io)).toBe(2);expect(err).toContain('cannot run through the legacy');const reads=[...vi.mocked(readFileSync).mock.calls.slice(before[0]),...vi.mocked(openSync).mock.calls.slice(before[1]),...vi.mocked(readFile).mock.calls.slice(before[2])].map(args=>String(args[0]));expect(reads.some(path=>path.startsWith('/must-not-open'))).toBe(false);expect(reads).toContain(join(f.home,'owner'));
+});
+
+it.each(['create','list','setGrants'] as const)('refuses redirect and caching for programme %s calls',async command=>{
+ const f=fixture();let options:RequestInit|undefined;await f.invoke('program',[command,'{}'],'owner',async(_url,init)=>{options=init;return new Response('Private response',{status:403});});expect(options).toMatchObject({redirect:'error',cache:'no-store',headers:{'content-type':'application/json',authorization:expect.stringMatching(/^Bearer /)}});
+});
+it.each(['secret','bad-record','bad-reference'] as const)('refuses malformed programme metadata with %s without printing it',async reason=>{
+ const f=fixture();await f.invoke('program',['create',JSON.stringify({member:'sam',label:'Safe metadata',records:['tasks'],operations:[]})]);const [valid]=JSON.parse((await f.invoke('program',['list'])).out);
+ const token={...valid,...(reason==='secret'?{token:'PRIVATE METADATA'}:reason==='bad-record'?{records:[null]}:{fingerprint:'PRIVATE METADATA'})};
+ const result=await f.invoke('program',['list'],'owner',async()=>Response.json({data:{programSetup:{tokens:[token]}}}));expect(result).toMatchObject({code:1,out:'',calls:1});expect(result.err).toContain('Invalid daemon response');expect(result.err).not.toContain('PRIVATE METADATA');
 });

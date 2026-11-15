@@ -24,7 +24,7 @@ export async function runAccessClient(piece: 'token'|'program'|'sessions'|'accou
   const issuance=(piece==='token'||piece==='program')&&argv[0]==='create';
   const link=piece==='token'&&argv[0]==='link';
   const oneTime=issuance||link;
-  const unknownOutcome=link?'Sign-in link outcome unknown; make a new link if needed':unknownIssuance;
+  const unknownOutcome=link?'Sign-in link outcome unknown; make a new link if needed':piece==='program'?'Program token creation outcome unknown; list program tokens before trying again':unknownIssuance;
   const help=`usage: ${program} <${names.join('|')}> [json-object]\n`;
   if(!argv.length||argv.includes('--help')||argv.includes('-h')){io.stdout(help);return 0;}
   const name=argv[0];if(!names.includes(name)||argv.length>2){io.stderr(help);return 2;}
