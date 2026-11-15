@@ -87,6 +87,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  it('follows an Inbox approval to its exact source and resolves the item',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('approval-source');expect(step.value.actions.approvalInbox,JSON.stringify(step.value.actions.approvalInbox)).toMatchObject({ok:true});
  });
+ it('follows an Inbox task to its source and records its completed outcome',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('task-source');
+  for(const name of ['inboxTaskArrival','inboxTaskSettlement','inboxSourceTargets','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;

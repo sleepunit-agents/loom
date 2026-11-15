@@ -24,6 +24,7 @@ import {chromium} from 'playwright-core';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
+import {inboxTaskSource} from './rebuild-inbox-task-source.mjs';
 
 
 import {tmpdir} from 'node:os';
@@ -212,6 +213,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
   report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox}));
+  save();yield {phase:'task-source',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}
