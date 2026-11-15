@@ -58,7 +58,7 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
  try{
   const context={agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',why:'Requested in the fictitious conversation.'};
   const answer=async(card,button)=>{
-   const active=tile.getByRole('article').filter({has:page.getByRole('heading',{name:card.ask,exact:true})}).filter({has:page.getByRole('button',{name:button,exact:true})}).last();
+   const active=tile.getByRole('article',{name:card.ask,exact:true}).filter({has:page.getByRole('button',{name:button,exact:true})}).last();
    await active.getByRole('heading',{name:card.ask,exact:true}).first().waitFor({timeout:4000});
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
    await active.getByRole('button',{name:button,exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');

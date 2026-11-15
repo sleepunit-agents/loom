@@ -44,7 +44,7 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
 function Details({ approval: a, snapshot, actions, renderChange, inline = false }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean } & ChangePresentation) {
   const change = renderChange?.(a);
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
-  return <article className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
+  return <article aria-label={a.ask} className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
     <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>
     <section><h3>Why</h3><p>{a.why}</p></section>
     <section><h3>If you allow</h3><p>{a.ifYes}</p></section>
