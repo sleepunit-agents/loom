@@ -3,7 +3,8 @@ import {keepReadUntil} from '../../core/data/read-lease.js';
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type {ProjectsReader} from './projects.js';
-export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'memoryHistory'|'access'>;
+import {retainedQueryFields} from './retained-query.js';
+export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'memoryHistory'|'retained'|'access'>;
 import {projectDeadline} from './project-deadlines.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
@@ -75,6 +76,7 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
+  ...retainedQueryFields(source),
   // Retained revisions have no current-body expiry lease. Keep this safe
   // boundary separate from the live Project/Memory deadline path above.
   memoryHistory:{type:list(revision),args:{id},resolve:(_source,args,context)=>{
