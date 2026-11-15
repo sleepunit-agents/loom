@@ -30,15 +30,16 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
    modelRoles:()=>[{model:'example-model',provider:'example-provider',harness:'example-harness',series:'example'}]});
   await root.ready;
   const s=root.services,actor={kind:'member' as const,id:'alex'};
+  root.writes.run(()=>{s.projects.save({id:'garden',name:'Example garden',members:['alex','robin'],agents:['fern','moss'],repositories:['github:example-house/garden']});s.householdAccess.setAccounts({agent:'fern',github:['example-fern']});});
   const thread=s.comms!.threads.open({member:'alex',agent:'fern',title:'Repair the garden pump'});
   await s.comms!.send({thread:thread.id,sender:'alex',kind:'message',words:'Please compare replacement pumps for our example garden.'});
   await s.comms!.send({thread:thread.id,sender:'fern',kind:'reply',words:'Three fit. The quiet model costs 164 example dollars.'});
-  const tasks=['Compare garden pumps','Order the selected pump','Measure the hose','Retire the broken pump'].map(title=>s.tasks.create({title,goal:'The example garden has working water.',why:'The old pump stopped.',owner:{kind:'agent',id:'fern'},source:{kind:'conversation',id:thread.conversation}},actor));
+  const tasks=['Compare garden pumps','Order the selected pump','Measure the hose','Retire the broken pump'].map(title=>s.tasks.create({title,goal:'The example garden has working water.',why:'The old pump stopped.',owner:{kind:'agent',id:'fern'},project:'garden',source:{kind:'conversation',id:thread.conversation}},actor));
   s.tasks.claim(tasks[0].id,{kind:'agent',id:'fern'});
   s.tasks.close(tasks[3].id,'The broken pump was recycled.');
   s.tasks.link(tasks[1].id,tasks[0].id,'blocks');
   s.tasks.comment(tasks[0].id,'Compared three fictitious models.',{kind:'agent',id:'fern'});
-  const approval=s.approvals.request({kind:'command',target:'example-worker:inspect-pump',what:'Inspect the example pump',why:'Check the hose before ordering.',agent:'fern',askedFrom:thread.conversation,actingFor:'alex',conversation:thread.conversation,member:'alex',ask:'Inspect the example pump?',ifYes:'Fern inspects it.',ifNo:'Fern waits.'});
+  const approval=s.approvals.request({kind:'command',target:'example-worker:inspect-pump',what:'Inspect the example pump',why:'Check the hose before ordering.',agent:'fern',askedFrom:thread.conversation,actingFor:'alex',conversation:thread.conversation,project:'garden',member:'alex',ask:'Inspect the example pump?',ifYes:'Fern inspects it.',ifNo:'Fern waits.'});
   await s.comms!.ask(thread.id,'fern','example-question',{words:'Spend up to 180 example dollars on the pump?',answers:'yes-no',why:'The example pump is available.',ifYes:'Fern orders the pump.',ifNo:'Fern compares cheaper pumps.'});
   const trigger=s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:approval.id,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the example inspection is answered.',note:'Continue the pump inspection'});
   const change=s.changes.put({id:'github:example-house/garden#12',repo:'github:example-house/garden',number:12,page:'',title:`Plan the pump repair (${tasks[0].id})`,body:'Fictitious pull request for the browser walkthrough.',url:'https://github.com/example-house/garden/pull/12',state:'open',draft:false,author:{login:'example-fern'},created:at,updated:at,closed:null,head:{ref:'pump-repair',id:'a'.repeat(40)},base:{ref:'next'},checks:{state:'passing',failing:[],running:[],total:1},review:{state:'approved',by:[]},mergeable:'yes',conflicts:false,people:[]});
@@ -55,7 +56,6 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   const commons=join(home,'commons');
   const program={database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
   const manifest={fictional:true,createdAt:at,members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,gaps:[
-   {page:'people',promise:'A shared project with members, agents and a repository',reason:'No project administration operation or trusted shared service is registered; no raw rows were inserted.'},
    {page:'machines',promise:'An enrolled machine with a job',reason:'No shared machine enrollment operation is registered. A worker and assigned job cannot be fabricated through application operations.'},
   ]};
   writeFileSync(join(home,'program.json'),JSON.stringify(program,null,2)+'\n',{mode:0o600});

@@ -19,7 +19,7 @@ it('reports actual working heartbeats and clears Stop only after explicit observ
  const before=f.db.select().from(s.threads).get()!;expect(before).toMatchObject({working:true,workingSince:expect.any(String),workingBeat:expect.any(String)});f.clock.advance(1000);
  expect((await report({state:'working',work:'Checking the pump'},'beat')).status).toBe(200);expect(f.db.select().from(s.threads).get()).toMatchObject({workingSince:before.workingSince,workingBeat:new Date(f.clock.now()).toISOString()});
  f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));expect((await(await report({state:'working',work:'Checking the pump'},'read-stop')).json()).value.stopRequested).toBe(true);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);
- expect((await(await report({state:'idle',work:'Stopped',seenStop:true},'stopped')).json()).value.stopRequested).toBe(true);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:false});expect(f.db.select().from(s.agentStatus).get()).toEqual({agent:'art',state:'idle',work:'Stopped',changedAt:new Date(f.clock.now()).toISOString()});
+ expect((await(await report({state:'idle',work:'Stopped',seenStop:true},'stopped')).json()).value.stopRequested).toBe(true);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:false});expect(f.db.select().from(s.agentStatus).get()).toEqual({agent:'art',state:'idle',work:'',changedAt:new Date(f.clock.now()).toISOString()});
 });
 it('rejects non-body authority and input-selected attribution',async()=>{
  const f=await fixture(),message={kind:'reply',clientId:'one',words:'PRIVATE'};
