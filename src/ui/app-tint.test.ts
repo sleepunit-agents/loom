@@ -9,36 +9,10 @@ import { describe, expect, it } from 'vitest';
 // The app's own React (web/node_modules: `npm run build` installs it before `npm test`), the one its components use.
 import { createElement as h } from '../../web/node_modules/react/index.js';
 import { renderToStaticMarkup } from '../../web/node_modules/react-dom/server.node.js';
-import { APP_TINTS, TINTS, TintContext, nameTint, tintOf, tintsOf } from '../../web/src/tint';
-
-import { AppTile } from '../../web/src/app-header';
+import { APP_TINTS, TINTS, nameTint, tintOf, tintsOf } from '../../web/src/tint';
 
 import { Dock } from '../../web/src/components/ui/dock';
 import { ACCENTS, parseManifest } from './vocab.js';
-
-type P = { label: string; href: string; current: boolean; kind?: 'place' | 'setting'; accent?: string };
-const shell = (pieces: P[]) => ({
-  owner: 'Jonathan', admin: true, scope: '', household: true, agents: [], asks: 0, home: '/', tab: 'setup',
-  core: [{ label: 'Activity', href: '/activity', current: false }, { label: 'Knowledge', href: '/knowledge', current: false }, { label: 'People', href: '/people', current: false }],
-  pieces,
-});
-// The live household's pieces (2026-11-03), as loom sorts them (by label).
-const live: P[] = [
-  { label: 'Approvals', href: '/p/approvals', current: false, kind: 'setting' }, { label: 'Boxes', href: '/p/runtime', current: false, kind: 'setting' },
-  { label: 'Bridges', href: '/p/shuttle', current: false, kind: 'setting' }, { label: 'Clock', href: '/p/clock', current: false, kind: 'setting' },
-  { label: 'Machine', href: '/p/machine', current: false, kind: 'setting' }, { label: 'Secrets', href: '/p/secrets', current: false, kind: 'setting' },
-  { label: 'Tasks', href: '/p/tasks', current: false, kind: 'place' },
-];
-// A piece installed ahead of all of them, in both grids.
-const withNew = (extra: P[]) => [...extra, ...live].sort((a, b) => a.label.localeCompare(b.label));
-const aardvark: P[] = [{ label: 'Aardvark', href: '/p/aardvark', current: false, kind: 'setting' }, { label: 'Abacus', href: '/p/abacus', current: false, kind: 'place' }];
-
-/** Each launch tile's label and data-tint, in the order SheetView draws them. */
-
-const headerTint = (label: string, pieces: P[]) => {
-  const html = renderToStaticMarkup(h(TintContext.Provider, { value: tintsOf(pieces) }, h(AppTile, { label, icon: 'circle' })));
-  return /data-tint="([a-z]+)"/.exec(html)?.[1];
-};
 
 describe("an app's one colour (web/src/tint.ts)", () => {
 
