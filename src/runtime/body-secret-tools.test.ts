@@ -16,7 +16,7 @@ vi.mock('node:child_process',()=>({spawn:vi.fn()}));
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
 const privateValue='PRIVATE_TOOL_CREDENTIAL';
 async function rootFixture(answer:'auto'|'ask'|'never'='auto',expected=Buffer.from(privateValue)){
- const buffers:Buffer[]=[],source=vi.fn(async()=>{expect(f.db.$client.inTransaction).toBe(false);expect(f.db.select().from(s.secretUses).get()?.state).toBe('started');const value=Buffer.from(expected);buffers.push(value);return value;});
+ const buffers:Buffer[]=[],source=vi.fn(async():Promise<Buffer>=>{expect(f.db.$client.inTransaction).toBe(false);expect(f.db.select().from(s.secretUses).get()?.state).toBe('started');const value=Buffer.from(expected);buffers.push(value);return value;});
  const f=await bodyFixture(clean,{secretInputs:{source:{read:source}}});
  f.root.writes.run(()=>{
   f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
