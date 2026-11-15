@@ -2,7 +2,6 @@ import { useRecords, type LiveRecord, type Snapshot } from '../../data';
 import type { TickPart } from '../../ticker';
 import type { Task } from '../tasks/model';
 import type { Wake } from '../clock/model';
-import type { VenueRecord } from '../bridges/model';
 import type { ChangeRecord } from '../changes/model';
 
 export interface DeskBox extends LiveRecord { id: string; revokedAt?: number }
@@ -12,7 +11,7 @@ export function useDeskStats() {
   const boxes = useRecords<DeskBox>('runtime.box');
   const tasks = useRecords<Task>('task');
   const wakes = useRecords<Wake>('wake');
-  const venues = useRecords<VenueRecord>('bridges.venue');
+  const venues = useRecords<LiveRecord & { enabled: boolean }>('bridges.venue');
   const changes = useRecords<ChangeRecord>('change');
   const enrolled = boxes.status === 'live' ? current(boxes).filter(b=>b.revokedAt===undefined).length : undefined;
   const open = current(changes).filter(c=>c.state==='open');

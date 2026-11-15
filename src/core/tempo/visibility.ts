@@ -23,7 +23,8 @@ export function tempoVisibility(viewer: Viewer): QueryVisibility {
   const ownedAgent = (column: AnyColumn): SQL => kind === 'member'
     ? sql`exists (select 1 from ${memberAgents} where ${memberAgents.agent} = ${column} and ${memberAgents.member} = ${id})`
     : kind === 'agent' ? sql`${column} = ${id}` : sql`false`;
-  const trigger = (f: Fields): SQL => sql`(${owner} or ${project(f.project)} or (${f.toKind} = 'agent' and ${ownedAgent(f.to)}))`;
+  const trigger = (f: Fields): SQL => sql`(${owner} or ${project(f.project)} or (${f.toKind} = 'agent' and ${ownedAgent(f.to)})
+    or (${f.targetKind} = 'operation' and ${f.toKind} is null and ${f.to} is null and ${f.ownerKind} = 'agent' and ${ownedAgent(f.owner)}))`;
   return {
     triggers: trigger,
     triggerLog: f => sql`exists (select 1 from ${triggers} where ${triggers.id} = ${f.trigger} and ${trigger(getTableColumns(triggers))})`,
