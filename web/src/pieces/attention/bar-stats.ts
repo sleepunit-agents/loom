@@ -1,4 +1,4 @@
-import { useRecords, type LiveRecord, type Snapshot } from '../../data';
+import { useRecords, type Snapshot } from '../../data';
 import type { TickPart } from '../../ticker';
 import type { Task } from '../tasks/model';
 import { useDataQuery } from '../../data/graphql';
@@ -16,17 +16,19 @@ export interface DeskTempoData {
   triggerLog: { seq: number; event: string }[];
   agentPauses: { agent: string }[];
 }
-export interface DeskBox extends LiveRecord { id: string; revokedAt?: number }
+/** Enrollment is distinct from worker health; no machine names or owner details. */
+export const deskBoxesQuery = `query DeskBoxes { boxes { id revokedAt } }`;
+export interface DeskBoxesData { boxes: { id: string; revokedAt: string | null }[] }
 const current = <T extends {id:string}>(s: Snapshot<T>): readonly T[] => s.status === 'live' ? s.records : [];
 /** Counts only the policy-filtered records in this window. No legacy tile programs or health guesses. */
 export function useDeskStats() {
-  const boxes = useRecords<DeskBox>('runtime.box');
+  const boxes = useDataQuery<DeskBoxesData>(deskBoxesQuery);
   const tasks = useRecords<Task>('task');
   const tempo = useDataQuery<DeskTempoData>(deskTempoQuery);
   const tempoData = tempo.status === 'live' ? tempo.data : undefined;
   const venues = useRecords<VenueRecord>('bridges.venue');
   const changes = useRecords<ChangeRecord>('change');
-  const enrolled = boxes.status === 'live' ? current(boxes).filter(b=>b.revokedAt===undefined).length : undefined;
+  const enrolled = boxes.status === 'live' && boxes.data ? boxes.data.boxes.filter(b=>b.revokedAt===null).length : undefined;
   const open = current(changes).filter(c=>c.state==='open');
   const failing = open.filter(c=>c.checks.state==='failing').length;
   const activeTriggers = tempoData?.triggers.filter(t=>t.enabled && ['standing','due','firing','held'].includes(t.state)).length ?? 0;

@@ -3,16 +3,15 @@ import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo])}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>f.snapshots[type]}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo,f.boxes])}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(type).not.toBe('runtime.box');return f.snapshots[type];}}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
-beforeEach(()=>{f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
- 'runtime.box':live([{id:'local'},{id:'gone',revokedAt:1}]),
+beforeEach(()=>{f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
  task:live([{id:'t-1',status:'in_progress',ready:false},{id:'t-2',status:'open',ready:true}]),
  wake:live([{id:'w-1',state:'parked'},{id:'w-2',state:'fired'}]),
  'bridges.venue':live([{id:'v',enabled:true},{id:'off',enabled:false}]),
@@ -35,6 +34,7 @@ it('uses owned-agent facts and open asks, and opens Inbox through the router',as
 it.each(['offline','denied','loading'] as const)('drops stale work, identity and count on %s',async(status)=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
  f.tempo={...f.tempo,status};
+ f.boxes={...f.boxes,status};
  for(const type of Object.keys(f.snapshots))f.snapshots[type]={...f.snapshots[type],status};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  expect(tree.root.findByType('ticker-test').props.parts.map((p:{text:string})=>p.text)).toEqual(['Your agents are unavailable','Tasks unavailable','Tempo unavailable','Bridges unavailable','Changes unavailable','Boxes unavailable']);
@@ -73,7 +73,7 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
  expect(tree.root.findByProps({'aria-label':'1 enrolled box; health unavailable'})).toBeTruthy();
  // Each source drops its own stale values independently, including a retained red PR.
  f.snapshots.change={...f.snapshots.change,status:'denied'};
- f.snapshots['runtime.box']={...f.snapshots['runtime.box'],status:'offline'};
+ f.boxes={...f.boxes,status:'offline'};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  const parts=tree.root.findByType('ticker-test').props.parts;
  expect(parts.some((p:{text:string})=>p.text.includes('CI red')||p.text.includes('enrolled'))).toBe(false);
@@ -95,4 +95,22 @@ it('updates Tempo independently, clears retained failures and keeps an empty liv
  f.tempo={status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  expect(tempo().text).toBe('Tempo · 0 active triggers · 0 paused agents');
+});
+
+it('updates box enrollment, distinguishes live zero and clears retained counts in every unavailable state',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ const boxes=()=>tree.root.findByType('ticker-test').props.parts.at(-1).text;
+ f.boxes={status:'live',data:{boxes:[{id:'a',revokedAt:null},{id:'b',revokedAt:null}]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(boxes()).toBe('2 enrolled boxes · health unavailable');
+ for(const status of ['loading','offline','denied']){
+  f.boxes={...f.boxes,status};
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  expect(boxes()).toBe('Boxes unavailable');
+  expect(tree.root.findByProps({'aria-label':'Boxes unavailable'})).toBeTruthy();
+ }
+ f.boxes={status:'live',data:{boxes:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(boxes()).toBe('0 enrolled boxes · health unavailable');
+ expect(tree.root.findByProps({'aria-label':'0 enrolled boxes; health unavailable'})).toBeTruthy();
 });
