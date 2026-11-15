@@ -164,4 +164,4 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
     open={!!selected || !!selectedOutcome} onBack={()=>navigate()} backLabel="Inbox" blank={<Empty title="Open an ask" text="Read the full question and what happens either way." />} />;
 }
 
-export { InboxView, InboxQuestionCard } from "../inbox-view";
+export { InboxView, InboxQuestionCard, InboxActionNotices } from "../inbox-view";

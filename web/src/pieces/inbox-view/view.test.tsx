@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
-vi.mock('../../kit', () => Object.fromEntries(['Split', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input', 'Textarea'].map(name => [name, (props: { children?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode }) => name === 'Split' ? h(name, { label: 'Inbox' }, props.list, props.reader, props.search) : h(name, props, props.children)])));
+vi.mock('../../kit', () => Object.fromEntries(['Split', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input', 'Textarea'].map(name => [name, (props: { children?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; listTop?: ReactNode; onFolder?: (id: string) => void }) => name === 'Split' ? h(name, { label: 'Inbox', onFolder: props.onFolder }, props.listTop, props.list, props.reader, props.search) : h(name, props, props.children)])));
 import { InboxQuestionCard, InboxView } from './index';
 import { rows, type InboxActions, type InboxItem, type InboxSnapshot } from './model';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,4 +77,20 @@ it('uses Allow and Deny for the same yes/no question shown inline in chat', asyn
   expect(named('Yes')).toBeUndefined(); expect(named('No')).toBeUndefined();
   await act(async () => { named('Deny').props.onClick(); });
   expect(answer).toHaveBeenCalledExactlyOnceWith(item.id, 'no', undefined);
+});
+
+it('places current action outcomes in FYI and Errors and hides them with the mailbox on access loss', async () => {
+  const results = { status: 'live' as const, results: [
+    { id: 'saved', at: item.at, ok: true, text: 'Task closed' },
+    { id: 'failed', at: item.at, ok: false, text: 'Answer failed' },
+  ] };
+  const props = { snapshot, results, select: vi.fn() };
+  await act(async () => { tree = create(h(InboxView, props)); });
+  await act(async () => { tree.root.findByType('Split').props.onFolder('fyi'); });
+  expect(JSON.stringify(tree.toJSON())).toContain('Task closed');
+  await act(async () => { tree.root.findByType('Split').props.onFolder('errors'); });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Task closed');
+  expect(JSON.stringify(tree.toJSON())).toContain('Answer failed');
+  await act(async () => { tree.update(h(InboxView, { ...props, snapshot: { ...snapshot, status: 'denied' } })); });
+  expect(tree.root.findAllByType('article')).toHaveLength(0);
 });
