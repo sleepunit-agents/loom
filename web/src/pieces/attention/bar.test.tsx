@@ -3,16 +3,15 @@ import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, changes:{status:'live',data:{changes:[]}} as any, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskAgentStatus')?{status:f.snapshots['attention.agent'].status,data:{agentStatus:f.snapshots['attention.agent'].records.map((r:any)=>({agent:r.agent,state:r.state,work:r.work,changedAt:new Date(r.changedAt).toISOString()}))}}:document.includes('DeskChanges')?f.changes:document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.agent'],f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges,f.changes])}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(['runtime.box','bridges.venue','change','attention.agent']).not.toContain(type);return f.snapshots[type];}}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, tasks:{status:'live',data:{inProgress:[],readyTasks:[]}} as any, changes:{status:'live',data:{changes:[]}} as any, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskAgentStatus')?{status:f.snapshots['attention.agent'].status,data:{agentStatus:f.snapshots['attention.agent'].records.map((r:any)=>({agent:r.agent,state:r.state,work:r.work,changedAt:new Date(r.changedAt).toISOString()}))}}:document.includes('DeskTasks')?f.tasks:document.includes('DeskChanges')?f.changes:document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.agent'],f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges,f.changes,f.tasks])}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(['runtime.box','bridges.venue','change','task','attention.agent']).not.toContain(type);return f.snapshots[type];}}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
-beforeEach(()=>{f.changes={status:'live',data:{changes:[{id:'pr',checks:'failing'}]}};f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
- task:live([{id:'t-1',status:'in_progress',ready:false},{id:'t-2',status:'open',ready:true}]),
+beforeEach(()=>{f.tasks={status:'live',data:{inProgress:[{id:'t-1'}],readyTasks:[{id:'t-2'}]}};f.changes={status:'live',data:{changes:[{id:'pr',checks:'failing'}]}};f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
  wake:live([{id:'w-1',state:'parked'},{id:'w-2',state:'fired'}]),
  'household.time':live([{id:'owner',at:Date.parse('2026-11-13T18:41:00Z'),timezone:'America/Chicago'}]),
  'attention.ownedAgent':live([{id:'art',name:'Art'}]),
@@ -31,6 +30,7 @@ it('uses owned-agent facts and open asks, and opens Inbox through the router',as
 });
 it.each(['offline','denied','loading'] as const)('drops stale work, identity and count on %s',async(status)=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ f.tasks={...f.tasks,status};
  f.changes={...f.changes,status};
  f.tempo={...f.tempo,status};
  f.bridges={...f.bridges,status};
@@ -145,4 +145,20 @@ it('updates generated Changes counts, clears retained failures and distinguishes
  f.changes={status:'live',data:{changes:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  expect(changes().text).toBe('Changes · 0 open');
+});
+
+it('updates generated task counts independently and clears retained readiness in unavailable states',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ const tasks=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tasks-preview');
+ f.tasks={status:'live',data:{inProgress:[{id:'a'},{id:'b'}],readyTasks:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tasks().text).toBe('Tasks · 2 in progress · 0 ready');
+ for(const status of ['loading','offline','denied']){
+  f.tasks={...f.tasks,status};
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  expect(tasks().text).toBe('Tasks unavailable');
+ }
+ f.tasks={status:'live',data:{inProgress:[],readyTasks:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tasks().text).toBe('Tasks · 0 in progress · 0 ready');
 });
