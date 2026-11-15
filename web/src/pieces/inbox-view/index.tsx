@@ -65,7 +65,8 @@ export function InboxQuestionCard({ id, snapshot, actions, inline, sourceCard }:
   return item ? <QuestionReader key={item.id} item={item} actions={actions} inline={inline} sourceCard={sourceCard} /> : <Empty title="Item is unavailable" />;
 }
 
-export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation }: {
+export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation, sourceCard }: {
+  sourceCard?(item: InboxItem): ReactNode;
   navigation?: { folder: string; query: string; offset: number; hasNext: boolean; onFolder(id: string): void; onQuery(value: string): void; previous(): void; next(): void };
   results?: InboxResultsSnapshot; dismissResult?(id: string): Promise<void>;
   snapshot: InboxSnapshot; selected?: string; select(id?: string): void;
@@ -89,6 +90,6 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
     listTop={<>{navigation && folder !== 'errors' && <nav aria-label="Inbox pages"><Button disabled={!live || navigation.offset === 0} onClick={navigation.previous}>Previous page</Button><Button disabled={!live || !navigation.hasNext} onClick={navigation.next}>Next page</Button></nav>}{currentResults && (folder === 'fyi' || folder === 'errors' || folder === 'all') && <InboxActionNotices snapshot={currentResults} errorsOnly={folder === 'errors'} dismiss={dismissResult} />}</>}
     search={<Input aria-label="Search asks" value={live ? query : ''} disabled={!live} onChange={event => navigation ? navigation.onQuery(event.target.value) : setQuery(event.target.value)} />}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : shown.length ? shown.map(row => <Row key={row.id} title={row.body?.words ?? `Item from ${row.agent ?? row.fromId ?? 'Loom'}`} className={row.volume === 'dim' ? '[&_.loom-kit-title]:line-clamp-1' : undefined} meta={row.volume === 'dim' ? undefined : row.body?.why ?? row.source} status={row.volume === 'dim' ? undefined : `${row.agent ?? 'Loom'} · ${row.state} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : folder === 'errors' && currentResults?.results.some(row => !row.ok && !row.readAt) ? null : <Empty title="No items here" />}
-    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
+    reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} sourceCard={sourceCard?.(item)} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
 }
