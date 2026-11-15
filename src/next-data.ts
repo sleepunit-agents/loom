@@ -13,8 +13,13 @@ import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}) {
-  const authenticate = dataAuthentication(db, () => clock.now());
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true) {
+  const resolve = dataAuthentication(db, () => clock.now());
+  const authenticate = (request: Request) => {
+    if (!admitted()) return;
+    const auth = resolve(request);
+    return auth && { ...auth, valid: () => admitted() && auth.valid() };
+  };
   const live = new DataLive();
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
