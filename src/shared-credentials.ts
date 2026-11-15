@@ -1,6 +1,6 @@
 /** Current credential claims at the outside door. Never derive authority from a
  * caller's Viewer label, job argument, or an installed-module name. */
-import {isCredentialOperation,programSnapshot,sameProgramGrants,type ProgramGrantReader,type ProgramGrants} from './shared-program-access.js';
+import {isReservedProgramOperation,programSnapshot,sameProgramGrants,type ProgramGrantReader,type ProgramGrants} from './shared-program-access.js';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
@@ -91,7 +91,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       return { ...auth, valid, ...(request.headers.get('upgrade')?.toLowerCase() === 'websocket' ? { activity: presented } : {}) };
     },
     program(viewer:Viewer):Readonly<ProgramGrants>|undefined{return proofs.get(viewer)?.grants;},
-    allows(viewer:Viewer,operation:string):boolean{const found=proof(viewer);return !!found&&(!found.grants||(!isCredentialOperation(operation)&&found.grants.operations.includes(operation)));},
+    allows(viewer:Viewer,operation:string):boolean{const found=proof(viewer);return !!found&&(!found.grants||(!isReservedProgramOperation(operation)&&found.grants.operations.includes(operation)));},
     receiptScope(viewer:Viewer):string|undefined{const found=proofs.get(viewer);return found?.grants?found.token.fingerprint:undefined;},
     browser(viewer: Viewer): Readonly<{ session: string }> | undefined {
       const found = proof(viewer);
