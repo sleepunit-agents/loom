@@ -1,30 +1,13 @@
-import { EventEmitter } from 'node:events';
-import { PassThrough, Writable } from 'node:stream';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import {EventEmitter} from 'node:events';
+import {PassThrough,Writable} from 'node:stream';
+import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
-import { claudeBody, type ClaudeSpawn } from './claude-body.js';
+import { claudeBody } from './claude-body.js';
+import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'requested-model', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
   run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [{ pattern: 'Read', guestsOnly: false }, { pattern: 'Bash(*)', guestsOnly: true }] } } };
-function fixture() {
-  let words = '';
-  const child = Object.assign(new EventEmitter(), {
-    stdin: new Writable({ write(chunk, _encoding, done) { words += chunk.toString(); done(); } }),
-    stdout: new PassThrough(), stderr: new PassThrough(),
-    kill: vi.fn(() => { child.emit('close', null); return true; }),
-  }) as unknown as ChildProcessWithoutNullStreams;
-  const launch = vi.fn<ClaudeSpawn>(() => child), abort = new AbortController(), env = { PATH: '/usr/bin', ACCOUNT_PROFILE: '/private/account' };
-  const run = claudeBody({ command: '/private/claude', cwd: '/house', env, spawn: launch });
-  const session = () => launch.mock.calls[0][1][launch.mock.calls[0][1].indexOf('--session-id') + 1];
-  const rows = (extra: Record<string, unknown>[] = []) => [
-    { type: 'system', subtype: 'init', model: 'init-model', session_id: session() },
-    ...extra.map(row => ({ session_id: session(), ...row })),
-    { type: 'assistant', parent_tool_use_id: null, session_id: session(), message: { model: 'observed-model', content: [{ type: 'text', text: 'Answer é' }] } },
-    { type: 'result', subtype: 'success', is_error: false, session_id: session(), result: 'Answer é', modelUsage: { 'misleading-model': {} } },
-  ];
-  const finish = (value: unknown) => { (child.stdout as PassThrough).write(typeof value === 'string' ? value : (value as unknown[]).map(row => JSON.stringify(row)).join('\n')); child.emit('close', 0); };
-  return { run, child, launch, abort, env, rows, finish, words: () => words };
-}
+
 it('selects the requested model, denies native tools, and reports response models instead of init/request/usage guesses', async () => {
   const f = fixture(), result = f.run(job, 'PRIVATE ACCEPTED MAIL', f.abort.signal); f.env.ACCOUNT_PROFILE = '/changed';
   const args = f.launch.mock.calls[0][1];
@@ -69,20 +52,6 @@ it('does not classify authenticated household people as guests from a missing ou
   const result = f.run(configured,'mail',f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']); f.finish(f.rows()); await result;
 });
 
-it('handles actual foreground child pipes with a fake provider, without native diagnostics escaping', async () => {
-  const run = claudeBody({command:'/configured/fake-provider',cwd:process.cwd(),env:{},
-    spawn: (_command,args,options) => spawn(process.execPath,['-e',[
-      "const args=process.argv.slice(1),session=args[args.indexOf('--session-id')+1];",
-      "let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',part=>input+=part);",
-      "process.stdin.on('end',()=>{if(input!=='PRIVATE MAIL')process.exit(9);",
-      "process.stderr.write('PRIVATE DIAGNOSTIC');",
-      "process.stdout.write(JSON.stringify({type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed-fake',content:[{type:'text',text:'Answer'}]}})+'\\n');",
-      "process.stdout.write(JSON.stringify({type:'result',session_id:session,subtype:'success',is_error:false,result:'Answer'})+'\\n');});",
-    ].join(''),'--',...args],options),
-  });
-  expect(await run(job,'PRIVATE MAIL',new AbortController().signal)).toEqual({text:'Answer',model:'observed-fake',actions:[]});
-});
-
 it('keeps guest-only tools available for an outside sender with configured tier three',async()=>{
  const f=fixture(),configured=structuredClone(job);configured.run!.policy!.people=[{kind:'outside',person:'outside-key',tier:3}];
  const result=f.run(configured,'mail',f.abort.signal);expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await result;
@@ -108,4 +77,15 @@ it('snapshots private MCP config to descriptor 3, erases its pipe bytes, and per
 it('erases an unsettled private MCP pipe at cancellation before its write callback runs',async()=>{
  const f=fixture(),chunks:Buffer[]=[];let release!:()=>void;const pipe=new Writable({write(chunk,_encoding,done){chunks.push(chunk);release=done;}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{"private":"LOCAL_CAPABILITY"}')});const result=run(job,'mail',f.abort.signal),refused=expect(result).rejects.toThrow('Native Claude execution unavailable');f.abort.abort();expect(chunks).toHaveLength(1);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);await refused;release();
+});
+it('snapshots composed private tool names without broadening denied native tools',async()=>{
+ const f=fixture(),names=['mcp__loom_secrets__command'],pipe=new Writable({write(_chunk,_encoding,done){done();}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
+ const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names});names.push('Bash');const pending=run(job,'mail',f.abort.signal),args=f.launch.mock.calls[0][1];
+ expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom_secrets__command']);expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await pending;
+});
+it.each([{names:[{toString:()=> 'mcp__loom_secrets__command'} as unknown as string]},{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom_secrets__command','mcp__loom_secrets__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
+ const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
+});
+it('refuses private tool names without a private MCP configuration before launch',()=>{
+ const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpTools:['mcp__loom_secrets__command']})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });

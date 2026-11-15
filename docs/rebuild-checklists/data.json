@@ -1,0 +1,137 @@
+{
+  "page": "data",
+  "title": "How a tile gets its data",
+  "ownerTask": "t-2235",
+  "sourceSha256": "ce9258f9c956ff7328e4153b2acb353c73e7d189ff99cef6a38fd824b24e6b3e",
+  "promises": [
+    {
+      "id": "data-001",
+      "promise": "One GraphQL endpoint, generated from the same schema as the database. A tile sends a query naming exactly the fields and connected things it wants, gets the rows, then receives changes as subscriptions over the websocket.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-002",
+      "promise": "There is one definition of the data, and no hand-written reads.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-003",
+      "promise": "A tile names exactly the fields and connected things it wants.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-004",
+      "promise": "Loom runs one query, with the visibility check for whoever is asking.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-005",
+      "promise": "After the first rows, loom sends only what changed.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-006",
+      "promise": "A query names a table from the model and the fields it wants. Any app's tile asks the same way.",
+      "source": "docs/how-it-works/site/data.html#con-h"
+    },
+    {
+      "id": "data-007",
+      "promise": "The connection knows the caller from its session or token.",
+      "source": "docs/how-it-works/site/data.html#con-h"
+    },
+    {
+      "id": "data-008",
+      "promise": "The labels on each row decide whether this caller gets it.",
+      "source": "docs/how-it-works/site/data.html#con-h"
+    },
+    {
+      "id": "data-009",
+      "promise": "A new inbox item reaches an open Inbox tile as a change.",
+      "source": "docs/how-it-works/site/data.html#con-h"
+    },
+    {
+      "id": "data-010",
+      "promise": "The endpoint is generated from the same Drizzle schema as the tables, so there is one definition of the data and no hand-written reads. GraphQL is a widely used standard with ready-made tools on both ends.",
+      "source": "docs/how-it-works/site/data.html#how-h"
+    },
+    {
+      "id": "data-011",
+      "promise": "Loom turns the request into one database query. Filtering, joining and the visibility check all happen in the database.",
+      "source": "docs/how-it-works/site/data.html#how-h"
+    },
+    {
+      "id": "data-012",
+      "promise": "After the first rows, changes arrive as subscriptions over the websocket. A tile never asks again for what it already has.",
+      "source": "docs/how-it-works/site/data.html#how-h"
+    },
+    {
+      "id": "data-013",
+      "promise": "The tables on every page of this site are one schema, defined once. A query is written against that schema, so nothing is stored as a bundle the database cannot look inside.",
+      "source": "docs/how-it-works/site/data.html#how-h"
+    },
+    {
+      "id": "data-014",
+      "promise": "a Checked in the query. The visibility check runs inside the query, for whoever is asking. A caller never receives a row it may not see, or that row's changes.",
+      "source": "docs/how-it-works/site/data.html#see-h"
+    },
+    {
+      "id": "data-015",
+      "promise": "b The rule. A household owner sees everything, including what is private to another member. Anyone else sees what is in their projects, plus what belongs to agents they own. Private to a member means that member plus household owners.",
+      "source": "docs/how-it-works/site/data.html#see-h"
+    },
+    {
+      "id": "data-016",
+      "promise": "c Installed means trusted. The check is for callers from outside. Loom's own parts never ask each other for permission.",
+      "source": "docs/how-it-works/site/data.html#see-h"
+    },
+    {
+      "id": "data-017",
+      "promise": "migrations The list of changes already made to the database's shape, so each is applied once.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-018",
+      "promise": "operation_results The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-019",
+      "promise": "outside_effects Things that reach outside loom (a push notification, a send to Discord, starting a body). On a staging copy these wait here to be let through by hand.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-020",
+      "promise": "notification_queue Notifications waiting to be sent to each device, and whether each arrived.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-021",
+      "promise": "signin_challenges Passkey challenges in flight. Each lives a few minutes.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-022",
+      "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept up to an hour until they are turned into incoming messages. The one place loom stores something it does not look inside.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-023",
+      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-024",
+      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-025",
+      "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "live"
+      }
+    }
+  ],
+  "modelTables": []
+}
