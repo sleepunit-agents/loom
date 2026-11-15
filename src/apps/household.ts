@@ -1,8 +1,8 @@
 /** Trusted household membership and agent appearance over the shared schema. */
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { agents, members, memberAgents } from '../core/data/schema.js';
+import { agents, members, memberAgents, projects, projectMembers, projectAgents, projectRepositories, agentAccounts } from '../core/data/schema.js';
 const id = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
 export const memberInput = z.object({
   id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
@@ -18,6 +18,35 @@ export class HouseholdError extends Error {
 }
 export function householdService(db: DataDatabase, now: () => string) {
   return {
+    /** Trusted setup for the sharing labels used by work apps. Callers from
+     * outside still go through owner-controlled household administration. */
+    setProject(input: {id:string;name:string;members:string[];agents:string[];repositories:string[]}) {
+      const value=z.object({id,name:z.string().trim().min(1),members:z.array(id),agents:z.array(id),
+        repositories:z.array(z.string().regex(/^(?:github:)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/).transform(v=>v.replace(/^github:/,'').toLowerCase()))}).strict().parse(input);
+      return db.transaction(()=>{
+        for(const member of value.members)if(!db.select().from(members).where(eq(members.id,member)).get())throw new HouseholdError('invalid','Unknown member');
+        for(const agent of value.agents)if(!db.select().from(agents).where(eq(agents.id,agent)).get())throw new HouseholdError('invalid','Unknown agent');
+        for(const repository of value.repositories)if(db.select().from(projectRepositories).all().some(row=>row.project!==value.id&&row.repository.replace(/^github:/,'').toLowerCase()===repository))throw new HouseholdError('conflict','Repository already belongs to another project');
+        db.insert(projects).values({id:value.id,name:value.name}).onConflictDoUpdate({target:projects.id,set:{name:value.name}}).run();
+        db.delete(projectMembers).where(eq(projectMembers.project,value.id)).run();
+        db.delete(projectAgents).where(eq(projectAgents.project,value.id)).run();
+        db.delete(projectRepositories).where(eq(projectRepositories.project,value.id)).run();
+        for(const member of new Set(value.members))db.insert(projectMembers).values({project:value.id,member}).run();
+        for(const agent of new Set(value.agents))db.insert(projectAgents).values({project:value.id,agent}).run();
+        for(const repository of new Set(value.repositories))db.insert(projectRepositories).values({project:value.id,repository}).run();
+        return {id:value.id};
+      });
+    },
+    setGithubAccounts(input:{agent:string;logins:string[]}) {
+      const value=z.object({agent:id,logins:z.array(z.string().regex(/^[A-Za-z0-9-]+$/).max(100).transform(v=>v.toLowerCase()))}).strict().parse(input);
+      return db.transaction(()=>{
+        if(!db.select().from(agents).where(eq(agents.id,value.agent)).get())throw new HouseholdError('invalid','Unknown agent');
+        for(const login of value.logins)if(db.select().from(agentAccounts).all().some(row=>row.agent!==value.agent&&row.service==='github'&&row.login.toLowerCase()===login))throw new HouseholdError('conflict','GitHub login already belongs to another agent');
+        db.delete(agentAccounts).where(and(eq(agentAccounts.agent,value.agent),eq(agentAccounts.service,'github'))).run();
+        for(const login of new Set(value.logins))db.insert(agentAccounts).values({agent:value.agent,service:'github',login}).run();
+        return {id:value.agent};
+      });
+    },
     setMember(input: z.input<typeof memberInput>) {
       const value = memberInput.parse(input);
       return db.transaction(() => {

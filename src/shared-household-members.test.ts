@@ -206,3 +206,11 @@ it('keeps generic member output types free of credential relations and generated
     .filter((name: string) => /^(Tokens|Sessions|Passkeys|SigninLinks|SigninChallenges|NotificationDevices|OperationResults)/.test(name));
   expect(leaked).toEqual([]);
 });
+
+it('keeps work-label setup internal instead of adding an outside authority door',async()=>{
+ const f=fixture();
+ for(const name of ['setProject','setGithubAccounts'])for(const actor of ['sam','lee','art'] as const)
+  expect((await f.call(name,{},actor,name+'-'+actor)).status).toBe(404);
+ expect(f.client.prepare('SELECT * FROM projects').all()).toEqual([]);
+ expect(f.client.prepare('SELECT * FROM agent_accounts').all()).toEqual([]);
+});

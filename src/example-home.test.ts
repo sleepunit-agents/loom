@@ -27,17 +27,25 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(database.prepare('select id,owner from model_accounts').all()).toEqual([{id:manifest.account.id,owner:'alex'}]);
   expect(database.prepare("select operation,id from operation_results where id='example-account'").get()).toEqual({operation:'runtime.accountCreate',id:'example-account'});}finally{database.close();}
   expect(readFileSync(join(home,'program.json'),'utf8')).not.toContain('loom_');expect(JSON.stringify(manifest)).not.toContain('loom_');expect(readFileSync(join(home,'example.json'),'utf8')).not.toContain('loom_');
-  expect(manifest.tasks).toHaveLength(4);expect(manifest.gaps.map((g:{page:string})=>g.page)).toEqual(['people','machines']);
+  expect(manifest.tasks).toHaveLength(4);expect(manifest.gaps.map((g:{page:string})=>g.page)).toEqual(['machines']);
   const before=readFileSync(join(home,'app.db'));
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
   let link='';app=await startSharedHome({home,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
-  const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title status } approvals { id state } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
+  const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title status } approvals { id state } changes { id project agent } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
   const result=await query.json();expect(result.errors).toBeUndefined();
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
+  expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);
+  const token=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Fictitious sharing proof'})).value;
+  try{
+   const read=async()=>{const response=await app!.http.request(app!.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token.token,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } changes { id project agent } approvals { id } }'})});return response.json();};
+   expect(await read()).toEqual({data:{tasks:manifest.tasks.map((id:string)=>({id})),changes:[{id:manifest.change,project:'garden',agent:'fern'}],approvals:[]}});
+   app.writes.run(()=>app!.services.household.setProject({id:'garden',name:'Example garden',members:['alex'],agents:['fern','moss'],repositories:['example-house/garden']}));
+   expect(await read()).toEqual({data:{tasks:[],changes:[],approvals:[]}});
+  }finally{app.writes.run(()=>app!.services.signin.revoke(token.fingerprint));}
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({label:'Example model subscription'})]);
  }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
 });

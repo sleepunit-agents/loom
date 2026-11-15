@@ -1,0 +1,45 @@
+import Database from 'better-sqlite3';
+import {expect,it} from 'vitest';
+import {createDataSchema} from '../core/data/database.js';
+import {householdService} from './household.js';
+import {projects,projectMembers,projectAgents,projectRepositories,agentAccounts} from '../core/data/schema.js';
+it('sets project sharing and GitHub attribution atomically and refuses ambiguous labels',()=>{
+ const client=new Database(':memory:');
+ try{
+  const db=createDataSchema(client),house=householdService(db,()=>new Date(0).toISOString());
+  for(const id of ['fern','moss'])house.setAgent({id,about:'',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'});
+  house.setMember({id:'alex',role:'owner',agents:['fern','moss']});
+  house.setMember({id:'robin',role:'member',agents:['moss']});
+  const project={id:'garden',name:'Garden',members:['alex','robin','robin'],agents:['fern','moss'],repositories:['github:EXAMPLE/Garden','example/garden']};
+  house.setProject(project);
+  expect(db.select().from(projectMembers).all()).toHaveLength(2);
+  expect(db.select().from(projectRepositories).all()).toEqual([{project:'garden',repository:'example/garden'}]);
+  expect(()=>house.setProject({...project,id:'shed'})).toThrow('another project');
+  expect(()=>house.setProject({...project,members:['missing']})).toThrow('Unknown member');
+  expect(db.select().from(projectMembers).all()).toHaveLength(2);
+  house.setGithubAccounts({agent:'fern',logins:['Example-Fern','example-fern']});
+  expect(()=>house.setGithubAccounts({agent:'moss',logins:['EXAMPLE-FERN']})).toThrow('another agent');
+  expect(db.select().from(agentAccounts).all()).toEqual([{agent:'fern',service:'github',login:'example-fern'}]);
+  expect(()=>house.setProject({...project,agents:['missing']})).toThrow('Unknown agent');
+  expect(()=>house.setGithubAccounts({agent:'missing',logins:[]})).toThrow('Unknown agent');
+  const memberships=db.select().from(projectMembers).all(),accounts=db.select().from(agentAccounts).all();
+  client.exec("CREATE TRIGGER refuse_project_agent BEFORE INSERT ON project_agents BEGIN SELECT RAISE(ABORT,'injected project failure'); END");
+  expect(()=>house.setProject({...project,name:'Changed',members:['alex']})).toThrow('injected project failure');
+  expect(db.select().from(projectMembers).all()).toEqual(memberships);
+  expect(db.select().from(projects).all()).toEqual([{id:'garden',name:'Garden'}]);
+  expect(db.select().from(projectAgents).all()).toEqual([{project:'garden',agent:'fern'},{project:'garden',agent:'moss'}]);
+  client.exec('DROP TRIGGER refuse_project_agent');
+  client.exec("CREATE TRIGGER refuse_github BEFORE INSERT ON agent_accounts BEGIN SELECT RAISE(ABORT,'injected GitHub failure'); END");
+  expect(()=>house.setGithubAccounts({agent:'fern',logins:['new-fern']})).toThrow('injected GitHub failure');
+  expect(db.select().from(agentAccounts).all()).toEqual(accounts);
+  client.exec('DROP TRIGGER refuse_github');
+  house.setGithubAccounts({agent:'fern',logins:['new-fern']});
+  expect(db.select().from(agentAccounts).all()).toEqual([{agent:'fern',service:'github',login:'new-fern'}]);
+  house.setGithubAccounts({agent:'fern',logins:[]});expect(db.select().from(agentAccounts).all()).toEqual([]);
+  house.setProject({...project,name:'Restored garden',members:['alex'],agents:['fern'],repositories:[]});
+  expect(db.select().from(projectAgents).all()).toEqual([{project:'garden',agent:'fern'}]);
+  expect(db.select().from(projects).all()).toEqual([{id:'garden',name:'Restored garden'}]);
+  expect(db.select().from(projectMembers).all()).toEqual([{project:'garden',member:'alex'}]);
+  expect(db.select().from(projectRepositories).all()).toEqual([]);
+ }finally{client.close();}
+});
