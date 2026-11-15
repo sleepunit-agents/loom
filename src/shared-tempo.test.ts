@@ -52,7 +52,7 @@ it('fails settings closed without chat provenance and forwards configured adapte
  const f=fixture();
  expect((await f.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).status).toBe(503);
  const settings=vi.fn(()=>({id:'proposal'})),admit=vi.fn(()=>true),operation=vi.fn(),instructions=vi.fn(()=> 'From repository');
- const g=fixture({settings,admit,operation,instructions});
+ const g=fixture({settings,admit,operation,instructions,repository:'/must-not-be-read'});
  expect(await (await g.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).json()).toEqual({ok:true,value:{id:'proposal'}});
  expect(settings).toHaveBeenCalledWith({kind:'member',id:'owner'},{kind:'agent',id:'art'},{settleSeconds:60});
  expect((await g.call('tempo.set',{...g.trigger,instructions:null,file:'routines/check.md'},'file')).status).toBe(200);

@@ -15,6 +15,8 @@ it('rejects traversal, ambiguous references and every symlink component',()=>{
  const root=temp(),outside=temp();fs.writeFileSync(join(root,'lane'),'inside');fs.writeFileSync(join(outside,'lane'),'PRIVATE OUTSIDE');
  fs.symlinkSync(join(outside,'lane'),join(root,'file'));fs.symlinkSync(outside,join(root,'directory'));fs.symlinkSync(root,join(outside,'repo'));
  fs.symlinkSync(join(root,'lane'),join(root,'internal'));
+ fs.mkdirSync(join(root,'checkout'));fs.writeFileSync(join(root,'checkout/lane'),'inside');
+ expect(()=>repositoryInstructions(join(outside,'repo/checkout'))('lane')).toThrow('unavailable or unsafe');
  const read=repositoryInstructions(root);
  for(const file of ['../lane','/lane','a/../lane','./lane','a//lane','a\\lane','lane/','file','directory/lane','internal'])expect(()=>read(file)).toThrow();
  for(const repo of [root+'/',root+'/.',root+'/../'+root.split('/').at(-1),join(outside,'repo'),'/'])expect(()=>repositoryInstructions(repo)('lane')).toThrow();
@@ -52,4 +54,11 @@ it('closes every opened descriptor after successful and failed reads',()=>{
  expect(repositoryInstructions(root)('lane')).toBe('words');
  expect(()=>repositoryInstructions(root)('directory/missing')).toThrow();
  expect(closed.slice().sort()).toEqual(opened.slice().sort());
+});
+
+it('fails on unsupported hosts before opening any filesystem path',()=>{
+ const root=temp();fs.writeFileSync(join(root,'lane'),'words');const opened=vi.spyOn(fs,'openSync');
+ vi.stubGlobal('process',Object.create(process,{platform:{value:'darwin'}}));
+ try{expect(()=>repositoryInstructions(root)('lane')).toThrow('configured repository');expect(opened).not.toHaveBeenCalled();}
+ finally{vi.unstubAllGlobals();}
 });
