@@ -1,3 +1,4 @@
+import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
@@ -218,6 +219,7 @@ export function sharedRoot(options: {
       return result.value;
     }),
     household: householdService(db, now),
+    signin: sharedTokens(db, clock),
     approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
@@ -226,6 +228,7 @@ export function sharedRoot(options: {
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
+  registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
