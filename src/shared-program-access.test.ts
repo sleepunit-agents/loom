@@ -9,15 +9,16 @@ import {afterEach,expect,it} from 'vitest';
 import {z} from 'zod';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {members,agents,tokens,sessions,memberAgents,tasks} from './core/data/schema.js';
+import {members,agents,tokens,sessions,memberAgents,tasks,boxes,jobs} from './core/data/schema.js';
+import {RecoveredWrite,type WriteReceipt} from './core/operations/index.js';
 import {sharedRoot} from './shared-root.js';
 import type {ProgramGrants} from './shared-program-access.js';
 const cleanup:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-const raw={program:'p'.repeat(64),sam:'s'.repeat(64),owner:'o'.repeat(64),cookie:'c'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+const raw={program:'p'.repeat(64),other:'q'.repeat(64),sam:'s'.repeat(64),owner:'o'.repeat(64),cookie:'c'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 function fixture(hold?:()=>Promise<string>){
  const client=new Database(':memory:');cleanup.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'sam',role:'member',joinedAt:at}]).run();db.insert(agents).values({id:'art',about:'Agent',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();db.insert(memberAgents).values({member:'sam',agent:'art'}).run();
- for(const kind of ['program','sam','owner'] as const)db.insert(tokens).values({fingerprint:hash(raw[kind]),label:kind,kind:'owner',member:kind==='owner'?'owner':'sam',createdAt:at}).run();
+ for(const kind of ['program','other','sam','owner'] as const)db.insert(tokens).values({fingerprint:hash(raw[kind]),label:kind,kind:'owner',member:kind==='owner'?'owner':'sam',createdAt:at}).run();
  db.insert(sessions).values({id:hash(raw.cookie),token:hash(raw.program),device:'Forbidden program browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  const grants=new Map<string,ProgramGrants>([[hash(raw.program),{records:['tasks'],operations:['tasks.command']}]]);
  const root=sharedRoot({db,clock,originAllowed:()=>true,programGrants:fp=>grants.get(fp),fields:{custom:{type:GraphQLString,resolve:hold??(()=> 'Private custom words')}} ,reportError:()=>{}});cleanup.push(()=>root.close());
@@ -52,8 +53,11 @@ it('isolates program receipts from ordinary tokens belonging to the same member'
  const f=fixture();f.root.operations.register({name:'fixture.value',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({value:z.string()}).strict(),may:()=>true,run(ctx){return{value:f.root.credentials.program(ctx.viewer)?'Program result':'Ordinary private result'};}});
  f.grants.set(hash(raw.program),{records:[],operations:['fixture.value']});
  expect(await(await f.call('fixture.value',{},'shared','sam')).json()).toMatchObject({value:{value:'Ordinary private result'}});
- expect(await(await f.call('fixture.value',{},'shared')).json()).toMatchObject({value:{value:'Program result'}});
- expect(f.client.prepare("select count(*) as n from operation_results where id='shared'").get()).toEqual({n:2});
+ expect(await(await f.call('fixture.value',{},'shared')).json()).toMatchObject({ok:false,code:'conflict'});
+ expect(await(await f.call('fixture.value',{},'program-id')).json()).toMatchObject({value:{value:'Program result'}});
+ f.grants.set(hash(raw.other),{records:[],operations:['fixture.value']});
+ expect(await(await f.call('fixture.value',{},'program-id','other')).json()).toMatchObject({ok:false,code:'conflict'});
+ expect(await(await f.call('fixture.value',{},'program-id')).json()).toMatchObject({value:{value:'Program result'}});
 });
 it('rechecks grants before prepared effects and keeps trusted installed calls free of outside grants',async()=>{
  let began!:()=>void,release!:()=>void;const started=new Promise<void>(r=>began=r),held=new Promise<void>(r=>release=r);const f=fixture();let effects=0,prepares=0;
@@ -79,4 +83,45 @@ it('withdraws an ordinary in-flight token when an owner first marks it as a rest
  f.grants.set(hash(raw.sam),{records:[],operations:[]});
  await expect(response.text()).rejects.toThrow('Data access ended');
  expect((await(await f.read('{ custom }','sam')).json()).errors).toBeDefined();
+});
+
+it('refuses valid agent/body/runner credentials marked as programs, and rejects forged equal Viewers',()=>{
+ const f=fixture(),at=new Date(f.clock.now()).toISOString();
+ f.db.insert(boxes).values({id:'box',name:'Box',owner:'sam',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
+ f.db.insert(jobs).values({id:'body',agent:'art',box:'box',title:'Body',state:'running',brief:'',model:'fixture',startedByKind:'member',startedBy:'sam',houseRepository:'fixture',houseFile:'HOUSE.md',houseBranch:'next',queuedAt:at}).run();
+ for(const value of [{kind:'agent',agent:'art',box:null,job:null},{kind:'agent',agent:'art',box:null,job:'body'},{kind:'runner',agent:null,box:'box',job:null}]){
+  f.client.prepare('UPDATE tokens SET kind=?,member=NULL,agent=?,box=?,job=? WHERE fingerprint=?').run(value.kind,value.agent,value.box,value.job,hash(raw.program));
+  f.grants.delete(hash(raw.program));expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.program}}))?.viewer.kind).toBe(value.kind);
+  f.grants.set(hash(raw.program),{records:[],operations:[]});expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.program}}))).toBeUndefined();
+ }
+ f.client.prepare("UPDATE tokens SET kind='owner',member='sam',agent=NULL,box=NULL,job=NULL WHERE fingerprint=?").run(hash(raw.program));f.grants.set(hash(raw.program),{records:['tasks'],operations:['tasks.command']});
+ const auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.program}}))!;expect(f.root.credentials.allows(auth.viewer,'tasks.command')).toBe(true);
+ const forged={...auth.viewer};expect(f.root.credentials.allows(forged,'tasks.command')).toBe(false);expect(f.root.credentials.program(forged)).toBeUndefined();
+ expect(f.root.operations.call('http',forged,'tasks.command',{action:'comment',id:'t-1',text:'Forged'},'forged')).toMatchObject({ok:false,code:'denied'});
+});
+it('preserves canonical principal identity for durable prepared-write recovery while binding receipt hashes to the program',async()=>{
+ const f=fixture();let journal:Readonly<WriteReceipt>|undefined,recovered=false,prepares=0;
+ f.grants.set(hash(raw.program),{records:[],operations:['fixture.journal']});
+ f.root.operations.register({name:'fixture.journal',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),inputHash:()=> 'private-input-fingerprint',may:viewer=>viewer.kind==='member',
+  admit(ctx){journal=ctx.receipt;},prepare:async()=>{prepares++;throw Error('Fictitious holder committed, reply lost');},run(){throw Error('Must reconcile rather than repeat');},
+  recover(ctx){if(!journal||recovered||ctx.receipt?.id!==journal.id||ctx.receipt.inputHash!==journal.inputHash)return;expect(ctx.receipt.viewer).toBe(JSON.stringify({id:'sam',kind:'member'}));recovered=true;return new RecoveredWrite({saved:true},journal.expires);},
+ });
+ expect((await f.call('fixture.journal',{},'journal')).status).toBe(503);expect(journal?.inputHash).not.toBe('private-input-fingerprint');expect(journal?.viewer).toBe(JSON.stringify({id:'sam',kind:'member'}));
+ expect(f.root.operations.recoverWrite({kind:'member',id:'sam'},journal!)).toMatchObject({ok:true,value:{saved:true}});
+ expect(await(await f.call('fixture.journal',{},'journal')).json()).toMatchObject({ok:true,value:{saved:true}});expect(prepares).toBe(1);
+ expect(await(await f.call('fixture.journal',{},'journal','sam')).json()).toMatchObject({ok:false,code:'conflict'});
+});
+it('rechecks receipt replay inside its transaction even if a synchronous hashing hook withdraws the grant',async()=>{
+ const f=fixture();let withdraw=false,effects=0;
+ f.grants.set(hash(raw.program),{records:[],operations:['fixture.replay']});
+ f.root.operations.register({name:'fixture.replay',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,inputHash:()=>{if(withdraw)f.grants.set(hash(raw.program),{records:[],operations:[]});return 'same';},run(){effects++;return{saved:true};}});
+ expect((await f.call('fixture.replay',{},'replay')).status).toBe(200);withdraw=true;
+ expect((await f.call('fixture.replay',{},'replay')).status).toBe(403);expect(effects).toBe(1);
+});
+it('does not begin prepared IO when post-commit admission observers withdraw its grant',async()=>{
+ const f=fixture();let prepares=0;
+ f.grants.set(hash(raw.program),{records:[],operations:['fixture.io']});
+ f.root.operations.register({name:'fixture.io',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,prepare:async()=>{prepares++;},run(){return{saved:true};}});
+ const stop=f.root.writes.observe(()=>f.grants.set(hash(raw.program),{records:[],operations:[]}));
+ try{expect((await f.call('fixture.io',{},'io')).status).toBe(403);expect(prepares).toBe(0);}finally{stop();}
 });

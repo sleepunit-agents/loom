@@ -155,7 +155,7 @@ export function sharedRoot(options: {
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
-    receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.allows, outsideScope:credentials.receiptScope,
+    receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.allows, receiptScope:credentials.receiptScope,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   startupCleanups.push(()=>operations.close());

@@ -92,7 +92,7 @@ export class Operations {
    * receipts then commit in one transaction without creating legacy tables.
    * Omit only while using the legacy bootstrap; never mix stores/connections.
    */
-  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer, operation:string) => boolean; outsideScope?: (viewer:Viewer)=>string|undefined } = {}) {
+  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer, operation:string) => boolean; receiptScope?: (viewer:Viewer)=>string|undefined } = {}) {
     if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
     if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
     if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
@@ -107,9 +107,8 @@ export class Operations {
     }
     return committed.value;
   }
-  private caller(viewer:Viewer):string {
-    const scope=this.options.outsideScope?.(viewer);
-    return scope ? `program:${scope}:${callerKey(viewer)}` : callerKey(viewer);
+  private outsideAllowed(door:Door,viewer:Viewer,name:string):boolean {
+    return door==='direct'||!this.options.currentOutside||this.options.currentOutside(viewer,name);
   }
   private report(error: unknown): void {
     try { this.options.reportError?.(error); } catch { /* reporting cannot undo a committed effect */ }
@@ -157,7 +156,7 @@ export class Operations {
     if (this.invalidInternal('direct', viewer)) return failure('denied', 'Internal caller unavailable');
     if (this.db.inTransaction || this.frames.length) return failure('unavailable', 'Recovery must own the outer transaction');
     const op = this.ops.get(receipt.name);
-    if (!op?.write || !op.recover || this.caller(viewer) !== receipt.viewer || !receipt.id || receipt.id.length > 200)
+    if (!op?.write || !op.recover || callerKey(viewer) !== receipt.viewer || !receipt.id || receipt.id.length > 200)
       return failure('unavailable', 'Recovery identity unavailable');
     const changes: Change[] = [];
     this.frames.push(changes);
@@ -199,7 +198,7 @@ export class Operations {
   /** Trusted metadata for local post-call receipts. Never returns input or output. */
   retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
     this.expireReceipts(this.clock.now());
-    const row = this.receipt(this.caller(viewer), id);
+    const row = this.receipt(callerKey(viewer), id);
     return row?.operation===name && row.expires>this.clock.now() ? row.expires : undefined;
   }
   /** Installed modules use this local handle. No transport exposes it. Labels
@@ -239,7 +238,7 @@ export class Operations {
   private async dispatchAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
     if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     if (!valid()) return failure('denied', 'Authentication ended');
-    if(door!=='direct'&&this.options.currentOutside&&!this.options.currentOutside(viewer,name))return failure('denied','Permission denied');
+    if(!this.outsideAllowed(door,viewer,name))return failure('denied','Permission denied');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
     if ((op.windowOnly && !signedInWindow(door, viewer, window)) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
@@ -256,6 +255,7 @@ export class Operations {
         if (!(prior instanceof PreparationNeeded)) return prior;
         receipt = prior.receipt;
       } else if (!this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
+      if(!valid()||!this.outsideAllowed(door,viewer,name))return failure('denied','Authentication ended');
       const prepared = await op.prepare?.(parsed.data, {viewer, receipt});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
@@ -287,15 +287,21 @@ export class Operations {
     try {
       result = this.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
-        if (door !== 'direct' && this.options.currentOutside && !this.options.currentOutside(viewer,name)) return failure('denied','Permission denied');
+        if (!this.outsideAllowed(door,viewer,name)) return failure('denied','Permission denied');
         if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
-        const who = this.caller(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
+        const who = callerKey(viewer);
+        const fingerprint = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
+        // Keep the canonical principal for existing durable recovery journals.
+        // A reused ID from another program/token conflicts before result replay.
+        const scope=this.options.receiptScope?.(viewer);
+        const body=scope?createHash('sha256').update('loom-program-receipt-v1\0').update(scope).update('\0').update(fingerprint).digest('hex'):fingerprint;
         if (op.write) {
           this.expireReceipts(now);
           const old = this.receipt(who, id!);
           if (old) {
             if (old.operation !== name || old.inputHash !== body) return failure('conflict', 'Operation id already used for different input');
             op.validateReplay?.(viewer, parsed.data, prepared);
+            if(!this.outsideAllowed(door,viewer,name))throw new OperationError('denied','Permission denied');
             this.completedWriteDeadlines.set(old.result,old.expires);
             return old.result;
           }
@@ -307,6 +313,7 @@ export class Operations {
           if (recovered) break;
         }
         if (!recovered && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
+        if(!this.outsideAllowed(door,viewer,name))throw new OperationError('denied','Permission denied');
         if (preflight && !recovered) {
           const admitted: unknown = op.admit?.(ctx, parsed.data);
           if (admitted instanceof Promise) { void admitted.catch(() => {}); throw new Error('Admission must be synchronous'); }
