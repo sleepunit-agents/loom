@@ -125,7 +125,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
             tile:!!tile,hidden:tile?.hasAttribute('hidden'),inert:!!tile?.closest('[inert]'),focused:tile?.hasAttribute('data-focused'),
             mode:split?.getAttribute('data-mode'),open:split?.hasAttribute('data-open'),
             rows:tile?.querySelectorAll('[data-split-row]').length??0,
-            states:['Opening People','Opening people','Connection lost','don’t have access','Something went wrong','No people yet'].filter(label=>tile?.textContent?.includes(label)),
+            states:['Opening People','Opening people','Connection lost','don’t have access','Something went wrong','This app could not open','No people yet'].filter(label=>tile?.textContent?.includes(label)),
             backButtons:tile?.querySelectorAll('.loom-split__back').length??0};
         }).catch(()=>({unavailable:true}));
         diagnostics.push(`${name} People view: ${JSON.stringify(state)}`);
