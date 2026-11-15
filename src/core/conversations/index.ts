@@ -139,7 +139,7 @@ export class Conversations {
       if (input.question && questionItem) throw new Error('Digest needs one question source');
       if (input.question && conversation.venue === 'loom' && conversation.member) throw new Error('Private digest questions need encrypted Comms');
       const raised = questionItem ? this.item(questionItem) : undefined;
-      if (raised && (raised.conversation !== conversation.id || raised.toKind !== 'person' || raised.state !== 'waiting'
+      if (raised && (raised.conversation !== conversation.id || raised.toKind !== 'person' || !raised.answers || raised.state !== 'waiting'
         || (conversation.member && raised.to !== conversation.member))) throw new Error('Digest question differs from conversation');
       if (raised && conversation.venue === 'loom' && conversation.member && (!raised.thread || raised.messageSeq == null
         || raised.words !== null || raised.why !== null || raised.ifYes !== null || raised.ifNo !== null || raised.link !== null)) throw new Error('Private digest question needs encrypted message reference');

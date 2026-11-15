@@ -111,21 +111,27 @@ export class CommsMessages {
       question: input.question ? { ...input.question, refs: input.question.refs ? [...input.question.refs] : undefined } : undefined };
     const cvs = this.threads.conversations, cv = cvs.conversation(input.conversation);
     if (input.summary.length > 600) throw new Error('Digest summary exceeds 600 characters');
-    if (!input.question || cv.venue !== 'loom' || !cv.member) return () => cvs.digest(input);
-    const thread = this.db.select().from(threads).where(eq(threads.conversation, cv.id)).get();
-    if (cv.venue !== 'loom' || !cv.member || !thread || input.question.to !== cv.member) throw new Error('Private digest needs its member thread');
+    const privateThread = cv.venue === 'loom' && !!cv.member;
+    const thread = privateThread ? this.db.select().from(threads).where(eq(threads.conversation, cv.id)).get() : undefined;
+    if (privateThread && (!thread || input.question && input.question.to !== cv.member)) throw new Error('Private digest needs its member thread');
     const previous = () => this.db.select().from(digests).where(and(eq(digests.conversation, cv.id), eq(digests.run, input.run))).get();
-    const before = previous(), question = input.question;
-    const ask = await this.prepareAsk(thread.id, cv.agent, `digest:${randomUUID()}`, {
+    const before = previous();
+    const validate = () => {
+      const current = cvs.conversation(cv.id);
+      if (current.agent !== cv.agent || current.member !== cv.member || current.project !== cv.project || current.venue !== cv.venue || current.place !== cv.place
+        || JSON.stringify(previous()) !== JSON.stringify(before)
+        || privateThread && (!thread || this.threads.thread(thread.id).conversation !== cv.id)) throw new Error('Digest changed during preparation');
+    };
+    if (!input.question || !privateThread) return () => this.db.transaction(() => { validate(); return cvs.digest(input); });
+    const question = input.question;
+    const ask = await this.prepareAsk(thread!.id, cv.agent, `digest:${randomUUID()}`, {
       words: question.words, answers: question.answers, why: question.why ?? undefined,
       ifYes: question.ifYes ?? undefined, ifNo: question.ifNo ?? undefined, link: question.link ?? undefined,
       waitsOnKind: question.waitsOnKind === 'task' || question.waitsOnKind === 'approval' ? question.waitsOnKind : undefined,
       waitsOnId: question.waitsOnId ?? undefined, refs: question.refs,
     });
     return () => this.db.transaction(() => {
-      const current = cvs.conversation(cv.id);
-      if (current.agent !== cv.agent || current.member !== cv.member || current.project !== cv.project
-        || JSON.stringify(previous()) !== JSON.stringify(before)) throw new Error('Digest changed during preparation');
+      validate();
       const message = ask();
       return cvs.digest({ ...input, question: undefined }, message.inboxItem!);
     });
