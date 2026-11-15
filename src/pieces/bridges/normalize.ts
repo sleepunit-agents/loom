@@ -33,6 +33,7 @@ export interface DiscordChannel {
   id: string;
   guild?: string;
   kind: 'channel' | 'thread' | 'dm';
+  group?: boolean;
   parent?: string;
 }
 
@@ -47,6 +48,7 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
   return {
     id: message.id, connection: connection.id, channel: message.channel_id,
     ...(channel.kind === 'thread' ? { parent: channel.parent, thread: channel.id } : {}),
+    ...(channel.kind === 'dm' && channel.group ? { groupDm: true } : {}),
     isDm: channel.kind === 'dm', user: message.author.id, text: message.content,
     postedAt: new Date(message.timestamp).toISOString(),
     mentions: [...new Set(message.mentions.map(mention => mention.id))],
@@ -77,6 +79,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
     id: JSON.stringify([message.channel, message.ts]), connection: connection.id,
     channel: message.channel, thread: message.thread_ts,
     isDm: kind === 'im' || kind === 'mpim',
+    ...(kind === 'mpim' ? { groupDm: true } : {}),
     // Legacy integrations have only a bot id. Never confuse it with a user id.
     user: message.user ?? `bot:${message.bot_id}`, text: message.text,
     postedAt: new Date(millis).toISOString(),

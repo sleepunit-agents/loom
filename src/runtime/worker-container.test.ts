@@ -12,7 +12,7 @@ function frame(text: string, stream = 1) { const bytes = Buffer.from(text); cons
 function fixture() {
   const writes: string[] = [], wait = deferred<unknown>();
   const socket = new Duplex({ allowHalfOpen: true, read() {}, write(chunk, _encoding, done) { writes.push(chunk.toString()); done(); } });
-  const engine = { attach: vi.fn(async () => socket), json: vi.fn(async (_method: string, path: string, _body: unknown, signal: AbortSignal): Promise<unknown> => {
+  const engine = { attach: vi.fn(async (_id: string, _signal: AbortSignal): Promise<Duplex> => socket), json: vi.fn(async (_method: string, path: string, _body: unknown, signal: AbortSignal): Promise<unknown> => {
     if (signal.aborted) throw new Error('aborted');
     if (path.startsWith('/containers/create')) return { Id: id };
     if (path.endsWith('/json')) return { Mounts: [] };
@@ -220,4 +220,30 @@ for (const stage of ['attach', 'start']) it(`bounds delayed create and stalled $
   const body = f.start(); const failed = expect(body.spawned).rejects.toThrow(); await vi.advanceTimersByTimeAsync(70); created.resolve({ Id: id }); await flush();
   await vi.advanceTimersByTimeAsync(29); expect(f.engine.json.mock.calls.some(call => call[0] === 'DELETE')).toBe(false);
   await vi.advanceTimersByTimeAsync(1); await failed; await body.stop(); expect(f.writes).toEqual([]); expect(vi.getTimerCount()).toBe(0);
+});
+
+it('selects only the assigned account runner for container argv and environment', async () => {
+  const f = fixture(), selected = { command: '/account-runner', args: ['--profile-a'], cwd: '/work', env: { ACCOUNT_PROFILE: 'a' } };
+  const executor = containerWorkerExecutor({ ...f.config, accountRunners: { [job.account]: { [job.harness]: selected } } }, { engine: f.engine, builder: f.builder, name: () => 'account' });
+  selected.env.ACCOUNT_PROFILE = 'mutated'; selected.command = '/wrong'; selected.args.push('--wrong');
+  const body = executor.start(job, 'image', f.abort.signal); await body.spawned;
+  const spec = f.engine.json.mock.calls[0][2];
+  expect(spec).toMatchObject({ Entrypoint: ['/account-runner'], Cmd: ['--profile-a'], Env: ['ACCOUNT_PROFILE=a'] });
+  expect(f.writes).toEqual([]); await body.release();
+  expect(JSON.parse(f.writes[0]).job).toMatchObject({ account: job.account, model: job.model, harness: job.harness });
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); await body.exited; await body.stop();
+  const count = f.engine.json.mock.calls.length;
+  expect(() => executor.start({ ...job, account: 'missing' }, 'image', f.abort.signal)).toThrow('configured runner for account');
+  expect(() => executor.build({ ...job, account: 'missing' }, f.abort.signal)).toThrow('configured runner for account');
+  expect(f.builder.build).not.toHaveBeenCalled(); expect(f.engine.json).toHaveBeenCalledTimes(count);
+});
+it('uses each account and harness binding in the actual Docker specification', async () => {
+  const accounts = { a: { first: { ...plan, command: '/a-first', env: { PROFILE: 'a-first' } }, second: { ...plan, command: '/a-second', env: { PROFILE: 'a-second' } } },
+    b: { first: { ...plan, command: '/b-first', env: { PROFILE: 'b-first' } } } };
+  for (const [account, harness] of [['a', 'first'], ['a', 'second'], ['b', 'first']]) {
+    const f = fixture(), executor = containerWorkerExecutor({ ...f.config, accountRunners: accounts }, { engine: f.engine, builder: f.builder, name: () => 'selection' });
+    const body = executor.start({ ...job, account, harness }, 'image', f.abort.signal); await body.spawned;
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Entrypoint: [`/${account}-${harness}`], Env: [`PROFILE=${account}-${harness}`] });
+    await body.release(); f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); await body.exited; await body.stop();
+  }
 });

@@ -129,3 +129,30 @@ for (const container of [{ socket: 'relative' }, { socket: '/docker.sock', privi
     expect(f.read).toHaveBeenCalledTimes(1); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 }
+
+it('passes explicit account and harness runner bindings to the actual worker executor', async () => {
+  const f = fixture(), configured = { ...config, accountRunners: { subscription: { claude: { ...plan, env: { PROFILE: '/worker/private/subscription' } } } } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'token');
+  expect(await workerProgram(f)).toBe(0); expect(f.executor).toHaveBeenCalledWith(configured);
+});
+
+for (const accountRunners of [null, [], { sub: null }, { sub: [] }, { sub: { claude: null } },
+  { '': { claude: plan } }, { sub: { '': plan } }, { sub: { claude: { ...plan, extra: 'wrong' } } },
+  ...[{ command: '\0' }, { args: ['bad\0arg'] }, { cwd: '/bad\0dir' }, { env: { KEY: 'bad\0value' } }].map(patch => ({ sub: { claude: { ...plan, ...patch } } })),
+]) it('rejects malformed nested account runners before token reads or execution', async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, accountRunners }));
+  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config');
+  expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+});
+it('passes account bindings to container execution too', async () => {
+  const f = fixture(), containerExecutor = vi.fn().mockReturnValue({}), configured = { ...config, container: { socket: '/fake/docker.sock' }, accountRunners: { subscription: { claude: plan } } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith(configured); expect(f.executor).not.toHaveBeenCalled();
+});
+
+for (const patch of [{ cwd: 'relative' }, { env: { 'BAD-KEY': 'value' } }]) it('rejects invalid container runner plans before the token or builder', async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, container: { socket: '/fake/docker.sock' }, accountRunners: { sub: { claude: { ...plan, ...patch } } } }));
+  const containerExecutor = vi.fn(); expect(await workerProgram({ ...f, containerExecutor })).toBe(1);
+  expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+});
