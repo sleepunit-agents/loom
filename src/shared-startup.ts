@@ -1,3 +1,4 @@
+import { notificationKey } from './core/signin/notification-key.js';
 /** Default web startup from an explicit, already prepared shared household.
  * No importer, discovery, schema upgrade, or legacy database fallback. */
 import Database from 'better-sqlite3';
@@ -67,7 +68,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
   const publicOrigin=relyingParty(process.env)?.origin;
-  app=await serveShared({db,clock,memory:program.memory,commsKey,
+  app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:sameOrigin,publicOrigin,
    changes:adapters.changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
