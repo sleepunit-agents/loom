@@ -440,7 +440,7 @@ projection is a composition port; the native listener/CLI wiring is separate.
 Mail confirmation, observed model/latency telemetry and Stop acknowledgement stay
 with the receiving runtime. The model cannot supply those fields or invoke the
 private take route. Successful status reports notify the runtime so its heartbeat
-can preserve waiting/idle status; a returned Stop request invokes the runtime's
+can preserve the reported waiting status; a returned Stop request invokes the runtime's
 Stop callback before publishing a tool result. Request cancellation closes only
 that call, while body close cancels every current and future call.
 
