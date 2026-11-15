@@ -8,11 +8,13 @@ import type {Viewer} from '../../policy.js';
 import {SqliteVecBackend} from '../../backends/sqlite-vec.js';
 import {createEmbeddingProvider} from '../../backends/index.js';
 import {semanticMemoryReady} from './semantic-schema.js';
+import {prepareMemoryInput} from '../../tools/remember.js';
 import type {MindSources} from './sources.js';
 type Identity={name:string;input_hash:string;expires:number};
 type Stored=Identity&{result:string};
 const category=z.enum(['user','project','self','feedback','reference','pursuit','episode']);
-const remember=z.object({category,title:z.string().min(1).max(200),content:z.string().min(1).max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional()}).strict();
+const authored=z.string().refine(value=>value.trim().length>0,'Authored text cannot be blank');
+const remember=z.object({category,title:authored.max(200),content:authored.max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional()}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
 export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined}){
  const sources=new Map<string,{path:string;db:Database.Database}>();let closed=false;
@@ -71,7 +73,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};
  const scopedId=z.string().regex(/^[^:]+:[a-f0-9-]{36}$/);
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
- operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(input)).ref)]}))});
+ operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(input))).ref)]}))});
  operations.register({...base,doors:[...base.doors],name:'memory.recall',input:recall.describe('Recall your memories by meaning, adding heat. Returns opaque IDs and scores; select memoryProjectMemory(id: id) on GraphQL for title and content.'),output:z.object({ids,matches:z.array(z.object({id:scopedId,score:z.number()}))}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{const matches=(await backend.recall(input)).map(row=>({id:opaque(db,row.path),score:row.relevance}));return {ids:matches.map(row=>row.id),matches};})});
  return {close};
 }

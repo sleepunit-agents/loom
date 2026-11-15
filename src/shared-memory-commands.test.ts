@@ -87,6 +87,13 @@ it('binds commands to the actual body, publishes committed content, and reads op
  expect(f.source.prepare('SELECT input_hash FROM memory_command_receipts WHERE id=?').get('remember')).toEqual({input_hash:fingerprint});
  expect(f.count()).toBe(1);expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(words))).toBe(false);expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(title))).toBe(false);
 });
+it('uses shared authored-input validation and the normal episode TTL default',async()=>{
+ const f=await fixture();
+ for(const change of [{title:'   '},{content:'\n\t'}])expect((await f.call('remember',{...input,...change},'blank-'+Object.keys(change)[0])).status).toBe(400);
+ expect(f.count()).toBe(0);expect(f.source.prepare('SELECT count(*) AS n FROM memory_command_preparations').get()).toEqual({n:0});
+ const made=await f.call('remember',{...input,category:'episode'},'episode-default');expect(made.status).toBe(200);expect(f.source.prepare('SELECT ttl,expires_at FROM memories').get()).toEqual({ttl:'48h',expires_at:'2026-11-16T18:00:00.000Z'});
+ expect((await f.call('remember',{...input,category:'episode',title:'Permanent episode',ttl:'permanent'},'episode-explicit')).status).toBe(200);expect(f.source.prepare('SELECT ttl,expires_at FROM memories WHERE title=?').get('Permanent episode')).toEqual({ttl:'permanent',expires_at:null});
+});
 it('forwards TTL, metadata, category and project filters and truncates eligible recall matches',async()=>{
  const f=await fixture(),ids:string[]=[];
  for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other']] as const){
