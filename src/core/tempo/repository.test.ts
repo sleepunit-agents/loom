@@ -25,7 +25,11 @@ it('requires a bounded regular UTF-8 file and keeps unsafe errors word-free',()=
  const root=temp(),read=repositoryInstructions(root);fs.mkdirSync(join(root,'directory'));
  for(const [name,words] of [['empty',''],['blank',' \n'],['nul','words\0'],['large','x'.repeat(MAX_LANE_FILE_BYTES+1)]] as const)fs.writeFileSync(join(root,name),words);
  fs.writeFileSync(join(root,'invalid'),Buffer.from([255]));
- for(const file of ['directory','missing','empty','blank','nul','large','invalid'])expect(()=>read(file)).toThrow('unavailable or unsafe');
+ for(const file of ['directory','missing','empty','blank','nul','large','invalid']){
+  let message='';try{read(file);}catch(error){message=(error as Error).message;}
+  expect(message).toBe('Lane instruction file is unavailable or unsafe');
+  expect(message).not.toContain(root);expect(message).not.toContain('PRIVATE OUTSIDE');
+ }
  fs.writeFileSync(join(root,'limit'),'x'.repeat(MAX_LANE_FILE_BYTES));expect(read('limit')).toHaveLength(MAX_LANE_FILE_BYTES);
 });
 it('detects an in-place file change before returning words',()=>{
@@ -61,4 +65,14 @@ it('fails on unsupported hosts before opening any filesystem path',()=>{
  vi.stubGlobal('process',Object.create(process,{platform:{value:'darwin'}}));
  try{expect(()=>repositoryInstructions(root)('lane')).toThrow('configured repository');expect(opened).not.toHaveBeenCalled();}
  finally{vi.unstubAllGlobals();}
+});
+
+it.each(['mtimeNs','ctimeNs'] as const)('detects a same-size change through %s metadata',field=>{
+ const root=temp();fs.writeFileSync(join(root,'lane'),'first');const stat=fs.fstatSync;let calls=0;
+ vi.spyOn(fs,'fstatSync').mockImplementation(((...args:Parameters<typeof fs.fstatSync>)=>{
+  const result=Reflect.apply(stat,fs,args) as fs.BigIntStats;
+  if(++calls===2)return Object.assign(Object.create(Object.getPrototypeOf(result)),result,{[field]:result[field]+1n});
+  return result;
+ }) as typeof fs.fstatSync);
+ expect(()=>repositoryInstructions(root)('lane')).toThrow('unavailable or unsafe');expect(calls).toBe(2);
 });
