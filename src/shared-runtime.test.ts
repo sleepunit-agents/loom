@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox } from './core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 import { workOnce } from './runtime/worker.js';
@@ -212,4 +212,16 @@ it('recovers committed job outcomes through the actual write observer without a 
   f.root.writes.run(() => f.db.update(jobs).set({ state: 'done', exitCode: 0, endedAt: f.now() }).where(eq(jobs.id, queued.id)).run());
   expect(f.ended).not.toHaveBeenCalled();
   expect(f.db.select().from(inbox).all().filter(row => row.source === 'trigger')).toMatchObject([{ to: 'owner', words: 'Committed elsewhere' }]);
+});
+
+it('requires the current bearer runner proof rather than a runner-labelled cookie', async () => {
+  const f = fixture(), job = f.send(), cookie = 'z'.repeat(64);
+  f.db.insert(sessions).values({ id: hash(cookie), token: hash(credential), device: 'Fixture', via: 'link', isAgent: true, issuedAt: f.now(), seenAt: f.now(), provedAt: f.now() }).run();
+  for (const [name, input] of [['next', {}], ['started', { job: job.id, build: 'image' }], ['heartbeat', { job: job.id, state: 'starting' }], ['finish', { job: job.id, exitCode: 0, logTail: '' }]] as const) {
+    const response = await f.root.http.request(`/api/runtime/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui='+cookie }, body: JSON.stringify({ id: 'cookie-'+name, input }) });
+    expect(response.status).toBe(403);
+  }
+  expect(f.db.select().from(operationResults).all()).toEqual([]);
+  expect(f.db.select().from(jobs).get()?.state).toBe('queued');
+  expect((await f.call('next', {}, 'bearer')).status).toBe(200);
 });

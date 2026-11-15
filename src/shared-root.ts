@@ -61,7 +61,7 @@ export function sharedRoot(options: {
     } catch (error) { options.reportError(error); }
   };
   const runtime = createRuntime(db, clock, { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
-  registerSharedRuntime(operations, db, { now, roles, jobEnded });
+  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
 
   const requests = new SecretRequests(db, now);
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,

@@ -14,12 +14,13 @@ const jobInput = z.object({ job: z.string().min(1) });
 const ack = z.object({ ok: z.literal(true) }).strict();
 export function registerSharedRuntime(operations: Operations, db: DataDatabase, options: {
   now(): string; roles(): readonly ModelRole[];
+  runner(viewer: Viewer): Readonly<{ box: string }> | undefined;
   /** Called after the effect AND receipt commit, including successful replay. */
   jobEnded(id: string): void;
 }) {
   const dispatcher = new Dispatcher(db, options.now, options.roles);
   const machine = (viewer: Viewer) => {
-    if (viewer.kind !== 'runner') return false;
+    if (viewer.kind !== 'runner' || options.runner(viewer)?.box !== viewer.id) return false;
     const row = db.select().from(boxes).where(eq(boxes.id, viewer.id)).get();
     return !!row && row.revokedAt === null;
   };
@@ -29,7 +30,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     return job?.box === viewer.id && (!states || states.includes(job.state));
   };
   const runner = (viewer: Viewer) => {
-    if (viewer.kind !== 'runner') throw new OperationError('denied', 'Worker required');
+    if (viewer.kind !== 'runner' || options.runner(viewer)?.box !== viewer.id) throw new OperationError('denied', 'Worker required');
     return viewer.id;
   };
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
