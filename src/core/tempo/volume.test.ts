@@ -1,3 +1,4 @@
+import { Conversations } from '../conversations/index.js';
 import { afterEach, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
@@ -67,4 +68,22 @@ it('rejects invalid quiet periods and another recipient without modifying the it
   expect(() => volume.set(who, 'one', 'mute', 'forever')).toThrow();
   for (const patch of [{ muteDays: 0 }, { dimDays: -1 }, { settleSeconds: -1 }, { muteDays: Infinity }]) expect(() => volume.setTimings(who, patch)).toThrow();
   expect(item()).toMatchObject({ volume: 'full', quietUntil: null });
+});
+
+it('expires quiet items by instant when persisted UTC precision differs', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock(Date.parse('2026-11-14T18:00:00.000Z'));
+  const now = () => new Date(clock.now()).toISOString();
+  db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now() }).run();
+  const mail = new Conversations(db, now), volume = new InboxVolume(db, clock);
+  const item = mail.send({ toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'unknown', words: 'Quiet' });
+  try {
+    // Whole-second timestamps are valid shared data, including older producers.
+    db.update(inbox).set({ volume: 'mute', quietUntil: '2026-11-14T18:00:00Z' }).where(eq(inbox.id, item.id)).run();
+    let notifications = 0;
+    expect(volume.expire(() => { notifications++; })).toBeUndefined();
+    expect(mail.item(item.id)).toMatchObject({ volume: 'full', quietUntil: null });
+    expect(notifications).toBe(1);
+    expect(volume.expire(() => { notifications++; })).toBeUndefined();
+    expect(notifications).toBe(1);
+  } finally { client.close(); }
 });

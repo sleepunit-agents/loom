@@ -2,6 +2,8 @@
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type { Mind } from './role.js';
+import type {ProjectsReader} from './projects.js';
+export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'access'>;
 import {projectDeadline} from './project-deadlines.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
@@ -48,12 +50,14 @@ const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
 } });
 
 const access=new GraphQLObjectType({name:'MemoryProjectsAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
-export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:()=>number=Date.now,capabilities?: (viewer:Viewer)=>{allowed:boolean;agents:string[]}): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
+export function projectsQueryFields(source: Mind|ProjectQueryReader, deadlines?:QueryDeadlines, now:()=>number=Date.now,capabilities?: (viewer:Viewer)=>{allowed:boolean;agents:string[]}): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
  const read = (context: { viewer: Viewer }, verb: string, input: Record<string, unknown>, absent: unknown) => {
   if (!context?.viewer) return absent;
   try {
-   const result = mind.call(context.viewer, verb, input);
+   if(verb!=='projectsList'&&(typeof input.id!=='string'||input.id.length<3||input.id.length>(verb==='projectMemoryRead'?300:200)))return absent;
+   const result = 'call' in source?source.call(context.viewer, verb, input):{ok:true as const,value:verb==='projectsList'?source.list(context.viewer):verb==='projectRead'?source.read(input.id as string,context.viewer):source.memoryRead(input.id as string,context.viewer)};
    if (result.ok) {
+    if(result.value===undefined||result.value===null)return absent;
     if(deadlines){
      const key=JSON.stringify([context.viewer.kind,context.viewer.id,verb,input]);
      const rows=verb==='projectsList'?result.value as ProjectRecord[]:[result.value as ProjectRecord|ProjectMemory];
@@ -68,7 +72,7 @@ export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:(
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
-  memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?capabilities?.(context.viewer)??null:null},
+  memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?(capabilities??('access' in source?source.access:undefined))?.(context.viewer)??null:null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
   memoryProject: { type: project, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
   memoryProjectMemory: { type: memory, args: { id }, resolve: (_source, args, context) => read(context, 'projectMemoryRead', { id: args.id }, null) },

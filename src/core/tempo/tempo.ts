@@ -52,7 +52,17 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
     /** Start after all sweep contributors and operation targets are installed. */
     start() { if (closed) return; sources.recover(options.changeRevision); if (!closed) engine.tick(); },
     /** Call after committed Inbox writes or a runtime capacity change. */
-    changed() { if (closed) return; settled.changed(); if (!closed) options.changed?.(); },
+    changed() { if (closed || db.$client.inTransaction) return; settled.changed(); if (!closed) options.changed?.(); },
+    /** Shared writer's post-commit hook: recover watched source outcomes, then
+     * rescan trigger configuration, quiet deadlines and waiting inbox batches.
+     * Never call this from a provisional savepoint or inside an operation.
+     */
+    committed() {
+      if (closed) return;
+      if (db.$client.inTransaction) throw new Error('Refresh Tempo after commit');
+      sources.recover(options.changeRevision);
+      if (!closed) engine.tick();
+    },
     close() { closed = true; sources.close(); engine.close(); settled.close(); },
   };
 }

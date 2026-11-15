@@ -15,6 +15,8 @@ it('does nothing with no open items and combines contributing parts in one recip
   expect(sweep.run(who, 'noon')).toMatchObject([{ part: 'Tasks', count: 2, ageMs: 3 * 86_400_000 }, { part: 'Approvals', count: 1 }]);
   expect(deliveries).toHaveLength(1);
   expect(deliveries[0].words).toContain('Tasks: 2 open, oldest 3 days');
+  expect(deliveries[0].words).toContain('- t-old: Old task (3 days)');
+  expect(deliveries[0].words).toContain('- t-new: New task (1 hours)');
   expect(deliveries[0].summaries[0].items.map(i => i.id)).toEqual(['t-old', 't-new']);
   sweep.run({ kind: 'agent', id: 'mark' }, 'noon'); expect(deliveries).toHaveLength(1);
   stop(); expect(sweep.run(who, 'evening')).toMatchObject([{ part: 'Approvals' }]);
