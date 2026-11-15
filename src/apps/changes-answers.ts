@@ -9,7 +9,7 @@ import type { approvalService } from './approvals.js';
  */
 export function changeAnswers(db: DataDatabase, approvals: ReturnType<typeof approvalService>) {
   return {
-    answer(input: { change: string; head: string; approval: string; member: string; allow: boolean }) {
+    answer(input: { change: string; head: string; approval: string; member: string; allow: boolean; basis?: string }) {
       return db.transaction(() => {
         const change = db.select().from(changes).where(eq(changes.id, input.change)).get();
         if (!change || change.state !== 'open') throw new Error('Change is no longer open');
@@ -18,7 +18,7 @@ export function changeAnswers(db: DataDatabase, approvals: ReturnType<typeof app
         if (!change.agent || approval.agent !== change.agent || approval.kind !== 'merge'
           || approval.target !== `${change.id}@${input.head}` || approval.operation !== null
           || approval.project !== change.project) throw new Error('Approval does not match this change');
-        const result = input.allow ? approvals.allow(approval.id, input.member) : approvals.deny(approval.id, input.member);
+        const result = input.allow ? approvals.allow(approval.id, input.member, input.basis) : approvals.deny(approval.id, input.member);
         // Preserve CI/reviewer/author blockers. Only an answer-blocked or
         // merge-ready copy changes groups; the reader will refresh GitHub facts.
         if (change.waitingOn === 'you' || change.waitingOn === 'agent') {

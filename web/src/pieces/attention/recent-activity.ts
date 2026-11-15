@@ -1,20 +1,18 @@
 import { useMemo } from 'react';
 import type { Snapshot } from '../../data';
-import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
+import { useSelection } from '../../data/graphql/selection';
+import type { DataQuerySnapshot } from '../../data/graphql';
 import { memoryQueries } from '../../memory/queries';
 import type { ActivityWindow } from '../activity/model';
 
 // Reuse Memory's reviewed document and decoder, never its one-shot HTTP helper.
 export const deskRecentActivitySelection = memoryQueries.activity();
-export function deskRecentActivity(query: DataQuerySnapshot<Record<string, unknown>>): Snapshot<ActivityWindow> {
+export function deskRecentActivity(query: DataQuerySnapshot<ActivityWindow | null>): Snapshot<ActivityWindow> {
   if (query.status !== 'live') return {status:query.status,records:[]};
-  if (!query.data) return {status:'loading',records:[]};
-  try {
-    const window=deskRecentActivitySelection.decode(query.data);
-    return window?{status:'live',records:[window]}:{status:'denied',records:[]};
-  } catch { return {status:'offline',records:[]}; }
+  if (query.data === undefined) return {status:'loading',records:[]};
+  return query.data?{status:'live',records:[query.data]}:{status:'denied',records:[]};
 }
 export function useDeskRecentActivity(): Snapshot<ActivityWindow> {
-  const query=useDataQuery<Record<string,unknown>>(deskRecentActivitySelection.query,deskRecentActivitySelection.variables);
+  const query=useSelection(deskRecentActivitySelection);
   return useMemo(()=>deskRecentActivity(query),[query]);
 }
