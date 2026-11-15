@@ -6,8 +6,9 @@ import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {agents,agentStatus,household,members,memberAgents,projects,projectMembers,projectAgents,tokens} from './core/data/schema.js';
+import {agents,agentStatus,household,members,memberAgents,projects,projectMembers,projectAgents,tokens,triggers,triggerLog,agentPauses} from './core/data/schema.js';
 import {serveShared} from './shared-serve.js';
+import {deskTempoQuery} from '../web/src/pieces/attention/bar-stats';
 import {deskTimeQuery} from '../web/src/pieces/attention/bar-system';
 import {deskAgentStatusQuery} from '../web/src/pieces/attention/agent-status';
 const cleanups:(()=>void|Promise<void>)[]=[];
@@ -66,4 +67,17 @@ it('keeps status scope identical to current shared-project agent visibility, inc
  const read=async()=> (await fetch(f.app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:'{ agents(where:{id:{eq:"mark"}}){ id agentStatusByAgent { agent work } } }'})})).json();
  expect(await read()).toEqual({data:{agents:[{id:'mark',agentStatusByAgent:[{agent:'mark',work:'Other fixture status'}]}]}});
  f.app.writes.run(()=>f.db.delete(projectMembers).run());expect(await read()).toEqual({data:{agents:[]}});expect((await f.read('member')).data.agentStatus.map((row:{agent:string})=>row.agent)).toEqual(['art']);
+});
+
+it('mounts the exact Tempo ticker with its unchanged reviewed policy before latest-event limits',async()=>{
+ const f=await fixture();
+ f.app.writes.run(()=>{
+  f.db.insert(triggers).values(['art','mark'].map(agent=>({id:'trigger-'+agent,ownerKind:'agent' as const,owner:agent,sourceKind:'time' as const,lifespan:'once' as const,targetKind:'operation' as const,target:'fixture',note:'Not selected',enabled:false,state:'standing' as const,createdAt:f.at,changedAt:f.at}))).run();
+  f.db.insert(agentPauses).values(['art','mark'].map(agent=>({agent,since:f.at}))).run();
+  f.db.insert(triggerLog).values([{seq:1,trigger:'trigger-art',at:f.at,event:'set',note:'Not selected'},{seq:2,trigger:'trigger-mark',at:f.at,event:'set',note:'Hidden newer event'}]).run();
+ });
+ const read=async(member:keyof typeof raw='member')=>(await fetch(f.app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw[member]},body:JSON.stringify({query:deskTempoQuery})})).json();
+ expect(await read()).toEqual({data:{triggers:[{id:'trigger-art',enabled:false,state:'standing'}],triggerLog:[{seq:1,event:'set'}],agentPauses:[{agent:'art'}]}});
+ expect((await read('owner')).data.triggers).toHaveLength(2);
+ f.app.writes.run(()=>f.db.delete(memberAgents).run());expect(await read()).toEqual({data:{triggers:[],triggerLog:[],agentPauses:[]}});
 });
