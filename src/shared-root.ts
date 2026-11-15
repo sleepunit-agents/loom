@@ -1,3 +1,4 @@
+import { sharedHouseholdAccess, householdAccessQueries, registerSharedHouseholdAccess } from './shared-household-access.js';
 import { sharedNotifications, type SharedNotificationOptions } from './core/signin/shared-notifications.js';
 import { sharedAccount, sharedAccountFields, registerSharedAccount } from './core/signin/shared-account.js';
 import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
@@ -127,6 +128,8 @@ export function sharedRoot(options: {
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
+  const householdQueries=householdAccessQueries(db,now);
+  const outside=(request:Request)=>{const auth=credentials.authenticate(request);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
@@ -137,7 +140,7 @@ export function sharedRoot(options: {
   startupCleanups.push(notices.close);
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...householdQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, outside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
@@ -226,6 +229,7 @@ export function sharedRoot(options: {
     household: householdService(db, now),
     signin: sharedTokens(db, clock),
     account: sharedAccount(db, clock),
+    householdAccess: sharedHouseholdAccess(db, now),
     notifications: pushes,
     approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
@@ -237,6 +241,7 @@ export function sharedRoot(options: {
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
+  registerSharedHouseholdAccess(operations, db, services.householdAccess);
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
@@ -259,7 +264,7 @@ export function sharedRoot(options: {
   }, db).then(value => { meter = value; return value; });
   const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
-  const authenticate = credentials.authenticate;
+  const authenticate = outside;
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
