@@ -4,7 +4,7 @@
  * ("Count these 5 scheduled jobs as your work?"), the runtime a `principal-reset` ("Count this conversation as your work
  * from now on?"); the household owner's Allow has core read the approval back and post it, as him, to the piece that
  * applies it (the clock's `vouch-approved`, the runtime's `reset-approved`). Deny records no and asks nothing; a member
- * can't apply one; an ask that waits on it clears itself once it's answered.
+ * can't apply one. Current Inbox settlement is checked on the canonical service.
  *
  * The approvals piece is the t-1970 test's stub, widened to these kinds; the clock and the runtime are stubs recording
  * each action they're posted (and the caller) in $LOOM_HOME, and spending it as the real ones do: allowed, exact target.
@@ -285,19 +285,6 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
     const m = await applyOwnerApproval(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'sam', agents: ['art'] }, { ok: true, message: 'Allowed.' }, h);
     expect(m).toMatchObject({ ok: false, message: expect.stringMatching(/It wasn't applied: only the household owner says whose work a wake is/) });
     expect(acts()).toEqual([]);
-  });
-
-  it('an ask that waits on the approval clears itself once it\'s answered', async () => {
-    const art = agentDir(h, 'art');
-    const conv = recordTurn(art, 'art', { venue: 'wake', place: 'wake:w-000001', label: 'A check', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:runtime').conversation;
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'asked', needs_owner: { ask: 'Count these 5 scheduled jobs as your work?', why: 'They were set before loom kept whom each was for.',
-      if_yes: 'They fire as yours.', if_no: 'Nothing changes.', refs: ['a-0000beef'], waits_on: { approval: 'a-0000beef' } } });
-    const cookie = await login('jonathan');
-    const d = await inbox(cookie);
-    const ask = (x: Data) => (x.items as Data[]).find((i) => i.kind === 'alert' && i.source.id === 'loom');
-    expect(ask(d).approval.actions.map((b: Data) => b.label)).toEqual(['Allow', 'Deny']);
-    await press(cookie, d, 'allow', { id: 'a-0000beef' });
-    expect(ask(await inbox(cookie))).toBeUndefined();
   });
 
   it('only an allowed one is applied: a pending, denied or used one leaves the answer as it was', async () => {

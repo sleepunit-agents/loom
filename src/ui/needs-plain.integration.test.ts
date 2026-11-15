@@ -183,13 +183,10 @@ describe('a Needs you in plain words', () => {
     // And counted once: the Inbox's badge and the agent's.
     expect(d.chrome.shell.asks).toBe(1);
     expect(d.chrome.shell.agents.find((x: Data) => x.id === 'art').asks).toBe(1);
-    // Allow, as the sheet posts it: to the approvals piece. The ask clears itself at once, leaving a quiet FYI.
+    // The retained legacy card still sends Allow to the approvals piece.
     const allow = a.approval.actions[0];
     expect(await press(cookie, d, a.approval.source, allow.action, allow.fields)).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(join(h.home, 'approvals.json'), 'utf-8'))['a-1234abcd'].state).toBe('allowed');
-    const after = await inbox(cookie);
-    expect(alertOf(after)).toBeUndefined();
-    expect((after.items as Data[]).find((i) => i.kind === 'fyi' && i.text === ASK.ask)).toMatchObject({ attention: false, meta: 'Cleared itself: the approval was allowed' });
   });
 
   it('another agent\'s approval stays its own card: an ask can\'t take it under its words', async () => {
