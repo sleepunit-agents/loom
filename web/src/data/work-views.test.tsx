@@ -364,3 +364,10 @@ it.each(['ci','reviewer','author','agent','you'] as const)('offers a bound stand
  await act(async()=>buttons.find((button:{props:{children:unknown}})=>button.props.children==='Always for pond')!.props.onClick());
  expect(request).toHaveBeenCalledExactlyOnceWith('/api/approvals/always',expect.anything());expect(change.waitingOn).toBe(waitingOn);expect(card.state).toBe('pending');
 });
+it('shows private reported steps from the currently visible approval record and removes them when that approval is withdrawn from the query',async()=>{
+ fixture();feed.approvals.approvals=[{...feed.approvals.approvals[0],kind:'command',state:'used',member:'alice',what:'Private fixture'}];
+ feed.approvals.approvalRecord=[{seq:7,at:'2026-11-14T00:00:00Z',event:'use',approval:'a-one',agent:'art',note:'Reported step: PRIVATE STEP RESULT'}];
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));expect(words()).toContain('PRIVATE STEP RESULT');expect(words()).toContain('Current reported step');
+ feed.approvals.approvals=[];feed.approvals.approvalRecord=[];
+ await act(async()=>{tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));});expect(words()).not.toContain('PRIVATE STEP RESULT');
+});
