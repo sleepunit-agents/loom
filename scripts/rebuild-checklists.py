@@ -67,12 +67,15 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for n in nodes:
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  for app,text,contains in ui.get(f.stem,[]): add(text,'',{'kind':'ui','app':app,'contains':contains})
+ if f.stem=='tempo':
+  for check,text in [('held','An answer arriving while the agent is paused does not fire its trigger.'),('resumed','Resuming fires the held once-only answer trigger exactly once.'),('settled','Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.'),('cancelled','Cancelling a future trigger prevents delivery beyond its deadline.')]:add(text,'',{'kind':'action','action':'tempo'+check.capitalize()})
  if f.stem=='conversations':
   add('Sending in Comms persists the message after reload and creates one Inbox delivery item.','',{'kind':'action','action':'commsSend'})
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
  if f.stem=='secrets':add('The owner can change the household default from Ask to Never in Settings and it persists after reload.','',{'kind':'action','action':'secretDefault'})
  if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
+
  if f.stem=='memory':add('Create a provisional Knowledge fact, manually mark it due, verify it with Still true, then retain its words and Fresh state after reload.','',{'kind':'action','app':'Knowledge'})
  if f.stem=='people':
   add('Adding a household member through the normal built program persists that member.','',{'kind':'action','app':'Household setup'})
@@ -81,6 +84,11 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='signing-in':add('Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.','',{'kind':'action','app':'Your account'})
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
+ if f.stem=='desk':
+  for row in rows:
+   if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
+   if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
+   if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
  if f.stem=='data':
   for row in rows:
    if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
