@@ -93,3 +93,5 @@ export default function CommsApp({path:shellPath,go,visible=true}:{path?:string;
   reader={creating&&mine?<div className="grid gap-3 p-4"><h1>New thread</h1><label>Agent<select value={ownedAgent} onChange={e=>setAgent(e.target.value)}>{mine.agents.map(id=><option key={id}>{id}</option>)}</select></label>{ownedAgent?<Composer key={ownedAgent} member={mine.member} agent={ownedAgent} onOpened={navigate} enabled={status==='live'}/>:<Empty title="No agents available"/>}</div>:current?<ThreadReader key={`${current.id}/${current.member}/${current.agent}`} thread={current} go={go} onDeleted={()=>navigate()}/>:selected?<Empty title="This thread is no longer in view"/>:null}
   open={!!selected||creating} onBack={()=>navigate()} backLabel="Threads" blank={<Empty title="Open a thread" text="Choose a thread or start one with your agent."/>}/>
 }
+
+export { CommsView } from "../comms-view";

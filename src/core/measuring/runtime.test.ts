@@ -20,6 +20,7 @@ describe('committed Measuring runtime replacement', () => {
     await runtime.reload();
     runtime.run('request', 'tasks', () => 2);
     expect(rows).toHaveLength(1);
+    expect(rows[0].day).toBe('2026-11-14');
     let finish!: (value: number) => void;
     const pending = runtime.runAsync('request', 'tasks', () => new Promise<number>(resolve => {finish = resolve;}));
     settings = { ...settings, on: false };
