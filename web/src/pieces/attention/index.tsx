@@ -1,3 +1,4 @@
+import { TaskQuestionAnswer } from '../tasks/question-answer';
 import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { stamp } from './time';
@@ -144,6 +145,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   } : undefined;
   return <InboxView snapshot={{ status, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}
     selected={selected} select={select} detail={{ status, item: current }} actions={actions}
+    sourceCard={item => item.source === 'task' && item.waitsOnKind === 'task' ? <TaskQuestionAnswer key={item.id} item={item}/> : undefined}
     results={{ status, results: data?.results ?? [] }} dismissResult={live ? id => mutate('inbox.dismissResult', { id }) : undefined}
     navigation={{ folder, query: search, offset, hasNext: (data?.items.length ?? 0) > inboxPageSize,
       onFolder(id) { setFolder(id); setOffset(0); select(); }, onQuery(value) { setSearch(value); setOffset(0); },

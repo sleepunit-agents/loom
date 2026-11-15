@@ -24,6 +24,8 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(readFileSync(join(out,app.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
   if(title==='Approvals')expect(step.value.report.actions?.approvalRulesAndExpiry,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Comms')expect(step.value.report.actions?.approvalPreparedChanges,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
+  if(title==='Inbox')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
+  if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Approvals')expect(step.value.report.actions?.approvalDecisions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Changes')expect(step.value.report.actions?.workVisibility,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,before:'ask',after:'never',persistedAfterReload:true});
@@ -40,6 +42,14 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
+ it('measures desk launcher and tile controls',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk');
+  for(const name of ['deskLauncher','deskGeometry','deskLayout']){
+   const result=step.value.actions?.[name];expect(typeof result?.ok).toBe('boolean');
+   if(!result.ok)expect(result.error).toBeTruthy();
+   expect(readFileSync(join(out,result.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+  }
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;
@@ -51,7 +61,13 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    const tempo=measured.pages.find((page:{page:string})=>page.page==='tempo');
    const observed=tempo.promises.filter((entry:{probe?:{kind:string;action?:string}})=>entry.probe?.kind==='action'&&entry.probe.action?.startsWith('tempo'));expect(observed).toHaveLength(4);expect(observed.map((entry:{status:string})=>entry.status)).toEqual(['met','met','met','met']);
    for(const name of ['tempoHeld','tempoResumed','tempoSettled','tempoCancelled'])expect(report.actions[name]).toMatchObject({ok:true,screenshot:expect.any(String)});
-   expect(measured.counts['not checkable yet']).toBeGreaterThan(0);
+   for(const [name,count] of [['tasks',20],['approvals',20],['changes',17]] as const){
+    const measuredPage=measured.pages.find((page:{page:string})=>page.page===name);
+    expect(measuredPage,`Missing ${name} report`).toBeDefined();
+    expect(measuredPage.promises).toHaveLength(count);
+    const outstanding=measuredPage.promises.filter((promise:{status:string})=>promise.status!=='met');
+    expect(outstanding,`${name} promises lack complete behavioral evidence: ${JSON.stringify(outstanding)}`).toEqual([]);
+   }
    expect(measured.pages.every((page:{promises:unknown[]})=>page.promises.length>0)).toBe(true);
    expect(JSON.stringify(report)).not.toMatch(/AGE-SECRET-KEY-|\/login\/[a-zA-Z0-9_-]{24,}/);
   }finally{await steps?.return();if(out&&!process.env.LOOM_TEST_SHOTS)rmSync(out,{recursive:true,force:true});}

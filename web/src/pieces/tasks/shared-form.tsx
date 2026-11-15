@@ -12,6 +12,7 @@ export type TaskCommand =
   | { action: 'close'; id: string; reason: string }
   | { action: 'comment'; id: string; text: string }
   | { action: 'link' | 'unlink'; id: string; dependsOn: string; type: 'blocks' | 'parent-child' }
+  | { action: 'answer'; id: string; question: string; answer: 'yes' | 'no' | 'words'; text?: string }
   | { action: 'ask'; id: string; input: { to: { kind: 'member'; id: string }; ask: string; ifYes: string; ifNo: string; answers: 'yes-no' | 'words' } };
 export interface TaskFormProps {
   status: 'live' | 'loading' | 'denied' | 'unavailable';

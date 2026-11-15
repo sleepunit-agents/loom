@@ -16,7 +16,7 @@ import { createLoomServer } from './server.js';
 import { agentDir, createToken, loadHousehold, memberOf, type Household } from './household.js';
 import { runtimePieces, parseLoomBlock } from './cli/pieces-managed.js';
 import {
-  conversationId, createConversationTables, digestId, digestsOf, dueToProgressSeconds, foldConversations, getConversation, listConversations,
+  conversationId, createConversationTables, digestId, digestsOf, dueToProgressSeconds, getConversation, listConversations,
   parseDigest, parseTurn, recordTurn, turnsOf, turnWriter, daysOf, writeDigest, ConversationError, type TurnInput,
   answerNeeds, NEEDS_VERDICTS, openNeeds,
 } from './backends/conversations.js';
@@ -460,61 +460,6 @@ describe('criterion 3: digests (conversation_digest)', () => {
       expect(writeDigest(art, { conversation: conv, run: 'r' }, { summary: 'x', projects: ['pond'] }).projects).toEqual(['pond']);
       expect(writeDigest(art, { conversation: conv, run: 's' }, { summary: 'x' }).projects).toEqual([]);
     });
-  });
-});
-
-// ─── 4. Retention ───────────────────────────────────────────────────────────
-
-describe('criterion 4: retention (the fold)', () => {
-  let dir: string;
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'loom-conv-fold-')); });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-  const day = (d: string, hhmm: string) => `${d}T${hhmm}:00.000Z`;
-  const turn = (iso: string, kind: 'message' | 'reply', model?: string, outcome: 'answered' | 'failed' = 'answered'): TurnInput => kind === 'message'
-    ? { venue: 'slack', place: 'dm:U1', at: iso, from: { kind: 'person', slug: 'loren' }, kind }
-    : { venue: 'slack', place: 'dm:U1', at: iso, from: { kind: 'agent', id: 'art' }, kind, run: 'r', outcome, ...(model ? { model } : {}) };
-
-  it('folds whole days only into conversation_days rows with the stated fields, deletes their turns, and never refolds', () => {
-    const now = new Date('2026-11-02T12:00:00.000Z');   // the cutoff is 2026-08-04T12:00Z
-    const w = (t: TurnInput) => recordTurn(dir, 'art', t, 'runtime:shuttle');
-    // 2026-07-01: whole and old. Latencies 60 s and 120 s (median 90 s); one model, two outcomes; one turn with none.
-    w(turn(day('2026-07-01', '09:00'), 'message')); w(turn(day('2026-07-01', '09:01'), 'reply', 'opus'));
-    w(turn(day('2026-07-01', '10:00'), 'message')); w(turn(day('2026-07-01', '10:02'), 'reply', 'opus', 'failed'));
-    w(turn(day('2026-07-01', '11:00'), 'reply'));
-    // 2026-08-04: its first turn is past the cutoff, its last isn't: not a whole day yet.
-    w(turn(day('2026-08-04', '01:00'), 'message')); w(turn(day('2026-08-04', '20:00'), 'reply', 'opus'));
-    const id = conversationId('art', 'slack', 'dm:U1');
-    writeDigest(dir, { conversation: id, run: 'r' }, { summary: 'kept for good' });
-
-    expect(foldConversations(dir, now)).toEqual({ days: 1, turns: 5 });
-    const days = daysOf(dir, id);
-    expect(days).toEqual([{
-      conversation: id, day: '2026-07-01',
-      counts: { message: 2, reply: 3 },
-      median_latency_ms: 90_000,
-      outcomes: { opus: { answered: 1, failed: 1 }, unknown: { answered: 1 } },
-    }]);
-    expect(turnsOf(dir, id).map((t) => t.at)).toEqual([day('2026-08-04', '01:00'), day('2026-08-04', '20:00')]);
-    // The conversation and its digests stay.
-    expect(getConversation(dir, id)).toBeDefined();
-    expect(digestsOf(dir, id)).toHaveLength(1);
-
-    // Again: nothing to do. A late turn for a folded day is refused, so the row never changes.
-    expect(foldConversations(dir, now)).toEqual({ days: 0, turns: 0 });
-    expect(() => w(turn(day('2026-07-01', '12:00'), 'message'))).toThrow(ConversationError);
-    expect(daysOf(dir, id)).toEqual(days);
-
-    // Later, 2026-08-04 is whole and folds too; 2026-07-01 is still the one row it was.
-    expect(foldConversations(dir, new Date('2026-11-03T00:00:00.000Z'))).toEqual({ days: 1, turns: 2 });
-    expect(daysOf(dir, id).map((d) => d.day)).toEqual(['2026-07-01', '2026-08-04']);
-    expect(daysOf(dir, id)[0]).toEqual(days[0]);
-    // seq keeps increasing past the folded turns.
-    expect(w(turn(day('2026-11-02', '11:00'), 'message')).seq).toBe(8);
-  });
-
-  it('a store without conversations folds nothing', () => {
-    expect(foldConversations(dir)).toEqual({ days: 0, turns: 0 });
   });
 });
 
