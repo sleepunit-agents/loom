@@ -54,7 +54,12 @@ it.each(['session','token','expiry'] as const)('rechecks the exact cookie %s aft
   const pending = f.call(); await started;
   if (reason === 'session') f.root.writes.run(() => f.db.delete(sessions).where(eq(sessions.id, hash(cookie))).run());
   if (reason === 'token') f.root.writes.run(() => f.db.update(tokens).set({ revokedAt: new Date(f.clock.now()).toISOString() }).where(eq(tokens.fingerprint, hash(bearer))).run());
-  if (reason === 'expiry') f.clock.advance(30 * 86400000);
+  if (reason === 'expiry') {
+    // This fixture has no runtime work; stop periodic sweeps before its 30-day
+    // clock jump. The suspended HTTP preparation and exact expiry check remain.
+    f.root.services.runtime.close();
+    f.clock.advance(30 * 86400000);
+  }
   release(); expect((await pending).status).toBe(403);
   expect(f.db.select().from(tasks).get()?.title).toBe('Private fixture');
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
