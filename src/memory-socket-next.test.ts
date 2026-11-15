@@ -314,3 +314,29 @@ it('refreshes Activity expiry and household midnight on the shared GraphQL clock
     expect(JSON.stringify(current)).not.toContain('Leaves recent');expect(JSON.stringify(current)).not.toContain('Expires soon');
   } finally {writer.close();await f.close();}
 },2000);
+
+it('refreshes People contact staleness and evidence expiry on the shared GraphQL clock',async()=>{
+ const f=await setup(['127.0.0.1','127.0.0.2']),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
+ writer.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
+ try{
+  const now=f.clock.now(),people=new PeopleStore({dbPath:path,actor:'fiction'});
+  people.write({slug:'friend',where:{email:{value:'fiction@example.invalid',verified_at:new Date(now-14*86400000+1000).toISOString()}}});people.close();
+  writer.prepare("INSERT INTO memories VALUES('evidence','Fictional evidence','Private fictional words',?,NULL,'{\"person\":\"friend\"}',?,'user',0)").run(new Date(now).toISOString(),new Date(now+2000).toISOString());
+  const scheduled=vi.spyOn(f.clock,'at');touched(join(f.home,'agents/fiction'),'memory','evidence',f.clock);
+  await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1001,expect.any(Function)));scheduled.mockRestore();
+  const selection='{ memoryPerson(id:"fiction:friend") { fields { key state } evidence { title content } newer } }';
+  const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'person-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})));
+  const a=await f.open(),b=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+  const initial=await subscribe(a);await subscribe(b);expect(JSON.stringify(initial)).toContain('"state":"fresh"');expect(JSON.stringify(initial)).toContain('Private fictional words');
+  const frames:Message[]=[];a.on('message',raw=>frames.push(JSON.parse(String(raw))));
+  f.clock.advance(1000);await Promise.resolve();expect(frames).toEqual([]);
+  const stale=await message(b,()=>f.clock.advance(1));
+  expect(stale).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryPerson','fields',0,'state'],removed:false,value:'stale'}]}}}});
+  await vi.waitFor(()=>expect(frames).toHaveLength(1));expect(frames[0]).toEqual(stale);
+  const expired=await message(b,()=>f.clock.advance(999));
+  expect(expired).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryPerson','evidence',0],removed:true,value:null},{path:['memoryPerson','newer'],removed:false,value:0}])}}}});
+  await vi.waitFor(()=>expect(frames).toHaveLength(2));expect(frames[1]).toEqual(expired);
+  const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query:selection})});
+  expect(await response.json()).toMatchObject({data:{memoryPerson:{fields:[{key:'email',state:'stale'}],evidence:[],newer:0}}});
+ }finally{writer.close();await f.close();}
+},2000);
