@@ -154,7 +154,6 @@
   "src/transport/knowledge-http-server.integration.test.ts": 413,
   "src/ui/access-css.test.ts": 68,
   "src/ui/access-plain.test.ts": 5,
-  "src/ui/accessibility.integration.test.ts": 90250,
   "src/ui/activity-app.integration.test.ts": 38279,
   "src/ui/agent-at-work.integration.test.ts": 4579,
   "src/ui/agent-desk-hide.integration.test.ts": 56410,

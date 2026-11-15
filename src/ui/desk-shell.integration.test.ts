@@ -69,6 +69,22 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
    await expect.poll(()=>page.locator('html').getAttribute('data-contrast')).toBe('more');await expect.poll(()=>page.locator('html').getAttribute('data-ground')).toBe('wash');
    expect(await page.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
   }
+  // Accessibility choices belong to this shared Appearance control, rather
+  // than the retired Accessibility app. Follow reacts to each device live.
+  await set({motion:'follow',contrast:'follow'},'access-follow');
+  await b.emulateMedia({reducedMotion:'reduce',contrast:'more'});
+  await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('reduce');
+  await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('more');
+  await b.emulateMedia({reducedMotion:'no-preference',contrast:'no-preference'});
+  await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
+  await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('normal');
+  await set({motion:'on',contrast:'on'},'access-on');
+  for(const page of [a,b]){await expect.poll(()=>page.locator('html').getAttribute('data-motion')).toBe('reduce');await expect.poll(()=>page.locator('html').getAttribute('data-contrast')).toBe('more');}
+  await b.emulateMedia({reducedMotion:'reduce',contrast:'more'});
+  await set({motion:'off',contrast:'off'},'access-off');
+  await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
+  await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('normal');
+  await set({motion:'on',contrast:'on'},'access-restore');
   const painted=async(page:Page)=>page.locator('.desk-home-card .loom-pixel-face canvas').evaluateAll(nodes=>nodes.some(node=>{const canvas=node as HTMLCanvasElement,pixels=canvas.getContext('2d')?.getImageData(0,0,canvas.width,canvas.height).data;return pixels?.some((value,index)=>index%4===3&&value>0);}));
   for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
   await set({pixel:false},'pixel-off');for(const page of [a,b]){await expect.poll(()=>page.locator('.desk-home-card .loom-pixel-face').count()).toBe(0);await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);}
