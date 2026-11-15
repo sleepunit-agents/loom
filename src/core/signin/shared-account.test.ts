@@ -54,13 +54,15 @@ it('binds registration challenges to the exact fresh browser and rejects expired
  expect(f.db.select().from(passkeys).all()).toEqual([]);
 });
 it('serves only personal metadata and ends the selected browser and its notifications through shared commands',async()=>{
- const f=fixture();await f.add();
+ const f=fixture(),key=await f.add();
  const sam=(await f.read()).data.account,other=(await f.read('other')).data.account;
  expect(sam.member).toBe('sam');expect(sam.passkeys).toHaveLength(1);expect(sam.sessions).toHaveLength(1);expect(other.passkeys).toEqual([]);expect(other.sessions[0].device).toBe('other laptop');
  expect(JSON.stringify(sam)).not.toContain(hash(f.raw.sam));expect(JSON.stringify(sam)).not.toContain(hash(f.cookies.sam));
  const call=(name:string,input:unknown,member:'sam'|'other'='sam')=>f.post('/api/account/'+name,{input,id:name},member);
  expect((await call('removePasskey',{ref:sam.passkeys[0].ref},'other')).status).toBe(404);
  expect((await call('removePasskey',{ref:sam.passkeys[0].ref})).status).toBe(200);
+ key.counter=1;const challenge=(await(await f.post('/login/passkey/options')).json()).challenge,before=f.db.select().from(sessions).all();
+ expect((await f.post('/login/passkey',key.assertion(challenge))).status).toBe(401);expect(f.db.select().from(sessions).all()).toEqual(before);
  f.db.insert(notificationDevices).values({endpoint:'https://push.example/device',member:'sam',session:hash(f.cookies.sam),keys:'{}',device:'Laptop',createdAt:new Date(f.clock.now()).toISOString(),seenAt:new Date(f.clock.now()).toISOString()}).run();
  expect((await call('revokeSession',{ref:sam.sessions[0].ref},'other')).status).toBe(404);
  // Ending the calling browser commits successfully, then the response is denied
@@ -69,7 +71,9 @@ it('serves only personal metadata and ends the selected browser and its notifica
  expect(f.db.select().from(notificationDevices).all()).toEqual([]);expect(f.db.select().from(sessions).all()).toHaveLength(1);
 });
 it('makes one-time links from a current member browser without caller-selected identity',async()=>{
- const f=fixture();expect((await f.post('/api/signin/link',{member:'other'})).status).toBe(200);
+ const f=fixture(),response=await f.post('/api/signin/link',{member:'other'});expect(response.status).toBe(200);
+ const {value}=await response.json(),redeemed=await f.post(value.path),cookie=redeemed.headers.get('set-cookie')!.split(';')[0];expect(redeemed.status).toBe(303);
+ expect(await(await f.root.http.request(origin+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'sam'}});
 });
 
 it('refuses registration with missing or mismatched embedded credential public keys',async()=>{
