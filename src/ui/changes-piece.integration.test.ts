@@ -138,7 +138,10 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
     expect(await row(b).count()).toBe(0);
 
-    app.data.writes.run(()=>app.db.update(s.changes).set({checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you'}).where(eq(s.changes.id,changeId)).run());
+    app.data.writes.run(()=>{
+      app.db.update(s.changes).set({checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you'}).where(eq(s.changes.id,changeId)).run();
+      app.db.delete(s.changeChecks).where(eq(s.changeChecks.change,changeId)).run();
+    });
     const request=()=>app.data.writes.run(()=>app.data.services.approvals.request({kind:'merge',target:`${changeId}@${app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()!.headCommit}`,agent:'art',project:'pond',what:'Merge shared change',why:'Ready',askedFrom:'changes',actingFor:'unknown',ask:'Merge this exact commit?',ifYes:'Agent merges this head',ifNo:'Wait'})).value;
     const first=request();
     const owners=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
@@ -146,7 +149,10 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     const c=await owners.newPage(), d=await owners.newPage();
     for (const page of [c,d]) page.on('pageerror',error=>errors.push(error.message));
     await Promise.all([c.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`),d.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`)]);
-    for (const page of [c,d]) await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(1);
+    for (const page of [c,d]) {
+      await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(1);
+      expect(await page.getByText('Typecheck · failing',{exact:true}).count()).toBe(0);
+    }
     const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-changes-piece'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       await d.setViewportSize({ width, height: 900 });
