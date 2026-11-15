@@ -118,7 +118,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       const value = taskAskSchema.parse(input); person.parse(actor);
       return db.transaction(() => {
         if (row(id).status === 'closed') throw new Error('Closed work cannot ask a question');
-        mail.resolve('task', id, 'Question replaced');
+        mail.resolve('task', id, 'Question replaced', {kind:'person',id:value.to.id});
         const task = touch(id, { assigneeKind: value.to.kind, assignee: value.to.id, ask: value.ask, ifYes: value.ifYes, ifNo: value.ifNo, answers: value.answers, askedByKind: actor.kind, askedBy: actor.id });
         mail.send({ toKind: 'person', to: value.to.id, source: 'task', sourceId: `${id}:${randomUUID()}`,
           fromKind: actor.kind === 'member' ? 'person' : 'agent', fromId: actor.id,
