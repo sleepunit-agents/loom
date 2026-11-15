@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
-import { members, sessions, signinLinks, tokens } from '../data/schema.js';
+import { members, notificationDevices, sessions, signinLinks, tokens } from '../data/schema.js';
 import { sharedRoot } from '../../shared-root.js';
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -106,6 +106,8 @@ it('refuses cross-origin requests, cookies or a fingerprint as minting authority
 it('admits the newly issued cookie on the real shared socket and ends that same browser on logout', async () => {
   const f = fixture(), signed = await f.redeem(await f.link()), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
   const second = await f.redeem(await f.link()), secondCookie = second.headers.get('set-cookie')!.split(';', 1)[0];
+  const at = new Date(f.clock.now()).toISOString();
+  for (const [id, value] of [['first', cookie], ['second', secondCookie]]) f.db.insert(notificationDevices).values({ endpoint: 'https://push.invalid/' + id, member: 'sam', session: hash(value.slice('loom_ui='.length)), keys: 'fixture push keys', device: id, createdAt: at, seenAt: at }).run();
   const identity = await f.root.http.request('http://loom/auth/session', { headers: { cookie } });
   expect(await identity.json()).toEqual({ viewer: { kind: 'member', id: 'sam' } });
   const server = createServer(), detach = f.root.attach(server);
@@ -124,6 +126,7 @@ it('admits the newly issued cookie on the real shared socket and ends that same 
   const closed = once(ws, 'close');
   const out = await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } });
   expect(out.status).toBe(200); expect(out.headers.get('set-cookie')).toContain('Max-Age=0');
+  expect(f.db.select().from(notificationDevices).all()).toMatchObject([{ endpoint: 'https://push.invalid/second' }]);
   expect((await closed)[0]).toBe(4403);
   expect((await f.read(cookie)).status).toBe(401);
   expect((await f.read(secondCookie)).status).toBe(200);
@@ -183,4 +186,15 @@ it('applies headless recognition inside the trusted service even without an expl
   const path = f.root.writes.run(() => signin.makeLink(hash(credential))).value.path;
   const result = f.root.writes.run(() => signin.redeem(path.split('/').at(-1)!, 'Mozilla/5.0 HeadlessChrome/140.0')).value;
   expect(result.maxAge).toBe(21600); expect(f.db.select().from(sessions).get()).toMatchObject({ isAgent: true, device: 'HeadlessChrome' });
+});
+
+it.each(['origin', 'fetch-site'] as const)('rejects cross-origin logout via %s without ending the session or notification device', async header => {
+  const f = fixture(), response = await f.redeem(await f.link()), cookie = response.headers.get('set-cookie')!.split(';', 1)[0];
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(notificationDevices).values({ endpoint: 'https://push.invalid/keep', member: 'sam', session: hash(cookie.slice('loom_ui='.length)), keys: 'fixture push keys', device: 'Browser', createdAt: at, seenAt: at }).run();
+  const headers: Record<string, string> = { cookie, ...(header === 'origin' ? { origin: 'https://elsewhere.test' } : { 'sec-fetch-site': 'cross-site' }) };
+  const out = await f.root.http.request('http://loom/logout', { method: 'POST', headers });
+  expect(out.status).toBe(403); expect(out.headers.get('set-cookie')).toBeNull();
+  expect(f.db.select().from(sessions).all()).toHaveLength(1); expect(f.db.select().from(notificationDevices).all()).toHaveLength(1);
+  expect((await f.read(cookie)).status).toBe(200);
 });

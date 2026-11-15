@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
-import { members, sessions, signinLinks, tokens } from '../data/schema.js';
+import { members, notificationDevices, sessions, signinLinks, tokens } from '../data/schema.js';
 import { dataAuthentication } from '../data/authentication.js';
 import type { DataWrites } from '../data/writes.js';
 
@@ -34,13 +34,13 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
       db.insert(signinLinks).values({ id: fingerprint(code), token: id, label: current.label, expiresAt }).run();
       return { path: `/login/${code}`, expiresAt };
     },
-    redeem(code: string, device: string, isAgent = false) {
+    redeem(code: string, userAgent: string, isAgent = false) {
       if (!/^[0-9a-f]{64}$/.test(code)) throw new Error('Sign-in refused');
       return db.transaction(() => {
         const link = db.select().from(signinLinks).where(eq(signinLinks.id, fingerprint(code))).get();
         if (!link || Date.parse(link.expiresAt) <= clock.now()) throw new Error('Sign-in refused');
         const current = token(link.token), cookie = secret(), at = new Date(clock.now()).toISOString();
-        const browser = browserDevice(device), agent = isAgent || browser.isAgent;
+        const browser = browserDevice(userAgent), agent = isAgent || browser.isAgent;
         db.delete(signinLinks).where(eq(signinLinks.id, link.id)).run();
         db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: browser.device,
           via: 'link', isAgent: agent, issuedAt: at, seenAt: at, provedAt: at }).run();
@@ -93,7 +93,11 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   });
   routes.post('/logout', c => {
     const cookie = c.req.header('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('loom_ui='))?.slice(8);
-    if (cookie && /^[a-zA-Z0-9_-]{32,4096}$/.test(cookie)) write(() => options.db.delete(sessions).where(eq(sessions.id, fingerprint(cookie))).run());
+    if (cookie && /^[a-zA-Z0-9_-]{32,4096}$/.test(cookie)) write(() => {
+      const id = fingerprint(cookie);
+      options.db.delete(notificationDevices).where(eq(notificationDevices.session, id)).run();
+      options.db.delete(sessions).where(eq(sessions.id, id)).run();
+    });
     c.header('set-cookie', cookieHeader('', 0, c.req.url));
     return c.json({ ok: true });
   });
