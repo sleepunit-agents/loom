@@ -77,16 +77,19 @@ for (const output of ['not-json', JSON.stringify([{ ...windows[0], token: 'crede
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
   });
 }
+for (const mode of ['--account-signin', '--account-usage'] as const) {
 for (const patch of [
   { account: { ...identity, token: 'credential-secret' } },
   { account: { account: 'subscription', owner: 'member' } },
   { command: { ...command, shell: true } },
   { timeoutMs: 0 }, { timeoutMs: 1.5 }, { timeoutMs: 300_001 },
 ]) it('refuses malformed private command configuration before spawning', async () => {
-  const f = fixture('--account-signin'); f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, ...patch }));
+  const f = fixture(mode); f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, ...patch }));
   expect(await workerProgram(f.input)).toBe(1); expect(spawn).not.toHaveBeenCalled();
   expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.input.output).not.toHaveBeenCalled();
 });
+
+}
 
 for (const [output, code] of [['{"signedIn":false}', 0], ['not-json', 0], ['{"signedIn":true}', 7], ['{"signedIn":true,"token":"credential-secret"}', 0]] as const) {
   it('never acknowledges unsuccessful or invalid private sign-in through the executable program', async () => {
@@ -97,3 +100,13 @@ for (const [output, code] of [['{"signedIn":false}', 0], ['not-json', 0], ['{"si
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
   });
 }
+
+it('rejects valid quota output when the private command exits unsuccessfully', async () => {
+  const f = fixture('--account-usage'), result = workerProgram(f.input); await spawned(f);
+  f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 7, null);
+  expect(await result).toBe(1); expect(f.input.output).not.toHaveBeenCalled(); expect(spawn).toHaveBeenCalledOnce();
+});
+it('refuses a box field in a usage configuration', async () => {
+  const f = fixture('--account-usage'); f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, box: 'unexpected' }));
+  expect(await workerProgram(f.input)).toBe(1); expect(spawn).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
+});
