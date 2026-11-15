@@ -1,3 +1,4 @@
+import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
@@ -74,6 +75,7 @@ export function sharedRoot(options: {
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   comms?.install(operations);
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body);
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, options.approvedOperations, now),
