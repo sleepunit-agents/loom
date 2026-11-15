@@ -57,7 +57,7 @@ async function fixture(options:{unprepared?:boolean}={}){
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
 it('edits and restores bounded private versions through actual native commands and authorized GraphQL',async()=>{
- const f=await fixture(),id=(await f.call('remember',input,'history-make')).result.value.ids[0];
+ const f=await fixture(),id=(await f.call('remember',{...input,ttl:'1h'},'history-make')).result.value.ids[0];
  const history=async(token=raw.body)=>(await f.query(`{memoryHistory(id:"${id}"){id op replacedAt content}}`,token)).memoryHistory as {id:number;op:string;replacedAt:string;content:string}[];
  for(let i=0;i<12;i++)expect((await f.call('update',{id,content:`alpha PRIVATE_EDIT_${i}`},'edit-'+i)).status).toBe(200);
  const revisions=await history();expect(revisions).toHaveLength(10);expect(revisions[0]).toMatchObject({op:'update',content:'alpha PRIVATE_EDIT_10'});expect(revisions.at(-1)?.content).toBe('alpha PRIVATE_EDIT_1');
@@ -66,6 +66,10 @@ it('edits and restores bounded private versions through actual native commands a
  expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:'alpha PRIVATE_EDIT_10'}});
  const after=await history();expect(after).toHaveLength(10);expect(after[0]).toMatchObject({op:'revision-restore',content:'alpha PRIVATE_EDIT_11'});
  expect(await f.call('restoreRevision',{id,revision_id:revisions[0].id},'restore-version')).toEqual(restored);expect(await history()).toEqual(after);
+ const before=f.source.serialize();expect(await history()).toEqual(after);expect(f.source.serialize()).toEqual(before);
+ const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);
+ expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(await history()).toEqual(after);
+ expect((await f.call('archive',{id},'history-archive')).status).toBe(200);expect(await history()).toEqual(after);
  expect(await history(raw.member)).toEqual(after);
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await history(raw.member)).toEqual([]);
  for(const value of [words,title,'PRIVATE_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
@@ -155,7 +159,8 @@ it('forwards TTL, metadata, category and project filters and truncates eligible 
 it('leaves an existing unprepared source byte-for-byte unchanged through startup and refused commands',async()=>{
  const f=await fixture({unprepared:true});expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(await f.query('{memoryProject(id:"art:pond"){name}}')).toEqual({memoryProject:{name:'Fictional pond'}});
- expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
+ expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);
+ const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
 });
 it('recovers recall after shared receipt failure without adding heat again',async()=>{
