@@ -1,5 +1,6 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import type { DataDatabase } from './core/data/database.js';
 import type { Clock } from './core/clock.js';
 import type { DataWrites } from './core/data/writes.js';
@@ -25,6 +26,7 @@ export interface SharedTempoOptions {
   instructions?: TempoOptions['instructions'];
   changeRevision?: TempoOptions['changeRevision'];
   settings?: TempoOperationOptions['settings'];
+  mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
   chatMember?(viewer: Viewer): string | undefined;
   settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
@@ -46,11 +48,11 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       }),
       operation: options.operation ?? (() => { throw new Error('Unknown Tempo operation'); }),
     },
-    commands: { authorize: (viewer, access) => {
+    commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => {
       // Chat is the control surface. A current body may carry out its recorded
       // member's ordinary mailbox preference, without becoming that member.
       const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
-      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person
+      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).sourceAllowsItem({kind:'member',id:person},access.item.id)
         : access.action === 'settings' && access.who.kind === 'person' && access.who.id === person);
       return (tempoCommandAllowed(db, viewer, access) || delegated) &&
         (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who));
