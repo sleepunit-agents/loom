@@ -19,7 +19,7 @@ let tree: any;
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; feed.hook.mockClear(); });
 const text = () => JSON.stringify(tree.toJSON());
 function data(): SettingsData {
-  return { homeComms: { member: 'jonathan' }, household: [{ secretsDefault: 'ask' }], secrets: [{ name: 'API', description: 'Reads the forge', changedAt: '2026-11-14T12:00:00.000Z', changedBy: 'jonathan' }], secretGrants: [], secretRequests: [], secretRules: [], secretRuleAgents: [], secretUses: [], secretChanges: [] };
+  return { secretsReader: { id: 'jonathan', defaultAnswer: 'ask' }, secrets: [{ name: 'API', description: 'Reads the forge', changedAt: '2026-11-14T12:00:00.000Z', changedBy: 'jonathan' }], secretGrants: [], secretRequests: [], secretRules: [], secretRuleAgents: [], secretUses: [], secretChanges: [] };
 }
 async function draw(path = '/p/settings-preview', go = vi.fn()) {
   await act(async () => { const app = h(SettingsApp, { path, go }); if (tree) tree.update(app); else tree = create(app); });
@@ -38,8 +38,8 @@ it.each(['loading', 'offline', 'denied'] as const)('hides retained secret metada
 });
 it('requires the authenticated member from the same selection and discards the old reader after a principal change', async () => {
   const initial = data(); feed.query = { status: 'live', data: initial }; await draw('/p/settings-preview/item/secrets/API');
-  feed.query = { status: 'live', data: { ...initial, homeComms: null } }; await draw('/p/settings-preview/item/secrets/API'); expect(text()).not.toContain('Reads the forge');
-  feed.query = { status: 'live', data: { ...initial, homeComms: { member: 'other' }, secrets: [] } }; await draw('/p/settings-preview/item/secrets/API');
+  feed.query = { status: 'live', data: { ...initial, secretsReader: null } }; await draw('/p/settings-preview/item/secrets/API'); expect(text()).not.toContain('Reads the forge');
+  feed.query = { status: 'live', data: { ...initial, secretsReader: { id: 'other', defaultAnswer: 'ask' }, secrets: [] } }; await draw('/p/settings-preview/item/secrets/API');
   expect(text()).not.toContain('Reads the forge'); expect(text()).toContain('This item is no longer available');
 });
 it('handles malformed selection ids and never requests a value field', async () => {
