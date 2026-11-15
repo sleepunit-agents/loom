@@ -5,6 +5,13 @@ import {tempoSettingsProposals} from '../dist/core/tempo/proposal.js';
 export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
  const screenshot='action-approvalRulesAndExpiry.png',s=app.services,write=fn=>app.writes.run(fn).value;
  const check=(v,m)=>{if(!v)throw Error(m);};
+ const answerInTile=async(card,answer)=>{
+  await tile.getByRole('button',{name:'Go to Approvals',exact:true}).click();
+  await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(card.what,{exact:true})}).click();
+  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
+  await tile.getByRole('group',{name:'Answer approval',exact:true}).getByRole('button',{name:answer,exact:true}).click();const response=await pending;
+  check(response.ok()&&(await response.json()).ok===true,'Prepared tile answer refused');
+ };
  try{
   const base={kind:'command',target:'fictitious:inspection',what:'Fictitious expiring inspection',why:'Measure allowance expiry.',agent:'fern',askedFrom:'fictitious-expiry',actingFor:'alex',ask:'Allow a fictitious inspection?',ifYes:'Inspect.',ifNo:'Wait.',minutes:1};
   for(const minutes of [1,3]){
@@ -50,11 +57,12 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
   const words=await history.innerText();check(/\brequest\b/.test(words)&&/\ballow\b/.test(words)&&/\buse\b/.test(words)&&words.includes('Fern performed the fictitious inspection.'),'Browser permanent history omitted request/answer/use/report');
   const draft=write(()=>s.tasks.create({title:'Fictitious order draft',goal:'Discard an unused draft only on approval.',why:'Prove a prepared dangerous action.',owner:{kind:'household'}},{kind:'member',id:'alex'}));
   const deniedDraft=write(()=>s.approvals.request({agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,what:'Discard the fictitious order draft',why:'A fictitious prepared change.',ask:'Discard the fictitious order draft?',ifYes:'Loom cancels this draft.',ifNo:'Loom keeps the draft.'}));
-  await tile.getByRole('button',{name:'Go to Approvals',exact:true}).click();
-  await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(deniedDraft.what,{exact:true})}).click();
-  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-  await tile.getByRole('group',{name:'Answer approval',exact:true}).getByRole('button',{name:'Deny',exact:true}).click();const response=await pending;
-  check(response.ok()&&(await response.json()).ok===true&&s.approvals.get(deniedDraft.id).state==='denied'&&s.tasks.get(draft.id).status==='open','Deny changed the prepared draft or answered another card');
+  await answerInTile(deniedDraft,'Deny');
+  check(s.approvals.get(deniedDraft.id).state==='denied'&&s.tasks.get(draft.id).status==='open','Deny changed the prepared draft or answered another card');
+  const who={kind:'person',id:'alex'},before=s.tempo.volume.timings(who).settleSeconds;
+  const deniedSetting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},{agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',why:'Requested in the fictitious conversation.'}));
+  await answerInTile(deniedSetting,'Deny');check(s.approvals.get(deniedSetting.id).state==='denied'&&s.tempo.volume.timings(who).settleSeconds===before,'Deny changed a setting or answered another card');
+  example.deniedSettingApproval=deniedSetting.id;example.preparedSettingBefore=before;
   example.preparedDraft=draft.id;example.deniedDraftApproval=deniedDraft.id;
   await page.screenshot({path:join(out,screenshot),fullPage:true});return {approvalRulesAndExpiry:{ok:true,screenshot}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {approvalRulesAndExpiry:{ok:false,error:String(error),screenshot}};}
@@ -72,9 +80,8 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
    await activate(active.getByRole('button',{name:button,exact:true}));const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
   };
-  const before=s.tempo.volume.timings(who).settleSeconds;clock.advance(1);
-  const deniedSetting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},context));
-  await answer(deniedSetting,'Deny');check(s.tempo.volume.timings(who).settleSeconds===before,'Deny applied a proposed setting');clock.advance(1);
+  const before=s.tempo.volume.timings(who).settleSeconds;
+  check(before===example.preparedSettingBefore&&s.approvals.get(example.deniedSettingApproval).state==='denied','The tile setting Deny was not preserved before inline Allow');clock.advance(1);
   const setting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},context));
   const change=tile.getByRole('region',{name:'Tempo settings change',exact:true}).last();
   await change.getByRole('region',{name:'Before',exact:true}).getByText(`${before} seconds`,{exact:true}).waitFor({timeout:4000});
