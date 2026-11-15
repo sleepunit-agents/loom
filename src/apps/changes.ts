@@ -13,6 +13,12 @@ export type MergeRuleReader = (target: string, agent: string) => Rule | undefine
 export type PullRequestReader = (repository: string, now: number) => Promise<Change[]>;
 const order = ['you', 'agent', 'ci', 'reviewer', 'author', 'done'];
 
+function projectFor(db: DataDatabase, repository: string) {
+  const found = db.select().from(projectRepositories).all().filter(r => repoId(r.repository) === repoId(repository));
+  if (new Set(found.map(r => r.project)).size > 1) throw new Error('Repository belongs to more than one project');
+  return found[0]?.project ?? null;
+}
+
 /** Copy GitHub facts into the shared model. A reader performs the outside IO;
  * rendering and sorting read this cache only. Merge answers belong to Approvals,
  * and this module never merges a PR itself.
@@ -23,14 +29,9 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     if (!row) throw new Error('Change not found');
     return row;
   };
-  const projectFor = (repository: string) => {
-    const found = db.select().from(projectRepositories).all().filter(r => repoId(r.repository) === repoId(repository));
-    if (new Set(found.map(r => r.project)).size > 1) throw new Error('Repository belongs to more than one project');
-    return found[0]?.project ?? null;
-  };
   const store = (raw: Change) => {
     const c = changeSchema.parse(raw), repository = repoId(c.repo).slice(7);
-    const project = projectFor(repository);
+    const project = projectFor(db, repository);
     // Attribution comes from the household's GitHub account rows, never a branch prefix.
     const accounts = db.select().from(agentAccounts).where(and(eq(agentAccounts.service, 'github'), sql`lower(${agentAccounts.login}) = ${c.author.login.toLowerCase()}`)).all();
     if (new Set(accounts.map(a => a.agent)).size > 1) throw new Error('GitHub login belongs to more than one agent');
@@ -81,7 +82,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
         const repositories = [...new Set(db.select().from(projectRepositories).all().map(r => repoId(r.repository).slice(7)))];
         const rows: Change[] = [];
         for (const repository of repositories) {
-          projectFor(repository);
+          projectFor(db, repository);
           for (const c of await read(repository, Date.parse(now()))) {
             if (repoId(c.repo).slice(7) !== repository) throw new Error('Reader returned another repository');
             rows.push(c);
@@ -98,4 +99,18 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
       }
     },
   };
+}
+
+/** Trusted repository-label refresh. The caller owns the enclosing DataWrites
+ * transaction and current write authority. No GitHub facts or timestamps change.
+ * Returning IDs lets that caller report affected Changes without another feed. */
+export function reprojectChanges(db: DataDatabase): string[] {
+  return db.transaction(() => {
+    // Validate every current mapping before changing any cached label.
+    const updates = db.select({ id: changes.id, repository: changes.repository, project: changes.project }).from(changes).all()
+      .map(row => ({ ...row, nextProject: projectFor(db, row.repository) }))
+      .filter(row => row.project !== row.nextProject);
+    for (const row of updates) db.update(changes).set({ project: row.nextProject }).where(eq(changes.id, row.id)).run();
+    return updates.map(row => row.id);
+  });
 }
