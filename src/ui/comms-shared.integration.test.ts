@@ -39,6 +39,11 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     await expect.poll(() => a.getByRole('textbox',{name:'Message art',exact:true}).count()).toBe(1);
     await b.goto(`${url}/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`);
     await a.getByRole('textbox',{name:'Message art',exact:true}).fill('PRIVATE PERSON MESSAGE');
+    // A reconnect/remount must retain the unsent device draft without sending it.
+    expect(db.select().from(messages).all()).toHaveLength(0);
+    await a.reload();
+    await expect.poll(() => a.getByRole('textbox',{name:'Message art',exact:true}).inputValue()).toBe('PRIVATE PERSON MESSAGE');
+    expect(db.select().from(messages).all()).toHaveLength(0);
     await a.getByRole('button',{name:'Send',exact:true}).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('PRIVATE PERSON MESSAGE',{exact:true}).count()).toBe(1);
     await composition.services.comms!.send({thread:thread.id,kind:'reply',sender:'art',words:'PRIVATE AGENT REPLY'}); composition.changed();

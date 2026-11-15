@@ -18,13 +18,17 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(report.inventory).toEqual(titles);
   expect(report.clock).toMatchObject({householdZone:'America/Chicago',browserZone:'Asia/Tokyo',title:expect.stringMatching(/, America\/Chicago time$/)});
  });
+ it('measures encrypted private-word expiry on the program clock',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
+  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
+ });
  for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase).toBe('app');const app=step.value.row;
   expect(app.title).toBe(title);expect(app.opened||!!app.error).toBe(true);
   expect(app.text.trim().length).toBeGreaterThan(0);
   expect(Array.isArray(app.consoleErrors)).toBe(true);expect(Array.isArray(app.live.frames)).toBe(true);
   expect(readFileSync(join(out,app.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
-  if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true});
+  if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true});
   if(title==='Inbox')for(const name of ['inboxDecisions','inboxHistory']){const result=step.value.report.actions?.[name];expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
   if(title==='Inbox')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
@@ -35,12 +39,14 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Comms')expect(step.value.report.actions?.changeInline,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Tasks')for(const name of ['taskReady','taskLifecycle','taskStructure','taskComments'])expect(step.value.report.actions?.[name],JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Bridges')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,discordChannel:true,slackPerson:true,persistedAfterReload:true});
+  if(title==='People')expect(step.value.report.actions?.commsSend,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true,persistedAfterReload:true,inboxCopies:1});
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
+  if(title==='Comms'){const result=step.value.report.actions?.conversationRecords;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
   if(['Your account','Household setup','Project sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Knowledge')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
   if(title==='Tempo'){expect(app.error).toBeUndefined();expect(app.actions).toMatchObject({held:{ok:true},resumed:{ok:true},settled:{ok:true},cancelled:{ok:true}});for(const name of ['held','resumed','settled','cancelled'])expect(readFileSync(join(out,app.actions[name].screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));}
  });
- it('sends and answers through the real Comms and Inbox controls',{retry:0,timeout:20_000},async()=>{
+ it('answers in Inbox and shows the answer in Comms',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
@@ -59,6 +65,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(step.value.actions.dataSharingSQL.statements.length).toBeGreaterThan(0);
   for(const name of ['dataDoor','dataSelectionSQL','dataSharingSQL','dataTaskPatches','dataInboxChange']){const result=step.value.actions?.[name];expect(result?.inconclusive||typeof result?.ok==='boolean').toBe(true);if(result.ok===false)expect(result.error??result.reason).toBeTruthy();}
 
+
+ });
+ it('checks owner and member conversation privacy through normal browser sign-in',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('visibility');
+  for(const name of ['conversationLabels','conversationVisibility','commsPrivacy','inboxVisibility','inboxRecipients'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,isolation:{http:'blocked',websocket:'blocked'},cleanup:{restored:true,contextClosed:true,credentialAbsent:true}});
  });
  it('follows an Inbox approval to its exact source and resolves the item',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('approval-source');expect(step.value.actions.approvalInbox,JSON.stringify(step.value.actions.approvalInbox)).toMatchObject({ok:true});

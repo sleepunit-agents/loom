@@ -26,7 +26,7 @@ import { MIGRATIONS } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
   checkEnvelope, slugError, renderWhereLine, oneLine, byName, mergeLevel, withoutNulls, stampWhere, whereCounts,
-  hasTable, RESERVED_KEYS, isReserved, type CardRowBase, type RevisionMeta, type RevisionOp,
+  hasTable, RESERVED_KEYS, isReserved, type CardRowBase, type RevisionMeta, type RevisionOp, type CardConnection,
 } from './cards.js';
 
 export { SLUG_RE, RESERVED_KEYS, fieldState, type FieldState, type RevisionOp } from './cards.js';
@@ -355,6 +355,7 @@ function parseRow(raw: RawRow): PersonRow {
 
 export class PeopleStore {
   private db: Database;
+  private readonly ownsDatabase: boolean;
   private readonly table: CardTable<RawRow>;
   private readonly now: () => number;
   /** False on a read-only store whose tables do not exist yet. */
@@ -367,27 +368,33 @@ export class PeopleStore {
   /** Whether this store has the person_merges table (an old read-only store may not): no table, no redirects. */
   private readonly holdsMerges: boolean;
 
-  constructor(config: PeopleStoreConfig) {
+  constructor(config: PeopleStoreConfig | CardConnection) {
     this.now = config.now ?? Date.now;
-    this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
-    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    if (!config.readonly) {
-      this.db.pragma('journal_mode = WAL');
-      // Only this feature's migration: the people tables do not depend on the
-      // memories schema, and a raw store must not half-run the others.
-      for (const id of PEOPLE_MIGRATIONS) {
-        const m = MIGRATIONS.find((x) => x.id === id)!;
-        if (m.pending(this.db)) m.run(this.db);
+    this.ownsDatabase = !('database' in config);
+    if ('database' in config) {
+      if (!config.database.inTransaction) throw Error('Borrowed person writer requires a source transaction');
+      this.db = config.database;
+    } else {
+      this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
+      this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
+      if (!config.readonly) {
+        this.db.pragma('journal_mode = WAL');
+        // Only this feature's migration: the people tables do not depend on the
+        // memories schema, and a raw store must not half-run the others.
+        for (const id of PEOPLE_MIGRATIONS) {
+          const m = MIGRATIONS.find((x) => x.id === id)!;
+          if (m.pending(this.db)) m.run(this.db);
+        }
       }
     }
     this.holdsPeople = hasTable(this.db, 'people');
     this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
     this.holdsMerges = hasTable(this.db, 'person_merges');
-    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, slug => touched(dirname(config.dbPath), 'person', slug));
+    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, 'dbPath' in config ? slug => touched(dirname(config.dbPath), 'person', slug) : undefined, !this.ownsDatabase);
   }
 
   close(): void {
-    this.db.close();
+    if(this.ownsDatabase)this.db.close();
   }
 
   /** The merge that left `slug` a redirect (person_merge), or null. */
