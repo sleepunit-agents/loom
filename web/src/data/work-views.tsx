@@ -5,6 +5,7 @@ import Approvals, { ApprovalCard, type ApprovalActions } from '../pieces/approva
 import Changes, { ChangeCard, type ChangeActions } from '../pieces/change-view';
 import { useDataQuery } from './graphql';
 import { refreshChanges } from './work-refresh';
+import { sendApprovalRule } from './work-rule';
 import { sendWorkAnswer } from './work-answer';
 import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
@@ -17,7 +18,7 @@ function useWorkAccess() {
     refresh:snapshot.status === 'live' && snapshot.data?.workChangesRefresh === true};
 }
 function ownerApprovalActions(owner: boolean): ApprovalActions | undefined {
-  return owner ? {allow:id=>sendWorkAnswer({piece:'approvals',id,answer:'allow'}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
+  return owner ? {setRule:sendApprovalRule,allow:id=>sendWorkAnswer({piece:'approvals',id,answer:'allow'}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
 }
 
 // The root may supply household time. The browser's own timezone is a display
