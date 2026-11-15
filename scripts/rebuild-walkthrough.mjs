@@ -23,6 +23,7 @@ import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
 
@@ -147,9 +148,11 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;}})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
-  Object.assign(report.actions,await deskActions({page,app,out,inventory:report.inventory}));
+  Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
 
   save();yield {phase:'desk',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await appearanceActions({page,app,out}));
+  save();yield {phase:'appearance',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
 
