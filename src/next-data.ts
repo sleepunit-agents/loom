@@ -15,8 +15,8 @@ import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true) {
-  const resolve = dataAuthentication(db, () => clock.now());
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>) {
+  const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
     if (!admitted()) return;
     const auth = resolve(request);
