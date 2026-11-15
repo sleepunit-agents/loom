@@ -64,7 +64,7 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
-  registerSharedAccountReports(operations, db, now, credentials.runner);
+  const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   const roles = () => options.modelRoles?.() ?? [];
   let tempo!: ReturnType<typeof installSharedTempo>;
   const jobEnded = (id: string) => {
@@ -178,6 +178,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      accountReports.close();
       runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
