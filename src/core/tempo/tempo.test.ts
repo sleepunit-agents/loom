@@ -6,7 +6,6 @@ import { createDataSchema } from '../data/database.js';
 import { agents, approvals, conversations, inbox, jobs, members, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
 import { createTempo } from './tempo.js';
-import { Conversations } from '../conversations/index.js';
 import { tempoSettingsService } from './settings.js';
 
 it('publishes committed dim and mute expiry to subscriptions without an unrelated trigger or inbox write', () => {
