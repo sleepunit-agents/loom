@@ -43,9 +43,16 @@ action_promises={('tasks','Lets a person or an agent claim work, comment on it a
 out=ROOT/'docs/rebuild-checklists';out.mkdir(exist_ok=True)
 for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  p=Parser();p.feed(f.read_text());nodes=list(p.root.all());rows=[];seen=set()
+ source_hash=hashlib.sha256(f.read_bytes()).hexdigest()
+ previous_path=out/(f.stem+'.json')
+ previous=json.loads(previous_path.read_text()) if previous_path.exists() else {}
+ # Bind evidence to unchanged source text and page bytes, never a shifting id.
+ bindings={(row['promise'],row['source']):row['probe'] for row in previous.get('promises',[]) if 'probe' in row} if previous.get('sourceSha256')==source_hash else {}
  def add(text,section,probe=None):
   if not text or text in seen:return
+  source=f'docs/how-it-works/site/{f.name}'+('#'+section if section else '')
   if probe is None and (f.stem,text) in action_promises: probe={'kind':'action','action':action_promises[(f.stem,text)]}
+  if probe is None:probe=bindings.get((text,source))
   seen.add(text);rows.append({'id':f.stem+'-'+str(len(rows)+1).zfill(3),'promise':text,'source':f'docs/how-it-works/site/{f.name}'+('#'+section if section else ''),**({'probe':probe} if probe else {})})
  for n in nodes:
   if n.tag=='li' and n.parent and (n.parent.cls('does') or n.parent.cls('see') or n.parent.cls('rules') or n.parent.cls('facts') or n.parent.cls('plumb')):
@@ -87,6 +94,6 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
- obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':hashlib.sha256(f.read_bytes()).hexdigest(),'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
+ obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':source_hash,'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  (out/(f.stem+'.json')).write_text(json.dumps(obj,indent=2,ensure_ascii=False)+'\n')
  print(f.stem,len(rows))
