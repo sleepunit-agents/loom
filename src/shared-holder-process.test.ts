@@ -23,3 +23,18 @@ it('retires the original owner on an unexpected post-ready exit and refuses all 
  const starting=startSharedHolder('/private/home/secret-holder',clock);child.send({op:'ready',key:Buffer.alloc(32,3)},()=>{});const owner=await starting;
  parent.emit('close',1,null);await expect(owner.source.read('TOKEN')).rejects.toThrow('unavailable');await expect(owner.close()).rejects.toThrow('unavailable');expect(owner.fingerprintKey.every(byte=>byte===0)).toBe(true);expect(fork).toHaveBeenCalledOnce();
 });
+
+it.each(['timeout','malformed'] as const)('kills the original post-ready child on %s before another owner close is requested',async reason=>{
+ const {parent,child}=holderChannelPair(),clock=new FakeClock(),kill=vi.fn(()=>true);Object.assign(parent,{kill});vi.mocked(fork).mockReturnValue(parent as unknown as ReturnType<typeof fork>);
+ const starting=startSharedHolder('/private/home/secret-holder',clock);child.send({op:'ready',key:Buffer.alloc(32,3)},()=>{});const owner=await starting;
+ if(reason==='malformed')child.on('message',(raw:{seq:number})=>{child.send({op:'result',seq:raw.seq,ok:true,value:false},()=>{});});
+ const read=owner.source.read('TOKEN'),refused=expect(read).rejects.toThrow('unavailable');if(reason==='timeout')clock.advance(5000);await refused;expect(kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');expect(parent.connected).toBe(true);expect(owner.fingerprintKey.some(byte=>byte!==0)).toBe(true);
+ let settled=false;const closing=owner.close().finally(()=>{settled=true;}),failed=expect(closing).rejects.toThrow('unavailable');await Promise.resolve();expect(settled).toBe(false);parent.emit('close',null,'SIGKILL');await failed;expect(owner.fingerprintKey.every(byte=>byte===0)).toBe(true);expect(fork).toHaveBeenCalledOnce();
+});
+it('kills an acknowledged child at the original five-second deadline and still joins OS close before erasing its key',async()=>{
+ const {parent,child}=holderChannelPair(),clock=new FakeClock(),kill=vi.fn(()=>true);Object.assign(parent,{kill});vi.mocked(fork).mockReturnValue(parent as unknown as ReturnType<typeof fork>);
+ const starting=startSharedHolder('/private/home/secret-holder',clock);child.send({op:'ready',key:Buffer.alloc(32,3)},()=>{});const owner=await starting;let acknowledge!:()=>void;const acknowledged=new Promise<void>(resolve=>{acknowledge=resolve;});
+ child.on('message',(raw:{seq:number})=>child.send({op:'result',seq:raw.seq,ok:true,value:null},()=>acknowledge()));
+ let settled=false;const closing=owner.close().finally(()=>{settled=true;}),refused=expect(closing).rejects.toThrow('unavailable');await acknowledged;clock.advance(4999);expect(kill).not.toHaveBeenCalled();expect(settled).toBe(false);expect(owner.fingerprintKey.some(byte=>byte!==0)).toBe(true);
+ clock.advance(1);expect(kill).toHaveBeenCalledExactlyOnceWith('SIGKILL');expect(parent.connected).toBe(true);expect(settled).toBe(false);expect(owner.fingerprintKey.some(byte=>byte!==0)).toBe(true);child.disconnect();parent.emit('close',null,'SIGKILL');await refused;expect(owner.fingerprintKey.every(byte=>byte===0)).toBe(true);expect(fork).toHaveBeenCalledOnce();
+});

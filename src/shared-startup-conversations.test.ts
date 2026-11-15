@@ -13,8 +13,8 @@ it('normal startup carries a private conversation through the one Inbox and actu
  const clock=new FakeClock(Date.parse('2026-11-15T12:00:00Z')),body='fictional-body-token-'.repeat(4);
  const p=await sharedUiProgram({clock,seed(db,now){
   db.insert(s.members).values([{id:'alice',role:'owner',joinedAt:now()},{id:'bob',role:'member',joinedAt:now()}]).run();
-  db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
-  db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();
+  db.insert(s.agents).values(['art','mark'].map(id=>({id,about:'',markBg:'',markFg:'',faceShape:'pebble' as const,faceEyes:'dot' as const}))).run();
+  db.insert(s.memberAgents).values(['art','mark'].map(agent=>({member:'alice',agent}))).run();
  }});
  let sdk:ReturnType<typeof bodyConversationClient>|undefined;
  try{
@@ -44,6 +44,10 @@ it('normal startup carries a private conversation through the one Inbox and actu
   const turn=await sdk.turn({kind:'reply',model:'fixture',outcome:'answered'});
   await sdk.finding({turnSeq:turn.seq,measure:'Fictional quality',score:4,text:'Useful reply'});
   const query=await fetch(p.url+'/graphql',{method:'POST',headers:{cookie:signedCookie,origin:p.url,'content-type':'application/json'},body:JSON.stringify({query:'{findings{turnSeq score text}}'})});expect(await query.json()).toEqual({data:{findings:[{turnSeq:turn.seq,score:4,text:'Useful reply'}]}});
+  const handed=await fetch(p.url+'/api/conversation/handoff',{method:'POST',headers:{authorization:'Bearer '+body,origin:p.url,'content-type':'application/json'},body:JSON.stringify({id:'startup-handoff',input:{agent:'mark',clientId:'first',label:'Fictional comparison',words:'PRIVATE STARTUP HANDOFF'}})});expect(handed.status).toBe(200);
+  const child=z.object({value:z.object({conversation:z.string(),item:z.string()})}).parse(await handed.json()).value;
+  expect(p.db.select().from(s.conversations).where(eq(s.conversations.id,child.conversation)).get()).toMatchObject({venue:'handoff',place:'job',agent:'mark',member:'alice',project:null});
+  expect(p.db.select().from(s.inbox).where(eq(s.inbox.id,child.item)).get()).toMatchObject({source:'handoff',fromKind:'agent',fromId:'art',toKind:'agent',to:'mark',conversation:child.conversation});
   for(const table of [s.inbox,s.jobs,s.operationResults,s.messages,s.conversations,s.turns,s.findings])expect(JSON.stringify(p.db.select().from(table).all())).not.toContain('PRIVATE');
   const pending=z.object({item:z.string()}).parse(await call('comms/send',{thread:opened.thread,clientId:'revoked-pending',words:'PRIVATE PENDING INPUT'}));
   p.composition.writes.run(()=>p.db.delete(s.memberAgents).run());

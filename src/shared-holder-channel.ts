@@ -93,7 +93,10 @@ export function sharedHolderClient(channel:HolderChannel,clock:Clock){
  let seq=0,stopped=false,retiring=false;let resolve!:(key:Uint8Array)=>void,reject!:(error:Error)=>void;
  const ready=new Promise<Uint8Array>((yes,no)=>{resolve=yes;reject=no;});void ready.catch(()=>{});
  const pending=new Map<number,{op:Command['op'];yes:(value:any)=>void;no:(error:Error)=>void;cancel:()=>void}>();
- const stop=()=>{if(stopped)return;stopped=true;cancelReady();reject(failed());for(const item of pending.values()){item.cancel();item.no(failed());}pending.clear();detach();try{if(channel.connected)channel.disconnect();}catch{}};
+ const discard=(value?:unknown)=>erase(value);
+ const detachDiscard=()=>{channel.off('message',discard);channel.off('disconnect',detachDiscard);channel.off('error',detachDiscard);};
+ const retire=({fault}:{fault:boolean})=>{if(stopped)return;stopped=true;cancelReady();reject(failed());for(const item of pending.values()){item.cancel();item.no(failed());}pending.clear();detach();try{if(channel.connected){if(fault)channel.disconnect();else{channel.on('message',discard);channel.on('disconnect',detachDiscard);channel.on('error',detachDiscard);}}}catch{}};
+ const stop=()=>retire({fault:true});
  const detach=()=>{channel.off('message',message);channel.off('disconnect',stop);channel.off('error',stop);};
  let welcomed=false;
  const message=(raw:unknown)=>{
@@ -127,6 +130,10 @@ export function sharedHolderClient(channel:HolderChannel,clock:Clock){
  };
  let closing:Promise<void>|undefined;
  return {ready,holder,source:{read:(name:string)=>call({op:'read',name}),generation:():Promise<string>=>call({op:'generation'})},stop,
-  close(){retiring=true;return closing??=(async()=>{try{if(welcomed&&!stopped)await call({op:'close'});}finally{stop();}})();},
+  close(){retiring=true;return closing??=(async()=>{let acknowledged=false;try{if(welcomed&&!stopped){await call({op:'close'});acknowledged=true;}}finally{
+   // The child closes its channel after the reply. Active parent disconnect
+   // can suppress ChildProcess.close on Node24; retire IO without racing EOF.
+   retire({fault:!acknowledged});
+  }})();},
  };
 }

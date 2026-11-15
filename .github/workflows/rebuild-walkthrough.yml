@@ -37,6 +37,7 @@ jobs:
           nice -n 19 npx vitest run src/ui/rebuild-walkthrough.integration.test.ts --maxWorkers=1
           test -s "$LOOM_TEST_SHOTS/report.json"
           LOOM_DESK_EVIDENCE=1 nice -n 19 npx vitest run src/ui/account-next.integration.test.ts --maxWorkers=1
+          LOOM_PROGRAM_EVIDENCE=1 nice -n 19 npx vitest run src/ui/programme-home.integration.test.ts --maxWorkers=1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
