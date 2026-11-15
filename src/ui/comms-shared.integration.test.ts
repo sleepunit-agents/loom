@@ -12,13 +12,13 @@ import { generateX25519Identity } from 'age-encryption';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { dataAuthentication } from '../core/data/authentication.js';
-import { members, memberAgents, agents, messages, inbox, operationResults, threads } from '../core/data/schema.js';
+import { members, memberAgents, agents, messages, inbox, operationResults, threads, boxes, jobs, conversations, tokens } from '../core/data/schema.js';
 import { wordsKey } from '../pieces/comms/crypto.js';
 import { sharedRoot } from '../shared-root.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, sends, receives and answers inline through actual sharedRoot across windows', async () => {
+it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, sends and answers messages and Tempo settings inline across windows', async () => {
   const client = new Database(':memory:'), clock = new FakeClock(Date.now());
   const now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   db.insert(members).values({ id: 'alice', role: 'member', joinedAt: now() }).run();
@@ -85,8 +85,27 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
       await b.setViewportSize({width:390,height:844});
       await b.screenshot({path:join(process.env.LOOM_SHOTS,'comms-shared-phone.png'),fullPage:true});
     }
+    // Settings proposals use the actual bound body in this open chat.
+    const bodyToken='comms-browser-settings-body-'.repeat(4);
+    composition.writes.run(()=>{
+      db.insert(boxes).values({id:'browser-box',name:'Fixture box',owner:'alice',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
+      db.insert(jobs).values({id:'browser-body',box:'browser-box',agent:'art',conversation:thread.conversation,member:'alice',title:'Settings body',state:'running',brief:'',model:'fixture',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+      db.update(conversations).set({job:'browser-body'}).where(eq(conversations.id,thread.conversation)).run();
+      db.insert(tokens).values({fingerprint:hash(bodyToken),label:'Fixture body',kind:'agent',agent:'art',job:'browser-body',createdAt:now()}).run();
+    });
+    for(const [allow,seconds] of [[true,60],[false,120]] as const){
+     const proposal=await context.request.post(url+'/api/tempo/proposeSettings',{headers:{authorization:'Bearer '+bodyToken},data:{id:'timing-'+seconds,input:{who:{kind:'person',id:'alice'},patch:{settleSeconds:seconds}}}});expect(proposal.status()).toBe(200);
+     const card=a.getByRole('article',{name:'Inbox item',exact:true}).filter({has:a.getByText(seconds+' seconds',{exact:true})});
+     await expect.poll(()=>card.count()).toBe(1);
+     expect(await card.getByRole('heading',{name:'Before',exact:true}).count()).toBe(1);expect(await card.getByRole('heading',{name:'After',exact:true}).count()).toBe(1);
+     await card.getByRole('button',{name:allow?'Allow':'Deny',exact:true}).click();
+     await expect.poll(()=>card.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
+     expect(composition.services.tempo.volume.timings({kind:'person',id:'alice'}).settleSeconds).toBe(60);
+    }
+    await expect.poll(()=>a.getByRole('region',{name:'Tempo settings change',exact:true}).count()).toBe(2);
     composition.writes.run(() => client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(now(),hash(token)));
     for (const page of [a,b]) for (const words of ['PRIVATE PUMP QUESTION','PRIVATE PERSON MESSAGE','PRIVATE AGENT REPLY']) await expect.poll(() => page.getByText(words,{exact:true}).count()).toBe(0);
+    await expect.poll(()=>a.getByRole('region',{name:'Tempo settings change',exact:true}).count()).toBe(0);
   } finally {
     if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); await browser?.close(); console.info('Proof: closing root'); detach(); await composition.close(); console.info('Proof: closing listener'); await new Promise<void>(ok => server.close(() => ok())); client.close();
   }

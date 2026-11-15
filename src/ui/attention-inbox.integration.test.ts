@@ -18,7 +18,7 @@ import { sharedRoot } from '../shared-root.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads and answers through actual sharedRoot across windows, then withdraws revoked words', async () => {
+it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads, sets recipient volume and answers across windows, then withdraws revoked words', async () => {
   const client = new Database(':memory:'), clock = new FakeClock(Date.now());
   const now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   db.insert(members).values({ id: 'alice', role: 'member', joinedAt: now() }).run();
@@ -58,6 +58,17 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads an
     await Promise.all([a,b].map(page => page.goto(`${url}/p/inbox-preview/ask/${encodeURIComponent(question.inboxItem!)}`)));
     for (const page of [a,b]) await expect.poll(() => page.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).count()).toBe(1); console.info('Inbox: private question visible');
     await expect.poll(() => client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:1});
+    // Recipient volume uses this already-open Inbox item, before answering it.
+    await a.getByRole('button',{name:'Dim',exact:true}).click();
+    await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({volume:'dim'});
+    await expect.poll(()=>a.getByRole('button',{name:'Dim',exact:true}).isDisabled()).toBe(true);
+    await a.getByRole('button',{name:'Mute',exact:true}).click();
+    await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({volume:'mute'});
+    await expect.poll(()=>a.getByRole('button',{name:'Mute',exact:true}).isDisabled()).toBe(true);
+    expect(client.prepare('SELECT quiet_until AS until FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({until:new Date(clock.now()+7*86400000).toISOString()});
+    expect(await a.getByText(/returns to full/).count()).toBe(1);
+    await a.getByRole('button',{name:'Full',exact:true}).click();
+    await expect.poll(()=>client.prepare('SELECT volume,quiet_until AS quietUntil FROM inbox WHERE id=?').get(question.inboxItem!)).toEqual({volume:'full',quietUntil:null});
     await a.getByRole('button',{name:'Yes',exact:true}).click();
     for (const page of [a,b]) {
       await expect.poll(() => page.getByRole('button',{name:'Yes',exact:true}).count()).toBe(0);
