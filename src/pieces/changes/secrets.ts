@@ -2,11 +2,7 @@ import { OperationError } from '../../core/index.js';
 import { secretName, type SecretUse } from '../secrets/role.js';
 import type { Secrets } from './roles.js';
 
-/** Trusted composition supplies public forge owners and secret names, never values.
- * Bind use with secretUseRole and an explicit SecretValueSource. That role checks
- * the installed service and current owner-written service grants on every use.
- * No token discovery, agent grant fallback or automatic service grant occurs here.
- */
+/** Validate explicit public forge owners and Secret names, never values. */
 export function githubBindingNames(bindings: Readonly<Record<string, string>>): Map<string, string> {
   const names = new Map<string, string>();
   for (const [owner, name] of Object.entries(bindings)) {
@@ -19,6 +15,9 @@ export function githubBindingNames(bindings: Readonly<Record<string, string>>): 
   }
   return names;
 }
+
+/** Trusted composition supplies the credential-use port; this mapping neither
+ * discovers tokens nor grants any caller permission to read them. */
 export function githubSecrets(use: SecretUse, bindings: Readonly<Record<string, string>>): Secrets {
   const names = githubBindingNames(bindings);
   const references = new Set(names.values());

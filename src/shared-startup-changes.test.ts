@@ -54,7 +54,7 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
  expect(readFileSync(file,'utf8')).not.toContain(token);expect(db.$client.prepare("SELECT name FROM sqlite_master WHERE name='secrets_services'").get()).toBeUndefined();
  fail=false;hold=true;const started=new Promise<void>(yes=>{began=yes;});clean.push(()=>release?.());const pending=app.refreshChanges!();await started;
  let closed=false;const stopping=app.close().then(()=>{closed=true;});await new Promise<void>(yes=>setImmediate(yes));expect(closed).toBe(false);expect(db.$client.open).toBe(true);
- release();await pending.catch(()=>{});await stopping;expect(db.$client.open).toBe(false);
+ const beforeRelease=requests.mock.calls.length;hold=false;release();await expect(pending).rejects.toThrow('GitHub read unavailable');await stopping;expect(db.$client.open).toBe(false);expect(requests).toHaveBeenCalledTimes(beforeRelease);
  const count=requests.mock.calls.length;clock.advance(120000);expect(requests).toHaveBeenCalledTimes(count);
 });
 it('preserves an explicit Changes adapter even when configured bindings have no holder source',async()=>{
@@ -62,7 +62,17 @@ it('preserves an explicit Changes adapter even when configured bindings have no 
  const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
  delete program.secretHolder;program.githubBindings={acme:'FORGE'};program.adapters=join(home,'adapter.mjs');
  writeFileSync(program.adapters,'export default ()=>({changes:{read:async()=>[],rule:()=>undefined}})',{mode:0o600});writeFileSync(file,JSON.stringify(program),{mode:0o600});
- const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());await app.refreshChanges!();expect(wire.start).not.toHaveBeenCalled();
+ const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());
+ app.writes.run(()=>app.services.projects.save({id:'app',name:'App',members:[],agents:[],repositories:['github:acme/app']}));
+ await app.refreshChanges!();expect(app.services.changes.syncStatus()?.failed).toBe(false);expect(wire.start).not.toHaveBeenCalled();
+});
+it('uses an explicit trusted Secret source when the owned holder is disabled',async()=>{
+ const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
+ delete program.secretHolder;program.githubBindings={acme:'FORGE'};program.adapters=join(home,'source.mjs');
+ writeFileSync(program.adapters,"export default ()=>({secretInputs:{source:{read:async name=>{if(name!=='FORGE')throw Error('Unexpected name');return Buffer.from('FICTITIOUS_CUSTOM_TOKEN')}}}})",{mode:0o600});writeFileSync(file,JSON.stringify(program),{mode:0o600});
+ const request=vi.fn<typeof fetch>(async(url,init)=>{expect(url).toBe('https://api.github.com/graphql');expect(new Headers(init?.headers).get('authorization')).toBe('Bearer FICTITIOUS_CUSTOM_TOKEN');return Response.json({data:{repository:{pullRequests:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}});});vi.stubGlobal('fetch',request);
+ const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());app.writes.run(()=>app.services.projects.save({id:'app',name:'App',members:[],agents:[],repositories:['github:acme/app']}));
+ await app.refreshChanges!();expect(request).toHaveBeenCalledTimes(2);expect(app.services.changes.syncStatus()?.failed).toBe(false);expect(wire.start).not.toHaveBeenCalled();
 });
 it('fails closed when bindings have neither an explicit adapter nor a holder source',async()=>{
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
