@@ -7,7 +7,7 @@ import { createFoundation } from '../../foundation.js';
 import { loadKey } from './crypto.js';
 import { importComms } from './importer.js';
 import { installComms } from './index.js';
-import { messageView, type Message } from '../../../web/src/pieces/comms/message.js';
+import { messageView, type Message } from '../../../test/fixtures/legacy-comms-message.js';
 import { FakeClock } from '../../core/index.js';
 const cleanup:(()=>void)[]=[];afterEach(()=>{for(const f of cleanup.splice(0).reverse())f();});
 function home(){const path=mkdtempSync(join(tmpdir(),'comms-import-'));cleanup.push(()=>rmSync(path,{recursive:true,force:true}));return path;}
