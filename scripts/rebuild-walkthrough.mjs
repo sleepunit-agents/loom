@@ -143,6 +143,7 @@ export async function* walkthroughSteps(output) {
     if(selections[title]){
      row.selection=selections[title];
      try{
+      const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.first().click();
       await tile.getByText(selections[title],{exact:true}).first().click();
       await page.waitForFunction(ready,`${title} tile`);
       for(const text of details[title]??[])await tile.getByText(text,{exact:true}).first().waitFor();
