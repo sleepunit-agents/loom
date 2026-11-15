@@ -110,3 +110,22 @@ for (const buildTimeoutMs of [0, 1.5, 3_600_001]) it(`rejects invalid configured
   expect(f.read).toHaveBeenCalledTimes(1);
   expect(f.executor).not.toHaveBeenCalled();
 });
+
+
+it('selects the actual container executor when configured, without invoking a host runner', async () => {
+  const f = fixture(), containerExecutor = vi.fn().mockReturnValue({ container: true });
+  const selected = { ...config, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith(selected);
+  expect(f.executor).not.toHaveBeenCalled();
+  expect(f.run).toHaveBeenCalledWith(expect.objectContaining({ executor: { container: true } }));
+});
+for (const container of [{ socket: 'relative' }, { socket: '/docker.sock', privileged: true }, { socket: '/docker.sock', cleanupTimeoutMs: 0 }]) {
+  it('rejects malformed container configuration before reading worker credentials', async () => {
+    const f = fixture(), containerExecutor = vi.fn();
+    f.read.mockResolvedValue(JSON.stringify({ ...config, container }));
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(1);
+    expect(f.read).toHaveBeenCalledTimes(1); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  });
+}

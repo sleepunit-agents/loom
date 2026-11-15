@@ -47,17 +47,22 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     schema,
   });
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => live.changed() });
+  const http = dataHttp(db, authenticate, publicOrigin, schema);
   let closing: Promise<void> | undefined;
   return {
-    http: dataHttp(db, authenticate, publicOrigin, schema),
+    http,
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); },
     writes,
     close() {
       if (closing) return closing;
-      let resolve!: () => void, reject!: (error: unknown) => void;
-      closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      void (async () => { try { await socket.close(); } finally { live.close(); } })().then(resolve, reject);
+      // Publish before stopping admission; callbacks cannot create a second close.
+      closing = Promise.resolve().then(async () => {
+        try { await socketClosing; } finally { await http.drain(); }
+      });
+      http.stop();
+      const socketClosing = socket.close();
+      live.close();
       return closing;
     },
   };
