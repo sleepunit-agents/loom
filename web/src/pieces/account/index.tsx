@@ -1,3 +1,4 @@
+import DeviceLink from '../../signin/DeviceLink';
 import { decode as dec } from './encoding';
 import { useState, type FormEvent } from 'react';
 import { useDataQuery } from '../../data/graphql';
@@ -28,13 +29,12 @@ export default function AccountApp({go=()=>{},active=true}:{path?:string;go?:(pa
  const [busy,setBusy]=useState(false),[message,say]=useState('');
  const enabled=active&&feed.status==='live'&&!!account&&!busy;
  const change=async(name:string,ref:string)=>{if(!enabled)return;setBusy(true);say('');try{await memberOperation(name,{ref});say('Saved');}catch{say('Could not save. Check the connection and try again.');}finally{setBusy(false);}};
- const link=async()=>{if(!enabled)return;setBusy(true);say('');try{const response=await fetch('/api/signin/link',{method:'POST',credentials:'same-origin'});const result=await response.json();if(!response.ok)throw Error();say(new URL(result.value.path,location.origin).href);}catch{say('Could not make a sign-in link.');}finally{setBusy(false);}};
  return <AppFrame title="Your account" where="Account" go={go}><div className="grid gap-6 overflow-auto p-5">
  {feed.status==='loading'?<Loading label="Opening your account…"/>:!account?<Empty title="Your account is unavailable" text="Sign in as a household member and check the connection."/>:<>
  <h2 className="text-xl font-semibold">{account.member}</h2>
  {feed.status!=='live'&&<ErrorView text="Connection lost. Account changes are disabled."/>}
  {message&&<p role="status" className="break-all">{message}</p>}
- <Button disabled={!enabled} onClick={()=>void link()}>Make sign-in link</Button>
+ <DeviceLink enabled={enabled} member={account.member}/>
  <section aria-label="Passkeys" className="grid gap-4"><h2>Passkeys</h2><Registration enabled={enabled}/>{!account.passkeys.length&&<p>No passkeys yet.</p>}{account.passkeys.map(key=><div key={key.ref} className="rounded-xl border p-4"><h3>{key.label}</h3><p>{key.ended?'Stopped':'Active'} · Added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt?` · Last used ${new Date(key.lastUsedAt).toLocaleString()}`:''}</p><Button disabled={!enabled} variant="outline" onClick={()=>void change('account.removePasskey',key.ref)}>Remove passkey</Button></div>)}</section>
  <section aria-label="Signed-in browsers" className="grid gap-4"><h2>Signed-in browsers</h2>{account.sessions.map(session=><div key={session.ref} className="rounded-xl border p-4"><h3>{session.device}</h3><p>{session.ended?'Ended':'Signed in'} · Last used {new Date(session.seenAt).toLocaleString()}</p><Button disabled={!enabled} variant="outline" onClick={()=>void change('account.revokeSession',session.ref)}>Sign out browser</Button></div>)}</section>
  <Button disabled={!enabled} variant="outline" onClick={async()=>{await post('/logout',{});location.reload();}}>Sign out this device</Button>
