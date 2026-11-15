@@ -258,3 +258,26 @@ it('limits the origin-only referrer policy to the valid confirmation document', 
   expect(logout.status).toBe(200);
   expect(logout.headers.get('referrer-policy')).toBe('no-referrer');
 });
+
+it.each(['old','agent','future','boundary'])('does not renew fresh person proof through a %s browser cookie', async how => {
+  const f=fixture(), signed=await f.redeem(await f.link()), cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+  const now=f.clock.now();
+  f.db.update(sessions).set(how==='agent'?{isAgent:true}:{provedAt:new Date(now+(how==='future'?1:how==='boundary'?-600000:-660000)).toISOString()}).run();
+  const before=f.db.select().from(signinLinks).all();
+  expect((await f.mint({cookie})).status).toBe(403);
+  expect(f.db.select().from(signinLinks).all()).toEqual(before);
+  // The underlying member bearer and trusted issuer remain independent doors.
+  expect((await f.mint()).status).toBe(200);
+  expect(sharedSigninLinks(f.db,f.clock).makeLink(hash(credential)).path).toMatch(/^\/login\/[0-9a-f]{64}$/);
+});
+
+it('rechecks browser proof inside the admitted link write',async()=>{
+ const f=fixture(), signed=await f.redeem(await f.link()), cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const original=f.root.writes.run.bind(f.root.writes);
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+  f.db.update(sessions).set({provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+  return original(action);
+ });
+ expect((await f.mint({cookie})).status).toBe(401);
+ expect(f.db.select().from(signinLinks).all()).toEqual([]);
+});

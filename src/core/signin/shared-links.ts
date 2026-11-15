@@ -103,8 +103,18 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const cookie = c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
     const token = bearer ? fingerprint(bearer) : cookie ? options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,fingerprint(cookie))).get()?.token : undefined;
     if(!token)return c.json({error:'Member authentication required'},401);
+    // A browser cookie is not a new proof of identity. It must not turn an
+    // aged or automated session into a fresh passkey-enrollment session.
+    const freshBrowser = () => {
+      if (bearer) return true;
+      const session = cookie ? options.db.select().from(sessions).where(eq(sessions.id, fingerprint(cookie))).get() : undefined;
+      const proved = session ? Date.parse(session.provedAt) : NaN;
+      return !!session && session.token === token && !session.isAgent && Number.isFinite(proved)
+        && proved <= options.clock.now() && proved + 600000 > options.clock.now();
+    };
+    if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
     // Request input cannot choose a token/member or impersonate an agent.
-    return c.json({ ok: true, value: write(() => { if(!auth.valid())throw Error('Authentication ended'); return signin.makeLink(token); }) });
+    return c.json({ ok: true, value: write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token); }) });
   });
   routes.get('/auth/session', c => {
     const auth = authenticate(c.req.raw);
