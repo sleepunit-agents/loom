@@ -129,3 +129,24 @@ it('does not publish success if lifetime ends after the second holder callback',
   f.secrets.withValue = async (_name, use) => { const value = await use('private'); if (++calls === 2) f.stop(); return value; };
   expect(await f.api.authenticate()).toBeUndefined(); expect(f.request).toHaveBeenCalledTimes(2);
 });
+
+it.each(['lifetime', 'absolute deadline'] as const)('fences %s changes queued between final evidence and public return', async phase => {
+  const f = fixture(); let calls = 0, returned = false, checks = 0, now = 0;
+  f.secrets.withValue = async (_name, use) => { const value = await use('private'); if (++calls === 2) returned = true; return value; };
+  const current = () => {
+    if (returned && ++checks === 2) queueMicrotask(() => { if (phase === 'lifetime') f.stop(); else now = 15_000; });
+    return f.input.current();
+  };
+  const clock = { now: () => now, at: () => () => {} };
+  expect(await bridgeAuthentication({ ...f.input, current, clock }).authenticate()).toBeUndefined();
+  expect(f.request).toHaveBeenCalledTimes(2);
+});
+it('does not log credentials or upstream diagnostics on success or failures', async () => {
+  const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'info'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'error'), vi.spyOn(console, 'debug'), vi.spyOn(console, 'trace')];
+  const output = [vi.spyOn(process.stdout, 'write').mockImplementation(() => true), vi.spyOn(process.stderr, 'write').mockImplementation(() => true)];
+  const f = fixture(); expect(await f.api.authenticate()).toEqual({ bot: '123', workspace: '456' });
+  f.request.mockRejectedValue(Error('synthetic-private-upstream')); expect(await f.api.authenticate()).toBeUndefined();
+  f.request.mockResolvedValue(new Response('synthetic-private-body')); expect(await f.api.authenticate()).toBeUndefined();
+  f.secrets.withValue = async () => { throw Error('synthetic-private-holder'); }; expect(await f.api.authenticate()).toBeUndefined();
+  for (const log of [...logs, ...output]) expect(log).not.toHaveBeenCalled();
+});
