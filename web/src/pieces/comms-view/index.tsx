@@ -65,7 +65,7 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
   const live = snapshot.status === 'live';
   const display = selected && detail && detail.status !== 'live' ? { ...snapshot, threads: snapshot.threads.filter(thread => thread.id !== selected) } : snapshot;
   const shown = threadRows(display, archived, navigation ? '' : query);
-  const current = live && detail?.status === 'live' && detail.thread?.id === selected ? detail : undefined;
+  const current = live && !!selected && !!detail?.thread && detail.status === 'live' && detail.thread.id === selected ? detail : undefined;
   const open = async (agent: string) => {
     if (openingLock.current || !live || !actions) return;
     openingLock.current = true; setOpening(true); setFailed(false);

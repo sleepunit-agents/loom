@@ -43,7 +43,7 @@ it('mounts the shared Comms app, records reads and sends through authenticated s
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'pin', pinned: true });
 });
 it('creates conversations for owned agents without passing a member identity', async () => {
-  setup(); const go = await draw('/p/comms-preview');
+  setup(); f.data.commsThread = null; delete f.data.commsMessages; delete f.data.commsRefs; const go = await draw('/p/comms-preview');
   expect(named('Chat with art')).toBeDefined(); expect(named('Chat with bob')).toBeUndefined();
   await act(async () => { named('Chat with art').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/), title: 'New conversation' });
