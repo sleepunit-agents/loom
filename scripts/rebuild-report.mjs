@@ -32,7 +32,7 @@ export function evaluate(promise,run){
  if(p.kind==='ui'){
   const app=run.apps.find(app=>app.title===p.app);
   if(!app?.opened)return {status:run.fatal?'not checkable yet':'not met',reason:app?.error??run.fatal??`${p.app} was not reached from the launcher.`};
-  const text=[app.text,app.detailText].filter(Boolean).join('\n'),missing=p.contains.filter(value=>!text.includes(value));
+  const text=[app.text,app.detailText].filter(Boolean).join('\n'),missing=[...p.contains.filter(value=>!text.includes(value)),...(p.patterns??[]).filter(pattern=>!new RegExp(pattern).test(text)).map(pattern=>`pattern ${pattern}`)];
   const failed=missing.length>0||!p.contains.length&&app.unavailable;
   return {status:failed?'not met':'met',reason:failed?(missing.length?`Not displayed: ${missing.join('; ')}`:text.split('\n').filter(line=>/unavailable|couldn.t load/i.test(line)).join(' ')):`Displayed ${p.contains.length?p.contains.join('; '):'the app without an unavailable screen'}. This checks visibility only.`,evidence:app.screenshot};
  }

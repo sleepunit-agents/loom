@@ -5,6 +5,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
 import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
+import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
 const clean:(()=>void|Promise<void>)[]=[];
@@ -144,4 +145,14 @@ it('publishes an earlier committed intake when a later receipt in the drain fail
 });
 it('does not publish an empty drain during ordinary reconciliation',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();f.published.length=0;f.daemon.changed();await f.daemon.idle();expect(f.published).toEqual([]);
+});
+
+it('keeps the authenticated connection state when only channel filters change',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();const before=f.db.select().from(bridgeConnections).get()!;
+ expect(before.state).toBe('connected');f.clock.advance(1000);
+ const {state:_state,stateAt:_at,...connection}=before;
+ new BridgeSettings(f.db,()=>new Date(f.clock.now()).toISOString(),write=>f.writes.run(write).value).change({action:'connection',...connection,only:['CROOM'],ignore:['COTHER']});
+ f.daemon.changed();await f.daemon.idle();
+ expect(f.db.select().from(bridgeConnections).get()).toMatchObject({state:'connected',stateAt:before.stateAt});expect(f.transports).toHaveLength(1);expect(f.closed).not.toHaveBeenCalled();
+ await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('delivered');expect(f.errors).toEqual([]);
 });

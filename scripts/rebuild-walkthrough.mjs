@@ -21,7 +21,9 @@ import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {prepareRetention} from './rebuild-retention.mjs';
 import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
+
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
@@ -55,7 +57,7 @@ export async function* walkthroughSteps(output) {
  const out=resolve(output);mkdirSync(out,{recursive:true});
  const parent=mkdtempSync(join(tmpdir(),'loom-walkthrough-')),home=join(parent,'home');
  const report={version:1,source:{commit:process.env.GITHUB_SHA??null,ref:process.env.GITHUB_REF??null,repository:process.env.GITHUB_REPOSITORY??null,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null},startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
- let app,browser,page,phase='first-run',navigation=0;
+ let app,browser,page,clock,retention,phase='first-run',navigation=0;
  const sockets=[];
  const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[],connections=new Set();
  const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
@@ -64,8 +66,10 @@ export async function* walkthroughSteps(output) {
   // Only this disposable acceptance home gets this adapter, never exampleHome
   // or installed configuration. The ordinary startup loads its existing port.
   prepareAcceptanceHome(home);
-  const clock=new FakeClock(Date.now());
+  clock=new FakeClock(Date.parse(report.example.createdAt));
   let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
+  retention=await prepareRetention({app,example:report.example,home});
+
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
   // Control and persistence evidence must not compete with motion in every retained tile.
   const context=await browser.newContext({timezoneId:'Asia/Tokyo',viewport:{width:1600,height:1000},reducedMotion:'reduce',serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
@@ -104,6 +108,8 @@ export async function* walkthroughSteps(output) {
   report.inventory=titles;
   await page.keyboard.press('Escape');
   yield {phase:'ready',report:safeReport(report)};
+  report.actions={...report.actions,conversationRetention:await retention({page,clock,out})};
+  save();yield {phase:'retention',actions:safeReport(report.actions)};
   const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
   const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?'],'Agents':['DESCRIPTION']};
   const selections={'Tasks':'Measure the hose','Approvals':'Inspect the example pump','Changes':'Plan the pump repair (t-1)','Inbox':'Spend up to 180 example dollars on the pump?','Tempo':'Continue the pump inspection','Comms':'Repair the garden pump','Agents':'Fern'};
@@ -176,6 +182,7 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
+
 
  }catch(error){report.fatal=String(error);}
  finally{report.transport={sockets};report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}
