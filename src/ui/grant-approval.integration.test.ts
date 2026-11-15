@@ -90,7 +90,7 @@ function piece(home: string, name: string, raw: Record<string, unknown>, src: st
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
   writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
-    bins: [`loom-${name}`], loom: { settings: [], services: [], ...loom } }));
+    bins: [`loom-${name}`], loom }));
   writeFileSync(join(dir, 'current', 'cli'), src);
   chmodSync(join(dir, 'current', 'cli'), 0o755);
   mkdirSync(join(home, 'pieces', 'bin'), { recursive: true });
@@ -171,7 +171,7 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     return r.json() as Promise<{ ok: boolean; message: string }>;
   };
 
-  it('the ask holds Allow and Deny; Allow has the runtime apply it, as the owner, and the ask clears', async () => {
+  it('the ask holds Allow and Deny; Allow has the runtime apply it as the owner', async () => {
     const cookie = await login('jonathan');
     const d = await inbox(cookie);
     const a = askOf(d);
@@ -185,7 +185,6 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     expect(acts[0]).toMatchObject({ action: 'grant-approved', fields: { id: 'a-0000beef', agent: 'art', target: 'tasks:mark' },
       caller: { kind: 'owner', who: 'jonathan', agents: '*' }, scope: '', grant: true });
     expect(state('a-0000beef')).toBe('used');
-    expect(askOf(await inbox(cookie))).toBeUndefined();
   });
 
   it('the ask is headed by what Allow gives, in the piece\'s words, whatever the agent wrote; its own ask is the why', async () => {

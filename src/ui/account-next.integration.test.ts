@@ -1,126 +1,97 @@
-/** Account's one browser acceptance: actual sign-in, WebAuthn, two windows, six images; CI only. */
-import { it, expect, vi } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { chromium } from 'playwright-core';
-import { startLoom } from '../foundation.js';
-import { fixture } from '../fixture.js';
-import { FakeClock } from '../core/clock.js';
-import type { PushTransport } from '../core/signin/push-transport.js';
-import { deviceRef } from '../core/signin/notifications.js';
-import { signin } from '../core/signin/index.js';
-const root=resolve(import.meta.dirname,'../../dist/web');
-const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
-it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits three widths across windows',async()=>{
-  const home=mkdtempSync(join(tmpdir(),'account-browser-'));fixture(home);
-  const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  const send=vi.fn<PushTransport>(async()=>{});
-  const loom=await startLoom({home,next:true,staging:true,clock,webRoot:root,notifications:{send}});
-  const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
-  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
-  try{
-    const context=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
-    await a.addInitScript(()=>{
-      let sub:unknown=null;
-      const manager={getSubscription:async()=>sub,subscribe:async()=>{sub={toJSON:()=>({endpoint:'https://fcm.googleapis.com/account-browser-proof',expirationTime:null,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}}),unsubscribe:async()=>{sub=null;return true;}};return sub;}};
-      void manager.subscribe(); // Browser already holds a subscription when Account first opens.
-      Object.defineProperty(navigator.serviceWorker,'getRegistration',{value:async()=>({pushManager:manager})});
-      Object.defineProperty(window,'PushManager',{value:function(){}});
-      Object.defineProperty(window,'Notification',{value:{permission:'granted',requestPermission:async()=> 'granted'}});
-    });
-    // Model one lost operation reply, preserving the actual cookie-authenticated
-    // backend connection, operation identity, Live publications and queued write.
-    const testCalls:Array<{id:string;request:string;input:{ref:string}}>=[];let lostReply=false;
-    await b.routeWebSocket('**/live',socket=>{
-      const server=socket.connectToServer();
-      socket.onMessage(raw=>{const message=JSON.parse(String(raw));if(message.kind==='call'&&message.name==='notifications.test')testCalls.push(message);server.send(raw);});
-      server.onMessage(raw=>{const message=JSON.parse(String(raw));
-        if(!lostReply&&message.kind==='result'&&testCalls.some(c=>c.request===message.request)){
-          lostReply=true;socket.send(JSON.stringify({...message,result:{ok:false,code:'unavailable',message:'Test reply was lost'}}));
-        }else socket.send(raw);
-      });
-    });
-    const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
-    const cdp=await context.newCDPSession(a);await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
-    const link=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!link.ok)throw Error('Fixture sign-in failed');
-    await a.goto(base+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
-    const secondLink=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!secondLink.ok)throw Error('Second sign-in failed');
-    await b.goto(base+(secondLink.value as {path:string}).path);const otherSignedIn=b.waitForResponse(r=>r.request().method()==='POST');await b.getByRole('button',{name:'Sign in',exact:true}).click();expect((await otherSignedIn).status()).toBe(303);
-    await a.goto(base+'/p/account-preview');await b.goto(base+'/p/account-preview');
-    const registration=a.getByRole('form',{name:'Add a passkey',exact:true});await expect.poll(()=>registration.getByRole('textbox').isEnabled()).toBe(true);
-    await registration.getByRole('textbox').fill('Browser passkey');await registration.getByRole('button',{name:'Add a passkey',exact:true}).click();
-    await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);
-    const s=signin(loom),source=Object.values(s.sessions.read().sessions)[0].secret,temporary=s.createSession(source,{label:'Temporary browser'});
-    loom.live.changed([{type:'core.access',id:'credentials'}]);
-    const read=loom.operations.call('direct',{kind:'member',id:'jonathan'},'account.read',{});if(!read.ok)throw Error();
-    const ref=(read.value as {sessions:Array<{ref:string;label?:string}>}).sessions.find(x=>x.label==='Temporary browser')!.ref;
-    const end=a.getByRole('form',{name:`Sign out session ${ref}`,exact:true});await expect.poll(()=>end.count()).toBe(1);await end.getByRole('button').click();expect(s.session(temporary)).toBeDefined();
-    await end.getByRole('checkbox').check();await end.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:`Sign out session ${ref}`,exact:true}).count()).toBe(0);expect(s.session(temporary)).toBeUndefined();
-    const notifications=a.getByRole('region',{name:'Notifications',exact:true});
-    await expect.poll(()=>notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).isEnabled()).toBe(true);
-    await expect.poll(()=>notifications.textContent()).toContain('This browser: Enabled');
-    await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
-    const deviceRead=()=>loom.operations.call('direct',{kind:'member',id:'jonathan'},'notifications.read',{});
-    await expect.poll(()=>{const r=deviceRead();return r.ok?(r.value as {devices:unknown[]}).devices.length:0;}).toBe(1);
-    await notifications.getByRole('button',{name:'Turn off notifications on this browser',exact:true}).click();
-    await expect.poll(()=>notifications.textContent()).toContain('This browser: Off');
-    await expect.poll(()=>notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).isEnabled()).toBe(true);
-    await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
-    await expect.poll(()=>notifications.textContent()).toContain('This browser: Enabled');
-    const devices=deviceRead();if(!devices.ok)throw Error();const device=(devices.value as {devices:Array<{ref:string;session:string}>}).devices[0];
-    const extraEndpoint='https://fcm.googleapis.com/other-account-device';
-    s.sessions.change(f=>{const existing=f.push!.subs!['https://fcm.googleapis.com/account-browser-proof'];f.push!.subs![extraEndpoint]={...existing,sub:{...existing.sub,endpoint:extraEndpoint}};});
-    loom.live.changed([{type:'notifications.devices',id:'jonathan'}]);
-    const extra=b.getByRole('form',{name:`Remove notification device ${deviceRef(extraEndpoint)}`,exact:true});await expect.poll(()=>extra.count()).toBe(1);
-    const remote=b.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true});await expect.poll(()=>remote.count()).toBe(1);
-    expect(await remote.textContent()).toContain(device.session);
-    await extra.getByRole('button',{name:'Send test notification',exact:true}).click();
-    const attempts=()=>loom.db.prepare('SELECT id,ref,state FROM notifications_tests').all() as Array<{id:string;ref:string;state:string}>;
-    await expect.poll(()=>attempts().length).toBe(1);const attempt=attempts()[0];expect(attempt.ref).toBe(deviceRef(extraEndpoint));
-    await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).count()).toBe(1);
-    expect(testCalls).toHaveLength(1);expect(testCalls[0].input).toEqual({ref:deviceRef(extraEndpoint)});
-    expect(await remote.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
-    expect(await extra.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
-    // A disabled competing click cannot replace the original request.
-    await remote.getByRole('button',{name:'Send test notification',exact:true}).evaluate(button=>(button as HTMLButtonElement).click());
-    expect(testCalls).toHaveLength(1);expect(attempts()).toHaveLength(1);
-    await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);await b.goBack();
-    await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).isEnabled()).toBe(true);
-    await b.getByRole('button',{name:'Retry this change',exact:true}).click();await expect.poll(()=>testCalls.length).toBe(2);
-    expect(testCalls[1]).toEqual(testCalls[0]);expect(attempts()).toHaveLength(1);
-    await expect.poll(()=>notifications.textContent()).toContain('Queued for a test attempt');
-    expect(send).not.toHaveBeenCalled();clock.advance(0);
-    expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:test:${attempt.id}`},'account-release-test').ok).toBe(true);
-    // Release may arrive while the staged pass is settling its promise. Pump
-    // newly scheduled due work as well as the release callback, without time sleeps.
-    await expect.poll(()=>{clock.advance(0);return attempts()[0].state;}).toBe('sent');expect(send).toHaveBeenCalledOnce();
-    for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
-    const expectedTestTime=await b.evaluate(time=>new Date(time).toLocaleString(),clock.now());
-    await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain(`Test ${expectedTestTime}:`);
-    const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toEqual({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'});expect(send.mock.calls[0][0]).toEqual({endpoint:extraEndpoint,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
-    await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
-    const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
-    // Shared desk evidence owns appearance; this fixture owns Account behavior.
-    for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);
-      await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
-      await expect.poll(()=>remote.getByRole('button',{name:'Send test notification',exact:true}).isEnabled()).toBe(true);
-      await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${width}.png`),fullPage:false,animations:'disabled'});
-    }
-    await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
-    await remote.getByRole('checkbox').check();await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>a.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true}).count()).toBe(0);
-    await expect.poll(()=>notifications.textContent()).toContain('This browser: Off');
-    const remove=a.getByRole('form',{name:'Remove passkey Browser passkey',exact:true});await remove.getByRole('button').click();expect(Object.keys(s.sessions.read().passkeys??{})).toHaveLength(1);
-    await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});
-    clock.advance(601_000);
-    const deviceLink=a.getByRole('region',{name:'Sign in another device',exact:true});await deviceLink.getByRole('button',{name:'Make sign-in link',exact:true}).click();
-    const value=deviceLink.locator('[data-signin-link]');await expect.poll(()=>value.count()).toBe(1);const url=(await value.textContent())!;
-    await b.goto(url);await b.getByRole('button',{name:'Sign in',exact:true}).click();await b.goto(base+'/p/account-preview');
-    const stale=b.getByRole('form',{name:'Add a passkey',exact:true});await expect.poll(()=>stale.getByRole('textbox').isEnabled()).toBe(true);await stale.getByRole('textbox').fill('Must refuse');await stale.getByRole('button',{name:'Add a passkey',exact:true}).click();await expect.poll(()=>stale.getByRole('status').textContent()).toBe('Sign in again before adding a passkey');expect(s.sessions.read().passkeys??{}).toEqual({});
-    await deviceLink.getByRole('button',{name:'Hide sign-in link',exact:true}).click();expect(await value.count()).toBe(0);
-    await a.getByRole('button',{name:'Sign out this device',exact:true}).click();
-    await expect.poll(()=>a.getByRole('button',{name:'Sign in with a passkey',exact:true}).count()).toBe(1);expect((await (await context.request.get(base+'/auth/session')).json()).viewer).toBeNull();expect((await (await otherContext.request.get(base+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
-    expect(errors).toEqual([]);await context.close();await otherContext.close();
-  }finally{await browser.close();await loom.close();vi.unstubAllEnvs();rmSync(home,{recursive:true,force:true});}
-},90_000);
+import webpush from 'web-push';
+/** One Account browser proof through the actual shared program; CI owns Chrome. */
+import {it,expect} from 'vitest';
+import Database from 'better-sqlite3';
+import {createServer} from 'node:http';
+import {sharedSigninLinks} from '../core/signin/shared-links.js';
+import {createHash} from 'node:crypto';
+import {existsSync,mkdirSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {chromium} from 'playwright-core';
+import {FakeClock} from '../core/clock.js';
+import {createDataSchema} from '../core/data/database.js';
+import {members,tokens,sessions,passkeys,signinLinks} from '../core/data/schema.js';
+import {serveShared} from '../shared-serve.js';
+const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
+if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Account evidence needs Chrome and the built app');
+it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live and signs another browser out over the one door',async()=>{
+ const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),cookie='c'.repeat(64);
+ db.insert(members).values({id:'sam',role:'member',joinedAt:now()}).run();
+ db.insert(tokens).values({fingerprint:hash('a'.repeat(64)),kind:'owner',member:'sam',label:'Sam',createdAt:now()}).run();
+ db.insert(sessions).values([{id:hash(cookie),token:hash('a'.repeat(64)),device:'Current browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()},{id:hash('d'.repeat(64)),token:hash('a'.repeat(64)),device:'Kitchen tablet',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}]).run();
+ db.insert(passkeys).values({id:'fixture-key',token:hash('a'.repeat(64)),label:'Fixture laptop',publicKey:'unused-public-half',counter:0,createdAt:now()}).run();
+ const app=await serveShared({db,clock,webRoot,notifications:{vapid:webpush.generateVAPIDKeys(),send:async()=>{}},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+ try{
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Fixture notification browser'});
+  await context.addInitScript(()=>{Object.defineProperty(Notification,'requestPermission',{value:async()=> 'granted'});Object.defineProperty(navigator.serviceWorker,'ready',{value:Promise.resolve({pushManager:{getSubscription:async()=>null,subscribe:async()=>({endpoint:'https://fcm.googleapis.com/browser-proof',toJSON:()=>({keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}})})}})});});
+  await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);
+  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[];let legacy=0;
+  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/live')legacy++;});}
+  await a.goto(app.url+'/p/account-preview');await b.goto(app.url+'/p/account-preview');
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Fixture laptop',exact:true}).count()).toBe(1);
+  await a.getByRole('button',{name:'Remove passkey',exact:true}).click();
+  await expect.poll(()=>b.getByRole('heading',{name:'Fixture laptop',exact:true}).count()).toBe(0);expect(db.select().from(passkeys).all()).toEqual([]);
+  const tablet=a.getByRole('heading',{name:'Kitchen tablet',exact:true}).locator('..');
+  await tablet.getByRole('button',{name:'Sign out browser',exact:true}).click();
+  await expect.poll(()=>b.getByRole('heading',{name:'Kitchen tablet',exact:true}).count()).toBe(0);expect(db.select().from(sessions).all()).toHaveLength(1);
+  await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await expect.poll(()=>a.getByRole('status').last().textContent()).toContain('/login/');
+  await a.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor({state:'hidden'});
+  await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
+  await expect.poll(()=>b.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(1);
+  await b.getByRole('button',{name:'Remove notification device',exact:true}).click();
+  await expect.poll(()=>a.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(0);
+  const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
+  await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
+  expect(legacy).toBe(0);expect(errors).toEqual([]);
+ }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
+ finally{await browser.close();await app.close();client.close();}
+});
+
+it.runIf(enabled)('registers and uses a real browser passkey against the shared sign-in door',async()=>{
+ // Reserve a disposable loopback port so the RP origin is known before Root.
+ const reservation=createServer();await new Promise<void>(resolve=>reservation.listen(0,'127.0.0.1',resolve));
+ const address=reservation.address();if(!address||typeof address==='string')throw Error('No fixture port');
+ const port=address.port;await new Promise<void>(resolve=>reservation.close(()=>resolve()));
+ const origin=`http://localhost:${port}`,client=new Database(':memory:'),clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),raw='f'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+ db.insert(members).values({id:'sam',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw),kind:'owner',member:'sam',label:'Sam browser fixture',createdAt:at}).run();
+ db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash('g'.repeat(64)),kind:'owner',member:'other',label:'Other member fixture',createdAt:at}).run();
+ const app=await serveShared({db,clock,port,publicOrigin:origin,webRoot,originAllowed:()=>true,reportError:error=>{throw error;}});
+ let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined,trap:ReturnType<typeof createServer>|undefined;
+ try{
+  browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  // This proof represents a person; separate route tests exercise headless six-hour sessions.
+  const context=await browser.newContext({serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
+  let blockedHttp=0,blockedSocket=0,trapped=0;
+  trap=createServer((_request,response)=>{trapped++;response.end('Disposable isolation trap');});trap.on('upgrade',(_request,socket)=>{trapped++;socket.destroy();});
+  await new Promise<void>(resolve=>trap!.listen(0,'127.0.0.1',resolve));const trapAddress=trap.address();if(!trapAddress||typeof trapAddress==='string')throw Error('No trap port');
+  const trapOrigin=`http://127.0.0.1:${trapAddress.port}`;
+  await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();blockedHttp++;return route.abort('blockedbyclient');});
+  await context.routeWebSocket(url=>new URL(url).origin!==origin.replace(/^http/,'ws'),socket=>{blockedSocket++;socket.close();});
+  const page=await context.newPage(),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto(trapOrigin).catch(()=>{});expect(blockedHttp).toBe(1);await page.goto('about:blank');
+  await page.evaluate(url=>new Promise<void>(resolve=>{const socket=new WebSocket(url);socket.onclose=()=>resolve();socket.onerror=()=>resolve();}),trapOrigin.replace(/^http/,'ws'));
+  expect(blockedSocket).toBe(1);expect(trapped).toBe(0);
+  const cdp=await context.newCDPSession(page);await cdp.send('WebAuthn.enable');
+  await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+  // Genuine one-time link redemption; no browser cookie is seeded.
+  const link=app.writes.run(()=>sharedSigninLinks(db,clock).makeLink(hash(raw))).value;
+  await page.goto(origin+link.path);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.next-shell').waitFor();
+  expect(db.select().from(signinLinks).all()).toEqual([]);expect(db.select().from(sessions).all()).toMatchObject([{token:hash(raw),via:'link',isAgent:false}]);
+  expect((await context.request.post(origin+link.path)).status()).toBe(401);
+  await page.goto(origin+'/p/account-preview');
+  const form=page.getByRole('form',{name:'Add a passkey',exact:true});await form.getByLabel('Passkey name',{exact:true}).fill('Virtual laptop');await form.getByRole('button',{name:'Add a passkey',exact:true}).click();
+  await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
+  expect(db.select().from(passkeys).all()).toMatchObject([{label:'Virtual laptop',token:hash(raw)}]);
+  const registeredCounter=db.select().from(passkeys).get()!.counter;expect(registeredCounter).toBeGreaterThanOrEqual(0);
+  await page.getByRole('button',{name:'Sign out this device',exact:true}).click();await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
+  expect(db.select().from(sessions).all()).toEqual([]);
+  await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.locator('.next-shell').waitFor();
+  await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
+  expect(db.select().from(sessions).all()).toMatchObject([{token:hash(raw),via:'passkey',isAgent:false}]);expect(db.select().from(passkeys).get()!.counter).toBeGreaterThan(registeredCounter);
+  const body=await page.locator('body').innerText();expect(body.includes(raw)).toBe(false);expect(body.includes(link.path)).toBe(false);
+  const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});await page.screenshot({path:join(shots,'passkey-shared.png'),animations:'disabled',mask:[page.locator('[data-signin-link]')]});
+  await page.getByRole('button',{name:'Remove passkey',exact:true}).click();await expect.poll(()=>db.select().from(passkeys).all().length).toBe(0);await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor({state:'hidden'});
+  expect(errors).toEqual([]);
+ }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
+ finally{await browser?.close();await app.close();if(trap)await new Promise<void>(resolve=>trap!.close(()=>resolve()));client.close();}
+});
