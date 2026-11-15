@@ -286,60 +286,20 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     vi.useRealTimers();
   });
 
-  for (const [db, how] of [[COMMS_DB, 'exclusive'], [HOUSEHOLD_DB, 'exclusive'], [HOUSEHOLD_DB, 'recovery']] as const) {
-    it(`a Comms post, a live update and a turn wait out ${how === 'recovery' ? 'a WAL recovery' : 'a write lock'} on ${db}, and /login stays fast`, async () => {
-      const t = await open();
-      const ac = new AbortController();
-      const stream = await fetch(`${base}/comms/${t.id}/events`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.jonathan}` }, signal: ac.signal });
-      expect(stream.status).toBe(200);
-      expect(await read(stream, /event: message/, 3000)).toMatch(/event: message/);
-      // A recovery needs the WAL's index to exist: another connection keeps it, as the daemon's many always do.
-      const keeper = new BetterSqlite3(join(h.home, db));
-      keeper.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
-      const held = await hold(join(h.home, db), how);
-      try {
-        const post = api('comms/adapter', { op: 'post', place: t.id, agent: 'art', text: `under ${how}` });
-        const activity = api('comms/activity', { conversation: t.conversation, run: 'run-locks', cards: [{ id: 'c1', tool: 'Bash', summary: 'held', state: 'running' }] });
-        const turn = api('conversations/turn', { agent: 'art', venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
-        await queuedFor(join(h.home, db));
-        const login = await fetch(`${base}/login`);
-        expect(login.status).toBe(200);
-        // Released only after /login answered and the writers still wait: a blocking or failing server can't pass.
-        expect(await pending(post)).toBe(true);
-        expect(await pending(activity)).toBe(true);
-        const live = read(stream, /event: message\ndata: \{"seq":\d+\}/, 8000);
-        await held.release();
-        const posted = await post;
-        expect(posted.status, await posted.clone().text()).toBe(200);
-        expect(await posted.json()).toMatchObject({ ok: true });
-        expect((await activity).status).toBe(200);
-        expect((await turn).status).toBe(200);
-        expect(await live).toMatch(/event: message/);
-      } finally { await held.release(); keeper.close(); ac.abort(); }
-    }, 30_000);
-  }
 
-  it('a continuation\'s reconciliation waits out a held comms.db and finds its receipt', async () => {
-    const t = await open();
-    const q = { op: 'post', agent: 'art', place: t.id, text: 'kept before the lock', expiresAt: Date.now() + 60_000, ref: `continuation-${'d'.repeat(64)}` };
-    const first = await api('comms/adapter', q);
-    expect(first.status).toBe(200);
-    const { id } = await first.json() as { id: string };
-    // comms.db is what a reconciliation writes: it waits for it, /login answers meanwhile, and it finds the receipt.
-    const held = await hold(join(h.home, COMMS_DB), 'exclusive');
-    try {
-      const r = api('comms/adapter', { ...q, op: 'reconcile' });
-      await queuedFor(join(h.home, COMMS_DB));
-      expect((await fetch(`${base}/login`)).status).toBe(200);
-      expect(await pending(r)).toBe(true);
-      await held.release();
-      expect(await (await r).json()).toMatchObject({ ok: true, state: 'delivered', id });
-    } finally { await held.release(); }
-  }, 20_000);
-
-  it('a null body is still a bad input, not an internal error', async () => {
-    const r = await api('comms/adapter', null);
-    expect(r.status).toBe(400);
+  it('retired Comms runtime adapters refuse attribution and leave unobserved Stop intact',async()=>{
+    const thread=await open(),db=new BetterSqlite3(join(h.home,HOUSEHOLD_DB)),words=new BetterSqlite3(join(h.home,COMMS_DB));
+    try{
+      db.prepare('UPDATE comms_threads SET stop=1 WHERE id=?').run(thread.id);
+      const before=words.prepare('SELECT count(*) AS n FROM comms_messages WHERE thread=?').get(thread.id);
+      for(const [path,body]of [
+        ['comms/adapter',{op:'post',place:thread.id,agent:'art',text:'MUST NOT BE WRITTEN'}],
+        ['comms/adapter',{op:'status',place:thread.id,agent:'art'}],
+        ['comms/activity',{conversation:thread.conversation,run:'invented',cards:[{id:'step',tool:'Read',summary:'MUST NOT BE WRITTEN',state:'done'}]}],
+      ] as const)expect((await api(path,body)).status).toBe(403);
+      expect(words.prepare('SELECT count(*) AS n FROM comms_messages WHERE thread=?').get(thread.id)).toEqual(before);
+      expect(db.prepare('SELECT stop FROM comms_threads WHERE id=?').get(thread.id)).toEqual({stop:1});
+    }finally{words.close();db.close();}
   });
 
   it('a Comms post never waits on household.json\'s lock, which it doesn\'t take', async () => {
