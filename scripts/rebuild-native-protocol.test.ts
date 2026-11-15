@@ -66,3 +66,9 @@ it('retires an enrolled job and its scoped capability when the trusted scripted 
  expect(context.db.prepare("SELECT id FROM jobs WHERE state IN ('starting','running','waiting')").all()).toEqual([]);
  restored(context.db,context.example.runtime.box);
 }));
+it('bounds a pending asynchronous provider without a caller abort',{timeout:20_000},()=>household(async context=>{
+ let reached=false;
+ await expect(nativeProtocolSmoke({...context,native:async()=>{reached=true;return new Promise(()=>{});}})).rejects.toThrow();
+ expect(reached).toBe(true);expect(context.db.prepare("SELECT id FROM jobs WHERE state IN ('starting','running','waiting')").all()).toEqual([]);
+ restored(context.db,context.example.runtime.box);
+}));

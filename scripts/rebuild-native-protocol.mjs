@@ -50,7 +50,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
       execution=bodyProgram({args:[configuration],read:path=>readFile(path,'utf8'),stdin:async()=>bodyBytes,env:{},signal:AbortSignal.any([parentSignal,stopped.signal]),clock,
        native:async(job,words,bodySignal)=>{
         const expectedWords=job.id===example.runtime.job.id?'Check the shed hinges before the example rain.':'Inspect the shared garden path';
-        observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running'};
+        observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare('SELECT job FROM conversations WHERE id=?').get(job.conversation)?.job};
         let finished=false;
         const call=async(name,input)=>{
          if(finished||bodySignal.aborted||!['digest','turn','status'].includes(name))throw Error('Native fixture command is unavailable');
@@ -71,10 +71,11 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
     };
    }};
    const result=await workOnce({box,control,executor,signal:abort.signal});
-   if(result!=='finished'||!observed?.hadInput||!observed.running||!bodyBytes?.every(byte=>byte===0))throw Error('The real native protocol did not complete: '+JSON.stringify({result,observed,expected:[...expected],trace,erased:bodyBytes?.every(byte=>byte===0),jobs:db.prepare('SELECT id,state,conversation FROM jobs WHERE agent=?').all('moss')}));
+   if(result!=='finished'||!observed?.hadInput||!observed.running||observed.currentJob!==observed.job||!bodyBytes?.every(byte=>byte===0))throw Error('The real native protocol did not complete: '+JSON.stringify({result,observed,expected:[...expected],trace,erased:bodyBytes?.every(byte=>byte===0),jobs:db.prepare('SELECT id,state,conversation FROM jobs WHERE agent=?').all('moss')}));
    const row=db.prepare('SELECT state,model,conversation,box,log_tail FROM jobs WHERE id=?').get(observed.job);
    if(!commandToken?.every(byte=>byte===0))throw Error('Native fixture capability was not erased');
    if(row?.state!=='done'||row.model!==observed.requestedModel||row.conversation!==observed.conversation||row.box!==box)throw Error('The native fixture body did not finish in its assigned scope: '+JSON.stringify({row,observed}));
+   if(db.prepare('SELECT job FROM conversations WHERE id=?').get(observed.conversation)?.job!==null)throw Error('The conversation retained a completed current job');
    if(row.log_tail?.includes('PRIVATE_NATIVE_FIXTURE_OUTPUT'))throw Error('Native worker output escaped into job metadata');
    runs.push({...observed,state:row.state,bootstrapErased:true});expected.delete(observed.job);
   }
@@ -95,4 +96,21 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
   }
   if(failures.length)throw Error('Native fixture cleanup could not complete: '+failures.join(', '));
  }
+}
+
+/** The browser observes the reply produced through the same actual body path. */
+export async function nativeProtocolAction(context){
+ const {page,open,out}=context,actions={};
+ try{actions.nativeProtocol={ok:true,...await nativeProtocolSmoke(context)};}
+ catch{actions.nativeProtocol={ok:false,error:'The fictional native protocol could not complete or restore its temporary authority.'};return actions;}
+ const screenshot='action-nativeReply.png';
+ try{
+  const tile=await open('Comms');const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.first().click();
+  await tile.getByText('Inspect the example shed',{exact:true}).first().click();
+  await tile.getByText('Fictional native protocol response.',{exact:true}).waitFor();
+  await page.reload();const current=page.getByRole('region',{name:'Comms tile',exact:true});
+  await current.getByText('Fictional native protocol response.',{exact:true}).waitFor();
+  actions.nativeReply={ok:true,persistedAfterReload:true,screenshot};
+ }catch{actions.nativeReply={ok:false,error:'The native fixture reply was not observed in its browser thread after reload.',screenshot};}
+ await page.screenshot({path:join(out,screenshot),fullPage:true});return actions;
 }
