@@ -7,8 +7,7 @@
  *  - scope: one member's thread never reaches another member, not even another owner of the same agent;
  *  - live: a reply and a read reach the member's live subscription as one row's change, and no one else's;
  *  - the list: the rows the app draws from the set (web/src/thread-rows.ts listOf), for the open list, archived threads,
- *    Background work and both, are GET /comms's own, field for field and in its order, for each member; and a pin, an
- *    archive and a title made by another process (no same-process bump) reach a live subscription on the tick file.
+ *    Background work and both, are GET /comms's own, field for field and in its order, for each member.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -197,19 +196,8 @@ describe.skipIf(!hasAge)('Comms threads as live records (t-2027)', () => {
     expect(JSON.stringify((await ask('sam', { where: views[1][1] })).rows)).not.toContain(gone.id);
   }, 30_000);
 
-  it('hears a thread moved by another process on the tick file, not only in this one', async () => {
-    const t = thread('jonathan', 'art', 'moved elsewhere');
-    const jon = await openEvents(base, tok.jonathan); streams.push(jon);
-    await ask('jonathan', { subscribe: true, stream: jon.hello.stream });
-    const key = `loom/thread/${t.id}`;
-    // Another process's write: the row changes in household.db and comms.tick is written, with no listener here told.
-    const db = new BetterSqlite3(join(h.home, 'household.db'));
-    db.prepare('UPDATE comms_threads SET pinned = 1, updated = ? WHERE id = ?').run(Date.now(), t.id);
-    db.close();
-    writeFileSync(join(h.home, 'comms.tick'), String(Date.now()));
-    const t0 = Date.now();
-    expect(await until(() => jon.frames.some((f) => f.event === 'rows' && ((f.data.upserts as Data[]) ?? []).some((u) => u.key === key && u.pinned === true)), 6000)).toBe(true);
-    // Well inside the 15 s pull: the tick file brought it.
-    expect(Date.now() - t0).toBeLessThan(5_000);
-  }, 30_000);
+  // Cross-process writes to legacy household.db/comms.tick are not a write
+  // path of the approved shared program. Its commands commit through Root's
+  // DataWrites and publish the policy-filtered live query from that commit.
+
 });
