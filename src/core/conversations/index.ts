@@ -133,16 +133,23 @@ export class Conversations {
     return this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.waitsOnKind, kind), eq(inbox.waitsOnId, id), eq(inbox.state, 'waiting'))).returning().all();
   }
 
-  digest(input: DigestInput): typeof digests.$inferSelect {
+  digest(input: DigestInput, questionItem?: string): typeof digests.$inferSelect {
     if (input.summary.length > 600) throw new Error('Digest summary exceeds 600 characters');
     return this.db.transaction(() => {
       const conversation = this.conversation(input.conversation);
+      if (input.question && questionItem) throw new Error('Digest needs one question source');
+      if (input.question && conversation.venue === 'loom' && conversation.member) throw new Error('Private digest questions need encrypted Comms');
+      const raised = questionItem ? this.item(questionItem) : undefined;
+      if (raised && (raised.conversation !== conversation.id || raised.toKind !== 'person' || !raised.answers || raised.state !== 'waiting'
+        || (conversation.member && raised.to !== conversation.member))) throw new Error('Digest question differs from conversation');
+      if (raised && conversation.venue === 'loom' && conversation.member && (!raised.thread || raised.messageSeq == null
+        || raised.words !== null || raised.why !== null || raised.ifYes !== null || raised.ifNo !== null || raised.link !== null)) throw new Error('Private digest question needs encrypted message reference');
       const old = this.db.select().from(digests).where(and(eq(digests.conversation, input.conversation), eq(digests.run, input.run))).get();
       // A rewrite retires its old pending question; answered questions stay as history.
-      if (old?.inboxItem) this.db.update(inbox).set({ state: 'resolved', resolution: 'Digest rewritten', changedAt: this.now() }).where(and(eq(inbox.id, old.inboxItem), eq(inbox.state, 'waiting'))).run();
+      if (old?.inboxItem && old.inboxItem !== raised?.id) this.db.update(inbox).set({ state: 'resolved', resolution: 'Digest rewritten', changedAt: this.now() }).where(and(eq(inbox.id, old.inboxItem), eq(inbox.state, 'waiting'))).run();
       const revision = (old?.revision ?? 0) + 1;
       const question = input.question ? this.send({ ...input.question, toKind: 'person', conversation: conversation.id, source: 'thread', sourceId: `digest:${input.run}:${conversation.id}:${revision}`, fromKind: 'agent', fromId: conversation.agent }) : undefined;
-      const values = { at: this.now(), summary: input.summary, revision, inboxItem: question?.id ?? null };
+      const values = { at: this.now(), summary: input.summary, revision, inboxItem: question?.id ?? raised?.id ?? null };
       const digest = old ? this.db.update(digests).set(values).where(eq(digests.id, old.id)).returning().get()!
         : this.db.insert(digests).values({ ...values, id: `dg-${randomUUID()}`, conversation: conversation.id, run: input.run }).returning().get();
       this.db.delete(digestItems).where(eq(digestItems.digest, digest.id)).run();

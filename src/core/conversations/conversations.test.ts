@@ -90,7 +90,8 @@ it('keeps source decisions at their source and resolves linked questions without
   expect(db.select().from(inbox).all()).toHaveLength(2);
 });
 it('revises digests by run, replaces lists, resolves old questions and rolls back a failed rewrite', () => {
-  const { db, service, cv } = fixture();
+  const { db, service } = fixture();
+  const cv = service.open({ agent: 'art', venue: 'wake', place: 'night', label: 'Night shift' });
   const first = service.digest({ conversation: cv.id, run: 'run-1', summary: 'Picked a pump', items: [{ kind: 'task', text: 't-1' }], question: { to: 'jonathan', words: 'Order it?', answers: 'yes-no' } });
   expect(service.item(first.inboxItem!).state).toBe('waiting');
   expect(() => service.digest({ conversation: cv.id, run: 'run-1', summary: 'Bad rewrite', question: { to: 'missing-member', words: 'Order it?', answers: 'yes-no' } })).toThrow();

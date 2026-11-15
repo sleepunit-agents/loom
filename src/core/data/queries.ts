@@ -1,11 +1,11 @@
 import type Database from 'better-sqlite3';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
-import type { AnySQLiteTable } from 'drizzle-orm/sqlite-core';
+import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
 import { GraphQLError, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
-import { schema, tables, taskComments } from './schema.js';
+import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
 
 type TableName = keyof typeof tables;
 type Fields = Record<string, AnyColumn>;
@@ -68,7 +68,7 @@ export function dataQueries(client: Database.Database, options: {
       Object.entries(value.config(createTableRelationsHelpers(value.table))).map(([key, relation]) => [key, names.get(getTableName(relation.referencedTable))!]),
     ));
   }
-  function constrain(name: TableName, input: ReadConfig | true, sets = querySelection.getStore()?.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []) ?? []): ReadConfig {
+  function constrain(name: TableName, input: ReadConfig | true, sets = querySelection.getStore()?.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []) ?? [], root = true): ReadConfig {
     const config = input === true ? {} : input;
     const predicate = visibility[name]!;
     const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
@@ -95,13 +95,19 @@ export function dataQueries(client: Database.Database, options: {
         // this relation alias, including unrelated columns inside subqueries.
         // A SQLWrapper defers rendering past that rewrite. fields are already
         // aliased by the relational builder; inner subquery tables stay intact.
-        return and(sql`${{ getSQL: () => allowed }}`, requested);
+        // Readiness is a property of the visible task, not of the subset of
+        // blockers the caller can read. Never return hidden blocker rows/IDs.
+        const blocker = alias(tasks, 'data_ready_blocker');
+        const ready = root && name === 'tasks' && querySelection.getStore()?.fieldName === 'readyTasks'
+          ? sql`${fields.status} = 'open' and ${fields.type} <> 'epic' and not exists (select 1 from ${taskLinks} inner join ${tasks} as ${sql.identifier("data_ready_blocker")} on ${blocker.id} = ${taskLinks.dependsOn} where ${taskLinks.task} = ${fields.id} and ${taskLinks.type} = 'blocks' and ${blocker.status} <> 'closed')`
+          : undefined;
+        return and(sql`${{ getSQL: () => allowed }}`, ready ? sql`${{ getSQL: () => ready }}` : undefined, requested);
       },
       with: config.with && Object.fromEntries(Object.entries(config.with).map(([key, nested]) => {
         if (!nested) return [key, nested];
         const target = relations.get(name)?.[key];
         if (!target) throw new Error(`Unknown query relation: ${name}.${key}`);
-        return [key, constrain(target, nested, fieldsSelected.get(key) ?? [])];
+        return [key, constrain(target, nested, fieldsSelected.get(key) ?? [], false)];
       })),
     };
   }
@@ -139,7 +145,12 @@ export function dataQueries(client: Database.Database, options: {
   for (const name of selected) for (const key of [name, `${name}Single`]) {
     addCounts(name, getNamedType(generated.getQueryType()!.getFields()[key].type));
   }
-  for (const field of Object.values(generated.getQueryType()!.getFields())) {
+  const rootFields = generated.getQueryType()!.getFields();
+  // Reuse the generator's Tasks shape and arguments; this is another SQL
+  // selection of the same table, not a separately maintained row definition.
+  if (selected.has('tasks')) rootFields.readyTasks = { ...rootFields.tasks, name: 'readyTasks',
+    description: 'Visible open non-epic tasks with no unclosed blocker, filtered in SQL before pagination.' };
+  for (const field of Object.values(rootFields)) {
     const resolve = field.resolve!;
     field.resolve = (source, args, context, info) => {
       rejectRelationAliases(info);

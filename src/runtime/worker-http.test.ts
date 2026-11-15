@@ -90,3 +90,12 @@ it('keeps the deadline active while consuming the response body', async () => {
     expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });
+
+it('preserves explicit worker run capabilities and rejects malformed ports', async () => {
+  const run = { nestedContainers: true, gpu: false, ports: [{ address: '127.0.0.1', port: 8080 }] };
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response({ ...assignment, run }))
+    .mockResolvedValueOnce(response({ ...assignment, run: { ...run, ports: [{ address: 'x', port: 65536 }] } }));
+  const control = client(fetcher);
+  expect((await control.next())?.run).toEqual(run);
+  await expect(control.next()).rejects.toThrow('Worker next failed');
+});
