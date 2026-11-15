@@ -159,7 +159,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
 expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2+nativeActions});
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
- else expect(f.db.select().from(s.digests).all()).toEqual([]);
+ else expect(f.db.select().from(s.digests).all()).toMatchObject([{conversation:f.thread.conversation,run:job.id,revision:1,summary:'Completed this stretch of work.',inboxItem:null}]);
  expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});
  if(harness==='fixture')expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:2,day:new Date(f.clock.now()).toISOString().slice(0,10),measure:'useful',score:4,text:'Fictitious comparison was useful'});else expect(f.db.select().from(s.findings).all()).toEqual([]);
  const messages=f.db.select().from(s.messages).all();expect(await Promise.all(messages.map(row=>f.key.open(row.words!)))).toEqual(['PRIVATE WORKER INPUT','PRIVATE WORKER REPLY']);

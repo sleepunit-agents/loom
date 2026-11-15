@@ -7,23 +7,24 @@ import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { chromium } from 'playwright-core';
 
-import * as startup from '../shared-startup.js';
 import { run } from '../cli/serve.js';
-import { FakeClock } from '../core/clock.js';
+import { FakeClock,clock as normalClock } from '../core/clock.js';
+// In-process private holder fixture; no real child or fake frontend.
+vi.mock('../shared-holder-process.js',async()=>({startSharedHolder:(await import('../../test/fixtures/shared-holder.js')).inProcessSharedHolder}));
 
 beforeEach(()=>{vi.stubEnv('LOOM_PUBLIC_URL',undefined);vi.stubEnv('LOOM_WORKER_SOCKET',undefined);});
-afterEach(()=>vi.unstubAllEnvs());
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(path=>path&&existsSync(path));
 it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('first-run CLI sign-in opens one GraphQL socket, receives task deltas and loses access when the browser ends',async()=>{
  const home=mkdtempSync(join(tmpdir(),'loom-first-browser-')),clock=new FakeClock();
- const actual=startup.startSharedHome;let app!:Awaited<ReturnType<typeof actual>>;
- const start=vi.spyOn(startup,'startSharedHome').mockImplementation(async options=>app=await actual({...options,port:0,clock}));
+ vi.spyOn(normalClock,'now').mockImplementation(clock.now.bind(clock));
+ vi.spyOn(normalClock,'at').mockImplementation(clock.at.bind(clock));
  let printed='',ready!:(url:string)=>void;const listening=new Promise<string>(ok=>{ready=ok;});
  const running=run(['--http','--home',home,'--port','0'],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:text=>{printed+=text;},stderr:text=>{const url=/shared app on (http:\/\/\S+)/.exec(text)?.[1];if(url)ready(url);}});
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {
-  const url=await listening;
+  const url=await Promise.race([listening,running.then(code=>{throw Error('Normal startup stopped: '+code);})]);
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}}),page=await context.newPage();
   const paths:string[]=[],frames:string[]=[],errors:string[]=[];
@@ -38,11 +39,11 @@ it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('f
   await expect.poll(()=>frames.some(frame=>frame.includes('"tasks":[]'))).toBe(true);
   // Commit after the real tile has subscribed; it must draw the change without
   // navigation, a second read or a legacy feed waking it.
-  const {viewer}=await (await context.request.get(url+'/auth/session')).json();
-  const task=app.writes.run(()=>app.services.tasks.create({title:'First-run live pump',goal:'Water flows',why:'Test the actual live selection',owner:{kind:'household'}},{kind:'member',id:viewer.id})).value;
+  const created=await context.request.post(url+'/api/tasks/command',{headers:{origin:url},data:{id:'first-run-create',input:{action:'create',input:{title:'First-run live pump',goal:'Water flows',why:'Test the actual live selection',owner:{kind:'household'}}}}});
+  expect(created.status()).toBe(200);const made=await created.json();expect(made.ok).toBe(true);const task=made.value;
   await expect.poll(()=>page.getByText('First-run live pump',{exact:true}).count()).toBeGreaterThan(0);
   const before=frames.length;
-  app.writes.run(()=>app.services.tasks.edit(task.id,{title:'Pump changed live'}));
+  const edited=await context.request.post(url+'/api/tasks/command',{headers:{origin:url},data:{id:'first-run-edit',input:{action:'edit',id:task.id,input:{title:'Pump changed live'}}}});expect(edited.status()).toBe(200);
   await expect.poll(()=>page.getByText('Pump changed live',{exact:true}).count()).toBeGreaterThan(0);
   expect(frames.slice(before).some(frame=>frame.includes('Pump changed live'))).toBe(true);
   expect(paths.every(path=>path==='/graphql')).toBe(true);
@@ -53,6 +54,6 @@ it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('f
   await expect.poll(()=>page.getByText('Pump changed live',{exact:true}).count()).toBe(0);
   expect((await context.request.post(url+'/graphql',{data:{query:'{ tasks { id } }'}})).status()).toBe(401);
  } finally {
-  await browser?.close();process.emit('SIGTERM');await running;start.mockRestore();rmSync(home,{recursive:true,force:true});
+  await browser?.close();process.emit('SIGTERM');await running;rmSync(home,{recursive:true,force:true});
  }
 });

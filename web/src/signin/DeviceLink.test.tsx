@@ -19,3 +19,13 @@ it('discards late replies on disable, member change or unmount',async()=>{
 it('never retries a lost reply and Hide clears a delivered link',async()=>{
  const fetch=vi.fn().mockRejectedValueOnce(Error('PRIVATE TRANSPORT')).mockResolvedValueOnce(Response.json({ok:true,value:{path}}));vi.stubGlobal('fetch',fetch);await act(async()=>{tree=create(h(DeviceLink,{enabled:true,member:'sam'}));});await act(async()=>tree.root.findByType('button').props.onClick());expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).toContain('not retried');expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE TRANSPORT');await act(async()=>tree.root.findByType('button').props.onClick());expect(JSON.stringify(tree.toJSON())).toContain(path);await act(async()=>tree.root.findAllByType('button')[1].props.onClick());expect(JSON.stringify(tree.toJSON())).not.toContain(path);
 });
+it.each([401,403])('asks for fresh sign-in on a %s response without retrying or rendering server text',async status=>{
+ const fetch=vi.fn().mockResolvedValue(Response.json({error:'PRIVATE DETAILS'},{status}));vi.stubGlobal('fetch',fetch);
+ await act(async()=>{tree=create(h(DeviceLink,{enabled:true,member:'sam'}));});await act(async()=>tree.root.findByType('button').props.onClick());
+ expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).toContain('Sign in again');expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE DETAILS');
+});
+it('handles a non-JSON sign-in refusal without retrying',async()=>{
+ const fetch=vi.fn().mockResolvedValue(new Response('PRIVATE PROXY BODY',{status:401}));vi.stubGlobal('fetch',fetch);
+ await act(async()=>{tree=create(h(DeviceLink,{enabled:true,member:'sam'}));});await act(async()=>tree.root.findByType('button').props.onClick());
+ expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).toContain('Sign in again');expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE');
+});

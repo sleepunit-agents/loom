@@ -32,7 +32,7 @@ import { MIGRATIONS } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt, checkEnvelope,
   slugError, renderWhereLine, oneLine, mergeLevel, withoutNulls, stampWhere, whereCounts, hasTable, isReserved,
-  RESERVED_KEYS, type CardRowBase, type RevisionMeta,
+  RESERVED_KEYS, type CardRowBase, type RevisionMeta, type CardConnection,
 } from './cards.js';
 
 export { CardError as ProjectCardError } from './cards.js';
@@ -378,21 +378,28 @@ export interface ProjectListRow {
 
 export class ProjectsStore {
   private db: Database;
+  private readonly ownsDatabase: boolean;
   private readonly table: CardTable<RawRow>;
   private readonly now: () => number;
   /** False on a read-only store whose tables do not exist yet. */
   readonly migrated: boolean;
 
-  constructor(config: ProjectsStoreConfig) {
+  constructor(config: ProjectsStoreConfig | CardConnection) {
     this.now = config.now ?? Date.now;
-    this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
-    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    if (!config.readonly) {
-      this.db.pragma('journal_mode = WAL');
-      // Only this feature's migration, as the people store: a raw store must not half-run the memories ones.
-      for (const id of PROJECT_MIGRATIONS) {
-        const m = MIGRATIONS.find((x) => x.id === id)!;
-        if (m.pending(this.db)) m.run(this.db);
+    this.ownsDatabase = !('database' in config);
+    if ('database' in config) {
+      if (!config.database.inTransaction) throw Error('Borrowed project writer requires a source transaction');
+      this.db = config.database;
+    } else {
+      this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
+      this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
+      if (!config.readonly) {
+        this.db.pragma('journal_mode = WAL');
+        // Only this feature's migration, as the people store: a raw store must not half-run the memories ones.
+        for (const id of PROJECT_MIGRATIONS) {
+          const m = MIGRATIONS.find((x) => x.id === id)!;
+          if (m.pending(this.db)) m.run(this.db);
+        }
       }
     }
     this.migrated = ['projects', 'project_revisions', 'project_names'].every((t) => hasTable(this.db, t));
@@ -400,12 +407,13 @@ export class ProjectsStore {
       this.db,
       { table: 'projects', revisions: 'project_revisions', extraColumns: ['status'], noun: PROJECT_NOUN },
       config.actor ?? null,
-      slug => touched(dirname(config.dbPath), 'project', slug),
+      'dbPath' in config ? slug => touched(dirname(config.dbPath), 'project', slug) : undefined,
+      !this.ownsDatabase,
     );
   }
 
   close(): void {
-    this.db.close();
+    if(this.ownsDatabase)this.db.close();
   }
 
   private nowIso(): string {
