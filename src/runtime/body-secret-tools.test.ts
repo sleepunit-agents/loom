@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {createHash,randomUUID} from 'node:crypto';
+import {createHash,randomUUID,randomBytes} from 'node:crypto';
 import {z} from 'zod';
 import {eq} from 'drizzle-orm';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
@@ -13,6 +13,7 @@ import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
 import {bodyProgram} from './body-program.js';
 import type {WorkerAssignment} from './worker.js';
 import {bodySecretTools} from './body-secret-tools.js';
+vi.mock('node:crypto',async()=>{const actual=await vi.importActual<typeof import('node:crypto')>('node:crypto');return{...actual,randomBytes:vi.fn(actual.randomBytes)};});
 vi.mock('node:child_process',()=>({spawn:vi.fn()}));
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
 const privateValue='PRIVATE_TOOL_CREDENTIAL';
@@ -72,16 +73,17 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
  const pipeBuffers:Buffer[]=[];
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
   expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(JSON.stringify({args,options})).not.toContain(token);expect(args).toContain('mcp__loom_secrets__use_secret');
-  let config:Record<string,{url:string;headers:Record<string,string>}>|undefined,words='',ended=false,started=false;
+  let config:Record<string,{url:string;headers:Record<string,string>;timeout:number}>|undefined,words='',ended=false,started=false;
   const control=new Writable({write(bytes,_encoding,done){pipeBuffers.push(bytes);config=JSON.parse(bytes.toString()).mcpServers;expect(bytes.includes(Buffer.from(token))).toBe(false);done();}}),stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,control],kill:vi.fn(()=>{killed=true;child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
   const start=()=>{if(started||!ended||!config)return;started=true;void(async()=>{
+   expect(config!.loom_secrets).toMatchObject({timeout:86_400_000});
    const protocol=new Client({name:'native-model-fixture',version:'1'},{capabilities:{}}),connection=config!.loom_secrets;
    try{
     expect(words).toBe('Use the requested credential without repeating it');expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));
     const request=randomUUID();expect(JSON.parse(text(await protocol.callTool({name:'request_secret',arguments:{id:request,secret:'TOKEN',why:'Use it privately',minutes:5}}))).state).toBe('pending');
-    const result=await protocol.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request}});if(killed)return;expect(JSON.parse(text(result)).value).toBe(Buffer.from(privateValue).toString('base64'));expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');
+    const result=await protocol.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request}},undefined,{timeout:connection.timeout});if(killed)return;expect(JSON.parse(text(result)).value).toBe(Buffer.from(privateValue).toString('base64'));expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');
     const reply=decision==='leak-text'?privateValue:decision==='leak-base64'?Buffer.from(privateValue).toString('base64'):'Used the credential privately';
     const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:reply}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:reply}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
    }finally{await protocol.close();}
@@ -124,4 +126,10 @@ it('bounds admitted MCP requests while sixteen tools wait for owner consent',asy
  vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000&&++count===16)armed();return at(time,work);});
  const calls=Array.from({length:16},()=>f.use(id).catch(()=>undefined));await saturated;
  const refused=await fetch(f.config.url,{method:'POST',headers:{...f.config.headers,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:99,method:'tools/list'})});expect(refused.status).toBe(429);expect(count).toBe(16);expect(f.source).not.toHaveBeenCalled();await f.tools.close();await Promise.all(calls);
+});
+
+it('erases random capability bytes and each received authorization buffer',async()=>{
+ const f=await fixture(),entropy=vi.mocked(randomBytes).mock.results.filter(result=>result.type==='return').map(result=>result.value as unknown).filter((value):value is Buffer=>Buffer.isBuffer(value));expect(entropy.length).toBeGreaterThan(0);expect(entropy.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ const from=vi.spyOn(Buffer,'from');await f.client.listTools();
+ const captured=from.mock.calls.flatMap((args,index)=>args[0]===f.config.headers.Authorization&&from.mock.results[index].type==='return'?[from.mock.results[index].value]:[]);expect(captured.length).toBeGreaterThan(0);expect(captured.every(bytes=>Buffer.isBuffer(bytes)&&bytes.every(byte=>byte===0))).toBe(true);
 });

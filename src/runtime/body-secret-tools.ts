@@ -13,7 +13,8 @@ const unavailable=()=>new Error('Private Secret tool unavailable; do not retry a
 const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable().message}]});
 export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void}){
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
- const bearer='Bearer local_secret_'+randomBytes(32).toString('hex'),expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
+ const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
+ const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
  let authority:string|undefined,closed=false,waiting=0,retained=0,closing:Promise<void>|undefined,config:Buffer|undefined;
  const exposed:Buffer[]=[];
  const allowsReply=(text:string)=>{const bytes=Buffer.from(text);try{return !exposed.some(value=>bytes.includes(value));}finally{bytes.fill(0);}};
@@ -27,7 +28,8 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  }
  async function request(request:Request):Promise<Response>{
   const supplied=Buffer.from(request.headers.get('authorization')??'');
-  if(closed||signal.aborted||supplied.length!==expected.length||!timingSafeEqual(supplied,expected)||request.headers.has('origin')||new URL(request.url).host!==authority||request.headers.get('host')!==authority)return new Response(null,{status:403});
+  let authenticated=false;try{authenticated=!closed&&!signal.aborted&&supplied.length===expected.length&&timingSafeEqual(supplied,expected)&&!request.headers.has('origin')&&new URL(request.url).host===authority&&request.headers.get('host')===authority;}finally{supplied.fill(0);}
+  if(!authenticated)return new Response(null,{status:403});
   if(active.size>=16)return new Response(null,{status:429});
   if(request.method!=='POST')return new Response(null,{status:405});
   let size=0;
