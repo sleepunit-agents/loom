@@ -6,6 +6,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {bodyFixture,bodyCredentials as raw} from '../../test/fixtures/conversation-body.js';
 import * as s from '../core/data/schema.js';
+import {request as httpRequest} from 'node:http';
 import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
@@ -61,7 +62,7 @@ it('cancels a pending decision at body shutdown without a value read or a live l
  const f=await fixture('ask'),id=randomUUID();await f.request(id);let armed!:()=>void;const scheduled=new Promise<void>(resolve=>{armed=resolve;}),at=f.clock.at.bind(f.clock);vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000)armed();return at(time,work);});
  const pending=f.use(id),ended=pending.catch(()=>undefined);await scheduled;f.abort.abort();await f.tools.close();await ended;expect(f.source).not.toHaveBeenCalled();expect(f.tools.config.every(byte=>byte===0)).toBe(true);expect(f.waiting).toHaveBeenLastCalledWith(false);
 });
-it.each(['allow','stop'] as const)('uses the default native private pipe and real model tools while the owner decides: %s',async decision=>{
+it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default native private pipe and real model tools while the owner decides: %s',async decision=>{
  const f=await rootFixture('ask'),token='body_'+'f'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  f.root.writes.run(()=>{f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Native fixture',kind:'agent',agent:'art',job:'job',createdAt:new Date(f.clock.now()).toISOString()}).run();f.db.update(s.jobs).set({model:'requested',harness:'claude'}).where(eq(s.jobs.id,'job')).run();});
  expect((await f.send('Use the requested credential without repeating it','native-tools')).status).toBe(200);
@@ -81,7 +82,8 @@ it.each(['allow','stop'] as const)('uses the default native private pipe and rea
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));
     const request=randomUUID();expect(JSON.parse(text(await protocol.callTool({name:'request_secret',arguments:{id:request,secret:'TOKEN',why:'Use it privately',minutes:5}}))).state).toBe('pending');
     const result=await protocol.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request}});if(killed)return;expect(JSON.parse(text(result)).value).toBe(Buffer.from(privateValue).toString('base64'));expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');
-    const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'Used the credential privately'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'Used the credential privately'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
+    const reply=decision==='leak-text'?privateValue:decision==='leak-base64'?Buffer.from(privateValue).toString('base64'):'Used the credential privately';
+    const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:reply}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:reply}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
    }finally{await protocol.close();}
   })().catch(error=>{if(!killed){failure=error;child.emit('close',1);}}).finally(actorEnded);};
   control.once('finish',start);stdin.once('finish',()=>{ended=true;start();});return child;
@@ -89,12 +91,12 @@ it.each(['allow','stop'] as const)('uses the default native private pipe and rea
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}})),errors=vi.fn();
  const running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>bytes,env:{ACCOUNT_PROFILE:'/account'},signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},error:errors});
  expect(await Promise.race([waiting.then(()=>true),running.then(()=>false)])).toBe(true);expect(f.source).not.toHaveBeenCalled();
- if(decision==='allow'){
+ if(decision!=='stop'){
   let published!:()=>void;const waitingStatus=new Promise<void>(resolve=>{published=resolve;}),unobserve=f.root.writes.observe(()=>{if(f.db.select().from(s.agentStatus).get()?.state==='waiting')published();});tick();await waitingStatus;unobserve();expect(f.db.select().from(s.threads).get()?.working).toBe(true);
   const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'alice',true));f.clock.advance(1000);
  }else{f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));tick();}
- expect(await running).toBe(0);await actorDone;if(failure)throw failure;expect(errors).not.toHaveBeenCalled();expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
- if(decision==='allow'){expect(f.source).toHaveBeenCalledOnce();expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');expect(f.db.select().from(s.turns).all().filter(row=>row.kind==='reply')).toMatchObject([{model:'observed',run:'job'}]);}else{expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretUses).all()).toEqual([]);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(false);}
+ expect(await running).toBe(decision.startsWith('leak-')?1:0);await actorDone;if(failure)throw failure;expect(errors).toHaveBeenCalledTimes(decision.startsWith('leak-')?1:0);expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
+ if(decision!=='stop'){expect(f.source).toHaveBeenCalledOnce();expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');expect(f.db.select().from(s.turns).all().filter(row=>row.kind==='reply')).toMatchObject(decision.startsWith('leak-')?[]:[{model:'observed',run:'job'}]);}else{expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretUses).all()).toEqual([]);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(false);}
 });
 it('rejects browser-origin requests even with the local capability, and refuses caller-selected principals',async()=>{
  const f=await fixture();const denied=await fetch(f.config.url,{method:'POST',headers:{...f.config.headers,origin:'https://untrusted.invalid','content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:9,method:'tools/list'})});expect(denied.status).toBe(403);
@@ -110,4 +112,16 @@ it('cancels only the disconnected model call, erases its late source, and keeps 
  const pending=f.use(id),ended=pending.catch(()=>undefined);await started;await f.client.close();await cancelled;await ended;expect(f.abort.signal.aborted).toBe(false);
  const next=new Client({name:'reconnected-native',version:'1'},{capabilities:{}});await next.connect(new StreamableHTTPClientTransport(new URL(f.config.url),{requestInit:{headers:f.config.headers}}));clean.push(()=>next.close());expect((await next.listTools()).tools).toHaveLength(2);
  const late=Buffer.from('PRIVATE_LATE_SOURCE');release(late);await f.tools.close();await f.root.services.secrets.inputs.close();expect(late.every(byte=>byte===0)).toBe(true);expect(f.db.select().from(s.secretUses).get()?.state).toBe('failed');
+});
+
+it('rejects a wrong HTTP authority and oversized JSON before Root access',async()=>{
+ const f=await fixture(),headers={...f.config.headers,'content-type':'application/json',accept:'application/json, text/event-stream'};
+ const wrong=await new Promise<number|undefined>((resolve,reject)=>{const call=httpRequest(f.config.url,{method:'POST',headers:{...headers,host:'wrong.invalid'}},response=>{response.resume();response.once('end',()=>resolve(response.statusCode));});call.once('error',reject);call.end(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'}));});expect(wrong).toBe(403);
+ const huge=await fetch(f.config.url,{method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list',padding:'x'.repeat(1_048_576)})});expect(huge.ok).toBe(false);expect(f.fetcher).not.toHaveBeenCalled();
+});
+it('bounds admitted MCP requests while sixteen tools wait for owner consent',async()=>{
+ const f=await fixture('ask'),id=randomUUID();await f.request(id);let armed!:()=>void,count=0;const saturated=new Promise<void>(resolve=>{armed=resolve;}),at=f.clock.at.bind(f.clock);
+ vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000&&++count===16)armed();return at(time,work);});
+ const calls=Array.from({length:16},()=>f.use(id).catch(()=>undefined));await saturated;
+ const refused=await fetch(f.config.url,{method:'POST',headers:{...f.config.headers,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:99,method:'tools/list'})});expect(refused.status).toBe(429);expect(count).toBe(16);expect(f.source).not.toHaveBeenCalled();await f.tools.close();await Promise.all(calls);
 });

@@ -14,7 +14,9 @@ const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable(
 export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void}){
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
  const bearer='Bearer local_secret_'+randomBytes(32).toString('hex'),expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
- let closed=false,running=0,waiting=0,closing:Promise<void>|undefined,config:Buffer|undefined;
+ let authority:string|undefined,closed=false,waiting=0,retained=0,closing:Promise<void>|undefined,config:Buffer|undefined;
+ const exposed:Buffer[]=[];
+ const allowsReply=(text:string)=>{const bytes=Buffer.from(text);try{return !exposed.some(value=>bytes.includes(value));}finally{bytes.fill(0);}};
  const metadata=(signal:AbortSignal)=>bodyConversationClient({...input,clock,signal});
  // Validate the fixed Root origin/identity before binding a local listener.
  const check=metadata(signal);check.close();if(signal.aborted)throw unavailable();
@@ -25,16 +27,17 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  }
  async function request(request:Request):Promise<Response>{
   const supplied=Buffer.from(request.headers.get('authorization')??'');
-  if(closed||signal.aborted||supplied.length!==expected.length||!timingSafeEqual(supplied,expected)||request.headers.has('origin'))return new Response(null,{status:403});
+  if(closed||signal.aborted||supplied.length!==expected.length||!timingSafeEqual(supplied,expected)||request.headers.has('origin')||new URL(request.url).host!==authority||request.headers.get('host')!==authority)return new Response(null,{status:403});
+  if(active.size>=16)return new Response(null,{status:429});
   if(request.method!=='POST')return new Response(null,{status:405});
   let size=0;
   const bounded=request.body?new Request(request,{body:request.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(bytes,target){size+=bytes.byteLength;if(size>1_048_576)throw unavailable();target.enqueue(bytes);}})),duplex:'half'} as RequestInit):request;
   const server=new McpServer({name:'loom-secrets',version:'1'});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   const run=async(work:(signal:AbortSignal)=>Promise<{content:{type:'text';text:string}[]}>,callSignal:AbortSignal)=>{
-   if(closed||signal.aborted||running>=16)return failed();running++;
+   if(closed||signal.aborted)return failed();
    try{const current=AbortSignal.any([signal,request.signal,callSignal]);if(current.aborted)throw unavailable();const result=await work(current);if(current.aborted||closed)throw unavailable();return result;}
-   catch{return failed();}finally{running--;}
+   catch{return failed();}
   };
   server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:z.object({id:z.uuid(),secret:secretName,why:requestReason,minutes:z.number().int().min(1).max(525600),scope:z.enum(['agent','job']).default('job')}).strict()},(args,extra)=>run(async signal=>{
    const client=metadata(signal);try{return{content:[{type:'text',text:JSON.stringify(await client.requestSecret(args))}]};}finally{client.close();}
@@ -50,7 +53,10 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
     }
     value=await privateInput.granted(args.secret,args.id);
     if(signal.aborted||closed)throw unavailable();
-    return{content:[{type:'text',text:JSON.stringify({encoding:'base64',value:value.toString('base64')})}]};
+    const encoded=value.toString('base64'),representations=[Buffer.from(value),Buffer.from(encoded)];
+    if(retained+representations.reduce((n,value)=>n+value.length,0)>1_048_576){for(const value of representations)value.fill(0);throw unavailable();}
+    exposed.push(...representations);retained+=representations.reduce((n,value)=>n+value.length,0);
+    return{content:[{type:'text',text:JSON.stringify({encoding:'base64',value:encoded})}]};
    }finally{value?.fill(0);privateInput.close();client.close();if(waitingHere){waiting--;input.waiting?.(waiting>0);}}
   },extra.mcpReq.signal));
   try{await server.connect(transport);if(closed||signal.aborted)throw unavailable();const response=await transport.handleRequest(bounded);if(closed||signal.aborted){await response.body?.cancel();return new Response(null,{status:403});}return response;}
@@ -64,7 +70,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
  }));
  const onAbort=()=>{void close().catch(()=>{});};
  function close(){
-  if(closing)return closing;closed=true;stop.abort();expected.fill(0);config?.fill(0);input.signal.removeEventListener('abort',onAbort);
+  if(closing)return closing;closed=true;stop.abort();expected.fill(0);config?.fill(0);for(const value of exposed)value.fill(0);exposed.length=0;input.signal.removeEventListener('abort',onAbort);
   const stopped=new Promise<void>(resolve=>listener.close(()=>resolve()));listener.closeAllConnections();
   return closing=Promise.allSettled([...active]).then(async()=>{await stopped;});
  }
@@ -72,7 +78,8 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   await new Promise<void>((resolve,reject)=>{listener.once('error',reject);listener.listen(0,'127.0.0.1',()=>{listener.off('error',reject);resolve();});});
   listener.on('error',onAbort);input.signal.addEventListener('abort',onAbort,{once:true});
   if(signal.aborted)throw unavailable();const address=listener.address();if(!address||typeof address==='string')throw unavailable();
+  authority=`127.0.0.1:${address.port}`;
   config=Buffer.from(JSON.stringify({mcpServers:{loom_secrets:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
-  return{config,close};
+  return{config,close,allowsReply};
  }catch{await close();throw unavailable();}
 }

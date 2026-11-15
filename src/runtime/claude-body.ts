@@ -35,7 +35,13 @@ export function claudeBody(input: {
       ...(control?['--allowedTools','mcp__loom_secrets__request_secret','mcp__loom_secrets__use_secret']:[]),
       ...(denied.length ? ['--disallowedTools', ...denied] : [])];
     let child: ChildProcessWithoutNullStreams;
-    try { child = (input.spawn ?? spawn)(input.command, args, { cwd: input.cwd, env: { ...env }, shell: false, detached: false, stdio: control?['pipe','pipe','pipe','pipe']:'pipe' }); }
+    // Node extra pipes are Unix sockets, which cannot be reopened as /dev/fd/3.
+    // Bash converts that socket to an anonymous kernel pipe before exec; no
+    // credential is put in argv, environment or a filesystem entry. -p ignores
+    // BASH_ENV and imported shell functions; absolute cat avoids PATH lookup.
+    const executable=control?'/bin/bash':input.command;
+    const launchArgs=control?['--noprofile','--norc','-p','-c','exec 3< <(/bin/cat <&3); exec "$@"','loom-native',input.command,...args]:args;
+    try { child = (input.spawn ?? spawn)(executable, launchArgs, { cwd: input.cwd, env: { ...env }, shell: false, detached: false, stdio: control?['pipe','pipe','pipe','pipe']:'pipe' }); }
     catch { control?.fill(0);throw unavailable(); }
     const pipe=control?child.stdio?.[3] as Writable|undefined:undefined;
     const chunks: Buffer[] = [];

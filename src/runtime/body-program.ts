@@ -82,7 +82,7 @@ export async function bodyProgram(input: {
     const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
-    try { answer = await native(job, context.join('\n\n'), signal); }
+    try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
     finally { nativeAbort.abort(); await tools?.close(); await stopBeats(); }
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
