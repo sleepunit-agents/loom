@@ -24,7 +24,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const roster = useDeskRoster();
   const activity = useRecords<ActivityWindow>('activity.window', 'recent');
   const displays = useAgentDisplays();
-  const { reading:conversations, threads, status:threadStatus } = useHomeComms();
+  const { reading:conversations, status:threadStatus } = useHomeComms();
   const [phone,setPhone] = useState(()=>globalThis.window?.matchMedia?.('(max-width: 1023px)').matches ?? false);
   useEffect(()=>{const query=globalThis.window?.matchMedia?.('(max-width: 1023px)');if(!query)return;const change=()=>setPhone(query.matches);change();query.addEventListener('change',change);return()=>query.removeEventListener('change',change);},[]);
   const people = useRecords<AgentPerson>('person');
@@ -39,9 +39,9 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
   const ordered = orderedAgents(agents);
   const fold = phone && ordered.length > 4;
-  const opened = (ordered.find(a=>threads.some(t=>t.agent===a.id&&t.working))
+  const opened = (ordered.find(a=>statuses.status==='live'&&latestStatus(statuses.records,a.id)?.state==='working')
     ?? ordered.find(a=>open.some(ask=>ask.agent===a.id))
-    ?? ordered.find(a=>threads.some(t=>t.agent===a.id&&t.unread)) ?? ordered[0])?.id;
+    ?? ordered.find(a=>conversations?.summaries.some(s=>s.agent===a.id&&s.unread)) ?? ordered[0])?.id;
   return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
     <div className="desk-home-content"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
       <div className="grid min-w-0 gap-5">
@@ -58,14 +58,14 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const ownAsks = open.filter(ask=>ask.agent===agent.id), first=ownAsks[0];
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
             if(fold && agent.id!==opened) {
-              const recent=threads.filter(t=>t.agent===agent.id).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id));
-              const unread=recent.filter(t=>t.unread), thread=unread[0]??recent[0];
+              const summary=conversations?.summaries.find(s=>s.agent===agent.id);
+              const unread=summary?.unread??0, thread=summary?.first??summary?.last;
               const word=status?.state==='offline'?'Unavailable':first?'Needs you':status?.state==='working'?'Working':status?.state==='waiting'?'Waiting':status?'Quiet':'No status reported';
               return <section key={agent.id} className="desk-home-compact" data-agent={agent.id} aria-label={`${agent.name} card`}>
                 <Row aria-label={`Open ${agent.name} conversation`} title={agent.name} meta={word}
                   icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!first)} size={32}/>}
-                  trailing={<span className="desk-home-flags"><span role="img" className="desk-home-dot" data-state={status?.state} aria-label={word}/>{first&&<span>ASK</span>}<span aria-label={threadStatus==='live'?`${unread.length} unread threads`:'Conversations unavailable'}>{threadStatus==='live'?(unread.length?`${unread.length} unread`:''):'?'}</span></span>}
-                  onClick={()=>go(thread?threadPath(thread.id):'/p/comms-preview')} />
+                  trailing={<span className="desk-home-flags"><span role="img" className="desk-home-dot" data-state={status?.state} aria-label={word}/>{first&&<span>ASK</span>}<span aria-label={threadStatus==='live'?`${unread} unread threads`:'Conversations unavailable'}>{threadStatus==='live'?(unread?`${unread} unread`:''):'?'}</span></span>}
+                  onClick={()=>go(thread?threadPath(thread.thread):'/p/comms-preview')} />
               </section>;
             }
             return <section key={agent.id} aria-label={`${agent.name} card`} data-agent={agent.id} className="desk-home-card grid min-w-0 gap-3">

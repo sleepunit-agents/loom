@@ -4,9 +4,17 @@ import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),queryStatus:"live" as "live"|"offline"|"denied"}));
+function homeFixture() {
+ const snapshot=f.snapshots.thread;
+ return {status:snapshot.status,data:{homeComms:{member:'owner',agents:f.snapshots['attention.ownedAgent'].records.map((a:any)=>a.id),summaries:f.snapshots['attention.ownedAgent'].records.map((a:any)=>{
+  const recent=snapshot.records.filter((t:any)=>t.agent===a.id&&t.archived===null).sort((a:any,b:any)=>b.last-a.last||a.id.localeCompare(b.id));
+  const last=recent[0],first=recent.find((t:any)=>t.unread);
+  return {agent:a.id,unread:recent.filter((t:any)=>t.unread).length,last:last?{thread:last.id,title:last.title??'',at:new Date(last.last).toISOString()}:null,first:first?{thread:first.id}:null};
+ })}}};
+}
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.queryStatus,data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskHomeComms')?homeFixture():document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.queryStatus,data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['thread','attention.agent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]))}));
 import Rail from './rail';
 import { RailContext } from '../../desk-rail';
 import DeskSignals from './desk-signals';
@@ -41,7 +49,7 @@ it.each(['offline','denied','loading'] as const)('drops stale names, asks, work 
  await publish('attention.ownedAgent',status);expect(text()).not.toContain('Art rail card');
 });
 
-it('folds measured overflow, keeps talking before asks/unread, and unfolds when room returns',async()=>{
+it('folds measured overflow, keeps current working state before asks/unread, and unfolds when room returns',async()=>{
  const element={clientWidth:296,clientHeight:120,scrollHeight:700};let resize:()=>void=()=>{};
  vi.stubGlobal('document',{fonts:undefined});
  vi.stubGlobal('ResizeObserver',class{constructor(fn:()=>void){resize=fn;}observe(){}disconnect(){}});
@@ -51,13 +59,14 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBe(true);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('art');
   expect(tree.root.findByProps({className:'desk-rail-compact'}).props['data-agent']).toBe('mark');
-  // An actual working private thread takes priority over Art's ask.
-  await publish('thread','live',[...f.snapshots.thread.records,{id:'th:mark',agent:'mark',title:'In flight',unread:false,working:true,last:3,archived:null}]);
+  // Current working state takes priority over Art's ask.
+  await publish('attention.agent','live',[{id:'mark',agent:'mark',state:'working',work:'In flight',changedAt:2}]);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('mark');
   await act(async()=>tree.root.findByProps({'aria-label':'Open Art conversation'}).props.onClick());
   expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
-  // Losing this source immediately drops its talking priority and stale unread count.
+  // Conversation loss clears unread independently; status loss clears working priority.
   await publish('thread','offline');
+  await publish('attention.agent','offline');
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('art');
   expect(text()).not.toContain('1 unread thread');expect(text()).toContain('Conversations unavailable');
   element.clientHeight=900;await act(async()=>resize());

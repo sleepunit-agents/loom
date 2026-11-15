@@ -5,17 +5,16 @@ import { AppFrame, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
 import { HomeSteps } from './home-steps';
-import { threadPath } from './home-comms';
+import { useHomeComms, threadPath } from './home-comms-data';
 import type { ActivityWindow } from '../activity/model';
 import type { Ask } from './model';
 import './home.css';
 interface Profile extends LiveRecord { agent: string; description?: string; requestedAt?: string; canEdit: boolean }
-interface Thread extends LiveRecord { agent: string; archived: number|null; last: number; unread: boolean }
 /** A record-only agent window; profile writes and deeper sections stay in their owning apps. */
 export default function AgentApp({ path = '/p/agents-preview', go = p => location.assign(p) }: {path?:string;go?:(path:string)=>void} = {}) {
   const roster=useDeskRoster(), people=useRecords<AgentPerson>('person');
   const profiles=useRecords<Profile>('household.profile'), statuses=useDeskAgentStatuses();
-  const asks=useRecords<Ask>('attention.ask'), threads=useRecords<Thread>('thread');
+  const asks=useRecords<Ask>('attention.ask'), comms=useHomeComms();
   const activity=useRecords<ActivityWindow>('activity.window','recent'), displays=useAgentDisplays();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));
   const pathname=new URL(path,'http://loom').pathname, prefix='/p/agents-preview/agent/';
@@ -24,14 +23,13 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
   const agent=agents.find(a=>a.id===id), profile=profiles.status==='live'?profiles.records.find(p=>p.agent===agent?.id):undefined;
   const status=statuses.status==='live'&&agent?latestStatus(statuses.records,agent.id):undefined;
   const open=asks.status==='live'&&agent?openAsks(asks.records).filter(a=>a.agent===agent.id):[];
-  const recent=threads.status==='live'&&agent?threads.records.filter(t=>t.agent===agent.id&&t.archived===null).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id)):[];
-  const thread=recent.find(t=>t.unread)??recent[0];
+  const summary=comms.reading?.summaries.find(s=>s.agent===agent?.id),thread=summary?.first??summary?.last;
   const unavailable=roster.status==='loading'?<Loading label="Opening your agents…"/>:roster.status!=='live'?<Error title="Your agents are unavailable" text="Waiting for access and connection."/>:undefined;
   const links=agent?[
-    {title:'Conversation',meta:threads.status==='live'?'First unread or latest open thread':'Open Comms to reconnect',href:thread?threadPath(thread.id):'/p/comms-preview'},
+    {title:'Conversation',meta:comms.status==='live'?'First unread or latest open thread':'Open Comms to reconnect',href:thread?threadPath(thread.thread):'/p/comms-preview'},
     {title:'Activity',meta:'Recent work and conversations',href:`/p/activity-preview/?who=${encodeURIComponent(agent.id)}`},
     ...(agent.personPath?[{title:'People',meta:'Shared identity and relationships',href:agent.personPath}]:[]),
-    {title:'Home',meta:'Current work, Clock and questions for all your agents',href:'/p/home-preview'},
+    {title:'Home',meta:'Current work and questions for all your agents',href:'/p/home-preview'},
     ...(profile?.canEdit?[{title:'Edit profile in Setup',meta:'Description and description requests',href:'/p/setup-preview'}]:[]),
   ]:[];
   return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]"><div className="desk-home-content"><AppFrame title={agent?.name??'Your agents'} where="Agents" go={go}

@@ -10,8 +10,8 @@ import type { Call, CallState, Result, Snapshot } from '../../data';
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['wake','clock','attention.agent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.once}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskHomeComms')?f.snapshots['generated.homeComms']:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskHomeComms')?{status:f.snapshots['generated.homeComms'].status,data:{homeComms:f.snapshots['generated.homeComms'].records[0]??null}}:document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['generated.homeComms'],f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['wake','clock','attention.agent','thread']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
 vi.mock('./member-retention',()=>({useMemberRetention:vi.fn()}));
@@ -32,7 +32,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'generated.jobs':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'generated.homeComms':live([{member:'owner',agents:[],summaries:[]}]),'household.agentDisplay':live([]),'person':live([]),'generated.jobs':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards in saved position order with stable id ties, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -161,42 +161,45 @@ it.each(['loading','offline','denied'] as const)('clears Runtime words and avoid
   await publish('generated.jobs',live([{...runtimeJob('returned'),queuedAt:new Date(1).toISOString()}]));expect(words(tree!.root.findByProps({'aria-label':'Art runtime jobs'}))).toContain('Runtime returned');
   await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Runtime returned');expect(text()).not.toContain('Art card');
 });
-it('shows member conversation metadata and opens the latest and first unread exact threads',async()=>{
- const pending=request<any>();f.once.mockReturnValue(pending.call);const go=await draw();
- expect(f.once).toHaveBeenCalledWith('comms.agents',{});
- await pending.finish({ok:true,value:{member:'owner',agents:[],summaries:[{agent:'art',unread:2,last:{thread:'th:last',title:'Recent desk work',at:1},first:{thread:'th:first',text:'Reply words are not retained on Home'}}]}});
- expect(text()).toContain('Recent desk work');expect(buttons('2 unread threads')).toHaveLength(1);expect(text()).not.toContain('Reply words are not retained on Home');
- await click('2 unread threads');expect(go).toHaveBeenCalledWith('/p/comms-preview/thread/first');
- await publish('thread',{status:'denied',records:[]});expect(text()).not.toContain('Recent desk work');expect(buttons('2 unread threads')).toHaveLength(0);
+it('shows generated mailbox counts and opens exact last/unread destinations without legacy commands',async()=>{
+ f.snapshots['generated.homeComms']=live([{member:'owner',agents:[],summaries:[{agent:'art',unread:102,last:{thread:'th:last',title:'Recent desk work',at:'2026-11-14T00:00:00Z'},first:{thread:'th:first'}}]}]);
+ const go=await draw();expect(text()).toContain('Recent desk work');expect(buttons('102 unread threads')).toHaveLength(1);expect(f.once).not.toHaveBeenCalled();
+ await click('102 unread threads');expect(go).toHaveBeenCalledWith('/p/comms-preview/thread/first');
+ for(const status of ['loading','offline','denied'] as const){
+  await publish('generated.homeComms',{...f.snapshots['generated.homeComms'],status});
+  expect(text()).not.toContain('Recent desk work');expect(buttons('102 unread threads')).toHaveLength(0);
+ }
+ await publish('generated.homeComms',live([{member:'owner',agents:[],summaries:[]}]));expect(text()).toContain('No conversations yet.');
 });
-it('fences late conversation summaries after a thread feed loses access or changes',async()=>{
- const old=request<any>(),fresh=request<any>();f.once.mockReturnValueOnce(old.call).mockReturnValueOnce(fresh.call);await draw();
- await publish('thread',live([{id:'th:new'}]));
- await fresh.finish({ok:true,value:{member:'owner',agents:[],summaries:[{agent:'art',unread:0,last:{thread:'th:new',title:'Current conversation',at:2}}]}});
- await old.finish({ok:true,value:{member:'owner',agents:[],summaries:[{agent:'art',unread:0,last:{thread:'th:old',title:'Stale conversation',at:1}}]}});
- expect(text()).toContain('Current conversation');expect(text()).not.toContain('Stale conversation');
- await publish('thread',{status:'offline',records:[{id:'th:new'}]});expect(text()).not.toContain('Current conversation');
+it('withdraws compose eligibility on current ownership, identity and query loss',async()=>{
+ f.snapshots['generated.homeComms']=live([{member:'owner',agents:['art'],summaries:[]}]);await draw();
+ const composer=()=>tree!.root.findByProps({'aria-label':'Message Art'}).findAllByType('form');
+ expect(composer()).toHaveLength(1);expect(tree!.root.findByProps({'aria-label':'Message Mark'}).findAllByType('form')).toHaveLength(0);
+ await publish('generated.homeComms',live([{member:'owner',agents:[],summaries:[]}]));expect(composer()).toHaveLength(0);
+ await publish('generated.homeComms',live([{member:'other',agents:['art'],summaries:[]}]));expect(composer()).toHaveLength(1);
+ await publish('generated.homeComms',{...f.snapshots['generated.homeComms'],status:'offline'});expect(composer()).toHaveLength(0);
+ await publish('generated.homeComms',live([]));expect(composer()).toHaveLength(0);expect(text()).toContain('Conversations unavailable.');
 });
 
-it('folds only phone rosters over four, prioritizes fresh working threads then asks then unread, and unmounts other readers',async()=>{
+it('folds only phone rosters over four, prioritizes current working state then asks then unread, and unmounts other readers',async()=>{
  let matches=true;const changes=new Set<()=>void>();
  vi.stubGlobal('window',{matchMedia:()=>({get matches(){return matches;},addEventListener:(_s:string,f:()=>void)=>changes.add(f),removeEventListener:(_s:string,f:()=>void)=>changes.delete(f)}),addEventListener:vi.fn(),removeEventListener:vi.fn()});
  try {
  const agents=['art','birch','cedar','elm','fern'].map(id=>({id,name:id}));
  f.snapshots['attention.ownedAgent']=live(agents);
  f.snapshots['attention.ask']=live([ask('question',{agent:'birch'})]);
- const thread=(id:string,agent:string,extra={})=>({id,agent,title:id,last:1,archived:null,unread:false,...extra});
- const threads=[thread('th:working','fern',{working:true}),thread('th:old','cedar',{unread:true}),thread('th:new/one','cedar',{unread:true,last:2}),thread('th:latest','elm')];
- f.snapshots.thread=live(threads);const go=await draw();
+ const summary={member:'owner',agents:[],summaries:[{agent:'cedar',unread:2,last:{thread:'th:new/one',title:'Unread',at:'2026-11-14T00:00:00Z'},first:{thread:'th:new/one'}},{agent:'elm',unread:0,last:{thread:'th:latest',title:'Latest',at:'2026-11-14T00:00:00Z'},first:null}]};
+ f.snapshots['generated.homeComms']=live([summary]);
+ f.snapshots['attention.agent']=live([{id:'fern',agent:'fern',state:'working',work:'Working',changedAt:1}]);const go=await draw();
  const cards=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props.className?.startsWith('desk-home-card')).map((n:Node)=>n.props['data-agent']);
  const rows=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props.className==='desk-home-compact');
  expect(cards()).toEqual(['fern']);expect(rows()).toHaveLength(4);
  expect(tree!.root.findAllByProps({'aria-label':'birch desk details'})).toHaveLength(0);
  await act(async()=>tree!.root.findByProps({'aria-label':'Open cedar conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/new%2Fone');
  await act(async()=>tree!.root.findByProps({'aria-label':'Open elm conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/latest');
- await publish('thread',live(threads.map(t=>({...t,working:false}))));expect(cards()).toEqual(['birch']);
+ await publish('attention.agent',live([]));expect(cards()).toEqual(['birch']);
  await publish('attention.ask',{records:f.snapshots['attention.ask'].records,status:'denied'});expect(cards()).toEqual(['cedar']);expect(text()).not.toContain('Question question');
- await publish('thread',{records:threads,status:'offline'});expect(cards()).toEqual(['art']);expect(text()).not.toContain('2 unread');
+ await publish('generated.homeComms',{records:[summary],status:'offline'});expect(cards()).toEqual(['art']);expect(text()).not.toContain('2 unread');
  await act(async()=>{matches=false;changes.forEach(f=>f());});expect(cards()).toHaveLength(5);expect(rows()).toHaveLength(0);
  await act(async()=>{matches=true;changes.forEach(f=>f());});expect(cards()).toEqual(['art']);
  await publish('attention.ownedAgent',live(agents.slice(0,4)));expect(cards()).toHaveLength(4);expect(rows()).toHaveLength(0);

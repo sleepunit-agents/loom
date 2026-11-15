@@ -4,9 +4,17 @@ import {createElement as h, useMemo,useSyncExternalStore} from 'react';
 import {act,create} from 'react-test-renderer';
 import type {Snapshot} from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn()}));
+function homeFixture() {
+ const snapshot=f.snapshots.thread;
+ return {status:snapshot.status,data:{homeComms:{member:'owner',agents:f.snapshots['attention.ownedAgent'].records.map((a:any)=>a.id),summaries:f.snapshots['attention.ownedAgent'].records.map((a:any)=>{
+  const recent=snapshot.records.filter((t:any)=>t.agent===a.id&&t.archived===null).sort((a:any,b:any)=>b.last-a.last||a.id.localeCompare(b.id));
+  const last=recent[0],first=recent.find((t:any)=>t.unread);
+  return {agent:a.id,unread:recent.filter((t:any)=>t.unread).length,last:last?{thread:last.id,title:last.title??'',at:new Date(last.last).toISOString()}:null,first:first?{thread:first.id}:null};
+ })}}};
+}
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent']])}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.call}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['attention.ownedAgent']);return useMemo(()=>document.includes('DeskHomeComms')?homeFixture():({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots.thread,f.snapshots['attention.ownedAgent'],document]);}}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['thread','attention.agent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.call}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import AgentApp from './agent';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
