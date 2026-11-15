@@ -88,6 +88,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith('Wears one of three looks'):row['probe']={'kind':'action','action':'deskLooks'}
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
+
    if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
    if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
