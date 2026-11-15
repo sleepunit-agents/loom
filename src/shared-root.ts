@@ -1,3 +1,6 @@
+import { SecretRequests } from './pieces/secrets/requests.js';
+import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
+import { registerSharedSecretCommands } from './shared-secret-commands.js';
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -30,9 +33,12 @@ export function sharedRoot(options: {
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
   tempo?: SharedTempoOptions;
+  /** Explicit authenticated private holder and stable private retry key. */
+  secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
+  if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   const chat = new AsyncLocalStorage<TempoChatAuthentication>();
@@ -41,13 +47,36 @@ export function sharedRoot(options: {
   const credentials = sharedCredentials(db, clock, () => !closing);
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
-    receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
+    receipts: new OperationResults(db), writes: data.writes,
+    reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
+  const requests = new SecretRequests(db, now);
+  const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
+    options.secretWrites.fingerprintKey, write => {
+      const result = data.writes.run(write);
+      for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
+    });
+  registerSharedSecretCommands(operations, db, requests, values && {
+    values, fingerprintKey:options.secretWrites!.fingerprintKey,
+  });
+  let secretRecovery:Promise<void>|undefined, cancelSecretRecovery:(()=>void)|undefined;
+  const recoverSecrets=()=>{
+    if(closing || !values)return Promise.resolve();
+    if(secretRecovery)return secretRecovery;
+    cancelSecretRecovery?.();
+    secretRecovery=values.reconcilePending().catch(()=>{}).finally(()=>{
+      secretRecovery=undefined;
+      if(!closing)cancelSecretRecovery=clock.at(clock.now()+60_000,recoverSecrets);
+    });
+    return secretRecovery;
+  };
+  if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: new Conversations(db, now),
+    secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
@@ -56,7 +85,7 @@ export function sharedRoot(options: {
     ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
-  catch (error) { operations.close(); void data.close(); throw error; }
+  catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   const authenticate = credentials.authenticate;
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -117,10 +146,11 @@ export function sharedRoot(options: {
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
+      cancelSecretRecovery?.(); values?.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
