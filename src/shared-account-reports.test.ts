@@ -9,13 +9,14 @@ import { workerProgram } from './runtime/worker-program.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { boxes, members, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens, operationResults, sessions } from './core/data/schema.js';
+import { boxes, members, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens, operationResults, sessions, agents, memberAgents, agentBoxes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
+import type { ModelRole } from './runtime/placement.js';
 import { reportWorkerAccountUsage } from './runtime/worker-http.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const token = 'a'.repeat(64), other = 'b'.repeat(64), owner = 'c'.repeat(64);
-function fixture() {
+function fixture(roles: readonly ModelRole[] = []) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   db.insert(members).values({ id: 'member', role: 'owner', joinedAt: now() }).run();
@@ -24,7 +25,7 @@ function fixture() {
   db.insert(tokens).values({ fingerprint: createHash('sha256').update(owner).digest('hex'), label: 'owner', kind: 'owner', member: 'member', createdAt: now() }).run();
   db.insert(modelAccounts).values({ id: 'account', owner: 'member', provider: 'provider', label: 'Account', hasRoom: false }).run();
   db.insert(modelAccountBoxes).values({ account: 'account', box: 'worker' }).run();
-  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {} }); cleanup.push(() => root.close());
+  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, modelRoles: () => roles }); cleanup.push(() => root.close());
   const observation = { account: 'account', owner: 'member', provider: 'provider', windows: [{ name: 'week', usage: 0.2, readAt: now(), resetsAt: new Date(clock.now() + 3.5 * 86400_000).toISOString(), durationMs: 7 * 86400_000 }] };
   const readBases = new Map<string, string>();
   const call = async (input: unknown = observation, id = 'report', key = token) => {
@@ -298,4 +299,37 @@ it('publishes an identical-state failure completion to both reporting and truste
   expect(await (await f.call({ ...f.observation, basis }, 'old-reporting-success')).json()).toMatchObject({ value: { recorded: false } });
   release(f.observation.windows); expect(await pending).toEqual({ refreshed: false });
   expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false); expect(f.db.select().from(modelAccountWindows).all()).toEqual([]);
+});
+
+it('refreshes from the normal worker before claims and reports later failure through actual root ingestion', async () => {
+  const f = fixture([{ model: 'model', provider: 'provider', harness: 'native', series: 'series' }]), output = vi.fn(), error = vi.fn(), paths: string[] = [];
+  f.db.insert(agents).values({ id: 'agent', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  f.db.insert(memberAgents).values({ member: 'member', agent: 'agent' }).run();
+  f.db.insert(agentBoxes).values({ agent: 'agent', box: 'worker', position: 0 }).run();
+  f.db.insert(agentModels).values({ agent: 'agent', model: 'model', position: 0 }).run();
+  f.db.insert(agentRunSettings).values({ agent: 'agent', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', nestedContainers: false, gpu: false }).run();
+  f.db.insert(jobs).values({ id: 'quota-ready-job', agent: 'agent', title: 'Work', state: 'queued', brief: 'instructions', model: 'model', startedByKind: 'agent', startedBy: 'agent', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', queuedAt: f.now() }).run();
+  expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false);
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => { paths.push(new URL(String(input)).pathname); return f.root.http.fetch(new Request(input, init)); });
+  cleanup.push(() => { fetcher.mockRestore(); });
+  const command = { command: '/fake/reader', args: [], cwd: '/fake', env: {} };
+  const config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', build: command, runners: { native: command }, accountUsage: { readers: [{ account: f.identity, command }] } };
+  let release!: () => void; const ready = new Promise<void>(resolve => { release = resolve; });
+  let stop!: () => void; const ended = new Promise<void>(resolve => { stop = resolve; });
+  let attempts = 0, scans = 0;
+  const pending = workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : token,
+    on: () => {}, off: () => {}, output, error, usage: () => async () => { if (attempts++ > 0) throw Error('private diagnostic'); return f.observation.windows; },
+    executor: () => ({} as never),
+    run: async input => { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true); expect(await input.control.next()).toMatchObject({ id: 'quota-ready-job', box: 'worker', model: 'model', account: 'account', harness: 'native' }); expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' }); release(); await ended; },
+    pause: async (ms, signal) => {
+      expect(ms).toBe(60_000);
+      if (scans++ === 0) await ready;
+      else { expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false); stop(); await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }
+    },
+  });
+  expect(await pending).toBe(0);
+  expect(paths).toEqual(['/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
+  expect(f.db.select().from(modelAccountWindows).get()?.usage).toBe(0.2);
+  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.accountUsage', 'runtime.next', 'runtime.accountUnavailable']);
+  expect(error).toHaveBeenCalledExactlyOnceWith('Worker quota refresh unavailable\n'); expect(output).not.toHaveBeenCalled();
 });
