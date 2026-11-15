@@ -136,3 +136,29 @@ it('never decrypts thread words at an equal whole-second stored deadline', async
   const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
   expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
 });
+
+it('filters matching thread titles before paging and counts the whole personal mailbox', async () => {
+  const f = await fixture();
+  for (let n = 0; n < 110; n++) f.comms.threads.open({ member: 'alice', agent: 'art', title: `Other ${n}` });
+  const matching = f.comms.threads.open({ member: 'alice', agent: 'mark', title: 'Needle title' });
+  const archived = f.comms.threads.open({ member: 'alice', agent: 'art', title: 'Needle archived' }); f.comms.threads.archive(archived.id, true);
+  f.comms.threads.open({ member: 'bob', agent: 'art', title: 'Needle Bob' });
+  expect(f.service.list(alice, { search: 'NEEDLE', limit: 1 }).map(row => row.id)).toEqual([matching.id]);
+  expect(f.service.list(alice, { search: 'Needle', archived: true }).map(row => row.id)).toEqual([archived.id]);
+  expect(f.service.folders(alice)).toEqual({ threads: 112, archived: 1 });
+  expect(f.service.folders(owner)).toEqual({ threads: 0, archived: 0 });
+  f.revoke(); expect(f.service.folders(alice)).toEqual({ threads: 0, archived: 0 });
+});
+it('projects a current effective word deadline without decrypting and fails closed on changed metadata or policy', async () => {
+  const f = await fixture(), row = f.service.messages(alice, f.thread.id)[0];
+  const stored = f.service.wordsKeepUntil(alice, row);
+  expect(stored).toBe('2026-11-28T18:00:00.000Z');
+  f.db.insert(household).values({ commsDays: 1 }).run();
+  expect(f.service.wordsKeepUntil(alice, row)).toBe('2026-11-15T18:00:00.000Z');
+  f.db.update(messages).set({ keepUntil: '2026-11-15T17:59:59Z' }).where(eq(messages.seq, row.seq)).run();
+  expect(f.service.wordsKeepUntil(alice, row)).toBeNull();
+  const latest = f.service.messages(alice, f.thread.id)[0];
+  expect(f.service.wordsKeepUntil(alice, latest)).toBe('2026-11-15T17:59:59.000Z');
+  expect(f.opens()).toBe(0);
+  f.revoke(); expect(f.service.wordsKeepUntil(alice, latest)).toBeNull();
+});
