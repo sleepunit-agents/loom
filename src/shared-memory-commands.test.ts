@@ -130,6 +130,8 @@ it('archives, restores and forgets one own opaque ID with private notes, replay 
  expect((await f.call('recall',{query:'alpha'},'absent')).result.value.ids).toEqual([]);expect(await f.call('archive',{id,note},'archive-one')).toEqual(archived);
  const restored=await f.call('restore',{id},'restore-one');expect(restored.status).toBe(200);expect(restored.result.value.ids).toEqual([id]);expect((await f.call('recall',{query:'alpha'},'present')).result.value.ids).toEqual([id]);
  expect(await f.call('restore',{id},'restore-one')).toEqual(restored);
+ f.source.exec("CREATE TRIGGER fail_forget_source BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.forget' BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('forget',{id},'forget-one')).status).toBe(503);expect(f.count()).toBe(1);expect(f.source.prepare('SELECT * FROM memory_deletions').all()).toEqual([]);f.source.exec('DROP TRIGGER fail_forget_source');
  f.db.$client.exec("CREATE TRIGGER fail_forget_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('forget',{id},'forget-one')).status).toBe(503);expect(f.count()).toBe(0);
  f.db.$client.exec('DROP TRIGGER fail_forget_core');const forgotten=await f.call('forget',{id},'forget-one');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([id]);expect(await f.call('forget',{id},'forget-one')).toEqual(forgotten);
  expect(f.source.prepare('SELECT content,op FROM memory_deletions').all()).toEqual([{content:words,op:'forget'}]);expect((await f.call('restore',{id},'restore-forgotten')).status).toBe(404);
