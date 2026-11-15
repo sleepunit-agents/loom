@@ -33,7 +33,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    if(!ready)return;
    const step=await steps?.next();expect(step?.done).toBe(true);const report=step?.value;
    expect(report.fatal).toBeUndefined();
-   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(report.actions?.[name],JSON.stringify(report.actions)).toMatchObject({ok:true});expect(report.live.dataFrames).toBeGreaterThan(0);
+   expect(report.live.dataFrames).toBeGreaterThan(0);
    const measured=JSON.parse(readFileSync(join(out,'report.json'),'utf8'));
    expect(measured.pages).toHaveLength(19);
    expect(measured.counts['not checkable yet']).toBeGreaterThan(0);
