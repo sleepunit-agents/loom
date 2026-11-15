@@ -38,7 +38,8 @@ export async function* walkthroughSteps(output) {
  const out=resolve(output);mkdirSync(out,{recursive:true});
  const parent=mkdtempSync(join(tmpdir(),'loom-walkthrough-')),home=join(parent,'home');
  const report={version:1,source:{commit:process.env.GITHUB_SHA??null,ref:process.env.GITHUB_REF??null,repository:process.env.GITHUB_REPOSITORY??null,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null},startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
- let app,browser,page;
+ let app,browser,page,phase='first-run',document=0;
+ const sockets=[];
  const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[],connections=new Set();
  const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
  try {
@@ -50,7 +51,8 @@ export async function* walkthroughSteps(output) {
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
   page=await context.newPage();page.setDefaultTimeout(8000);
-  page.on('websocket',socket=>{connections.add(socket);socket.on('close',()=>connections.delete(socket));});
+  page.on('framenavigated',frame=>{if(frame===page.mainFrame())document++;});
+  page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,document,closed:false,failed:false};sockets.push(row);socket.on('socketerror',()=>{row.failed=true;});connections.add(socket);socket.on('close',()=>{row.closed=true;connections.delete(socket);});});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
   page.on('pageerror',error=>pageErrors.push(error.message));
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
@@ -76,6 +78,7 @@ export async function* walkthroughSteps(output) {
   const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?'],'Agents':['DESCRIPTION']};
   const selections={'Tasks':'Measure the hose','Approvals':'Inspect the example pump','Changes':'Plan the pump repair (t-1)','Inbox':'Spend up to 180 example dollars on the pump?','Tempo':'Continue the pump inspection','Comms':'Repair the garden pump','Agents':'Fern'};
   for(const [index,title] of titles.entries()) {
+   phase=title;
    const start={console:consoleErrors.length,page:pageErrors.length,network:networkErrors.length,frames:frames.length};
    const row={title,opened:false,text:'',consoleErrors:[],pageErrors:[],networkErrors:[],live:{frames:[]},screenshot:`${String(index+2).padStart(2,'0')}-${title.toLowerCase().replace(/[^a-z0-9]+/g,'-')}.png`};
    try {
@@ -105,10 +108,11 @@ export async function* walkthroughSteps(output) {
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
    report.apps.push(row);save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
   }
+  phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;}})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
  }catch(error){report.fatal=String(error);}
- finally{report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}
+ finally{report.transport={sockets};report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}
  return safeReport(report);
 }
 export async function walkthrough(output){

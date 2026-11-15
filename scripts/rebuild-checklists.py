@@ -65,6 +65,18 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
+ if f.stem=='data':
+  for row in rows:
+   if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem=='desk':
+  for row in rows:
+   if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem=='index':
+  for row in rows:
+   if row['promise'].startswith('5 One query endpoint'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem=='tasks':
+  for row in rows:
+   if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':hashlib.sha256(f.read_bytes()).hexdigest(),'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  (out/(f.stem+'.json')).write_text(json.dumps(obj,indent=2,ensure_ascii=False)+'\n')
