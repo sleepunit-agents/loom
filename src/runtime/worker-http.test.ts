@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { httpWorkerControl } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage } from './worker-http.js';
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
 function client(fetcher: typeof fetch, signal = new AbortController().signal) {
@@ -98,4 +98,38 @@ it('preserves explicit worker run capabilities and rejects malformed ports', asy
   const control = client(fetcher);
   expect((await control.next())?.run).toEqual(run);
   await expect(control.next()).rejects.toThrow('Worker next failed');
+});
+
+it('reports quota observations once with distinct ids and the existing transport guards', async () => {
+  const observation = { account: 'a', owner: 'm', provider: 'p', windows: [] };
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ recorded: true }));
+  const options = { url: 'https://loom.example', token: 'secret', signal: new AbortController().signal, fetch: fetcher };
+  for (let i = 0; i < 2; i++) {
+    fetcher.mockResolvedValueOnce(response({ recorded: true }));
+    await reportWorkerAccountUsage(options, observation);
+  }
+  const bodies = fetcher.mock.calls.map(([url, init]) => {
+    expect(String(url)).toBe('https://loom.example/api/runtime/accountUsage');
+    expect(init?.redirect).toBe('error');
+    expect(init?.headers).toEqual({ authorization: 'Bearer secret', 'content-type': 'application/json' });
+    return JSON.parse(String(init?.body));
+  });
+  expect(bodies[0].id).not.toBe(bodies[1].id); expect(bodies.map(body => body.input)).toEqual([observation, observation]);
+  expect(() => reportWorkerAccountUsage({ ...options, url: 'http://remote.example' }, observation)).toThrow();
+  fetcher.mockRejectedValueOnce(Error('secret remote diagnostic'));
+  await expect(reportWorkerAccountUsage(options, observation)).rejects.toThrow(/^Worker accountUsage failed; outcome may be uncertain$/);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  await expect(reportWorkerAccountUsage(options, { ...observation, account: 'é'.repeat(600_000) })).rejects.toThrow('Worker accountUsage failed');
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});
+for (const cancel of [false, true]) it(`bounds quota reporting by ${cancel ? 'worker cancellation' : 'deadline'}`, async () => {
+  vi.useFakeTimers();
+  try {
+    const abort = new AbortController(), fetcher = vi.fn<typeof fetch>(async (_url, init) => new Promise((_yes, no) => {
+      init!.signal!.addEventListener('abort', () => no(Error('private diagnostic')), { once: true });
+    }));
+    const pending = expect(reportWorkerAccountUsage({ url: 'https://loom.example', token: 'secret', signal: abort.signal, fetch: fetcher, timeoutMs: 100 }, { account: 'a', owner: 'm', provider: 'p', windows: [] })).rejects.toThrow('Worker accountUsage failed');
+    if (cancel) abort.abort(); else await vi.advanceTimersByTimeAsync(100);
+    await pending; expect(fetcher).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

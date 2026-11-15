@@ -3,7 +3,7 @@ import type { BridgesSnapshot } from '../bridges-view';
 
 /** The shared root resolves the reader from its authenticated executor. */
 export const bridgesQuery = `query Bridges {
-  bridgeReader { id }
+  bridgeReader { id manage }
   bridgeActivity { id received delivered held }
   bridgeConnections { id platform agent workspace botUser tokenSecret appSecret enabled state stateAt }
   bridgeChannelFilters { connection channel rule }
@@ -12,7 +12,7 @@ export const bridgesQuery = `query Bridges {
   bridgeSends { id incoming connection channel thread text state postedId createdAt }
 }`;
 export interface BridgesData {
-  bridgeReader: { id: string } | null;
+  bridgeReader: { id: string; manage?: boolean } | null;
   bridgeActivity: readonly { id: string; received: number; delivered: number; held: number }[];
   bridgeConnections: BridgesSnapshot['connections'];
   bridgeChannelFilters: BridgesSnapshot['filters'];
