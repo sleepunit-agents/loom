@@ -15,6 +15,9 @@ import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
+import { createRuntime } from './runtime/runtime.js';
+import type { ModelRole } from './runtime/placement.js';
+import { registerSharedRuntime } from './shared-runtime.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -27,6 +30,8 @@ export function sharedRoot(options: {
   approvedOperations?: ApprovedOperations;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  modelRoles?(): readonly ModelRole[];
+  runtimeJobEnded?(id: string): void;
 }) {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
@@ -36,10 +41,17 @@ export function sharedRoot(options: {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
   registerSharedPreferences(operations, db);
+  const roles = () => options.modelRoles?.() ?? [];
+  const jobEnded = (id: string) => {
+    try { options.runtimeJobEnded?.(id); } catch (error) { options.reportError(error); }
+  };
+  const runtime = createRuntime(db, clock, { roles, changed: () => data.changed(), jobEnded, error: options.reportError });
+  registerSharedRuntime(operations, db, { now, roles, jobEnded });
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, options.approvedOperations, now),
     conversations: new Conversations(db, now),
+    runtime,
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   const authenticate = dataAuthentication(db, () => clock.now());
@@ -88,6 +100,7 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  runtime.start();
   return {
     http, operations, services, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
@@ -99,6 +112,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       const stopped = data.close();
       const pending = [...active];
