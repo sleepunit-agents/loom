@@ -67,6 +67,149 @@ it('tile and inline cards follow the same current answer/head and clear retained
   }
 });
 
+it('opens the exact change from a Comms deep link and follows shell navigation and back', async () => {
+  fixture();
+  const id = 'github:acme/app#3';
+  feed.changes.changes[0] = { ...feed.changes.changes[0], id };
+  const go = vi.fn();
+  const route = `/p/changes-preview/change/${encodeURIComponent(id)}`;
+  await draw(h(ChangesApp, { path: route, go }));
+  expect(words()).toContain('first-head');
+  await act(async () => tree.root.findByType('Split').props.onBack());
+  expect(go).toHaveBeenLastCalledWith('/p/changes-preview');
+  await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview', go })));
+  expect(words()).not.toContain('first-head');
+  await selectRow();
+  expect(go).toHaveBeenLastCalledWith(route);
+  await act(async () => tree.update(h(ChangesApp, { path: route, go })));
+  expect(words()).toContain('first-head');
+  await act(async () => tree.root.findByType('Split').props.onFolder('you'));
+  expect(go).toHaveBeenLastCalledWith('/p/changes-preview/you');
+  for (const path of ['/p/changes-preview/change/%broken', '/p/changes-preview/change/missing', '/p/changes-preview/change/']) {
+    await act(async () => tree.update(h(ChangesApp, { path, go })));
+    expect(words()).not.toContain('first-head');
+  }
+});
+
+it('linked work opens the Tasks reader route and unavailability withdraws the deep-linked reader', async () => {
+  fixture();
+  feed.changes.changeTasks = [{ change: 'c-one', task: 't-42', taskRow: { id: 't-42', title: 'Linked task', status: 'open' } }];
+  const go = vi.fn();
+  const node = h(ChangesApp, { go });
+  await draw(node);
+  await selectRow();
+  await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));
+  const linked = tree.root.findAllByType('Row').find((row: { props: { title: string } }) => row.props.title === 'Linked task');
+  await act(async () => linked.props.onClick());
+  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-42');
+  for (const status of ['offline', 'denied', 'loading']) {
+    feed.status = status;
+    await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));
+    expect(words()).not.toContain('first-head');
+    expect(words()).not.toContain('Linked task');
+  }
+});
+
+
+it('opens approval and reported-step links from Attention and follows shell folder navigation', async () => {
+  fixture();
+  const id = 'a-one/encoded?';
+  feed.approvals.approvals[0] = { ...feed.approvals.approvals[0], id };
+  const go = vi.fn();
+  const route = `/p/approvals-preview/approval/${encodeURIComponent(id)}`;
+  await draw(h(ApprovalsApp, { path: route, go }));
+  expect(words()).toContain('Keep one day?');
+  await act(async () => tree.root.findByType('Split').props.onBack());
+  expect(go).toHaveBeenLastCalledWith('/p/approvals-preview');
+  await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview', go })));
+  expect(words()).not.toContain('Keep one day?');
+  await selectRow();
+  expect(go).toHaveBeenLastCalledWith(route);
+  await act(async () => tree.update(h(ApprovalsApp, { path: route, go })));
+  await act(async () => tree.root.findByType('Split').props.onFolder('notices'));
+  expect(go).toHaveBeenLastCalledWith('/p/approvals-preview/notices');
+  await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/notices', go })));
+  expect(tree.root.findByType('Split').props.folder).toBe('notices');
+  expect(words()).toContain('Current reported step');
+  expect(words()).not.toContain('Keep one day?');
+  for (const folder of ['history', 'rules', 'pending']) {
+    await act(async () => tree.root.findByType('Split').props.onFolder(folder));
+    const path = folder === 'pending' ? '/p/approvals-preview' : `/p/approvals-preview/${folder}`;
+    expect(go).toHaveBeenLastCalledWith(path);
+    await act(async () => tree.update(h(ApprovalsApp, { path, go })));
+    expect(tree.root.findByType('Split').props.folder).toBe(folder);
+  }
+  for (const path of ['/p/approvals-preview/approval/%broken', '/p/approvals-preview/approval/missing', '/p/approvals-preview/approval/']) {
+    await act(async () => tree.update(h(ApprovalsApp, { path, go })));
+    expect(words()).not.toContain('Keep one day?');
+  }
+});
+
+it('approval deep links show the current answer and withdraw the reader when unavailable', async () => {
+  fixture();
+  const node = h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() });
+  await draw(node);
+  expect(words()).toContain('Keep one day?');
+  feed.approvals.approvals[0] = { ...feed.approvals.approvals[0], state: 'denied', ask: 'Current question' };
+  await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() })));
+  expect(words()).toContain('Current question');
+  expect(words()).toContain('denied');
+  for (const status of ['offline', 'denied', 'loading']) {
+    feed.status = status;
+    await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() })));
+    expect(words()).not.toContain('Current question');
+    expect(words()).not.toContain('Measuring settings change');
+    expect(tree.root.findAllByType('Button')).toHaveLength(0);
+  }
+});
+
+
+it('restores Changes folders from shell routes, including encoded projects and base navigation', async () => {
+  fixture();
+  const project = 'pond / field?';
+  feed.changes.changes[0] = { ...feed.changes.changes[0], project };
+  feed.changes.changes.push({ ...feed.changes.changes[0], id: 'c-other', title: 'Other project change', project: 'other', waitingOn: 'ci' });
+  const go = vi.fn();
+  for (const [folder, path] of [
+    ['you', '/p/changes-preview/you'], ['lately', '/p/changes-preview/lately'],
+    [`project:${project}`, `/p/changes-preview/project/${encodeURIComponent(project)}`], ['all', '/p/changes-preview'],
+  ]) {
+    await draw(h(ChangesApp, { path, go }));
+    expect(tree.root.findByType('Split').props.folder).toBe(folder);
+    expect(words().includes('Other project change')).toBe(folder === 'all' || folder === 'lately');
+    await act(async () => tree.root.findByType('Split').props.onFolder(folder));
+    expect(go).toHaveBeenLastCalledWith(path);
+    await act(async () => tree.unmount());
+  }
+  await draw(h(ChangesApp, { path: '/p/changes-preview/project/%broken', go }));
+  expect(tree.root.findByType('Split').props.folder).toBe('all');
+  expect(words()).toContain('Other project change');
+});
+
+it('restores Changes folder selection on browser back and forward without a shell callback', async () => {
+  fixture();
+  const location = { pathname: '/p/changes-preview/you' };
+  let pop: (() => void) | undefined;
+  const removeEventListener = vi.fn();
+  vi.stubGlobal('location', location);
+  vi.stubGlobal('history', { pushState: vi.fn((_state, _unused, path) => { location.pathname = path; }) });
+  vi.stubGlobal('window', { addEventListener: (_event: string, listener: () => void) => { pop = listener; }, removeEventListener });
+  try {
+    await draw(h(ChangesApp, {}));
+    expect(tree.root.findByType('Split').props.folder).toBe('you');
+    await act(async () => tree.root.findByType('Split').props.onFolder('lately'));
+    expect(location.pathname).toBe('/p/changes-preview/lately');
+    expect(tree.root.findByType('Split').props.folder).toBe('lately');
+    for (const [path, folder] of [['/p/changes-preview/you', 'you'], ['/p/changes-preview/lately', 'lately']]) {
+      location.pathname = path;
+      await act(async () => pop?.());
+      expect(tree.root.findByType('Split').props.folder).toBe(folder);
+    }
+    await act(async () => tree.unmount());
+    expect(removeEventListener).toHaveBeenCalledWith('popstate', pop);
+  } finally { await act(async () => tree.unmount()); vi.unstubAllGlobals(); }
+});
+
 it('answers a Measuring card through the mounted authenticated API without changing its local state', async () => {
  fixture();
  const request = vi.fn(async (_url:string,_options:RequestInit) => ({ok:true,json:async()=>({ok:true})}));

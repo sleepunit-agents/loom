@@ -68,8 +68,13 @@ export function ApprovalCard({ id, snapshot, actions, renderChange }: { id: stri
 
 /** No transport or cached private records: the generated query client supplies
  * the current visible snapshot, and drops it on disconnect or access loss. */
-export default function Approvals({ snapshot, actions, renderChange }: { snapshot: ApprovalSnapshot; actions?: ApprovalActions } & ChangePresentation) {
-  const [folder, setFolder] = useState('pending'), [query, setQuery] = useState(''), [selected, setSelected] = useState<string>();
+export default function Approvals({ snapshot, actions, renderChange, navigation }: { snapshot: ApprovalSnapshot; actions?: ApprovalActions;
+  navigation?: { selected?: string; select(id?: string): void; folder: string; openFolder(id: string): void };
+} & ChangePresentation) {
+  const [localFolder, setLocalFolder] = useState('pending'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
+  const folder = navigation ? navigation.folder : localFolder;
+  const selected = navigation ? navigation.selected : localSelected;
+  const setSelected = navigation ? navigation.select : setLocalSelected;
   const live = snapshot.status === 'live';
   const shown = rows(snapshot, folder, query);
   const approval = live ? snapshot.approvals.find(a => a.id === selected) : undefined;
@@ -77,7 +82,7 @@ export default function Approvals({ snapshot, actions, renderChange }: { snapsho
   const notices = live ? snapshot.notices.filter(n => matches([n.what, n.agent, n.target, n.kind], query)).sort((a,b) => b.at.localeCompare(a.at)) : [];
   const rulesView = folder === 'rules', noticesView = folder === 'notices';
   return <Split label="Approvals" className="h-full" folders={folders.map(f => ({ ...f, count: live ? f.id === 'rules' ? snapshot.rules.length : f.id === 'notices' ? snapshot.notices.length : rows(snapshot, f.id, '').length : undefined }))}
-    folder={folder} onFolder={id => { setFolder(id); setSelected(undefined); }}
+    folder={folder} onFolder={id => { if (navigation) navigation.openFolder(id); else { setLocalFolder(id); setLocalSelected(undefined); } }}
     search={<label>Search approvals<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
     listTitle={folders.find(f => f.id === folder)?.label}
     listMeta={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
