@@ -14,7 +14,7 @@ export interface InboxSnapshot { folders?: InboxFolders; status: 'live' | 'loadi
 export type InboxAnswer = 'yes' | 'no' | 'words' | 'done' | 'dismiss';
 export interface InboxActions {
   read?(id: string): Promise<void>;
-  answer(id: string, answer: InboxAnswer, words?: string): Promise<void>;
+  answer?(id: string, answer: InboxAnswer, words?: string): Promise<void>;
   openSource?(item: InboxItem): void;
 }
 export function managed(item: InboxItem): boolean {

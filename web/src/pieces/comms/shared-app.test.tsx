@@ -168,3 +168,8 @@ it('shows a current mentioned pull request card, updates it and withdraws denied
   f.data.mentionedChanges = {[id]:[]};
   await act(async()=>{tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}));}); expect(text()).not.toContain('UPDATED PR TITLE');
 });
+it('marks an owner-visible inline question read for its reader without offering another recipient’s answers',async()=>{
+ setup();f.data.homeComms={member:'owner',agents:[]};f.data.commsMessages=[message({kind:'ask',inboxItem:'in-ask'})];
+ f.data.item={id:'in-ask',source:'thread',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'OWNER VISIBLE QUESTION'},bodyKeepUntil:new Date(Date.now()+60000).toISOString()};
+ await draw();expect(text()).toContain('OWNER VISIBLE QUESTION');expect(f.call).toHaveBeenCalledExactlyOnceWith('inbox.read',{item:'in-ask'});expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();expect(named('Record answer')).toBeUndefined();
+});

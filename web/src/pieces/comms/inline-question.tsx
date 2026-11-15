@@ -16,9 +16,9 @@ export function InlineQuestion({ id, go, writable, readVisible }: { id: string; 
   const item = reading.status === 'live' ? reading.data : null;
   const now = useDeadline(item ? [item.bodyKeepUntil, item.answerKeepUntil] : []);
 
-  const actions: InboxActions | undefined = item && writable ? {
+  const actions: InboxActions | undefined = item ? {
     read: readVisible ? item => mutate('inbox.read', { item }) : undefined,
-    answer: (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }),
+    answer: writable ? (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }) : undefined,
     openSource: inboxSourcePath(item) ? item => { const path = inboxSourcePath(item); if (path) go(path); } : undefined,
   } : undefined;
   return <InboxQuestionCard id={id} inline actions={actions} snapshot={{ status: reading.status,

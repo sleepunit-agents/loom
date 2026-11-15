@@ -20,7 +20,7 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     if (!item.read && actions?.read) void actions.read(item.id).catch(() => { if (mounted.current) setError(true); });
   }, [item.id, canRead]);
   const answer = async (verdict: InboxAnswer, words?: string) => {
-    if (lock.current || item.state !== 'waiting' || !item.answers || !item.body || managed(item) || !actions) return;
+    if (lock.current || item.state !== 'waiting' || !item.answers || !item.body || managed(item) || !actions?.answer) return;
     if (verdict === 'words' && !words?.trim()) return;
     lock.current = true; setBusy(true); setError(false);
     try { await actions.answer(item.id, verdict, words?.trim()); }
@@ -37,7 +37,7 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     {item.refs.length > 0 && <p>About: {item.refs.join(' · ')}</p>}
     {waiting && managed(item) && <p>Answer this at its source.</p>}
     {waiting && managed(item) && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}
-    {waiting && item.answers && item.body && !managed(item) && actions && <section aria-label="Record your answer" className="grid gap-2">
+    {waiting && item.answers && item.body && !managed(item) && actions?.answer && <section aria-label="Record your answer" className="grid gap-2">
       {item.answers === 'yes-no' && <div><Button disabled={busy} onClick={() => void answer('yes')}>{inline ? 'Allow' : 'Yes'}</Button><Button disabled={busy} onClick={() => void answer('no')}>{inline ? 'Deny' : 'No'}</Button></div>}
       <Textarea aria-label="Answer in your own words" value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} />
       <div><Button disabled={busy || !draft.trim()} onClick={() => void answer('words', draft)}>Record answer</Button><Button disabled={busy} onClick={() => void answer('done')}>Mark done</Button><Button disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</Button></div>
