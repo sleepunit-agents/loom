@@ -27,6 +27,11 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const setup=database.prepare("select created_at,expires_at from tokens where label='Example setup'").get() as {created_at:string;expires_at:string};expect(Date.parse(setup.expires_at)-Date.parse(setup.created_at)).toBe(60_000);
   expect(database.prepare("select revoked_at from tokens where label='Example worker setup'").get()).toEqual({revoked_at:expect.any(String)});
   expect(database.prepare('select id,owner from model_accounts').all()).toEqual([{id:manifest.account.id,owner:'alex'}]);
+  expect(database.prepare('select id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,last_seen_at from boxes').all()).toEqual([{id:manifest.runtime.box,name:'Example workshop',owner:'alex',same_machine_as_loom:1,hosts_any:0,report_only:0,always_on:0,last_seen_at:manifest.createdAt}]);
+  expect(database.prepare('select box,agent,lent from box_agents order by agent').all()).toEqual([{box:manifest.runtime.box,agent:'fern',lent:0},{box:manifest.runtime.box,agent:'moss',lent:0}]);
+  expect(database.prepare('select fact,from_owner from box_facts order by fact').all()).toEqual([{fact:'arch:example',from_owner:0},{fact:'cpu:example',from_owner:1}]);
+  expect(database.prepare('select agent,model,member,conversation,state,box,brief from jobs where id=?').get(manifest.runtime.job.id)).toEqual({agent:'moss',model:'example-model',member:'alex',conversation:manifest.runtime.conversation,state:'queued',box:null,brief:''});
+
   expect(database.prepare("select operation,id from operation_results where id='example-account'").get()).toEqual({operation:'runtime.accountCreate',id:'example-account'});}finally{database.close();}
   expect(readFileSync(join(home,'program.json'),'utf8')).not.toContain('loom_');expect(JSON.stringify(manifest)).not.toContain('loom_');expect(readFileSync(join(home,'example.json'),'utf8')).not.toContain('loom_');
   expect(manifest.tasks).toHaveLength(4);expect(manifest.runtime.job).toMatchObject({title:'Inspect the example shed',state:'queued',box:null});expect(manifest.runtime.box).toEqual(expect.any(String));expect(manifest.gaps.map((g:{page:string})=>g.page)).toEqual(['people','machines']);
@@ -46,7 +51,7 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const ordinary=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Example ordinary member',expiresAt:new Date(Date.now()+60_000).toISOString()})).value;
   try{
    const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+ordinary.token,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id} modelAccounts{__typename ...on RuntimeAccountDetail{id usage signedInOn{id}} ...on RuntimeAccountSummary{label level}}}'})});
-   expect(response.status).toBe(200);expect((await response.json()).data).toEqual({currentJobs:[],modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Example model subscription',level:'plenty'}]});
+   expect(response.status).toBe(200);expect((await response.json()).data).toEqual({currentJobs:[{id:manifest.runtime.publicJob.id}],modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Example model subscription',level:'plenty'}]});
   }finally{app.writes.run(()=>app!.services.signin.revoke(ordinary.fingerprint));}
  }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
 });
