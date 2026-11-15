@@ -71,3 +71,5 @@ it('can disprove a one-query-door promise without claiming the converse proves i
  expect(evaluate(promise,{transport:{sockets:[{path:'/graphql',phase:'Tasks'}]}}).status).toBe('not checkable yet');
  expect(evaluate(promise,{transport:{sockets:[{path:'/live',phase:'Project sharing',failed:true}]}})).toMatchObject({status:'not met',evidence:'walkthrough.json#transport'});
 });
+
+it('keeps an explicitly incomplete action unknown even if partial checks passed',()=>{expect(evaluate({probe:{kind:'action',action:'partial'}},{actions:{partial:{ok:true,inconclusive:true,reason:'A new app has no query signature yet.'}}})).toMatchObject({status:'not checkable yet',reason:'A new app has no query signature yet.'});});
