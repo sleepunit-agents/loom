@@ -222,3 +222,17 @@ it('shows a change filed on work made in the conversation even without a chat me
  f.data.mentionedChanges={'github:house/loom#9':[{id:'github:house/loom#9',title:'FILED ON SOURCE TASK',state:'open',checks:'passing',review:'approved',waitingOn:'agent',draft:false}]};
  await draw();expect(text()).toContain('FILED ON SOURCE TASK');expect(text()).toContain('Made here');
 });
+
+it('labels source tasks as Made here and pages a change-only source list without hiding a mentioned sentinel',async()=>{
+ setup();f.data.sourceTasks=[{id:'t-90',title:'SOURCE TASK LABEL',status:'open'}];
+ f.data.madeChanges=Array.from({length:51},(_,n)=>({id:`github:house/loom#${n+1}`}));
+ f.data.mentionedChanges=Object.fromEntries(Array.from({length:51},(_,n)=>[`github:house/loom#${n+1}`,[{id:`github:house/loom#${n+1}`,title:`CHANGE TITLE ${n+1}`,state:'open',checks:'passing',review:'approved',waitingOn:'agent',draft:false}]]));
+ f.data.commsRefs=[{ref:'github:house/loom#51',messageSeq:1}];
+ await draw();
+ expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('SOURCE TASK LABEL')).props.children).toContain(' · Made here');
+ expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');
+ const next=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>node.props.children==='Next work');expect(next.props.disabled).toBe(false);
+ f.data.sourceTasks=[];f.data.madeChanges=[{id:'github:house/loom#51'}];
+ await act(async()=>{next.props.onClick();});
+ expect(f.requests.findLast(row=>row.query.includes('ConversationWork('))?.variables.offset).toBe(50);expect(text()).not.toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');
+});

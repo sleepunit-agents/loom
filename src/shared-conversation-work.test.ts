@@ -4,13 +4,13 @@ import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-
 import {changes,projectMembers,tasks} from './core/data/schema.js';
 import {sourceQuery} from '../web/src/pieces/comms/work-query.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-it('reads PRs filed on current visible source tasks, while rejecting hidden conversations, source tasks and changes through the actual UI query',async()=>{
+it.each(['house/loom#1','https://github.com/house/loom/pull/1'])('reads PRs filed on current visible source tasks, while rejecting hidden conversations, source tasks and changes through the actual UI query (%s)',async citation=>{
  const f=await bodyFixture(clean),at=new Date(f.clock.now()).toISOString(),actor={kind:'agent' as const,id:'art'},service=f.root.services.tasks;
  const source=service.create({title:'Source work',goal:'Work',why:'Needed',owner:actor,project:'pond',source:{kind:'conversation',id:f.thread.conversation}},actor);
  const elsewhere=service.create({title:'Elsewhere',goal:'Work',why:'Needed',owner:actor,project:'pond'},actor);
  const base={repository:'house/loom',body:'',url:'',state:'open' as const,draft:false,authorLogin:'someone',agent:null,branch:'work',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing' as const,review:'approved' as const,mergeable:'yes' as const,waitingOn:'author' as const,openedAt:at,updatedAt:at};
  f.db.insert(changes).values([{...base,id:'github:house/loom#1',number:1,title:'Made here',project:'pond'},{...base,id:'github:house/loom#2',number:2,title:'Hidden change',project:'other'},{...base,id:'github:house/loom#3',number:3,title:'Not made here',project:'pond'}]).run();
- service.comment(source.id,'Filed house/loom#1 and house/loom#2',actor);service.comment(elsewhere.id,'Filed house/loom#3',actor);
+ service.comment(source.id,'Filed '+citation+' and house/loom#2',actor);service.comment(elsewhere.id,'Filed house/loom#3',actor);
  const query=async(conversation=f.thread.conversation,offset=0)=>(await (await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:sourceQuery,variables:{conversation,offset}})})).json());
  expect(await query()).toMatchObject({data:{conversationMadeChanges:[{id:'github:house/loom#1'}]}});expect((await query()).errors).toBeUndefined();
  expect((await query(f.thread.conversation,1)).data.conversationMadeChanges).toEqual([]);

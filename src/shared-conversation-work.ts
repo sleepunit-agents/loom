@@ -7,7 +7,7 @@ import type {DataDatabase} from './core/data/database.js';
 import {changes,tasks,taskComments} from './core/data/schema.js';
 import {taskVisibility} from './core/data/visibility.js';
 import {workVisibility} from './core/data/work-visibility.js';
-import {refsIn} from './core/conversations/refs.js';
+import {citations} from './pieces/changes/model.js';
 import {canReadSharedConversation} from './shared-sharing.js';
 import type {Viewer} from './policy.js';
 export function conversationWorkFields(db:DataDatabase){
@@ -18,7 +18,7 @@ export function conversationWorkFields(db:DataDatabase){
    const taskPolicy=taskVisibility(context.viewer).tasks!(getTableColumns(tasks));
    const comments=db.select({text:taskComments.text}).from(taskComments).innerJoin(tasks,eq(tasks.id,taskComments.task))
     .where(and(eq(tasks.sourceKind,'conversation'),eq(tasks.sourceId,input.conversation),taskPolicy)).all();
-   const ids=new Set(comments.flatMap(comment=>refsIn(comment.text)).filter(id=>id.startsWith('github:')));
+   const ids=new Set(comments.flatMap(comment=>citations(comment.text)).filter(id=>id.startsWith('github:')));
    const limit=Math.max(1,Math.min(100,input.limit)),offset=Math.max(0,input.offset);
    return db.select({id:changes.id}).from(changes).where(workVisibility(context.viewer).changes!(getTableColumns(changes)))
     .orderBy(asc(changes.id)).all().filter(row=>ids.has(row.id)).slice(offset,offset+limit);
