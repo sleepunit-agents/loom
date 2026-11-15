@@ -41,7 +41,7 @@ async function fixture(options:{unprepared?:boolean}={}){
  const memory={checkingAgent:'art',sources:{commons:{directory:common,knowledge:join(common,'knowledge.db'),people:join(common,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'memories.db')},{agent:'mark',directory:other,memories:join(other,'memories.db')}]}};
  await prepareSharedMemorySources(memory);const project=new ProjectsStore({dbPath:memory.sources.agents[0].memories});project.write({slug:'pond',name:'Fictional pond'});project.close();
  let sourceBefore:Buffer|undefined;
- if(options.unprepared){const db=new Database(memory.sources.agents[0].memories);db.exec('DROP TABLE memory_command_schema; DROP TABLE memory_command_preparations; DROP TABLE memory_command_receipts');sourceBefore=db.serialize();db.close();}
+ if(options.unprepared){const db=new Database(memory.sources.agents[0].memories);db.exec('DROP TABLE memory_command_schema; DROP TABLE memory_command_preparations; DROP TABLE memory_command_receipts');sourceBefore=db.serialize();db.close();await prepareSharedMemorySources(memory);}
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(Date.parse('2026-11-14T18:00:00Z'));
  const f=await bodyFixture(clean,{memory});await f.root.ready;
  const server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
