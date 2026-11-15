@@ -2,6 +2,7 @@
  * provenance come from composition; no service name or request field grants
  * authority here. The shared writer must call tempo.committed() after commit.
  */
+import {createHash} from 'node:crypto';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
@@ -20,6 +21,8 @@ export type TempoAccess =
   | { action: 'settings'; who: Recipient };
 export interface TempoOperationOptions {
   authorize(viewer: Viewer, access: TempoAccess): boolean;
+  /** Outside authenticated context for delegated mailbox receipt isolation. */
+  mailboxReceiptScope?(viewer:Viewer):string|undefined;
   /** File a proposal using the authenticated caller's conversation/provenance
    * and the shared Approvals service with tempoSettingsProposals.operation
    * installed. Never apply timings in this callback.
@@ -34,6 +37,10 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   tempo: ReturnType<typeof createTempo>, options: TempoOperationOptions): void {
   if (operations.db !== db.$client) throw new Error('Tempo operations need the shared connection');
   const common = { write: true, recheckPolicy: true };
+  const mailbox = {...common,inputHash:(canonical:string,identity:Readonly<{actor:Viewer}>)=>{
+    const scope=options.mailboxReceiptScope?.(identity.actor);
+    return createHash('sha256').update(scope===undefined?canonical:JSON.stringify([scope,canonical])).digest('hex');
+  }};
   const triggerAccess = (viewer: Viewer, target: string, action: 'stop' | 'runNow') => {
     const trigger = db.select().from(triggers).where(eq(triggers.id, target)).get();
     return !!trigger && options.authorize(viewer, { action, trigger });
@@ -57,7 +64,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'inbox.volume',
+  operations.register(operation({ ...mailbox, name: 'inbox.volume',
     input: z.object({ item: z.string().min(1), volume: z.enum(['full', 'dim', 'mute']), until: z.string().optional() }).strict(), output: saved,
     may(viewer, input) {
       const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get();
@@ -69,7 +76,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       ctx.changed('inbox', item.id); return { saved: true };
     },
   }));
-  operations.register(operation({ ...common, name: 'tempo.proposeSettings',
+  operations.register(operation({ ...mailbox, name: 'tempo.proposeSettings',
     input: z.object({ who: recipient, patch: z.object({
       settleSeconds: z.number().int().nonnegative().optional(), dimDays: z.number().int().positive().optional(),
       muteDays: z.number().int().positive().optional(),
