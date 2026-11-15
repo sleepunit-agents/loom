@@ -1,13 +1,9 @@
+import { nextData } from './next-data.js';
 import type { GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from './core/index.js';
 import { memoryQueryFields } from './transport/memory-queries.js';
 import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
-import { dataHttp } from './core/data/http.js';
-import { dataReadSchema } from './core/data/read-schema.js';
-import { DataLive } from './core/data/live.js';
-import { dataSocket } from './core/data/socket.js';
 import { dataDatabase } from './core/data/database.js';
-import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
 import { discordApi } from './pieces/bridges/discord-api.js';
 import { runtimeDiscordHistoryPermit } from './pieces/runtime/role.js';
@@ -79,7 +75,7 @@ import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secr
 import { installHouseSecrets } from './pieces/secrets/house.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
-import { installSecretServices, installedSecretUse, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
+import { installedSecretUse, type SecretValueSource } from './pieces/secrets/service.js';
 import { githubSecrets } from './pieces/changes/secrets.js';
 import { changesApprovals } from './pieces/changes/approvals.js';
 import { installChangesDaemon, householdAttribution } from './pieces/changes/daemon.js';
@@ -294,8 +290,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   let historyRead: HistoryAccess['read'] = async () => ({value:'wait',current:()=>false});
   installDiscordHistory(app, {permit:(viewer,place)=>runtimeDiscordHistoryPermit(app,viewer,place),read:(...args)=>historyRead(...args)});
   if (options.bridges && !bridgeDaemons.has(app)) {
-    if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
-    const secrets=secretUseRole(app.db,options.bridges.source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live);
+    const secrets=installedSecretUse(app.operations,options.bridges.source,app.live,'bridges');
     const credentials=bridgeCredentials(options.bridges.source,app.operations.clock);
     const lifetime={credentialEpoch:credentials.current,observeCredentials:credentials.observe};
     let closed=false,serial=0;
@@ -374,13 +369,11 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const servers: ReturnType<typeof createServer>[] = [];
   const detaches: (() => void)[] = [];
   const sockets = new Set<Socket>();
-  let liveData: DataLive | undefined;
-  let socketData: ReturnType<typeof dataSocket> | undefined;
+  let data: ReturnType<typeof nextData> | undefined;
   let stopDataChanges: (() => void) | undefined;
   const close = async () => {
     stopDataChanges?.();
-    liveData?.close();
-    await socketData?.close();
+    await data?.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
     await Promise.all(servers.map(http => {
@@ -397,21 +390,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // The generated door uses the SAME connection and fresh shared credentials.
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-    const authenticateData = dataAuthentication(sharedData, () => app.operations.clock.now());
-    const fields = memoryQueries.get(app);
-    const data = dataHttp(sharedData, authenticateData, relyingParty(process.env)?.origin, fields);
-    liveData = new DataLive();
-    socketData = dataSocket({live: liveData, clock: app.operations.clock,
-      authenticate(req) {
-        const headers = new Headers();
-        for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
-        return authenticateData(new Request('http://localhost/graphql', {headers}));
-      },
-      schema: viewer => dataReadSchema(sharedData, viewer, fields), originAllowed: sameOrigin});
-    // Existing operation commits include access changes. File-source signals and
-    // time-dependent Memory projections are connected by their own composition.
-    stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); });
-    routes.all('/graphql', c => data.fetch(c.req.raw));
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memoryQueries.get(app));
+    // Legacy operation commits still publish here until shared command composition.
+    stopDataChanges = app.live.observe(() => data!.changed());
+    routes.all('/graphql', c => data!.http.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
     routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
     routes.all('/mcp', async c => {
@@ -476,7 +458,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), socketData.attach(http));
+      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), data.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');

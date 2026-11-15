@@ -25,6 +25,7 @@ export interface TempoOptions {
 }
 
 export function createTempo(db: DataDatabase, clock: Clock, options: TempoOptions) {
+  let closed = false;
   const settled = new SettledInbox(db, clock, options.admit, options.changed);
   const sweep = new Sweep(clock, delivery => {
     const conversation = delivery.who.kind === 'agent' ? options.conversations.open({ agent: delivery.who.id, venue: 'wake', place: `sweep:${delivery.who.id}`, label: 'The sweep' }).id : undefined;
@@ -43,15 +44,15 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
       } else options.operation(name, t, occurrence);
     },
     instructions: options.instructions,
-    changed() { settled.changed(); options.changed?.(); },
+    changed() { if (closed) return; settled.changed(); if (!closed) options.changed?.(); },
   });
   const sources = new TempoSources(db, engine);
   return {
     triggers: engine, inbox: settled, volume: settled.volume, sweep, sources,
     /** Start after all sweep contributors and operation targets are installed. */
-    start() { sources.recover(options.changeRevision); engine.tick(); },
+    start() { if (closed) return; sources.recover(options.changeRevision); if (!closed) engine.tick(); },
     /** Call after committed Inbox writes or a runtime capacity change. */
-    changed() { settled.changed(); options.changed?.(); },
-    close() { engine.close(); settled.close(); },
+    changed() { if (closed) return; settled.changed(); if (!closed) options.changed?.(); },
+    close() { closed = true; sources.close(); engine.close(); settled.close(); },
   };
 }

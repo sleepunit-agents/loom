@@ -126,6 +126,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
             if (hello || !object(f.d) || !Number.isSafeInteger(f.d.heartbeat_interval)
               || (f.d.heartbeat_interval as number) < 1000 || (f.d.heartbeat_interval as number) > 300_000) throw Error();
             hello = true; interval = f.d.heartbeat_interval as number;
+            const credentialDeadlineAt = clock.now() + 15_000;
             deadline(); deadline = at(15_000, () => reconnect(epoch));
             const jitter = (o.random ?? Math.random)();
             if (!Number.isFinite(jitter) || jitter < 0 || jitter >= 1) throw Error();
@@ -134,7 +135,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
             void track((async () => {
               if (!checkpoint && clock.now()-lastIdentify < 5000) throw Error();
               await o.secrets.withValue(o.tokenSecret, async token => {
-                if (!alive(epoch) || !o.beforeConnect()) throw Error();
+                if (!alive(epoch) || !o.beforeConnect() || clock.now() >= credentialDeadlineAt) throw Error();
                 const body = checkpoint ? {op:6,d:{token,session_id:checkpoint.session,seq:checkpoint.seq}}
                   : {op:2,d:{token,intents:37377,properties:{os:'linux',browser:'loom',device:'loom'}}};
                 if (!checkpoint) lastIdentify = clock.now();
