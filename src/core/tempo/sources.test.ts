@@ -1,8 +1,11 @@
 import Database from 'better-sqlite3';
+import { FakeClock } from '../clock.js';
+import { Conversations } from '../conversations/index.js';
+import { createTempo } from './tempo.js';
 import { eq } from 'drizzle-orm';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, approvals, changes, inbox, jobs, members, secretRequests, secrets, triggers } from '../data/schema.js';
+import { agents, approvals, changes, inbox, jobs, members, secretRequests, secrets, triggers, triggerLog } from '../data/schema.js';
 import { TempoSources } from './sources.js';
 
 it('reports only durable answers and terminal jobs with repeatable namespaced identities', () => {
@@ -88,4 +91,21 @@ it('distinguishes changes at the same source timestamp and repeats an unchanged 
     expect(events[4]).toEqual(events[3]);
     expect(() => sources.change('pr', '')).toThrow('durable source revision');
   } finally { client.close(); }
+});
+it('keeps answer words out of persisted trigger occurrences while retaining one durable answer event',()=>{
+ const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
+ db.insert(members).values({id:'sam',role:'owner',joinedAt:now()}).run();
+ db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+ db.insert(inbox).values({id:'question',toKind:'person',to:'sam',member:'sam',source:'thread',fromKind:'agent',words:'A private question',state:'answered',answers:'words',answer:'words',answerText:'PRIVATE ANSWER WORDS',answeredBy:'sam',answeredAt:now(),at:now(),changedAt:now()}).run();
+ const tempo=createTempo(db,clock,{conversations:new Conversations(db,now),admit:()=>false,operation(){throw Error('Unexpected operation');}});
+ try {
+  tempo.triggers.set({ownerKind:'member',owner:'sam',sourceKind:'answer',watches:'question:question',lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',note:'Answer watcher',instructions:'An answer arrived'});
+  tempo.start();
+  expect(db.select().from(inbox).all().filter(i=>i.source==='trigger')).toHaveLength(1);
+  expect(JSON.stringify(db.select().from(inbox).all().filter(i=>i.source==='trigger'))).not.toContain('PRIVATE ANSWER WORDS');
+  expect(JSON.stringify(db.select().from(triggerLog).all())).not.toContain('PRIVATE ANSWER WORDS');
+  db.update(inbox).set({answerText:'REVISED WORDING'}).where(eq(inbox.id,'question')).run();tempo.committed();
+  expect(db.select().from(inbox).all().filter(i=>i.source==='trigger')).toHaveLength(1);
+  expect(JSON.stringify(db.select().from(triggerLog).all())).not.toContain('REVISED WORDING');
+ } finally {tempo.close();client.close();}
 });
