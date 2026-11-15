@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { taskCommandSubmitter } from './task-command';
 const pendingStore = () => {
@@ -42,4 +43,14 @@ it('sends no untracked write when pending intent storage is unavailable', async 
   const storage = { ...pendingStore(), setItem: () => { throw new Error('Browser storage details'); } };
   await expect(taskCommandSubmitter(request, () => 'intent', storage)(input)).rejects.toThrow('Could not prepare the task. Try again.');
   expect(request).not.toHaveBeenCalled();
+});
+
+it('preserves the SHA-256 pending key and original ID without secure-context crypto.subtle',async()=>{
+ const cryptoSource=globalThis.crypto;vi.stubGlobal('crypto',{getRandomValues:cryptoSource.getRandomValues.bind(cryptoSource)});
+ try{
+  const storage=pendingStore(),key='loom:pending-task:'+createHash('sha256').update(JSON.stringify(input)).digest('hex');storage.setItem(key,'existing-intent');
+  const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{id:'t-1'}}));
+  await taskCommandSubmitter(request,()=>{throw new Error('Must reuse the existing key');},storage)(input);
+  expect(JSON.parse(String(request.mock.calls[0][1]!.body)).id).toBe('existing-intent');expect(storage.values.size).toBe(0);
+ }finally{vi.unstubAllGlobals();}
 });
