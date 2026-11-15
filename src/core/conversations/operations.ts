@@ -1,3 +1,4 @@
+import { threadTitle } from './title.js';
 /** Shared-schema mutation adapters. Composition supplies CURRENT authorization;
  * these adapters do not grant access, load keys or expose a private read door. */
 import { z } from 'zod';
@@ -26,7 +27,7 @@ const target = z.object({ thread: z.string().min(1) }).strict();
 const acknowledgement = z.object({ saved: z.literal(true) }).strict();
 const answerInput = z.object({ item: z.string().min(1), answer: z.enum(['yes', 'no', 'words', 'replied', 'done', 'dismiss']), words: z.string().max(100_000).optional() }).strict();
 const changeInput = z.discriminatedUnion('change', [
-  target.extend({ change: z.literal('rename'), title: z.string().min(1).max(120) }),
+  target.extend({ change: z.literal('rename'), title: threadTitle }),
   target.extend({ change: z.literal('pin'), pinned: z.boolean() }),
   target.extend({ change: z.literal('archive'), archived: z.boolean() }),
   target.extend({ change: z.literal('read'), seq: z.number().int().nonnegative() }),
@@ -72,11 +73,11 @@ export function registerConversationOperations(operations: Operations, service: 
   };
 
   operations.register(operation({ ...common, name: 'comms.open',
-    input: z.object({ thread: z.string().min(1), agent: z.string().min(1), project: z.string().min(1).optional(), title: z.string().min(1).max(120) }).strict(),
+    input: z.object({ thread: z.string().min(1), agent: z.string().min(1), project: z.string().min(1).optional(), title: threadTitle.optional() }).strict(),
     output: z.object({ thread: z.string(), conversation: z.string() }).strict(),
     may: (v, i) => openAccess(v, i),
     run(ctx, i) {
-      const thread = service.threads.open({ id: i.thread, member: member(ctx.viewer), agent: i.agent, project: i.project, title: i.title });
+      const thread = service.threads.open({ id: i.thread, member: member(ctx.viewer), agent: i.agent, project: i.project, title: i.title ?? 'New conversation', titledBy: i.title === undefined ? 'agent' : 'member' });
       changed(ctx, thread.id);
       return { thread: thread.id, conversation: thread.conversation };
     },
