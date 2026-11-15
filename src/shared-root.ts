@@ -1,6 +1,7 @@
 import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
 import {installMemoryTempo} from './transport/memory-tempo.js';
 import {installMemorySignals} from './transport/memory-signals.js';
+import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
@@ -93,8 +94,10 @@ export function sharedRoot(options: {
   const memory=sharedMemory(db,clock,options.memory,tasks);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
+  const notices = settledNotices(db, () => data.changed());
+  startupCleanups.push(notices.close);
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...options.fields}, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields}, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
@@ -179,7 +182,7 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>commsLifetime?.close());
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }
@@ -264,6 +267,7 @@ export function sharedRoot(options: {
       // Install shared completion before synchronous detach/abort callbacks.
       stopDeskTime();
       tempo.close();
+      notices.close();
       cancelSecretRecovery?.(); values?.close(); startup?.close();
       const deliveryStopped = delivery?.close();
       const stopped = data.close();
