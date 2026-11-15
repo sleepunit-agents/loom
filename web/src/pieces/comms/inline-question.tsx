@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { call, callOnce } from '../../data';
-import { useQuery, type QuerySelection } from '../../data/query';
+import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import { InboxQuestionCard } from '../inbox-view';
 import type { InboxActions, InboxItem } from '../inbox-view/model';
 import { inboxSourcePath, retainedInboxItem } from '../attention/inbox-query';
@@ -11,7 +11,7 @@ export function inlineQuestionSelection(id: string): QuerySelection<InboxItem | 
 }
 /** Inline questions use the same Inbox item and authenticated operations. */
 export function InlineQuestion({ id, go, writable }: { id: string; go(path: string): void; writable: boolean }) {
-  const reading = useQuery(useMemo(() => inlineQuestionSelection(id), [id]));
+  const reading = useSelection(useMemo(() => inlineQuestionSelection(id), [id]));
   const [now, setNow] = useState(Date.now);
   const item = reading.status === 'live' ? reading.data : null;
   useEffect(() => {
@@ -30,6 +30,6 @@ export function InlineQuestion({ id, go, writable }: { id: string; go(path: stri
     answer: (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }),
     openSource: inboxSourcePath(item) ? item => { const path = inboxSourcePath(item); if (path) go(path); } : undefined,
   } : undefined;
-  return <InboxQuestionCard id={id} inline actions={actions} snapshot={{ status: reading.status === 'error' ? 'offline' : reading.status,
+  return <InboxQuestionCard id={id} inline actions={actions} snapshot={{ status: reading.status,
     items: item ? [retainedInboxItem(item, Math.max(now, Date.now()))] : [] }} />;
 }

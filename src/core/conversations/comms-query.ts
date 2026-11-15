@@ -4,7 +4,7 @@ import { and, asc, count, desc, eq, getTableColumns, is, isNotNull, isNull, lt, 
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, household, messages, threadRefs, threads } from '../data/schema.js';
+import { agents, memberAgents, members, conversations, household, messages, threadRefs, threads } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 type Message = typeof messages.$inferSelect;
 type MessageView = Omit<Message, 'words'> & Pick<typeof conversations.$inferSelect, 'agent' | 'project' | 'member'> & { conversation: string };
@@ -49,6 +49,24 @@ export class CommsQueries {
     if (!current?.keepUntil || current.at !== expected.at || current.keepUntil !== expected.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
     const deadline = Math.min(Date.parse(current.keepUntil), Date.parse(current.at) + days * 86400000);
     return Number.isFinite(deadline) ? new Date(deadline).toISOString() : null;
+  }
+  /** Home is the signed-in member's own mailbox, including only agents they
+   * can give work to. Reply metadata suffices; no private words are loaded. */
+  home(viewer: Viewer) {
+    if (viewer.kind !== 'member' || !this.db.select({ id: members.id }).from(members).where(eq(members.id, viewer.id)).get()) return null;
+    const owned = this.db.select({ id: agents.id }).from(memberAgents).innerJoin(agents, eq(agents.id, memberAgents.agent))
+      .where(eq(memberAgents.member, viewer.id)).orderBy(asc(agents.id)).all().map(row => row.id);
+    const summaries = owned.map(agent => {
+      const unread = sql<boolean>`exists(select 1 from ${messages} where ${messages.thread} = ${threads.id}
+        and ${messages.kind} = 'reply' and ${messages.sender} = ${conversations.agent} and ${messages.seq} > ${threads.readSeq})`;
+      const rows = this.db.select({ thread: threads.id, title: threads.title, at: threads.lastAt, unread }).from(threads)
+        .innerJoin(conversations, eq(conversations.id, threads.conversation))
+        .where(and(this.allowed(viewer), eq(conversations.member, viewer.id), eq(conversations.agent, agent), isNull(threads.archivedAt)))
+        .orderBy(desc(sql`julianday(${threads.lastAt})`), asc(threads.id)).all();
+      return { agent, unread: rows.filter(row => row.unread).length,
+        last: rows[0] ?? null, first: rows.find(row => row.unread) ?? null };
+    });
+    return { member: viewer.id, agents: owned, summaries };
   }
   thread(viewer: Viewer, id: string) {
     return this.db.select(threadFields).from(threads).innerJoin(conversations, eq(conversations.id, threads.conversation))
@@ -106,14 +124,26 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
   const ref = new GraphQLObjectType({ name: 'CommsReferenceView', fields: { ref: { type: new GraphQLNonNull(GraphQLString) }, messageSeq: { type: new GraphQLNonNull(GraphQLInt) } } });
   const many = (type: GraphQLObjectType<any, any>) => new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
   const id = { type: new GraphQLNonNull(GraphQLString) };
+  const homeThread = new GraphQLObjectType({ name: 'HomeCommsThread', fields: {
+    thread: { type: new GraphQLNonNull(GraphQLString) }, title: { type: new GraphQLNonNull(GraphQLString) }, at: { type: new GraphQLNonNull(GraphQLString) },
+  } });
+  const homeAgent = new GraphQLObjectType({ name: 'HomeCommsAgent', fields: {
+    agent: { type: new GraphQLNonNull(GraphQLString) }, unread: { type: new GraphQLNonNull(GraphQLInt) },
+    last: { type: homeThread }, first: { type: homeThread },
+  } });
+  const home = new GraphQLObjectType({ name: 'HomeComms', fields: {
+    member: { type: new GraphQLNonNull(GraphQLString) }, agents: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
+    summaries: { type: many(homeAgent) },
+  } });
   const folders = new GraphQLObjectType({ name: 'CommsFolders', fields: {
     threads: { type: new GraphQLNonNull(GraphQLInt) }, archived: { type: new GraphQLNonNull(GraphQLInt) },
   } });
   return {
+    homeComms: { type: home, resolve: (_row, _args, context) => service.home(context.viewer) },
     commsFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) },
     commsThreads: { type: many(thread), args: { search: { type: GraphQLString }, member: { type: GraphQLString }, agent: { type: GraphQLString }, archived: { type: GraphQLBoolean }, limit: { type: GraphQLInt }, offset: { type: GraphQLInt } }, resolve: (_row, args, context) => service.list(context.viewer, args) },
     commsThread: { type: thread, args: { id }, resolve: (_row, args, context) => service.thread(context.viewer, args.id) },
-    commsMessages: { type: many(message), args: { thread: id, beforeSeq: { type: GraphQLInt }, limit: { type: GraphQLInt, defaultValue: 50 } }, resolve: (_row, args, context) => service.messages(context.viewer, args.thread, args.beforeSeq, args.limit) },
+    commsMessages: { type: many(message), args: { thread: id, beforeSeq: { type: GraphQLInt }, limit: { type: GraphQLInt, defaultValue: 50 } }, resolve: (_row, args, context) => service.messages(context.viewer, args.thread, args.beforeSeq ?? undefined, args.limit) },
     commsRefs: { type: many(ref), args: { thread: id, limit: { type: GraphQLInt, defaultValue: 100 } }, resolve: (_row, args, context) => service.refs(context.viewer, args.thread, args.limit) },
   };
 }

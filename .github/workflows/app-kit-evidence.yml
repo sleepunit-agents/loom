@@ -13,6 +13,9 @@ on:
       - 'src/pieces/mind/people*.ts'
       - 'web/src/pieces/attention/**'
       - 'web/src/pieces/inbox-view/**'
+      - 'web/src/pieces/comms/**'
+      - 'web/src/pieces/comms-view/**'
+      - 'src/ui/comms-shared.integration.test.ts'
       - 'src/ui/attention-inbox.integration.test.ts'
       - 'web/src/changes*'
       - '.github/workflows/app-kit-evidence.yml'
@@ -68,6 +71,12 @@ jobs:
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_SHOTS="$PWD/artifacts/app-kit"
           nice -n 19 npx vitest run src/ui/attention-inbox.integration.test.ts --project browser --maxWorkers=1
+      - name: Capture shared Comms on the after runner
+        if: matrix.version == 'after'
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_SHOTS="$PWD/artifacts/app-kit"
+          nice -n 19 npx vitest run src/ui/comms-shared.integration.test.ts --project browser --maxWorkers=1
       - name: Capture People on the hosted after runner
         if: matrix.version == 'after'
         env:

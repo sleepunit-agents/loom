@@ -1,4 +1,4 @@
-import type { QuerySelection } from '../../data/query';
+import type { QuerySelection } from '../../data/graphql/selection';
 import type { CommsMessage, CommsThread } from '../comms-view/model';
 export const threadFields = 'id conversation title agent project member pinned archivedAt lastAt readSeq working stopRequested';
 export const messageFields = 'thread seq kind sender at words wordsKeepUntil inboxItem verdict tool cardState delivery';

@@ -3,9 +3,9 @@ import { Children, createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
-vi.mock('../../data/query', () => ({ useQuery(selection: { query: string; variables: Record<string, unknown>; decode(data: Record<string, unknown>): unknown }) {
-  f.requests.push(selection);
-  return { status: f.status, data: f.status === 'live' ? selection.decode(selection.query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : selection.query.includes('Work(') ? { tasks: [] } : f.data) : undefined };
+vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
+  f.requests.push({ query, variables });
+  return { status: f.status, data: f.status === 'live' ? query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : query.includes('Work(') ? { tasks: [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,

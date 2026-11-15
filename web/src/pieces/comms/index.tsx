@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { call, callOnce } from '../../data';
-import { useQuery } from '../../data/query';
+import { useSelection } from '../../data/graphql/selection';
 import { InlineQuestion } from './inline-question';
 import { SharedWork } from './shared-work';
 import { CommsView } from '../comms-view';
@@ -15,9 +15,9 @@ export default function CommsApp({ path: shellPath, go }: { path?: string; go?(p
   let selected: string | undefined;
   try { selected = path.includes('/thread/') ? `th:${decodeURIComponent(path.slice(path.indexOf('/thread/') + 8))}` : undefined; } catch { /* Invalid route selects nothing. */ }
   useEffect(() => { setBefore(undefined); }, [selected]);
-  const reading = useQuery(useMemo(() => commsSelection(archived, search, offset, selected, before), [archived, search, offset, selected, before]));
+  const reading = useSelection(useMemo(() => commsSelection(archived, search, offset, selected, before), [archived, search, offset, selected, before]));
   const data = reading.status === 'live' ? reading.data : undefined, live = !!data?.home;
-  const status = reading.status === 'error' ? 'offline' : reading.status === 'live' && !live ? 'denied' : reading.status;
+  const status = reading.status === 'live' && !live ? 'denied' : reading.status;
   const navigate = (next: string) => { if (go) go(next); else { if (typeof history !== 'undefined') history.pushState(null, '', next); setLocalPath(next); } };
   const select = (id?: string) => { setBefore(undefined); navigate(id ? commsThreadPath(id) : base); };
   useEffect(() => {
