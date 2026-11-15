@@ -8,7 +8,7 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { DataLive } from './live.js';
 import { dataSocket } from './socket.js';
-import { GraphQLObjectType, GraphQLScalarType, GraphQLSchema } from 'graphql/index.js';
+import { GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
 import type { Authentication } from '../live/index.js';
 import { FakeClock } from '../clock.js';
 
@@ -129,4 +129,184 @@ it('serves ordinary generated GraphQL reads on the same authenticated websocket'
   f.client.exec("INSERT INTO members (id,role,joined_at) VALUES ('other','member','2026-11-14T00:00:00Z'); INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at) VALUES ('private','Secret','member','other','member','other','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z')");
   const result = await read(ws, () => ws.send(JSON.stringify({ type: 'subscribe', id: 'read', payload: { query: '{ tasks { id title } }' } })));
   expect(result).toEqual({ type: 'next', id: 'read', payload: { data: { tasks: [{ id: 't-1', title: 'Pump' }] } } });
+});
+
+it('supplies only the upgrade viewer to context fields for both reads and live reruns', async () => {
+  const f = await setup(), ws = await f.open(undefined,{viewer:{kind:'member',id:'owner'}});
+  let suffix = 'first';
+  const { GraphQLString } = await import('graphql/index.js');
+  f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
+    caller:{type:GraphQLString,resolve:(_source,_args,context)=>`${context.viewer.id}:${suffix}`},
+  }})}));
+  const live = {...selection,id:'context',payload:{
+    query:'subscription($query:String!,$vars:DataValue) { observe(query:$query,variables:$vars) { revision patches { path removed value } } }',
+    variables:{query:'{ caller }',vars:{viewer:{kind:'member',id:'owner'}}},
+  }};
+  expect((await read(ws,()=>ws.send(JSON.stringify(live)))).payload.data.observe.patches[0].value).toEqual({caller:'sam:first'});
+  suffix='second';
+  expect((await read(ws,()=>f.live.changed())).payload.data.observe.patches).toEqual([{path:['caller'],removed:false,value:'sam:second'}]);
+  const ordinary = {type:'subscribe',id:'read-context',payload:{query:'{ caller }',variables:{viewer:{kind:'member',id:'owner'}}}};
+  expect((await read(ws,()=>ws.send(JSON.stringify(ordinary))))).toMatchObject({payload:{data:{caller:'sam:second'}}});
+});
+
+
+it('sanitizes ordinary execution errors and observe failures without releasing partial words', async () => {
+  const f = await setup(), ws = await f.open();
+  const { GraphQLString } = await import('graphql/index.js');
+  f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
+    words:{type:GraphQLString,resolve:()=> 'PRIVATE partial words'},
+    broken:{type:GraphQLString,resolve:()=>{throw Error('PRIVATE database path and viewer');}},
+  }})}));
+  const ordinary = await read(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'broken-read',payload:{query:'{ words broken }'}})));
+  expect(ordinary).toEqual({type:'next',id:'broken-read',payload:{errors:[{message:'Data query could not complete'}]}});
+  const messages: {type:string;payload?:{errors?:unknown[]}}[] = [];
+  const finished = new Promise<void>(resolve => ws.on('message',raw=>{
+    const message = JSON.parse(String(raw));
+    if(message.id==='broken-live'){messages.push(message);if(message.type==='error'||message.type==='complete')resolve();}
+  }));
+  ws.send(JSON.stringify({...selection,id:'broken-live',payload:{...selection.payload,variables:{query:'{ words broken }'}}}));
+  await finished;
+  expect(messages.length).toBeGreaterThan(0);
+  expect(JSON.stringify(messages)).not.toContain('PRIVATE');
+  expect(messages.some(message=>message.type==='error'||message.payload?.errors?.length)).toBe(true);
+});
+
+it('isolates two authenticated socket viewers through interleaved reads and live refreshes', async () => {
+  const f = await setup(request => {
+    const id=request.headers.authorization;
+    return id==='owner'||id==='peer'?{viewer:{kind:'member',id},valid:()=>true}:undefined;
+  });
+  const { GraphQLString } = await import('graphql/index.js');
+  let revision=1;
+  f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
+    caller:{type:GraphQLString,resolve:(_source,_args,context)=>`${context.viewer.id}:${revision}`},
+  }})}));
+  const [owner,peer] = await Promise.all([f.open({authorization:'owner'}),f.open({authorization:'peer'})]);
+  const live={...selection,payload:{...selection.payload,variables:{query:'{ caller }'}}};
+  const initial=await Promise.all([owner,peer].map(ws=>read(ws,()=>ws.send(JSON.stringify(live)))));
+  expect(initial.map(result=>result.payload.data.observe.patches[0].value.caller)).toEqual(['owner:1','peer:1']);
+  revision=2;
+  const nextOwner=once(owner,'message'),nextPeer=once(peer,'message'); f.live.changed();
+  const changed=await Promise.all([nextOwner,nextPeer]);
+  expect(changed.map(raw=>JSON.parse(String(raw[0])).payload.data.observe.patches[0].value)).toEqual(['owner:2','peer:2']);
+  const ordinary={type:'subscribe',id:'read',payload:{query:'{ caller }'}};
+  const reads=await Promise.all([peer,owner].map(ws=>read(ws,()=>ws.send(JSON.stringify(ordinary)))));
+  expect(reads.map(result=>result.payload.data.caller)).toEqual(['peer:2','owner:2']);
+});
+
+it('uses the upgrade viewer for context-based reads and observe reruns despite client identity claims', async () => {
+  const f = await setup();
+  let title = 'First';
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    title: { type: GraphQLString, resolve: (_source, _args, context) => `${context.viewer.id}:${title}` },
+  } }) }));
+  const ws = await f.open(undefined, { viewer: { kind: 'member', id: 'owner' } });
+  const direct = await read(ws, () => ws.send(JSON.stringify({ type: 'subscribe', id: 'direct', payload: {
+    query: '{ title }', variables: { viewer: { kind: 'member', id: 'owner' } },
+  } })));
+  expect(direct.payload).toEqual({ data: { title: 'sam:First' } });
+  const observed = { ...selection, payload: { query: 'subscription($query: String!, $variables: DataValue) { observe(query: $query, variables: $variables) { revision patches { path removed value } } }', variables: { query: '{ title }', variables: { viewer: { kind: 'member', id: 'owner' } } } } };
+  const initial = await read(ws, () => ws.send(JSON.stringify(observed)));
+  expect(initial.payload.data.observe.patches[0].value).toEqual({ title: 'sam:First' });
+  const changed = await read(ws, () => { title = 'Second'; f.live.changed(); });
+  expect(changed.payload.data.observe).toEqual({ revision: 2, patches: [{ path: ['title'], removed: false, value: 'sam:Second' }] });
+});
+
+it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLite may close', async mode => {
+  const f = await setup(), ws = await f.open();
+  let began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const events: string[] = [];
+  clean.push(() => release());
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: GraphQLString, async resolve() {
+      began(); await held;
+      f.client.prepare('SELECT title FROM tasks').all(); events.push('read'); return 'done';
+    } },
+  } }) }));
+  ws.send(JSON.stringify(mode === 'query' ? { type: 'subscribe', id: 'slow', payload: { query: '{ slow }' } } : { ...selection, payload: { ...selection.payload, variables: { query: '{ slow }' } } }));
+  await started;
+  const ended = once(ws, 'close');
+  const draining = f.socket.close();
+  expect(f.socket.close()).toBe(draining);
+  const closing = draining.then(() => { events.push('closed'); });
+  try {
+    await ended;
+    release(); await closing;
+    expect(events).toEqual(['read', 'closed']);
+  } finally { release(); }
+});
+
+it('fences a queued protocol frame before async cleanup can close the transport', async () => {
+  let stream!: IncomingMessage['socket'], stopping = false, lateValidity = 0, executions = 0;
+  const f = await setup(request => {
+    stream = request.socket;
+    return { viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } };
+  });
+  const ws = await f.open();
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    late: { type: GraphQLString, resolve: () => { executions++; return 'must not leave'; } },
+  } }) }));
+  const messages: string[] = []; ws.on('message', raw => messages.push(String(raw)));
+  const ended = once(ws, 'close'); stopping = true;
+  const closing = f.socket.close();
+  // A correctly masked RFC6455 frame already queued at the transport. Inject
+  // synchronously, before close's asynchronous cleanup, without a timer race.
+  const payload = Buffer.from(JSON.stringify({ type: 'subscribe', id: 'late', payload: { query: '{ late }' } }));
+  expect(payload.length).toBeLessThan(126);
+  const mask = Buffer.from([1, 2, 3, 4]);
+  stream.emit('data', Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, payload.map((byte, i) => byte ^ mask[i % 4])]));
+  await ended; await closing;
+  expect(lateValidity).toBe(0); expect(executions).toBe(0); expect(messages).toEqual([]);
+  expect(() => f.socket.attach(createServer())).toThrow('access ended');
+});
+
+it('blocks buffered words and validity callbacks when serialisation reenters shutdown', async () => {
+  let stopping = false, lateValidity = 0, closing: Promise<void> | undefined;
+  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } }));
+  const ws = await f.open();
+  const secret = new GraphQLScalarType({ name: 'ClosingSecret', serialize: () => ({ toJSON() {
+    stopping = true; closing = f.socket.close(); return 'must not leave';
+  } }) });
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => 'secret' } } }) }));
+  const messages: string[] = []; ws.on('message', raw => messages.push(String(raw)));
+  const ended = once(ws, 'close');
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'secret', payload: { query: '{ secret }' } }));
+  await ended; expect(closing).toBeDefined(); await closing;
+  expect(lateValidity).toBe(0); expect(messages).toEqual([]);
+});
+
+it('publishes the same close promise before clock cleanup can reenter', async () => {
+  const f = await setup();
+  const at = f.clock.at.bind(f.clock), seen: Promise<void>[] = [];
+  let reenter = false;
+  f.clock.at = (when, callback) => {
+    const cancel = at(when, callback);
+    return () => { if (reenter) seen.push(f.socket.close()); cancel(); };
+  };
+  await f.open(); reenter = true;
+  const closing = f.socket.close(); await closing;
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen.every(promise => promise === closing)).toBe(true);
+  expect(f.socket.close()).toBe(closing);
+});
+
+it('drains socket work without closing independent watchers on its shared live hub', async () => {
+  let stopping = false, lateValidity = 0, lateExecutions = 0;
+  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } }));
+  const ws = await f.open();
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    socketOnly: { type: GraphQLString, resolve: () => { if (stopping) lateExecutions++; return 'socket'; } },
+  } }) }));
+  await read(ws, () => ws.send(JSON.stringify({ ...selection, payload: { ...selection.payload, variables: { query: '{ socketOnly }' } } })));
+  const schema = dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) });
+  const stream = f.live.watch({ schema, query: '{ tasks { title } }', valid: () => true });
+  clean.push(async () => { await stream.return?.(); });
+  await stream.next(); stopping = true;
+  const closing = f.socket.close(); f.live.changed(); await closing;
+  expect(lateValidity).toBe(0); expect(lateExecutions).toBe(0);
+  const pending = stream.next();
+  f.client.exec("UPDATE tasks SET title='Still live'"); f.live.changed();
+  expect((await pending).value.patches).toEqual([{ path: ['tasks', 0, 'title'], value: 'Still live' }]);
 });

@@ -54,6 +54,18 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     await a.getByRole('checkbox',{name:'Allow zoom',exact:true}).click();
     await expect.poll(()=>a.getByRole('checkbox',{name:'Allow zoom',exact:true}).isChecked()).toBe(true);
     await expect.poll(()=>b.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
+    await expect.poll(()=>a.getByRole('checkbox',{name:'One window at a time',exact:true}).isEnabled()).toBe(true);
+    await a.getByRole('checkbox',{name:'One window at a time',exact:true}).click();
+    await expect.poll(()=>a.locator('[data-tile]').count()).toBe(1);
+    await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+    await a.getByRole('button',{name:'Open Tasks',exact:true}).click();
+    await expect.poll(()=>a.getByRole('heading',{name:'Pond work',exact:true}).count()).toBe(1);
+    await a.getByRole('button',{name:'Open Live example',exact:true}).click();
+    await expect.poll(()=>a.locator('[data-tile=example]').count()).toBe(1);
+    await expect.poll(()=>a.getByRole('checkbox',{name:'One window at a time',exact:true}).isEnabled()).toBe(true);
+    await a.getByRole('checkbox',{name:'One window at a time',exact:true}).click();
+    await expect.poll(()=>a.locator('[data-tile]').count()).toBe(2);
+    await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
     await a.locator('.next-preferences > summary').click();
     await a.getByRole('textbox',{name:'Title',exact:true}).fill('Two windows on the next desk');
     await a.getByRole('button',{name:'Add record',exact:true}).click();

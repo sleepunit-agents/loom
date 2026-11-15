@@ -1,5 +1,6 @@
 import { internalCaller, isInternalCaller, wasInternalCaller, closeInternalCallers } from '../internal.js';
 import { statement } from '../db/index.js';
+import type { OperationReceipt, ReceiptPersistence } from './receipts.js';
 import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
@@ -73,6 +74,10 @@ function canonical(value: unknown): string {
 function callerKey(viewer: Viewer): string {
   return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical(viewer);
 }
+/** Shared connection write boundary supplied only by trusted composition. */
+export interface OperationWrites {
+  run<T>(operation: () => T): { value: T; notificationErrors: unknown[] };
+}
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
   private frames: Change[][] = [];
@@ -80,16 +85,55 @@ export class Operations {
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   private measuring?: Pick<Measuring, 'run' | 'runAsync'>;
-  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void) {
-    migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
+  /** Fresh composition supplies receipts backed by THIS connection. Effects and
+   * receipts then commit in one transaction without creating legacy tables.
+   * Omit only while using the legacy bootstrap; never mix stores/connections.
+   */
+  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void } = {}) {
+    if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
+    if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
+    if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
+
     this.expire();
+  }
+  private transaction<T>(run: () => T, write: boolean): T {
+    if (!write || !this.options.writes) return this.db.transaction(run)();
+    const committed = this.options.writes.run(run);
+    for (const error of committed.notificationErrors) {
+      this.report(error);
+    }
+    return committed.value;
+  }
+  private report(error: unknown): void {
+    try { this.options.reportError?.(error); } catch { /* reporting cannot undo a committed effect */ }
   }
   close() { closeInternalCallers(this); this.stopExpiry?.(); unregisterBuiltinServices(this); }
   private expire() {
     this.stopExpiry?.();
-    statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(this.clock.now());
-    const row = statement(this.db, 'SELECT min(expires) AS next FROM core_operations').get() as { next: number | null };
-    this.stopExpiry = row.next === null ? undefined : this.clock.at(row.next, () => this.expire());
+    this.expireReceipts(this.clock.now());
+    const next = this.options.receipts ? this.options.receipts.nextExpiry() :
+      (statement(this.db, 'SELECT min(expires) AS next FROM core_operations').get() as { next: number | null }).next ?? undefined;
+    this.stopExpiry = next === undefined ? undefined : this.clock.at(next, () => this.expire());
+  }
+  private expireReceipts(now: number) {
+    if (this.options.receipts) this.options.receipts.expire(now);
+    else statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(now);
+  }
+  private receipt(caller: string, id: string): OperationReceipt | undefined {
+    if (this.options.receipts) return this.options.receipts.get(caller, id);
+    const row = statement(this.db, 'SELECT * FROM core_operations WHERE viewer=? AND id=?').get(caller, id) as
+      { name: string; input_hash: string; result: string; expires: number } | undefined;
+    return row && { caller, id, operation: row.name, inputHash: row.input_hash, result: JSON.parse(row.result) as Result, expires: row.expires };
+  }
+  private saveReceipt(receipt: OperationReceipt, recovery = false) {
+    if (this.options.receipts) {
+      if (recovery) this.options.receipts.recover(receipt);
+      else this.options.receipts.insert(receipt);
+    } else {
+      const sql = 'INSERT INTO core_operations VALUES (?,?,?,?,?,?)' + (recovery ?
+        ' ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires' : '');
+      statement(this.db, sql).run(receipt.caller, receipt.id, receipt.operation, receipt.inputHash, JSON.stringify(receipt.result), receipt.expires);
+    }
   }
   register<I>(op: Operation<I>) {
     if (!/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_-]*$/.test(op.name) || this.ops.has(op.name)) throw new Error('invalid or duplicate operation');
@@ -112,11 +156,12 @@ export class Operations {
     this.frames.push(changes);
     let result: Result;
     try {
-      result = this.db.transaction((): Result => {
+      result = this.transaction((): Result => {
         const now = this.clock.now();
         const ctx: Context = {db:this.db, viewer, now, receipt, changed:(type,id)=>changes.push({type,id})};
-        const old = statement(this.db, 'SELECT name,input_hash FROM core_operations WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as {name:string;input_hash:string}|undefined;
-        if (old && (old.name !== receipt.name || old.input_hash !== receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
+        this.expireReceipts(now);
+        const old = this.receipt(receipt.viewer, receipt.id);
+        if (old && (old.operation !== receipt.name || old.inputHash !== receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
         let recovered: RecoveredWrite | undefined;
         for (const recover of this.recoveries) {
           const candidate = recover(ctx);
@@ -129,22 +174,23 @@ export class Operations {
           throw new Error('Recovery unavailable');
         const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};
         const serialized = JSON.stringify(answer);
-        statement(this.db, 'INSERT INTO core_operations VALUES (?,?,?,?,?,?) ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires')
-          .run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,serialized,recovered.expires);
+        this.saveReceipt({ caller: receipt.viewer, id: receipt.id, operation: receipt.name, inputHash: receipt.inputHash,
+          result: JSON.parse(serialized) as Result, expires: recovered.expires }, true);
         return JSON.parse(serialized) as Result;
-      })();
+      }, true);
     } catch (e) { result = e instanceof OperationError ? failure(e.code,e.message) : failure('unavailable','Recovery could not complete'); }
     finally { this.frames.pop(); }
     if (result.ok) {
-      if (changes.length) { try { this.committed(changes); } catch { /* committed recovery remains durable */ } }
+      if (changes.length) { try { this.committed(changes); } catch (error) { this.report(error); /* committed recovery remains durable */ } }
       this.expire();
     }
     return result;
   }
   /** Trusted metadata for local post-call receipts. Never returns input or output. */
   retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
-    const row=statement(this.db, 'SELECT name,expires FROM core_operations WHERE viewer=? AND id=?').get(callerKey(viewer),id) as {name:string;expires:number}|undefined;
-    return row?.name===name && row.expires>this.clock.now() ? row.expires : undefined;
+    this.expireReceipts(this.clock.now());
+    const row = this.receipt(callerKey(viewer), id);
+    return row?.operation===name && row.expires>this.clock.now() ? row.expires : undefined;
   }
   /** Installed modules use this local handle. No transport exposes it. Labels
    * identify retry receipts; they are never evidence of internal authority. */
@@ -228,17 +274,17 @@ export class Operations {
     if (this.db.inTransaction && !this.frames.length) return failure('unavailable', 'Operations must own the outer transaction');
     this.frames.push(changes);
     try {
-      result = this.db.transaction((): Result | PreparationNeeded => {
+      result = this.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
         if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
         const who = callerKey(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
-          statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(now);
-          const old = statement(this.db, 'SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
+          this.expireReceipts(now);
+          const old = this.receipt(who, id!);
           if (old) {
-            if (old.name !== name || old.input_hash !== body) return failure('conflict', 'Operation id already used for different input');
+            if (old.operation !== name || old.inputHash !== body) return failure('conflict', 'Operation id already used for different input');
             op.validateReplay?.(viewer, parsed.data, prepared);
-            return JSON.parse(old.result) as Result;
+            return old.result;
           }
         }
         const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
@@ -264,20 +310,21 @@ export class Operations {
         }
         const answer: Result = { ok: true, value: op.output.parse(value ?? null) };
         const serialized = JSON.stringify(answer);
-        if (op.write) statement(this.db, 'INSERT INTO core_operations VALUES (?, ?, ?, ?, ?, ?)').run(who, id, name, body, serialized, replay?.expires ?? now + 30 * 86400_000);
+        if (op.write) this.saveReceipt({ caller: who, id: id!, operation: name, inputHash: body,
+          result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + 30 * 86400_000 });
         return JSON.parse(serialized) as Result;
-      })();
+      }, !!op.write);
     } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
     finally { this.frames.pop(); }
     if (result instanceof PreparationNeeded) return result;
     if (!result.ok && op.rejected) {
-      try { this.db.transaction(() => op.rejected!(viewer, parsed.data, result as Failure, this.clock.now()))(); }
+      try { this.transaction(() => op.rejected!(viewer, parsed.data, result as Failure, this.clock.now()), true); }
       catch { /* An audit failure cannot turn a refused action into success. */ }
     }
     if (result.ok && changes.length) {
       const parent = this.frames.at(-1);
       if (parent) parent.push(...changes);
-      else { try { this.committed(changes); } catch { /* committed writes remain successful; failed subscribers reconnect */ } }
+      else { try { this.committed(changes); } catch (error) { this.report(error); /* committed writes remain successful */ } }
     }
     if (result.ok && !this.frames.length && op.write) this.expire();
     if (result.ok) { try { op.after?.(parsed.data, result); } catch { /* durable jobs resume on restart */ } }

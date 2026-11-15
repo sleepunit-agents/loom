@@ -50,12 +50,34 @@ it('checks conversation references at the end of a long episode before listing o
 });
 it('uses private agent policy and includes other members’ private conversations for household owners',async()=>{
  const a=source(),b=source();a.add('m-art');b.add('m-other');
- const rows=[run('dg-visible'),run('dg-private',{conversation:conv('cv-222222222222',{venue:'loom',member:'partial',label:'Partial private thread'})}),run('dg-malformed-comms',{conversation:conv('cv-333333333333',{venue:'loom',label:'No member'})})];
+ const rows=[run('dg-visible'),run('dg-private',{conversation:conv('cv-222222222222',{venue:'loom',member:'partial',label:'Partial private thread'})}),run('dg-unscoped-comms',{conversation:conv('cv-333333333333',{venue:'loom',label:'No member'})})];
  a.add('m-comms',{metadata:JSON.stringify({where:'loom:thread',conversation:'cv-222222222222'})});a.add('m-mislabeled',{metadata:JSON.stringify({where:'terminal',conversation:'cv-222222222222'})});a.add('m-unknown',{metadata:JSON.stringify({where:'terminal',conversation:'cv-444444444444'})});
- const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-private','d~art~dg-visible','e~other~m-other']);
+ const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-private','d~art~dg-unscoped-comms','d~art~dg-visible','e~other~m-other']);
  expect(list(app,partial).entries.map(e=>e.id)).toEqual(expect.arrayContaining(['d~art~dg-private','d~art~dg-visible']));expect(list(app,partial).entries.some(e=>e.agent==='other')).toBe(false);
  expect(read(app,'d~art~dg-private')).toMatchObject({ok:true});expect(read(app,'e~art~m-mislabeled')).toMatchObject({ok:true});expect(read(app,'e~other~m-other',partial)).toMatchObject({code:'not-found'});
  expect(app.operations.call('direct',{kind:'member',id:'outsider'},'mind.activityList',{})).toMatchObject({code:'denied'});expect(list(app,{kind:'agent',id:'art'}).entries.some(e=>e.agent==='other')).toBe(false);
+});
+it('shows shared project conversations without opening the agent’s episode files',async()=>{
+ const a=source();a.add('private-memory');
+ const r=role([run('shared',{conversation:conv(undefined,{project:'pond'})})]);
+ r.agents=()=>['art'];
+ const app=await fixture(a.path,undefined,r),viewer:Viewer={kind:'member',id:'outsider'};
+ expect(list(app,viewer).entries.map(e=>e.id)).toEqual(['d~art~shared']);
+ expect(read(app,'d~art~shared',viewer)).toMatchObject({ok:true});
+ expect(read(app,'e~art~private-memory',viewer)).toMatchObject({code:'not-found'});
+});
+it('checks shared-service UUID conversation ids in episode metadata and text',async()=>{
+ const a=source(),id='cv-12345678-1234-1234-1234-123456789abc';
+ a.add('metadata',{metadata:JSON.stringify({where:'terminal',conversation:id})});
+ a.add('body',{content:`Its conversation is ${id}`});
+ const app=await fixture(a.path,undefined,role([run('private',{conversation:conv(id,{member:'owner',venue:'loom'})})]));
+ expect(list(app,partial).entries).toEqual([]);
+ expect(read(app,'e~art~metadata',partial)).toMatchObject({code:'not-found'});
+ expect(read(app,'e~art~body',partial)).toMatchObject({code:'not-found'});
+});
+it('extracts task and PR references from shared digest item text',async()=>{
+ const a=source(),app=await fixture(a.path,undefined,role([run('refs',{summary:'Checked the hose',asked:['Review t-43'],tasks:['Task t-42 with sleepunit-agents/loom#42'],references:['Pond: t-44 sleepunit-agents/loom#44']})]));
+ expect(read(app,'d~art~refs')).toMatchObject({value:{tasks:[{label:'t-43',href:'/p/tasks-preview/task/t-43'},{label:'t-42',href:'/p/tasks-preview/task/t-42'},{label:'t-44',href:'/p/tasks-preview/task/t-44'}],prs:[{label:'loom#42'},{label:'loom#44'}]}});
 });
 it('deduplicates moved conversations and covered episodes; readers preserve stories, refs, own needs and card-only steps',async()=>{
  const a=source();a.add('covered',{metadata:JSON.stringify({where:'terminal',conversation:'cv-111111111111'}),created:'2026-11-13T14:00:00Z'});a.add('near-duplicate',{created:'2026-11-13T17:15:00Z'});a.add('independent',{created:'2026-11-13T15:00:00Z',title:'Weekly check: all clear'});
@@ -145,4 +167,17 @@ it('uses the current member for the legacy owner filter, with household owner fa
  expect(list(app,partial).entries.find(e=>e.id==='d~art~dg-partial')?.owner).toBe(true);expect(list(app,partial).entries.find(e=>e.id==='d~art~dg-household')?.owner).toBeUndefined();expect(list(app,partial).entries.find(e=>e.id==='e~art~m-partial')?.owner).toBe(true);
  expect(list(app,{kind:'agent',id:'art'}).entries.find(e=>e.id==='d~art~dg-household')?.owner).toBe(true);
  const ws=new WebSocket(app.url.replace('http:','ws:')+'/live?partial');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'activity.access'}));expect(JSON.parse((await initial)[0].toString()).records[0].owner).toBe('Partial');
+});
+
+it('derives the earliest episode deadline without visibility or list caps and closes it with the reader',async()=>{
+ const a=source();a.add('expires',{expires_at:new Date(now+2000).toISOString()});
+ a.add('future',{created:new Date(now+61000).toISOString()});
+ a.add('archived',{archived:1,expires_at:new Date(now+1).toISOString()});
+ a.add('invalid',{expires_at:'invalid'});
+ const app=await fixture(a.path),reader=(await import('./activity.js')).installedMindActivity(app.operations)!;
+ expect(reader.nextDeadline()).toBe(now+1000);
+ (app.operations.clock as FakeClock).advance(1000);expect(reader.nextDeadline()).toBe(now+1001);
+ (app.operations.clock as FakeClock).advance(1);expect(reader.nextDeadline()).toBe(now+2000);
+ (app.operations.clock as FakeClock).advance(999);expect(reader.nextDeadline()).toBe(startOf('2026-11-14','America/Chicago'));
+ reader.close();expect(reader.nextDeadline()).toBeUndefined();
 });

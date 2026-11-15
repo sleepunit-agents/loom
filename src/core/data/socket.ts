@@ -2,7 +2,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { useServer } from 'graphql-ws/use/ws';
-import type { GraphQLSchema } from 'graphql/index.js';
+import { execute, subscribe, GraphQLError, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
@@ -23,20 +23,55 @@ export function dataSocket(options: {
   const ws = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, handleProtocols: protocols => protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false });
   const admitted = new WeakMap<WebSocket, Authentication>();
   const cleanups = new Map<WebSocket, () => void>();
+  let stopping = false, closing: Promise<void> | undefined;
+  // Transport setup/direct reads and shared hub resolvers have independent lifetimes.
+  const executions = new Set<Promise<void>>();
+  async function run<T>(operation: () => T | PromiseLike<T>): Promise<T> {
+    if (stopping) throw new Error('Data access ended');
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    executions.add(done);
+    try { return await operation(); }
+    finally { executions.delete(done); finish(); }
+  }
   const protocol = useServer({
     isProd: true,
     connectionInitWaitTimeout: 0, // the owned clock below bounds admission
-    onConnect(ctx) { return admitted.get(ctx.extra.socket)?.valid() === true; },
+    onConnect(ctx) { return !stopping && admitted.get(ctx.extra.socket)?.valid() === true; },
     schema(ctx) {
+      if (stopping) throw new Error('Data access ended');
       const auth = admitted.get(ctx.extra.socket);
       if (!auth?.valid()) throw new Error('Authentication ended');
       auth.activity?.();
-      return dataSubscriptions(options.schema(auth.viewer), options.live, () => auth.valid());
+      return dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid());
+    },
+    context(ctx) {
+      if (stopping) throw new Error('Data access ended');
+      const auth = admitted.get(ctx.extra.socket);
+      if (!auth?.valid()) throw new Error('Authentication ended');
+      // The same server-resolved principal feeds direct reads and every live
+      // execution. Neither variables nor connectionParams supply this context.
+      return Object.freeze({ viewer: auth.viewer });
+    },
+    execute: (args: ExecutionArgs) => run(() => execute(args)),
+    subscribe: (args: ExecutionArgs) => run(async () => {
+      const result = await subscribe(args);
+      if (stopping && Symbol.asyncIterator in result) {
+        await result[Symbol.asyncIterator]().return?.();
+        throw new Error('Data access ended');
+      }
+      return result;
+    }),
+    // Ordinary execution errors travel in next payloads, not onError. Drop
+    // partial data as well: it may contain words from the failed projection.
+    onNext(_ctx, _id, _payload, _args, result) {
+      if (result.errors?.length) return { errors: [new GraphQLError('Data query could not complete')] };
     },
     // Never include database/driver errors or query-generated values in errors.
     onError() { return [{ message: 'Data subscription could not complete' }]; },
   }, ws, 0);
   function closeInvalid() {
+    if (stopping) return;
     for (const socket of ws.clients) {
       const auth = admitted.get(socket);
       if (!auth?.valid()) socket.close(4403, 'Authentication ended');
@@ -44,8 +79,10 @@ export function dataSocket(options: {
   }
   const detaches = new Set<() => void>();
   const attach = (server: Server) => {
+    if (stopping) throw new Error('Data access ended');
     const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
       if (new URL(request.url ?? '/', 'http://localhost').pathname !== '/graphql') return;
+      if (stopping) { socket.destroy(); return; }
       let auth: Authentication | undefined;
       try { auth = options.authenticate(request); } catch { /* fail closed */ }
       const protocols = request.headers['sec-websocket-protocol']?.split(',').map(s => s.trim());
@@ -60,7 +97,7 @@ export function dataSocket(options: {
         // between execution and ws.send; recheck even buffered initial results.
         const send = socket.send.bind(socket);
         socket.send = ((...args: Parameters<WebSocket['send']>) => {
-          if (!authentication.valid()) {
+          if (stopping || !authentication.valid()) {
             socket.close(4403, 'Authentication ended');
             const callback = args.at(-1);
             if (typeof callback === 'function') callback(new Error('Authentication ended'));
@@ -72,6 +109,7 @@ export function dataSocket(options: {
         let initialized = false;
         const cancelInit = options.clock.at(options.clock.now() + 10000, () => { if (!initialized) socket.close(4408, 'Connection initialisation timeout'); });
         socket.on('message', raw => {
+          if (stopping) { socket.terminate(); return; }
           if (!authentication.valid()) socket.close(4403, 'Authentication ended');
           try { if (JSON.parse(raw.toString()).type === 'connection_init') { initialized = true; cancelInit(); } } catch { /* protocol validates */ }
         });
@@ -86,11 +124,22 @@ export function dataSocket(options: {
     detaches.add(detach);
     return detach;
   };
-  return { attach, refreshAccess: closeInvalid, async close() {
-    for (const detach of [...detaches]) detach();
-    for (const cleanup of cleanups.values()) cleanup();
-    cleanups.clear();
-    for (const socket of ws.clients) socket.terminate();
-    await protocol.dispose();
+  return { attach, refreshAccess: closeInvalid, close() {
+    if (closing) return closing;
+    stopping = true;
+    // Publish the shared promise before cleanup callbacks can reenter close.
+    closing = Promise.resolve().then(async () => {
+      try {
+        for (const detach of [...detaches]) detach();
+        for (const cleanup of cleanups.values()) cleanup();
+        cleanups.clear();
+        for (const socket of ws.clients) socket.terminate();
+        await protocol.dispose();
+      } finally {
+        while (executions.size) await Promise.all([...executions]);
+        await options.live.drain();
+      }
+    });
+    return closing;
   } };
 }

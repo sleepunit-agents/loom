@@ -8,7 +8,7 @@ import { Jobs } from './jobs.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
-function fixture() {
+function fixture(venue: 'loom' | 'handoff' = 'handoff') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
   const now = () => at, db = createDataSchema(client, now);
@@ -19,8 +19,8 @@ function fixture() {
   db.insert(agentModels).values({ agent: 'art', model: 'primary', position: 0 }).run();
   db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'https://example.org/house', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: true }).run();
   const comms = new Conversations(db, now), runtime = new Jobs(db, now);
-  const conversation = comms.open({ agent: 'art', venue: 'loom', place: 'thread', label: 'Reply', project: 'pond', member: 'owner' });
-  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Hello' });
+  const conversation = comms.open({ agent: 'art', venue, place: 'thread', label: 'Reply', project: 'pond', member: 'owner' });
+  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'loom' ? 'thread' : 'handoff', fromKind: venue === 'loom' ? 'person' : 'agent', fromId: venue === 'loom' ? 'owner' : 'art', words: 'Hello' });
   const tick = (ms: number) => { at = new Date(Date.parse(at) + ms).toISOString(); };
   return { db, comms, runtime, conversation, send, tick, now };
 }
@@ -59,8 +59,10 @@ it('retries a failed start three times as new linked jobs, without retrying the 
   const f = fixture(); f.send();
   let job = f.runtime.admit(f.conversation.id)!;
   for (let n = 0; n < 4; n++) {
+    // Recreate the service between attempts: the budget lives in the database.
+    const runtime = new Jobs(f.db, f.now);
     expect(f.runtime.claim(job.id, 'worker')?.state).toBe('starting');
-    const result = f.runtime.finish(job.id, 'worker', 1, 'start failed');
+    const result = runtime.finish(job.id, 'worker', 1, 'start failed');
     expect(result.job.state).toBe('failed');
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
     expect(result.retry).toMatchObject({ retryOf: job.id, houseFile: 'Housefile', model: 'primary', box: null, state: 'queued' });
@@ -68,7 +70,11 @@ it('retries a failed start three times as new linked jobs, without retrying the 
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id });
     expect(f.runtime.admit(f.conversation.id)?.id).toBe(result.retry!.id);
     expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
-    job = result.retry!; f.tick(10_000);
+    const backoff = 1000 * 2 ** n;
+    expect(result.retry!.retryAt).toBe(new Date(Date.parse(f.now()) + backoff).toISOString());
+    f.tick(backoff - 1);
+    expect(runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
+    f.tick(1); job = result.retry!;
   }
   expect(f.db.select().from(jobs).all()).toHaveLength(4);
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
@@ -80,9 +86,9 @@ it('does not retry process failures after starting and returns unconfirmed mail 
   const job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
   f.comms.take(f.conversation.id, job.id);
-  const result = f.runtime.finish(job.id, 'worker', 2, 'x'.repeat(20_000));
+  const result = f.runtime.finish(job.id, 'worker', 2, 'ignored-prefix:' + 'x'.repeat(20_000) + ':TAIL');
   expect(result.retry).toBeUndefined();
-  expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_384) });
+  expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_379) + ':TAIL' });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: null, takenAt: null });
   expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
 });
@@ -146,4 +152,53 @@ it('excludes muted mail from admission, snapshots and retry attribution', () => 
   expect(f.db.select().from(inbox).where(eq(inbox.id, muted.id)).get()).toMatchObject({ state: 'waiting', job: null });
   f.runtime.stop(retry.id, 'owner', 'reset');
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+});
+
+it('keeps private Comms words out of the durable job brief and retry snapshots', () => {
+  const f = fixture('loom'); const mail = f.send();
+  f.db.update(inbox).set({ words: 'PRIVATE_PROMPT_MARKER' }).where(eq(inbox.id, mail.id)).run();
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.brief).toBe('');
+  f.runtime.claim(job.id, 'worker');
+  const result = f.runtime.finish(job.id, 'worker', 1, 'PRIVATE_LAUNCH_DIAGNOSTIC');
+  expect(result.job.logTail).toBeNull(); expect(result.retry?.brief).toBe('');
+  expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
+  expect(result.retry?.retryOf).toBe(job.id);
+});
+for (const exitCode of [0, 2]) it(`does not retain private body output after exit ${exitCode}`, () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  const result = f.runtime.finish(job.id, 'worker', exitCode, 'PRIVATE_REPLY_MARKER');
+  expect(result.job).toMatchObject({ state: exitCode === 0 ? 'done' : 'failed', exitCode, logTail: null, build: 'image' });
+  expect(f.runtime.get(job.id).logTail).toBeNull(); expect(result.retry).toBeUndefined();
+  expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
+});
+
+it('withholds output if a non-null conversation reference cannot be resolved', () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  // Corrupt only this in-memory fixture, never a home or installed database.
+  f.db.$client.pragma('foreign_keys = OFF');
+  f.db.delete(conversations).where(eq(conversations.id, f.conversation.id)).run();
+  expect(f.runtime.finish(job.id, 'worker', 0, 'PRIVATE_MISSING_CONTEXT').job.logTail).toBeNull();
+  expect(f.runtime.get(job.id).logTail).toBeNull();
+});
+it('keeps an unbound job brief and the final log lines', () => {
+  const f = fixture(); f.send(); const snapshot = f.runtime.admit(f.conversation.id)!;
+  f.db.insert(jobs).values({ ...snapshot, id: 'unbound', conversation: null, box: 'worker', state: 'running', brief: 'unbound instructions', build: 'image' }).run();
+  const tail = 'n'.repeat(16_374) + 'last-16384';
+  const result = f.runtime.finish('unbound', 'worker', 0, 'OLD '.repeat(5000) + tail);
+  expect(result.job).toMatchObject({ state: 'done', brief: 'unbound instructions', logTail: tail });
+  expect(f.runtime.get('unbound').logTail).toBe(tail); expect(result.retry).toBeUndefined();
+});
+
+it('does not copy a legacy private brief into a new failed-start retry', () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.db.update(jobs).set({ brief: 'LEGACY_PRIVATE_WORDS' }).where(eq(jobs.id, job.id)).run();
+  expect(f.runtime.workerBrief(job.id)).toBe('');
+  f.runtime.claim(job.id, 'worker');
+  const result = f.runtime.finish(job.id, 'worker', 1, 'PRIVATE_DIAGNOSTIC');
+  expect(result.retry?.brief).toBe(''); expect(result.job.logTail).toBeNull();
+  expect(f.runtime.get(result.retry!.id).brief).toBe('');
+  expect(f.runtime.get(job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
 });

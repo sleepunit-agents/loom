@@ -1,4 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
+import { GraphQLSchema, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
+import type { Viewer } from '../../policy.js';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from './database.js';
@@ -163,4 +165,74 @@ it('member project grants expose unowned agent metadata and removal hides it', a
   expect(await (await read('{ agents { id } }')).json()).toEqual({ data: { agents: [{ id: 'bot' }] } });
   db.delete(projectMembers).run();
   expect(await (await read('{ agents { id } }')).json()).toEqual({ data: { agents: [] } });
+});
+
+it('uses the root schema factory per request with the authenticated viewer and execution context', async () => {
+  const { db } = fixture();
+  const seen: Viewer[] = [];
+  const app = dataHttp(db, request => ({ viewer: { kind: 'member', id: request.headers.get('authorization') === 'Bearer owner' ? 'owner' : 'sam' }, valid: () => true }), undefined, viewer => {
+    seen.push(viewer);
+    return new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Root', fields: {
+      who: { type: GraphQLString, args: { viewer: { type: GraphQLString } }, resolve: (_source, _args, context) => `${viewer.id}:${context.viewer.id}` },
+    } }) });
+  });
+  for (const id of ['sam', 'owner', 'sam']) {
+    const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + id }, body: JSON.stringify({ query: 'query($viewer:String){ who(viewer:$viewer) }', variables: { viewer: 'impostor' } }) });
+    expect(await response.json()).toEqual({ data: { who: `${id}:${id}` } });
+  }
+  expect(seen).toEqual([{ kind: 'member', id: 'sam' }, { kind: 'member', id: 'owner' }, { kind: 'member', id: 'sam' }]);
+});
+
+it('never calls the root schema factory for callers refused at the HTTP door', async () => {
+  const { db } = fixture();
+  let calls = 0;
+  const schemaForViewer = () => { calls++; throw new Error('must not reach root'); };
+  for (const kind of ['service', 'runner', 'ended', 'missing'] as const) {
+    const app = dataHttp(db, () => kind === 'missing' ? undefined : { viewer: { kind: kind === 'ended' ? 'member' : kind, id: 'sam' }, valid: () => kind !== 'ended' }, undefined, schemaForViewer);
+    const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ who }' }) });
+    expect(response.status).toBe(kind === 'runner' || kind === 'service' ? 403 : 401);
+  }
+  expect(calls).toBe(0);
+});
+
+it('withholds a custom root result when admission ends during its resolver', async () => {
+  const { db } = fixture();
+  let valid = true;
+  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => valid }), undefined, () => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Root', fields: {
+    words: { type: GraphQLString, resolve: () => { valid = false; return 'private words'; } },
+  } }) }));
+  const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ words }' }) });
+  expect(response.status).toBe(401);
+  expect(JSON.stringify(await response.json())).not.toContain('private words');
+});
+
+
+it('combines caller-specific roots and shared fields without restoring default tables', async () => {
+  const { db } = fixture();
+  const fields = { memoryWho: { type: GraphQLString, resolve: (_source: unknown, _args: unknown, context: { viewer: Viewer }) => context.viewer.id } };
+  const authenticate = () => ({ viewer: { kind: 'member' as const, id: 'sam' }, valid: () => true });
+  const root = (viewer: Viewer) => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Work', fields: {
+    workWho: { type: GraphQLString, resolve: () => viewer.id },
+  } }) });
+  const combined = dataHttp(db, authenticate, undefined, root, fields);
+  const read = (app: ReturnType<typeof dataHttp>, query: string) => app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) });
+  expect(await (await read(combined, '{ workWho memoryWho }')).json()).toEqual({ data: { workWho: 'sam', memoryWho: 'sam' } });
+  expect((await (await read(combined, '{ tasks { id } }')).json()).errors).toBeDefined();
+  const fieldOnly = dataHttp(db, authenticate, undefined, fields);
+  expect(await (await read(fieldOnly, '{ memoryWho tasks { id } }')).json()).toEqual({ data: { memoryWho: 'sam', tasks: [{ id: 'agent' }, { id: 'mine' }] } });
+});
+
+
+it('preserves recursive custom query roots with and without shared fields', async () => {
+  const { db } = fixture();
+  const root: GraphQLObjectType = new GraphQLObjectType({ name: 'Recursive', fields: () => ({
+    who: { type: GraphQLString, resolve: (_source, _args, context) => context.viewer.id },
+    self: { type: root, resolve: () => ({}) },
+  }) });
+  const schema = new GraphQLSchema({ query: root });
+  for (const fields of [{}, { shared: { type: GraphQLString, resolve: () => 'memory' } }]) {
+    const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true }), undefined, () => schema, fields);
+    const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ who self { who self { who } } }' }) });
+    expect(await response.json()).toEqual({ data: { who: 'sam', self: { who: 'sam', self: { who: 'sam' } } } });
+  }
 });

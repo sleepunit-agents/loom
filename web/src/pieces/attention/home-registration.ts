@@ -17,7 +17,7 @@ export function RailSurface(props: { go: (path:string)=>void }) {
 
 const Bar = lazy(() => import('./bar'));
 export function BarSurface(props: import('./bar').BarProps) {
-  return createElement(Suspense,{fallback:null},createElement(Bar,props));
+  return createElement(Suspense,{fallback:createElement('div',{className:'next-status-placeholder','aria-hidden':true})},createElement(Bar,props));
 }
 
 const Signals = lazy(() => import('./desk-signals'));
