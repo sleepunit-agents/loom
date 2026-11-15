@@ -1,3 +1,4 @@
+import type {ProgramGrantReader} from './shared-program-access.js';
 import { sharedProjects, sharedProjectQueries, registerSharedProjects } from './shared-projects.js';
 import { sharedHouseholdAccess, householdAccessQueries, registerSharedHouseholdAccess } from './shared-household-access.js';
 import { sharedNotifications, type SharedNotificationOptions } from './core/signin/shared-notifications.js';
@@ -93,6 +94,8 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
+  /** Canonical persistent program marker/grants, supplied by the schema owner. */
+  programGrants?: ProgramGrantReader;
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
@@ -132,7 +135,7 @@ export function sharedRoot(options: {
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
-  const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action));
+  const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action),options.programGrants);
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
@@ -148,11 +151,11 @@ export function sharedRoot(options: {
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
-    ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
+    ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records);
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
-    receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.current,
+    receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.allows, outsideScope:credentials.receiptScope,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   startupCleanups.push(()=>operations.close());
@@ -303,6 +306,14 @@ export function sharedRoot(options: {
     try {
       if (!meter) await measuringReady;
       if (closing) return c.json(failure('unavailable', 'Loom is closing'), 503);
+      const auth=authenticate(c.req.raw);
+      if(auth&&credentials.program(auth.viewer)){
+        const path=new URL(c.req.url).pathname;
+        const command=/^\/api\/([^/]+)\/([^/]+)$/.exec(path);
+        // No credential ceremonies, private channels or alternate transport can
+        // turn a restricted program into an unrestricted member/browser.
+        if(path!=='/graphql'&&(!command||['signin','token','sessions','account'].includes(command[1])||!credentials.allows(auth.viewer,`${command[1]}.${command[2]}`)))return c.json(failure('denied','Permission denied'),403);
+      }
       await next();
     } finally { active.delete(entry); finished(); }
   });

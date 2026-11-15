@@ -5,6 +5,7 @@ import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
 import { bridgeSecretsTables, bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import { BridgeQueries, bridgeQueryFields } from './pieces/bridges/queries.js';
 import { bridgeSecretsReaderFields } from './pieces/bridges/readers.js';
+import {GraphQLSchema,GraphQLObjectType,GraphQLBoolean} from 'graphql/index.js';
 import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
@@ -26,7 +27,7 @@ import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
 import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead) {
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
@@ -53,11 +54,14 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
 
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
-  const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
-    tables: ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus',
+  const queryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
-      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'],
+      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
+  const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
+  const schema = (viewer: Viewer) => {
+    const records=programRecords?.(viewer),selected=records===undefined?queryTables:queryTables.filter(name=>records.includes(name));
+    return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
     visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
       // Reports have exactly the current visibility of their agent.
@@ -66,11 +70,11 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
+  }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // Jobs carry the same agent/project/private-member labels as Approvals.
     // Reuse its canonical SQL rather than maintain another sharing policy.
     ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
-  });
+  });};
   const socket = dataSocket({ live, clock, originAllowed, measure,
 
     authenticate(request) {
