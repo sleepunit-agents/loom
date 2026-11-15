@@ -64,6 +64,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    expect(timing()).toBe(before);
    expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',source:'approval',conversation:f.thread.conversation,waitsOnId:id})]));
    await answer(id,allow);expect(timing()).toBe(60);
+   expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()?.state).toBe(allow?'used':'denied');
   }
   expect(await command('tempo.proposeSettings',{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},randomUUID())).toMatchObject({ok:false,code:'denied'});
   expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
@@ -76,6 +77,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   const execute=()=>{if(started||!inputEnded||!connection)return;started=true;void(async()=>{
    const protocol=new Client({name:'tempo-native-fixture',version:'1'},{capabilities:{}});
    try{
+    expect(args).toContain('mcp__loom_secrets__loom_command');
     expect(words).toBe('PRIVATE WORKER INPUT');expect(acknowledged).toBe(true);
     expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
