@@ -14,8 +14,8 @@ it('uses the exact shared HTTP envelope and keeps its ID after an unconfirmed re
 it('does not treat a rejected or malformed response as confirmation', async () => {
   const request = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ ok: false, message: 'Access changed' }, { status: 403 }))
     .mockResolvedValueOnce(Response.json({ ok: true })).mockResolvedValueOnce(Response.json({ ok: true, value: {} }));
-  const send = taskCommandSubmitter(request, () => 'pending');
+  const send = taskCommandSubmitter(request, vi.fn().mockReturnValueOnce('first').mockReturnValueOnce('second').mockReturnValueOnce('third'));
   await expect(send(input)).rejects.toThrow('Access changed');
   await expect(send(input)).rejects.toThrow('Could not confirm'); await send(input);
-  expect(request.mock.calls.map(([, init]) => JSON.parse(String(init!.body)).id)).toEqual(['pending', 'pending', 'pending']);
+  expect(request.mock.calls.map(([, init]) => JSON.parse(String(init!.body)).id)).toEqual(['first', 'first', 'first']);
 });

@@ -38,9 +38,9 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     window.addEventListener('popstate', pop);
     return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  // Drop forms on access/connection loss; no draft may reappear on reconnect.
-  useEffect(() => { if (status !== 'live') setAction(undefined); }, [status]);
   const target = tasks.find(task => task.id === action?.id);
+  // A removed row is also access loss while the remaining query stays live.
+  useEffect(() => { if (status !== 'live' || (action?.id && !target)) setAction(undefined); }, [status, action?.id, target]);
   return <>
     <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor}
       links={tasks.flatMap(task => task.taskLinksByTask)} comments={tasks.flatMap(task => task.taskCommentsByTask)}

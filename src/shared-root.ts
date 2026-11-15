@@ -4,18 +4,18 @@ import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { dataAuthentication } from './core/data/authentication.js';
+import { sharedCredentials } from './shared-credentials.js';
 import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { pollChanges } from './apps/changes-polling.js';
+import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
-import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
@@ -28,24 +28,25 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  workAnswerAuthority?: WorkAnswerAuthority;
   changes?: { read: PullRequestReader; rule: MergeRuleReader };
+  workAnswerAuthority?: WorkAnswerAuthority;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
+  const credentials = sharedCredentials(db, clock, () => !closing);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
+  registerSharedPreferences(operations, db);
   const commit = <T>(run: () => T): T => {
     const result = data.writes.run(run);
     for (const error of result.notificationErrors) { try { options.reportError(error); } catch { /* reporting cannot undo a source commit */ } }
     return result.value;
   };
-  registerSharedPreferences(operations, db);
   const services = {
     tasks: taskService(db, now),
     changes: changeService(db, options.changes?.rule ?? (() => undefined), now, commit),
@@ -55,7 +56,7 @@ export function sharedRoot(options: {
   const changePolling = options.changes ? pollChanges(services.changes, options.changes.read, clock) : undefined;
   registerSharedTaskCommands(operations, db, services.tasks);
   if (options.workAnswerAuthority) registerSharedWorkCommands(operations, db, services.approvals, options.workAnswerAuthority);
-  const authenticate = dataAuthentication(db, () => clock.now());
+  const authenticate = credentials.authenticate;
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -102,7 +103,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services, refreshChanges: changePolling?.refresh, writes: data.writes, changed: data.changed,
+    http, operations, services, credentials, refreshChanges: changePolling?.refresh, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);

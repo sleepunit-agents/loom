@@ -275,22 +275,6 @@ it('serves real Memory and Work through the same HTTP and socket caller, includi
   expect((await closed)[0]).toBe(4403);
 });
 
-it('stops late authentication database reads when the root withdraws admission during HTTP execution', async () => {
-  let admitted = true, began!: () => void, release!: () => void;
-  const started = new Promise<void>(resolve => { began = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
-  const f = await setup({ held: { type: GraphQLString, async resolve() { began(); await held; return 'done'; } } }, () => admitted);
-  const pending = f.data.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query: '{ held }' }) });
-  await started;
-  const lateReads: string[] = [], prepare = f.client.prepare.bind(f.client);
-  const spy = vi.spyOn(f.client, 'prepare').mockImplementation(sql => { if (/from\s+"(?:tokens|sessions|members)"/i.test(sql)) lateReads.push(sql); return prepare(sql); });
-  try {
-    admitted = false; const closing = f.data.close(); release();
-    const response = await pending; expect([401, 503]).toContain(response.status);
-    expect(await response.text()).not.toContain('done'); await closing;
-    expect(lateReads).toEqual([]);
-  } finally { release(); spy.mockRestore(); }
-});
-
 it.each(['http', 'socket', 'observe'])('retains parallel callback work through composition shutdown (%s)', async mode => {
   const { GraphQLString, GraphQLNonNull } = await import('graphql/index.js');
   let began!: () => void, release!: () => void;
@@ -338,7 +322,7 @@ it.each(['http', 'socket'])('stops composition sibling callback admission synchr
     stop: { type: GraphQLString, resolve() { closing = f.data.close(); began(); return 'stop'; } },
     late: { type: GraphQLString, resolve() { late++; f.client.prepare('SELECT title FROM tasks').all(); return 'late'; } },
   });
-  let response: Promise<Response> | undefined;
+  let response: Promise<Response> | Response | undefined;
   if (mode === 'http') response = f.data.http.request('/graphql', { method: 'POST', headers: {
     authorization: `Bearer ${token}`, 'content-type': 'application/json',
   }, body: JSON.stringify({ query: '{ stop late }' }) });
@@ -348,4 +332,20 @@ it.each(['http', 'socket'])('stops composition sibling callback admission synchr
   }
   await started; await closing; await response;
   expect(late).toBe(0);
+});
+
+it('stops late authentication database reads when the root withdraws admission during HTTP execution', async () => {
+  let admitted = true, began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  const f = await setup({ held: { type: GraphQLString, async resolve() { began(); await held; return 'done'; } } }, () => admitted);
+  const pending = f.data.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query: '{ held }' }) });
+  await started;
+  const lateReads: string[] = [], prepare = f.client.prepare.bind(f.client);
+  const spy = vi.spyOn(f.client, 'prepare').mockImplementation(sql => { if (/from\s+"(?:tokens|sessions|members)"/i.test(sql)) lateReads.push(sql); return prepare(sql); });
+  try {
+    admitted = false; const closing = f.data.close(); release();
+    const response = await pending; expect([401, 503]).toContain(response.status);
+    expect(await response.text()).not.toContain('done'); await closing;
+    expect(lateReads).toEqual([]);
+  } finally { release(); spy.mockRestore(); }
 });
