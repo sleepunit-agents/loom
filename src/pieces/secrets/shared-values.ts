@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents, inbox } from '../../core/data/schema.js';
 import type { AsyncSecretMutations } from './async-values.js';
+import type { HolderWrite } from './holder-store.js';
 import { secretName } from './input.js';
 import { secretHasValue } from './presence.js';
 
@@ -19,12 +20,16 @@ type Journal = typeof secretWriteJournal.$inferSelect;
 const unavailable = () => new Error('Secret write awaits reconciliation');
 const conflict = () => new Error('Secret write identity already reserved');
 
+export interface RecoverableSecretMutations extends AsyncSecretMutations {
+  recover(who: HolderWrite): Promise<'committed' | 'undone'>;
+}
+
 export class SecretValues {
   private readonly key;
   private closed = false;
   private readonly running = new Map<string, Promise<void>>();
   constructor(private readonly db: DataDatabase, private readonly now: () => string,
-    private readonly holder: AsyncSecretMutations, fingerprintKey: Uint8Array,
+    private readonly holder: RecoverableSecretMutations, fingerprintKey: Uint8Array,
     /** The root supplies its shared write boundary to publish committed changes. */
     private readonly commit: (write: () => void) => void) {
     if (!(fingerprintKey instanceof Uint8Array) || fingerprintKey.byteLength !== 32) throw Error('Invalid secret retry key');
@@ -86,7 +91,7 @@ export class SecretValues {
   private perform(row: Journal, value?: string): Promise<void> {
     this.available();
     if (row.state === 'committed') return Promise.resolve();
-    if (row.state !== 'prepared') return Promise.reject(conflict());
+    if (row.state !== 'prepared') return Promise.reject(new Error('Secret write was undone; start a new write'));
     const current = this.running.get(row.id);
     if (current) return current;
     // Publish the promise before trusted transports can synchronously reenter.
@@ -141,16 +146,25 @@ export class SecretValues {
     });
   }
 
-  /** Only positive evidence can finish an interrupted write without its value.
-   * Root runs this after opening the holder and through its fake-clock schedule. */
+  /** Positive commit evidence finishes metadata. A definitive undone result
+   * first fences all delayed holder calls, so no value or retained caller input
+   * is needed to release an abandoned reservation. Absence alone never does. */
   async reconcilePending(): Promise<void> {
     this.available();
     const row = this.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.state, 'prepared')).get();
     if (!row || this.running.has(row.id)) return;
-    let found: unknown;
-    try { found = await this.holder.hasReceipt(this.holderIdentity(row)); }
+    let outcome: unknown;
+    try { outcome = await this.holder.recover(this.holderIdentity(row)); }
     catch { return; }
-    if (!this.closed && found === true) this.finish(row);
+    if (this.closed) return;
+    if (outcome === 'committed') { this.finish(row); return; }
+    if (outcome !== 'undone') return;
+    this.available();
+    this.commit(() => {
+      const current = this.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.id, row.id)).get();
+      if (current?.state !== 'prepared' || current.inputHash !== row.inputHash) return;
+      this.db.update(secretWriteJournal).set({ state: 'undone', completedAt: this.now() }).where(eq(secretWriteJournal.id, row.id)).run();
+    });
   }
   /** Root closes/cancels the transport before closing the shared database. */
   close(): void { this.closed = true; }

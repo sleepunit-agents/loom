@@ -9,8 +9,7 @@ import { createDataSchema, dataDatabase } from '../../core/data/database.js';
 import { agents, inbox, jobs, members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents, secretUses } from '../../core/data/schema.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { SecretRequests } from './requests.js';
-import { SecretValues } from './shared-values.js';
-import type { AsyncSecretMutations } from './async-values.js';
+import { SecretValues, type RecoverableSecretMutations } from './shared-values.js';
 const clients: Database.Database[] = [], homes: string[] = [];
 afterEach(() => { for (const db of clients.splice(0)) if (db.open) db.close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 function fixture(durable = false) {
@@ -20,21 +19,26 @@ function fixture(durable = false) {
   const now = () => '2026-11-14T12:00:00.000Z', db = createDataSchema(client, now), key = randomBytes(32);
   db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: now() }).run();
   db.insert(members).values({ id: 'other', role: 'owner', joinedAt: now() }).run();
-  const receipts = new Set<string>(), values = new Map<string, string>();
-  const holder: AsyncSecretMutations = {
+  const receipts = new Set<string>(), aborted = new Set<string>(), values = new Map<string, string>();
+  const holder: RecoverableSecretMutations = {
     hasReceipt: vi.fn(async who => receipts.has(JSON.stringify(who))),
+    recover: vi.fn(async who => {
+      const id = JSON.stringify(who); if (receipts.has(id)) return 'committed' as const;
+      aborted.add(id); return 'undone' as const;
+    }),
     set: vi.fn(async (who, name, bytes, mode) => {
       expect(client.inTransaction).toBe(false);
+      if (aborted.has(JSON.stringify(who))) throw Error('Fenced');
       if ((mode === 'add') === values.has(name)) throw Error('Wrong mode');
       values.set(name, Buffer.from(bytes).toString()); receipts.add(JSON.stringify(who));
     }),
-    remove: vi.fn(async (who, name) => { values.delete(name); receipts.add(JSON.stringify(who)); }),
+    remove: vi.fn(async (who, name) => { if (aborted.has(JSON.stringify(who))) throw Error('Fenced'); values.delete(name); receipts.add(JSON.stringify(who)); }),
   };
   const notifications = { refreshAccess: vi.fn(), changed: vi.fn() };
   const writes = new DataWrites(db, notifications);
   const service = new SecretValues(db, now, holder, key, write => { writes.run(write); });
   const input = { id: randomUUID(), member: 'owner', name: 'API', mode: 'add' as const, description: 'Purpose', value: 'NEVER-IN-LOOM-SENTINEL' };
-  return { home, path, client, db, now, key, holder, service, input, values, receipts, notifications };
+  return { home, path, client, db, now, key, holder, service, input, values, receipts, aborted, notifications };
 }
 it('hands bytes only to holder and commits typed metadata/change/journal exactly once', async () => {
   const f = fixture(); let owned: Uint8Array | undefined;
@@ -74,10 +78,11 @@ it('recovers a holder commit after lost acknowledgement and durable database reo
   await expect(service.set(f.input)).resolves.toEqual({ saved: true });
   expect(f.holder.set).toHaveBeenCalledTimes(1);
 });
-it('negative recovery evidence retains reservation and lets exact input retry', async () => {
+it('unavailable recovery retains reservation and lets exact input retry', async () => {
   const f = fixture(), actual = vi.mocked(f.holder.set).getMockImplementation()!;
   vi.mocked(f.holder.set).mockRejectedValueOnce(Error(f.input.value));
   await expect(f.service.set(f.input)).rejects.toThrow(/^Secret write awaits reconciliation$/);
+  vi.mocked(f.holder.recover).mockRejectedValueOnce(Error('Recovery unavailable'));
   await f.service.reconcilePending();
   expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
   await expect(f.service.set({ ...f.input, id: randomUUID(), name: 'OTHER' })).rejects.toThrow('reconciliation');
@@ -184,7 +189,7 @@ it.each(['set', 'remove', 'reconcile'] as const)('close during %s prevents datab
   if (kind === 'reconcile') {
     vi.mocked(f.holder.set).mockRejectedValueOnce(Error('lost'));
     await expect(f.service.set(f.input)).rejects.toThrow('reconciliation');
-    vi.mocked(f.holder.hasReceipt).mockImplementation(async () => { entered(); await blocked; return true; });
+    vi.mocked(f.holder.recover).mockImplementation(async () => { entered(); await blocked; return 'committed'; });
     pending = f.service.reconcilePending();
   } else if (kind === 'remove') {
     await f.service.set(f.input);
@@ -222,6 +227,7 @@ it('a negative receipt cannot release a lost-ack reservation whose holder commit
     throw Error('Transport lost before the holder finished');
   });
   await expect(f.service.set(f.input)).rejects.toThrow('reconciliation');
+  vi.mocked(f.holder.recover).mockRejectedValueOnce(Error('Recovery unavailable'));
   await f.service.reconcilePending();
   expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
   await expect(f.service.set({ ...f.input, id: randomUUID(), name: 'OTHER' })).rejects.toThrow('reconciliation');
@@ -324,4 +330,49 @@ it('recovered lost-ack removal keeps presence unavailable through reopen and per
   await expect(service.set({ ...f.input, id: randomUUID(), value: 'AFTER-REMOVAL' })).resolves.toEqual({ saved: true });
   expect(f.values.get('API')).toBe('AFTER-REMOVAL');
   expect(db.select().from(secretChanges).all().map(row => row.action)).toEqual(['add', 'removed', 'add']);
+});
+it('fenced undo releases an abandoned reservation after reopen without its value or an audit fiction', async () => {
+  const f = fixture(true); vi.mocked(f.holder.set).mockRejectedValueOnce(Error('Caller lost before mutation arrived'));
+  await expect(f.service.set(f.input)).rejects.toThrow('reconciliation'); f.service.close(); f.client.close();
+  const client = new Database(f.path); clients.push(client); client.pragma('foreign_keys = ON');
+  const db = dataDatabase(client, f.now), writes = new DataWrites(db, { refreshAccess() {}, changed() {} });
+  const service = new SecretValues(db, f.now, f.holder, f.key, write => { writes.run(write); });
+  await service.reconcilePending(); expect(db.select().from(secretWriteJournal).get()?.state).toBe('undone');
+  expect(db.select().from(secretChanges).all()).toEqual([]); expect(db.select().from(secrets).all()).toEqual([]);
+  await expect(service.set(f.input)).rejects.toThrow('undone');
+  vi.mocked(f.holder.set).mockImplementation(async (who, name, bytes) => { if(f.aborted.has(JSON.stringify(who)))throw Error('Fenced'); f.values.set(name, Buffer.from(bytes).toString()); f.receipts.add(JSON.stringify(who)); });
+  await expect(service.set({ ...f.input, id: randomUUID(), value: 'NEW-ATTEMPT' })).resolves.toEqual({ saved: true });
+  expect(db.select().from(secretChanges).all()).toHaveLength(1);
+});
+it('an invalid recovery result cannot free a reservation or invent a confirmed change', async () => {
+  const f = fixture(); vi.mocked(f.holder.set).mockRejectedValueOnce(Error('No acknowledgement'));
+  await expect(f.service.set(f.input)).rejects.toThrow('reconciliation');
+  vi.mocked(f.holder.recover).mockResolvedValueOnce('PRIVATE-ERROR' as 'undone');
+  await f.service.reconcilePending(); expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
+  expect(f.db.select().from(secretChanges).all()).toEqual([]);
+});
+it('undoing a lost removal keeps the existing value, grants and presence audit intact', async () => {
+  const f = fixture(); await f.service.set(f.input);
+  f.db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const requests = new SecretRequests(f.db, f.now);
+  requests.request({ id: 'keep', secret: 'API', agent: 'art', why: 'Keep using it', minutes: 5 }); requests.answer('keep', 'owner', true);
+  const grant = requests.grantFor('API', 'art');
+  vi.mocked(f.holder.remove).mockRejectedValueOnce(Error('Caller disappeared before remove arrived'));
+  await expect(f.service.remove({ id: randomUUID(), member: 'owner', name: 'API' })).rejects.toThrow('reconciliation');
+  await f.service.reconcilePending();
+  expect(f.db.select().from(secretWriteJournal).all().map(row => row.state)).toEqual(['committed', 'undone']);
+  expect(f.values.get('API')).toBe(f.input.value); expect(f.db.select().from(secretChanges).all().map(row => row.action)).toEqual(['add']);
+  expect(requests.grantFor('API', 'art')).toEqual(grant); expect(f.db.select().from(secretRequests).get()?.state).toBe('allowed');
+  await expect(f.service.set({ ...f.input, id: randomUUID(), mode: 'replace', value: 'NEXT' })).resolves.toEqual({ saved: true });
+});
+it.each(['committed','undone'] as const)('recovery refuses metadata work when an unrelated transaction begins during its %s await',async outcome=>{
+ const f=fixture();vi.mocked(f.holder.set).mockRejectedValueOnce(Error('Lost acknowledgement'));
+ await expect(f.service.set(f.input)).rejects.toThrow('reconciliation');
+ let release!:(value:'committed'|'undone')=>void,entered!:()=>void;
+ const started=new Promise<void>(resolve=>{entered=resolve;});
+ vi.mocked(f.holder.recover).mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});
+ const pending=f.service.reconcilePending();await started;f.client.exec('BEGIN');release(outcome);
+ try{await expect(pending).rejects.toThrow('reconciliation');}finally{f.client.exec('ROLLBACK');}
+ expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
+ expect(f.db.select().from(secrets).all()).toEqual([]);expect(f.db.select().from(secretChanges).all()).toEqual([]);
 });

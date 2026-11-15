@@ -13,11 +13,12 @@ import { synchronousHolderAcknowledgement } from './keyholder.js';
 const failed = () => new Error('Local secret mutation unavailable');
 const whoSchema = z.object({member:z.string().min(1).max(256),writeId:z.uuid()}).strict();
 const limit = 65536;
-/** The trusted daemon authenticates the end member and asserts that identity.
- * The holder's authority must pin the permitted daemon certificate fingerprint,
- * resolve the assertion to the actual member and check CURRENT household write
- * permission. Return null on denial. Neither TLS nor this assertion is itself
- * end-member authentication. Never install a pass-through authority.
+/** Authenticate the pinned installed daemon and canonicalize its actor assertion.
+ * The outside root authorizes the owner BEFORE admitting a journal write. The
+ * private holder is installed trusted code, not another owner-permission door.
+ * Recovery must remain available for admitted actors after their role changes;
+ * it releases no value and can only confirm a commit or fence an unused id.
+ * Never expose this transport or its daemon key to an outside caller.
  */
 export type HolderMutationAuthority = (peerFingerprint: string, assertedMember: string) => Promise<string | null>;
 
@@ -26,13 +27,13 @@ export function localHolderMutations(config: LocalHolderConfig) {
   let closed = false;
   const requests = new Set<ClientRequest>();
   if (!config.servername || !isAbsolute(config.socket)) throw failed();
-  async function send(who: HolderWrite, name: string | undefined, mode: 'add' | 'replace' | 'remove' | 'receipt', value?: Uint8Array) {
+  async function send(who: HolderWrite, name: string | undefined, mode: 'add' | 'replace' | 'remove' | 'receipt' | 'recover', value?: Uint8Array) {
     let bytes: Buffer | undefined;
     try {
       if (closed) throw failed();
-      who = whoSchema.parse(who); if (mode !== 'receipt') secretName.parse(name);
-      if (!['add','replace','remove','receipt'].includes(mode)) throw failed();
-      if (mode !== 'remove' && mode !== 'receipt') {
+      who = whoSchema.parse(who); if (mode !== 'receipt' && mode !== 'recover') secretName.parse(name);
+      if (!['add','replace','remove','receipt','recover'].includes(mode)) throw failed();
+      if (mode !== 'remove' && mode !== 'receipt' && mode !== 'recover') {
         if (!(value instanceof Uint8Array) || !value.length || value.length > limit) throw failed();
         bytes = Buffer.from(value); // Own a snapshot before any await.
       }
@@ -42,12 +43,12 @@ export function localHolderMutations(config: LocalHolderConfig) {
         const fail = () => { if (!settled) { settled=true; reject(failed()); } };
         const request = https.request({socketPath:config.socket,servername:config.servername,...material,
           rejectUnauthorized:true,agent:false,minVersion:'TLSv1.3',maxHeaderSize:8192,
-          method:'POST',path:mode === 'receipt' ? '/v1/receipt' : `/v1/mutation/${mode}/${name}`,
+          method:'POST',path:mode === 'receipt' ? '/v1/receipt' : mode === 'recover' ? '/v1/recover' : `/v1/mutation/${mode}/${name}`,
           headers:{'content-type':'application/octet-stream','content-length':bytes?.length ?? 0,
             'x-holder-member':Buffer.from(who.member).toString('base64url'),'x-holder-write-id':who.writeId},
         },response=>{
           // No holder-controlled output, including an error body, crosses this seam.
-          if ((response.statusCode!==204 && !(mode==='receipt' && response.statusCode===404)) || response.headers['content-length']!=='0' || response.headers['transfer-encoding']) {
+          if ((response.statusCode!==204 && !(mode==='receipt' && response.statusCode===404) && !(mode==='recover' && response.statusCode===410)) || response.headers['content-length']!=='0' || response.headers['transfer-encoding']) {
             fail();response.destroy();return;
           }
           response.on('data', (chunk:Buffer)=>{chunk.fill(0);fail();response.destroy();});
@@ -73,17 +74,18 @@ export function localHolderMutations(config: LocalHolderConfig) {
     /** A positive answer confirms a committed member/id, not the caller's input.
      * A negative answer must never release a reservation or trigger another id. */
     hasReceipt:(who:HolderWrite)=>send(who,undefined,'receipt'),
+    recover:async(who:HolderWrite):Promise<'committed'|'undone'> => await send(who,undefined,'recover') ? 'committed' : 'undone',
   };
 }
 
 /** Separate private socket, no value read endpoint. The caller owns store lifetime.
- * Current authorization runs before reading and again immediately before a
+ * Current daemon authentication runs before reading and again immediately before a
  * mutation (including receipt replay). Store work already started may commit
  * after disconnect: retry with the SAME member/writeId/input, never assume a
  * transport failure means rollback. No automatic retries or socket unlinking.
  */
 export async function listenHolderMutations(config: Omit<LocalHolderConfig,'servername'>,
-  store: Pick<HolderStore,'set'|'remove'|'hasReceipt'>, authority: HolderMutationAuthority) {
+  store: Pick<HolderStore,'set'|'remove'|'hasReceipt'|'recover'>, authority: HolderMutationAuthority) {
   try {
     if (!isAbsolute(config.socket) || typeof authority !== 'function') throw failed();
     assertPrivateDirectory(dirname(config.socket));
@@ -98,18 +100,18 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
       try {
         const peer=req.socket as TLSSocket;
         const fingerprint=peer.getPeerCertificate().fingerprint256;
-        const receipt=req.url==='/v1/receipt';
+        const receipt=req.url==='/v1/receipt', recovery=req.url==='/v1/recover';
         const match=/^\/v1\/mutation\/(add|replace|remove)\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(req.url??'');
         const member=req.headers['x-holder-member'],writeId=req.headers['x-holder-write-id'];
         const length=req.headers['content-length'];
-        if (closed || !peer.authorized || !fingerprint || req.method!=='POST' || (!match && !receipt)
+        if (closed || !peer.authorized || !fingerprint || req.method!=='POST' || (!match && !receipt && !recovery)
           || req.headers['content-type']!=='application/octet-stream' || req.headers['transfer-encoding']
           || typeof member!=='string' || !/^[A-Za-z0-9_-]{1,1366}$/.test(member)
           || typeof writeId!=='string' || typeof length!=='string' || !/^(0|[1-9][0-9]{0,4})$/.test(length)) throw failed();
         const asserted=Buffer.from(member,'base64url').toString('utf8');
         if (Buffer.from(asserted).toString('base64url')!==member || asserted.length>256) throw failed();
-        const expected=Number(length),mode=receipt ? 'receipt' : match![1] as 'add'|'replace'|'remove',name=match?.[2];
-        if (expected>limit || (mode==='remove' || mode==='receipt' ? expected!==0 : expected===0)) throw failed();
+        const expected=Number(length),mode=receipt ? 'receipt' : recovery ? 'recover' : match![1] as 'add'|'replace'|'remove',name=match?.[2];
+        if (expected>limit || (mode==='remove' || mode==='receipt' || mode==='recover' ? expected!==0 : expected===0)) throw failed();
         const memberId=await authority(fingerprint,asserted);
         const who=whoSchema.parse({member:memberId,writeId});
         if (closed || expired || req.destroyed) throw failed();
@@ -122,7 +124,7 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
         if (closed || size!==expected || expired || res.destroyed) throw failed();
         bytes=Buffer.concat(chunks);
         if (await authority(fingerprint,asserted)!==who.member || closed || expired || res.destroyed) throw failed();
-        let committed=true;
+        let committed=true, undone=false;
         if (mode==='receipt') {
           const found:unknown=store.hasReceipt(who);
           // Consume accidental async rejection as well as refusing its evidence.
@@ -130,10 +132,16 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
           if (typeof found!=='boolean') throw failed();
           committed=found;
           if (await authority(fingerprint,asserted)!==who.member) throw failed();
+        } else if (mode==='recover') {
+          const outcome:unknown=store.recover(who);
+          synchronousHolderAcknowledgement(outcome);
+          if (outcome!=='committed' && outcome!=='undone') throw failed();
+          committed=outcome==='committed';undone=outcome==='undone';
+          if (await authority(fingerprint,asserted)!==who.member) throw failed();
         } else if (mode==='remove') await store.remove(who,name!);
         else await store.set(who,name!,bytes,mode);
         if (closed || expired || res.destroyed) throw failed();
-        res.writeHead(committed?204:404,{'content-length':0,'cache-control':'no-store'});res.end();
+        res.writeHead(undone?410:committed?204:404,{'content-length':0,'cache-control':'no-store'});res.end();
       } catch {
         if (!res.headersSent && !res.destroyed) res.writeHead(503,{'content-length':0,'cache-control':'no-store'});
         res.end();
