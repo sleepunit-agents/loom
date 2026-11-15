@@ -130,3 +130,19 @@ The wire format follows Docker's [Engine API](https://docs.docker.com/reference/
 create, attach, start, wait and remove endpoints. The worker uses the explicitly
 configured local Unix socket and unversioned routes; it does not start or install
 an engine.
+
+## Home current-job selection
+
+The shared GraphQL door mounts `currentJobs(agent: String!)` for an agent's Home
+card. It returns only current job ID, agent, title, state, assigned box ID and
+queue time, ordered by queue time and ID. Terminal attempts disappear. Execution
+briefs, logs, account identities, build details and repository settings are not
+query fields.
+
+The query reuses the published agent/project/private-member SQL policy used by
+Approvals and bridge conversation labels: household owners see every job;
+private member jobs require that member or a household owner; other jobs are
+visible through an owned agent or project membership. Retained reads use current
+sharing facts. HTTP buffers and live socket publication use the same existing
+freshness fence as other shared selections. This field is available to the Home UI; its rendering is a separate consumer.
+The projection does not grant write or worker authority.
