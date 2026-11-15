@@ -56,6 +56,7 @@ claim only assigned work, and implement:
 
 | Operation | Input | Value in the standard success envelope |
 | --- | --- | --- |
+| `runtime.health` | `{facts?}` | `{ok:true}` |
 | `runtime.next` | `{}` | assignment or `null` |
 | `runtime.started` | `{job, build}` | `{ok:true}` |
 | `runtime.heartbeat` | `{job, state}` | `{active:boolean}` |
@@ -67,7 +68,7 @@ failed process cleanup, so it cannot claim more work after uncertain reaping.
 SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
-The fresh `sharedRoot` mounts these four authenticated runner operations on the
+The fresh `sharedRoot` mounts these authenticated runner operations on the
 same shared connection and write/receipt boundary. The canonical current bearer
 runner proof supplies the machine identity; runner-labelled cookies are refused.
 Only that live machine may claim or report its jobs; caller-supplied machine identity is refused.

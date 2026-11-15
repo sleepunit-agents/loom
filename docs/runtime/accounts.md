@@ -113,3 +113,11 @@ There is no retry of an uncertain report. Stopping the worker aborts pending
 reads/requests and joins the refresh loop before removing signal handlers. A late
 reader result cannot report or start another job. Without `accountUsage`, the
 normal worker starts no quota reader or refresh timer.
+
+Before the initial normal-worker quota scan, the worker reports machine health
+through `runtime.health`. It continues serial health reports every 15 seconds
+while that scan is pending, without claiming a job. This keeps a long private
+reader from making an always-on machine appear quiet. Health reports include
+configured machine facts when present, but never change quota. A failed health
+report cancels startup; an in-flight report is joined before claims or shutdown.
+After the initial scan the ordinary idle polls and job heartbeats maintain health.
