@@ -24,3 +24,9 @@ it('requires reset before changing sessions or rewinding and retains raw when me
 it('fences old load and receipt callbacks after retirement without touching SQLite',()=>{
  const f=fixture();f.retire();expect(()=>f.receipts.retain(f.raw(),f.next)).toThrow('lifetime');expect(()=>f.receipts.checkpoint()).toThrow('lifetime');expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);
 });
+it('rechecks retirement after the real durable receiver call before exposing the cursor',()=>{
+ const f=fixture();let live=true;const receipts=liveDiscordReceipts({discord(...args){f.receiver.discord(...args);live=false;}},'connection',()=>live);expect(()=>receipts.retain(f.raw(),f.next)).toThrow('lifetime');expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);live=true;expect(receipts.checkpoint()).toBeUndefined();
+});
+it('preserves the existing receiver default of persistent cursor advancement for other callers',()=>{
+ const f=fixture();f.receiver.discord('connection',f.raw(),{session:f.next.session,sequence:f.next.seq,resumeUrl:f.next.url});expect(f.db.select().from(bridgeResume).get()).toMatchObject({session:'session',sequence:1,resumeUrl:'wss://gateway.discord.gg'});
+});
