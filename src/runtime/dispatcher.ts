@@ -40,7 +40,8 @@ export class Dispatcher {
         const thread = claimed.conversation ? this.db.select({id:threads.id}).from(threads)
           .innerJoin(conversations,eq(conversations.id,threads.conversation))
           .where(and(eq(threads.conversation,claimed.conversation),eq(conversations.venue,'loom'))).get() : undefined;
-        return { thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
+        return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };

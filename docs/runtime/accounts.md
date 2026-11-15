@@ -157,3 +157,27 @@ Replacement and receipt commit together. Invalid or unknown choices preserve the
 previous order. A committed change wakes settled mail held for missing setup;
 queued work uses the latest preferences when claimed. A body already claimed keeps
 its requested model. The operation neither signs in nor calls a model provider.
+
+## Account metadata commands
+
+The shared operation door offers runtime.accountCreate ({provider,label}),
+runtime.accountRename ({account,label}), runtime.accountSignedIn ({account,box})
+and runtime.accountSignedOut ({account,box}). Each write uses the ordinary stable
+operation ID and receipt. Creation returns the new account ID; other commands
+acknowledge saved:true.
+
+Creation derives ownership from the authenticated member and accepts a provider
+already present in the configured model catalog. New accounts have no quota
+observation and cannot admit work until a worker reports fresh usage. Provider
+and ownership are fixed for this account; renaming changes its public label.
+
+Account owners and household owners may rename an account or remove its recorded
+sign-in location. Recording a sign-in also requires access to the live box as
+its owner or a household owner. Agents, runners and services cannot administer
+these records, and a token label is never ownership.
+
+The separate private program performs the actual provider sign-in/out. These
+commands record its result, without accepting credentials or invoking it inside
+Loom. A fresh sign-in or removed association invalidates pending usage reports
+only after the complete write and receipt commit. Replaying a receipt does not
+invalidate a newer observation; remove/re-add cannot revive an older read.

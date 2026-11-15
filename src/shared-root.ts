@@ -1,4 +1,6 @@
 import { registerAgentModels } from './shared-agent-models.js';
+
+import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
@@ -119,6 +121,7 @@ export function sharedRoot(options: {
   });
   registerSharedPreferences(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
+  registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
   registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
@@ -171,7 +174,6 @@ export function sharedRoot(options: {
     const latest=lastSecretChange(),credentialsChanged=latest!==secretChange;secretChange=latest;
     bridgeDaemon.changed(credentialsChanged);
   });
-  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,viewer=>credentials.body(viewer),options.bridges!.effectsAllowed);
   comms?.install(operations);
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const services = {
@@ -190,6 +192,7 @@ export function sharedRoot(options: {
     runtime,
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
+  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
