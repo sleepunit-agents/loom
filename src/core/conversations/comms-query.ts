@@ -1,10 +1,12 @@
+import { wordsDeadline } from './retention.js';
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
 import { and, asc, desc, eq, getTableColumns, is, isNotNull, isNull, lt, sql, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { agents, conversations, household, memberAgents, members, messages, threadRefs, threads } from '../data/schema.js';
+import { conversations, household, messages, threadRefs, threads } from '../data/schema.js';
+import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 type Message = typeof messages.$inferSelect;
 type MessageView = Omit<Message, 'words'> & Pick<typeof conversations.$inferSelect, 'agent' | 'project' | 'member'> & { conversation: string };
@@ -30,24 +32,6 @@ export class CommsQueries {
         input.archived ? isNotNull(threads.archivedAt) : isNull(threads.archivedAt)))
       .orderBy(desc(threads.pinned), desc(sql`julianday(${threads.lastAt})`), asc(threads.id)).limit(count).offset(offset).all();
   }
-  /** Home is the signed-in member's own mailbox, including only agents they
-   * can give work to. Reply metadata suffices; no private words are loaded. */
-  home(viewer: Viewer) {
-    if (viewer.kind !== 'member' || !this.db.select({ id: members.id }).from(members).where(eq(members.id, viewer.id)).get()) return null;
-    const owned = this.db.select({ id: agents.id }).from(memberAgents).innerJoin(agents, eq(agents.id, memberAgents.agent))
-      .where(eq(memberAgents.member, viewer.id)).orderBy(asc(agents.id)).all().map(row => row.id);
-    const summaries = owned.map(agent => {
-      const unread = sql<boolean>`exists(select 1 from ${messages} where ${messages.thread} = ${threads.id}
-        and ${messages.kind} = 'reply' and ${messages.sender} = ${conversations.agent} and ${messages.seq} > ${threads.readSeq})`;
-      const rows = this.db.select({ thread: threads.id, title: threads.title, at: threads.lastAt, unread }).from(threads)
-        .innerJoin(conversations, eq(conversations.id, threads.conversation))
-        .where(and(this.allowed(viewer), eq(conversations.member, viewer.id), eq(conversations.agent, agent), isNull(threads.archivedAt)))
-        .orderBy(desc(sql`julianday(${threads.lastAt})`), asc(threads.id)).all();
-      return { agent, unread: rows.filter(row => row.unread).length,
-        last: rows[0] ?? null, first: rows.find(row => row.unread) ?? null };
-    });
-    return { member: viewer.id, agents: owned, summaries };
-  }
   thread(viewer: Viewer, id: string) {
     return this.db.select(threadFields).from(threads).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(threads.id, id), this.allowed(viewer))).get() ?? null;
@@ -67,7 +51,7 @@ export class CommsQueries {
       .where(and(eq(threads.id, thread), this.allowed(viewer)))
       .orderBy(desc(threadRefs.messageSeq), asc(threadRefs.ref)).limit(count).all();
   }
-  async words(viewer: Viewer, expected: MessageView): Promise<string | null> {
+  async words(viewer: Viewer, expected: MessageView, retainedUntil?: (at: number) => void): Promise<string | null> {
     const row = () => this.db.select({ message: messages, agent: conversations.agent, project: conversations.project, member: conversations.member, conversation: conversations.id })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
@@ -84,6 +68,7 @@ export class CommsQueries {
     if (!retained(after, days()) || days() !== keep || !after?.message.words || !same(after.message) || !scope(after)
       || after.agent !== before.agent || after.project !== before.project || after.member !== before.member || after.conversation !== before.conversation
       || !after.message.words.equals(before.message.words)) return null;
+    retainedUntil?.(wordsDeadline(after.message, keep));
     return words;
   }
 }
@@ -98,24 +83,12 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
   const message = new GraphQLObjectType<MessageView, { viewer: Viewer }>({ name: 'CommsMessageView', fields: {
     ...Object.fromEntries(['thread', 'kind', 'sender', 'at'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['keepUntil', 'delivery', 'inboxItem', 'verdict', 'run', 'tool', 'cardState', 'clientId'].map(name => [name, { type: GraphQLString }])),
-    seq: { type: new GraphQLNonNull(GraphQLInt) }, words: { type: GraphQLString, resolve: (row, _args, context) => service.words(context.viewer, row) },
+    seq: { type: new GraphQLNonNull(GraphQLInt) }, words: { type: GraphQLString, resolve: (row, _args, context) => service.words(context.viewer, row, until => keepReadUntil(context, until)) },
   } });
   const ref = new GraphQLObjectType({ name: 'CommsReferenceView', fields: { ref: { type: new GraphQLNonNull(GraphQLString) }, messageSeq: { type: new GraphQLNonNull(GraphQLInt) } } });
   const many = (type: GraphQLObjectType<any, any>) => new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
   const id = { type: new GraphQLNonNull(GraphQLString) };
-  const homeThread = new GraphQLObjectType({ name: 'HomeCommsThread', fields: {
-    thread: { type: new GraphQLNonNull(GraphQLString) }, title: { type: new GraphQLNonNull(GraphQLString) }, at: { type: new GraphQLNonNull(GraphQLString) },
-  } });
-  const homeAgent = new GraphQLObjectType({ name: 'HomeCommsAgent', fields: {
-    agent: { type: new GraphQLNonNull(GraphQLString) }, unread: { type: new GraphQLNonNull(GraphQLInt) },
-    last: { type: homeThread }, first: { type: homeThread },
-  } });
-  const home = new GraphQLObjectType({ name: 'HomeComms', fields: {
-    member: { type: new GraphQLNonNull(GraphQLString) }, agents: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))) },
-    summaries: { type: many(homeAgent) },
-  } });
   return {
-    homeComms: { type: home, resolve: (_row, _args, context) => service.home(context.viewer) },
     commsThreads: { type: many(thread), args: { member: { type: GraphQLString }, agent: { type: GraphQLString }, archived: { type: GraphQLBoolean }, limit: { type: GraphQLInt }, offset: { type: GraphQLInt } }, resolve: (_row, args, context) => service.list(context.viewer, args) },
     commsThread: { type: thread, args: { id }, resolve: (_row, args, context) => service.thread(context.viewer, args.id) },
     commsMessages: { type: many(message), args: { thread: id, beforeSeq: { type: GraphQLInt }, limit: { type: GraphQLInt, defaultValue: 50 } }, resolve: (_row, args, context) => service.messages(context.viewer, args.thread, args.beforeSeq, args.limit) },

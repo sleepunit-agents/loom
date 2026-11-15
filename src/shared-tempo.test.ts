@@ -4,13 +4,13 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, memberAgents, tokens, inbox, changes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
+import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
 import type { SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const credential='tempo-owner-credential-'.repeat(3), hash=(s:string)=>createHash('sha256').update(s).digest('hex');
-function fixture(tempo?: SharedTempoOptions){
+function fixture(tempo?: SharedTempoOptions,fields?:Parameters<typeof sharedRoot>[0]['fields']){
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()}]).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -18,7 +18,7 @@ function fixture(tempo?: SharedTempoOptions){
  db.insert(agentModels).values({agent:'art',model:'model',position:0}).run();
  db.insert(agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
  db.insert(tokens).values({fingerprint:hash(credential),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
- const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,reportError(error){throw error;}});
+ const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,fields,reportError(error){throw error;}});
  cleanup.push(()=>{client.close();},()=>root.close());
  const call=(name:string,input:unknown,id:string)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({input,id})});
  const trigger={id:'delivery',ownerKind:'household',sourceKind:'time',times:now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Check pump',note:'Delivery'};
@@ -152,4 +152,21 @@ it('labels a person sweep for its ordinary recipient and preserves a trusted not
  const item=g.db.select().from(inbox).get()!;
  expect(notify).toHaveBeenCalledExactlyOnceWith('owner',[item.id]);
  g.root.services.tempo.capacityChanged();expect(notify).toHaveBeenCalledOnce();
+});
+
+it('withdraws a selected notice when recipient sharing changes during a sibling await',async()=>{
+ const {GraphQLString}=await import('graphql/index.js');let entered!:()=>void,release!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const f=fixture(undefined,{held:{type:GraphQLString,async resolve(){entered();await gate;return 'ready';}}}),sam='sam-frame-token-'.repeat(3);
+ f.db.insert(tokens).values({fingerprint:hash(sam),label:'Sam',kind:'owner',member:'sam',createdAt:f.now()}).run();
+ f.db.insert(projects).values({id:'pond',name:'Pond'}).run();f.db.insert(projectMembers).values({member:'sam',project:'pond'}).run();
+ f.root.writes.run(()=>f.root.services.conversations.send({toKind:'person',to:'sam',source:'notice',fromKind:'agent',project:'pond',words:'PRIVATE PROJECT WORDS'}));
+ f.clock.advance(5000);const selected=await f.notice(sam);expect(selected).toMatchObject({count:1});
+ const pending=f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+sam},body:JSON.stringify({query:'{ settledInboxNotice { id count } held }'})});
+ try{
+  await ready;f.root.writes.run(()=>f.db.delete(projectMembers).run());release();
+  const response=await pending,text=await response.text();expect(text).not.toContain(selected.id);
+  if(response.status===200)expect(JSON.parse(text).data.settledInboxNotice).toBeNull();
+  else expect([401,403,503]).toContain(response.status);
+ }finally{release();await pending;}
 });
