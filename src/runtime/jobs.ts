@@ -1,9 +1,10 @@
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
+import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads } from '../core/data/schema.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
@@ -51,7 +52,7 @@ export class Jobs {
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms words are delivered ephemerally by ConversationMail, never copied
         // into the durable worker job. Other venues keep their ordinary brief.
-        state: 'queued', brief: conversation.venue === 'loom' ? '' : mail.map(item => item.words ?? '').join('\n\n'), model: model.model,
+        state: 'queued', brief: conversation.venue === 'loom' ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
@@ -152,8 +153,14 @@ export class Jobs {
     if (state === 'done' || (state !== 'stopped' && job.state !== 'starting')) {
       this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
     }
-    if (job.conversation) this.db.update(conversations).set({ job: null })
-      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id))).run();
+    if (job.conversation) {
+      const detached=this.db.update(conversations).set({job:null})
+        .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();
+      // This exact body has ended. Clear its working indicator in the same
+      // transaction; an unobserved Stop and the last reported agent state stay.
+      if(detached)this.db.update(threads).set({working:false,workingSince:null,workingBeat:null})
+        .where(eq(threads.conversation,detached.id)).run();
+    }
     return ended;
   }
 }

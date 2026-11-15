@@ -1,6 +1,6 @@
+import { useMemo } from 'react';
+import { tempoActions } from './commands';
 import { TempoApp } from './feed';
-/** Display instants in the browser's timezone until the household projection
- * supplies its configured timezone. The view always names the timezone. */
-export default function TempoScreen() {
-  return <TempoApp timezone={Intl.DateTimeFormat().resolvedOptions().timeZone} />;
-}
+/** The live selection supplies the household timezone. UTC is only the empty
+ * loading fallback; a browser's local zone never changes a household schedule. */
+export default function TempoScreen() { const actions = useMemo(() => tempoActions(), []); return <TempoApp timezone="UTC" actions={actions} />; }

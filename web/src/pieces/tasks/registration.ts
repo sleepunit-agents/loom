@@ -3,5 +3,5 @@ import { lazy } from 'react';
 export const tasksApp = {
   id: 'tasks', title: 'Tasks', icon: 'list-checks', path: '/p/tasks-preview',
   fit: { min: [520,320] as [number,number], ideal:1040, max:null, big:true, why:'folders, work list and task reader' },
-  Screen: lazy(() => import('./index')),
+  Screen: lazy(() => import('../../data/tasks-app')),
 };

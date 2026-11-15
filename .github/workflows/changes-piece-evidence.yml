@@ -6,6 +6,8 @@ on:
       - 'src/foundation.ts'
       - 'src/next-data.ts'
       - 'src/core/data/**'
+      - 'src/shared-*.ts'
+      - 'src/apps/changes*.ts'
       - 'web/src/data/**'
       - 'web/src/pieces/change-view/**'
       - 'src/changes-*.ts'
@@ -36,12 +38,12 @@ jobs:
       - name: Prove the shared Changes reader
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          export LOOM_TEST_SHOTS="$PWD/artifacts/changes-piece"
+          export LOOM_TEST_SHOTS="$RUNNER_TEMP/changes-piece"
           nice -n 19 npx vitest run src/ui/changes-piece.integration.test.ts --maxWorkers=1
-          test "$(find artifacts/changes-piece -name '*.png' | wc -l)" -eq 6
+          test "$(find "$LOOM_TEST_SHOTS" -name '*.png' | wc -l)" -eq 6
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: changes-piece-${{ github.event.pull_request.head.sha }}
-          path: artifacts/changes-piece/
+          path: ${{ runner.temp }}/changes-piece/
           if-no-files-found: error

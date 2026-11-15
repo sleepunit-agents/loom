@@ -393,9 +393,21 @@ it('ships the Tempo selection through the generated door and withdraws it after 
   ]));
   const removed = await (await request()).json();
   expect(removed.errors).toBeUndefined();
-  expect(removed.data).toEqual({triggers:[],triggerLog:[],agentPauses:[]});
+  expect(removed.data).toEqual({triggers:[],triggerLog:[],agentPauses:[],tempoTimezone:'UTC'});
 });
-
+it('projects only the household timezone for Tempo and publishes changes through the same selection',async()=>{
+ const f=await setup();
+ f.db.insert(s.household).values({timezone:'America/Chicago',backupTarget:'PRIVATE TARGET'}).run();
+ const {tempoQuery}=await import('../web/src/pieces/tempo/query.js');
+ const socket=await f.open();
+ const first=await read(socket,()=>socket.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:tempoQuery}}})));
+ expect(first.payload.data.observe.patches[0].value.tempoTimezone).toBe('America/Chicago');
+ expect(JSON.stringify(first)).not.toContain('PRIVATE TARGET');
+ const settings=await f.data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({query:'{ household { backupTarget } }'})});
+ expect((await settings.json()).errors[0].message).toContain('Cannot query field');
+ const changed=await read(socket,()=>{f.data.writes.run(()=>f.db.update(s.household).set({timezone:'Europe/London'}).run());});
+ expect(changed.payload.data.observe.patches).toContainEqual({path:['tempoTimezone'],removed:false,value:'Europe/London'});
+});
 it('withdraws selected Tempo instructions when project access changes during a sibling await',async()=>{
  const {GraphQLString}=await import('graphql/index.js');let entered!:()=>void,release!:()=>void;
  const ready=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
