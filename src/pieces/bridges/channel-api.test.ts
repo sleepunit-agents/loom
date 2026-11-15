@@ -119,12 +119,12 @@ it('shares the deadline across slow token acquisition, headers and streaming', a
 });
 
 it.each(['holder', 'headers', 'body'] as const)('checks absolute expiry at %s even before the timer callback runs', async phase => {
-  let now = 0;
+  let now = 0, reads = 0;
   const acquired = deferred<void>(), headers = deferred<Response>(), body = deferred<ReadableStreamReadResult<Uint8Array>>();
   const request = vi.fn<typeof fetch>(async () => {
     if (phase === 'headers') return headers.promise;
     return { ok: true, redirected: false, headers: new Headers(), body: { getReader: () => ({
-      read: () => body.promise, cancel: async () => {},
+      read: () => ++reads === 1 ? body.promise : Promise.resolve({ done: true, value: undefined }), cancel: async () => {},
     }) } } as unknown as Response;
   });
   const secrets: SecretUse = { withValue: async (_name, use) => {
@@ -137,7 +137,7 @@ it.each(['holder', 'headers', 'body'] as const)('checks absolute expiry at %s ev
   const pending = api.channel('123');
   await Promise.resolve(); await Promise.resolve();
   now = 15_000;
-  acquired.resolve(); headers.resolve(Response.json({ id: '123' })); body.resolve({ done: true, value: undefined });
+  acquired.resolve(); headers.resolve(Response.json({ id: '123' })); body.resolve({ done: false, value: Buffer.from('{"id":"123"}') });
   expect(await pending).toBeUndefined();
   if (phase === 'holder') expect(request).not.toHaveBeenCalled();
 });
