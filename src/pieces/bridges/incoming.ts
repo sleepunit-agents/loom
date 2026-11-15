@@ -23,6 +23,11 @@ export interface IncomingMessage {
   webhook?: boolean;
 }
 
+function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
+ return row.channel===message.channel&&row.thread===(message.thread??null)&&row.isDm===message.isDm
+  &&row.user===message.user&&row.text===message.text&&row.postedAt===message.postedAt;
+}
+
 export class BridgeIncoming {
   private readonly conversations: Conversations;
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {
@@ -38,7 +43,7 @@ export class BridgeIncoming {
       const id = `bi:${JSON.stringify([message.connection, message.id])}`;
       const existing = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       if (existing) {
-        if (existing.channel !== message.channel || existing.thread !== (message.thread ?? null) || existing.isDm !== message.isDm || existing.user !== message.user || existing.text !== message.text || existing.postedAt !== message.postedAt) throw new Error('Incoming id reused for a different message');
+        if (!sameMessage(existing,message)) throw new Error('Incoming id reused for a different message');
         if (existing.state !== 'held' || !retryHeld) return existing;
       }
       const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();
@@ -80,9 +85,7 @@ export class BridgeIncoming {
             .from(inboxRefs).innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref))
             .where(and(eq(inboxRefs.item, delivered.id), eq(bridgeIncoming.state, 'delivered'))).all()
             .find(row => row.id === `bi:${JSON.stringify([row.connection, message.id])}`);
-          if (!original || original.user !== message.user || original.channel !== message.channel
-            || original.thread !== (message.thread ?? null) || original.isDm !== message.isDm
-            || original.text !== message.text || original.postedAt !== message.postedAt) throw Error('Bridge delivery identity changed');
+          if (!original || !sameMessage(original,message)) throw Error('Bridge delivery identity changed');
           deliveredAt = delivered.at;
           conversation = delivered.conversation;
           matchedMember = delivered.fromKind === 'person' ? delivered.fromId : null;

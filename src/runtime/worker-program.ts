@@ -5,15 +5,22 @@ import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js
 import { httpWorkerControl } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
-const command = z.object({ command: z.string().min(1), args: z.array(z.string()), cwd: z.string().min(1), env: z.record(z.string(), z.string()) }).strict();
+const commandString = z.string().refine(value => !value.includes('\0'));
+const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
+const containerCommand = command.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
 const containerDeadline = z.number().int().min(1).max(300_000);
 const configSchema = z.object({
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), command),
+  accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), command)).optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
     setupTimeoutMs: containerDeadline.optional(),
     cleanupTimeoutMs: containerDeadline.optional() }).strict().optional(),
-}).strict();
+}).strict().superRefine((config, context) => {
+  if (!config.container) return;
+  const plans = [...Object.values(config.runners), ...Object.values(config.accountRunners ?? {}).flatMap(values => Object.values(values))];
+  if (plans.some(plan => !containerCommand.safeParse(plan).success)) context.addIssue({ code: 'custom', message: 'Invalid container runner command' });
+});
 const accountCommand = z.object({
   command,
   account: z.object({ account: z.string().trim().min(1), owner: z.string().trim().min(1), provider: z.string().trim().min(1) }).strict(),

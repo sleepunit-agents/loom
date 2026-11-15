@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
+import { Conversations } from '../../core/conversations/index.js';
 import { BridgeIncoming, type IncomingMessage } from './incoming.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -170,6 +171,7 @@ it('group DMs never use one participant private-member context or a prior single
  const first=f.ingress.receive({...f.message,id:'private-first',isDm:true,channel:'direct'});
  const group=f.ingress.receive({...f.message,id:'group-message',isDm:true,groupDm:true,channel:'direct'});
  expect(group.conversation).not.toBe(first.conversation);
+ expect(group.member).toBe('jonathan');
  expect(f.db.select().from(conversations).where(eq(conversations.id,group.conversation!)).get()?.member).toBeNull();
  expect(f.db.select().from(conversations).where(eq(conversations.id,first.conversation!)).get()?.member).toBe('jonathan');
 });
@@ -213,5 +215,12 @@ it('rejects a conflicting cross-connection copy without creating a second receip
  const f=fixture(),connection=f.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,'c')).get()!;f.db.insert(bridgeConnections).values({...connection,id:'second'}).run();
  const first=f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct'});
  expect(()=>f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second',text:'Changed words'})).toThrow('identity changed');
+ expect(()=>f.ingress.receive({...f.message,id:'same-message',isDm:true,channel:'direct',connection:'second',user:'different-sender'})).toThrow('identity changed');
  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(1);expect(f.db.select().from(conversations).all()).toHaveLength(1);expect(f.db.select().from(inbox).get()?.conversation).toBe(first.conversation);
+});
+
+it('reuses the original public channel place key',()=>{
+ const f=fixture(),prior=new Conversations(f.db,f.now).open({agent:'art',venue:'discord',place:JSON.stringify(['w','room',null]),label:'Existing public room'});
+ const row=f.ingress.receive(f.message);
+ expect(row.conversation).toBe(prior.id);expect(f.db.select().from(conversations).all()).toHaveLength(1);
 });
