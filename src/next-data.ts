@@ -78,6 +78,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   let closing: Promise<void> | undefined;
   return {
     http,
+    readVersion: () => live.epoch(),
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
     writes,

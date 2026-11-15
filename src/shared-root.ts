@@ -1,3 +1,5 @@
+import { takeBodyInput } from './core/conversations/body-input.js';
+import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { mayRunPrivateWork } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
@@ -66,6 +68,7 @@ export function sharedRoot(options: {
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing);
+  const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...options.fields }, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
@@ -161,6 +164,7 @@ export function sharedRoot(options: {
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
+  http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.post('/api/:piece/:operation', async c => {
     const request = c.req.raw, origin = request.headers.get('origin'), url = new URL(request.url);
     if (request.headers.get('sec-fetch-site') === 'cross-site' || (origin && origin !== url.origin && !(origin === options.publicOrigin && new URL(origin).host === url.host)))
