@@ -75,7 +75,11 @@
     {
       "id": "changes-009",
       "promise": "A thread that mentions the pull request shows it as a card.",
-      "source": "docs/how-it-works/site/changes.html#con-h"
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeInline"
+      }
     },
     {
       "id": "changes-010",

@@ -37,3 +37,29 @@ export async function changeActions({page,tile,app,example,out}){
   await page.screenshot({path:join(out,screenshot),fullPage:true});return {changeWorkflow:{ok:true,screenshot,sourceReads:reads,groups:['you','agent','ci','reviewer','author','done']}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {changeWorkflow:{ok:false,error:String(error),screenshot}};}
 }
+
+/** The real composer creates a PR reference; the card opens the current tile. */
+export async function changeInline({page,tile,app,example,out}){
+ const screenshot='action-changeInline.png';
+ try{
+  const words=`Review this fictitious pull request: ${example.change}.`;
+  await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
+  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
+  await tile.getByRole('button',{name:'Send',exact:true}).click();
+  const response=await pending,body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Reference message refused');
+  const title=app.services.changes.get(example.change).title;
+  const card=tile.getByRole('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
+  await card.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
+  if(await card.getByRole('button',{name:'Yes, merge it',exact:true}).count())throw Error('Inline PR reference offers a merge action');
+  await card.getByRole('button',{name:'Open',exact:true}).click();
+  const change=page.getByRole('region',{name:'Changes tile',exact:true});
+  await change.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
+  const reader=change.getByRole('region',{name:'Changes: the open item',exact:true});
+  await reader.getByText('Compare garden pumps',{exact:true}).click();
+  const tasks=page.getByRole('region',{name:'Tasks tile',exact:true});
+  await tasks.getByRole('heading',{name:'Compare garden pumps',exact:true}).waitFor({timeout:4000});
+  await tasks.getByText('Pull requests',{exact:true}).waitFor();
+  await tasks.getByRole('link',{name:'example-house/garden#12',exact:true}).waitFor();
+  await page.screenshot({path:join(out,screenshot),fullPage:true});return {changeInline:{ok:true,screenshot}};
+ }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {changeInline:{ok:false,error:String(error),screenshot}};}
+}
