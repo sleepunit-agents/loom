@@ -3,7 +3,10 @@ import { sql } from 'drizzle-orm';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { expect, it } from 'vitest';
 import { createDataSchema } from './database';
-import { members, agents, memberAgents } from './schema';
+import { members, agents, memberAgents, memberPreferences as preferencesTable } from './schema';
+import { dataQueries } from './queries';
+import { withQueryFields } from './http';
+import { memberPreferences, memberPreferencesQuery, type MemberPreferencesData } from '../../../web/src/shell/member-preferences';
 import { CommsMessages } from '../conversations/messages';
 import { CommsQueries, commsQueryFields } from '../conversations/comms-query';
 import { homeComms, homeCommsQuery, type HomeCommsData } from '../../../web/src/pieces/attention/home-comms-data';
@@ -23,6 +26,18 @@ it('executes the exact desk summary selection without words and observes read/ow
   await messages.send({thread:hidden.id,sender:'art',kind:'reply',words:'Hidden reply'});
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:commsQueryFields(service)})});
   const read=()=>graphql({schema,source:homeCommsQuery,contextValue:{viewer:{kind:'member',id:'member'}}});
+  const defaults={ground:'depth' as const,sound:false,pixel:true,icons:false,haptics:true,oneWindow:false,zoom:false,motion:'follow' as const,contrast:'follow' as const,changedAt:at};
+  db.insert(preferencesTable).values([{...defaults,member:'member',look:'daylight'},{...defaults,member:'other',look:'lowlight'}]).run();
+  const preferenceSchema=withQueryFields(dataQueries(client,{tables:['memberPreferences'],visibility:{memberPreferences:()=>sql`true`}}),commsQueryFields(service));
+  const choices=await graphql({schema:preferenceSchema,source:memberPreferencesQuery});expect(choices.errors).toBeUndefined();
+  const identityFor=(id:string)=>graphql({schema:preferenceSchema,source:homeCommsQuery,contextValue:{viewer:{kind:'member',id}}});
+  for(const [id,look] of [['member','daylight'],['other','lowlight']] as const) {
+    const identity=await identityFor(id);expect(identity.errors).toBeUndefined();
+    expect(memberPreferences({status:'live',data:identity.data as unknown as HomeCommsData},{status:'live',data:choices.data as unknown as MemberPreferencesData}).records[0]).toMatchObject({id,prefs:{look}});
+  }
+  const missing=await identityFor('missing');expect(missing.errors).toBeUndefined();
+  expect(memberPreferences({status:'live',data:missing.data as unknown as HomeCommsData},{status:'live',data:choices.data as unknown as MemberPreferencesData})).toEqual({status:'denied',records:[]});
+
   statements.length=0;
   const first=await read();expect(first.errors).toBeUndefined();
   expect(first.data).toEqual({homeComms:{member:'member',agents:['art'],summaries:[{agent:'art',unread:1,last:{thread:'th:own',title:'Current conversation',at},first:{thread:'th:own'}}]}});

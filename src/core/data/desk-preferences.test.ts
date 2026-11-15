@@ -6,7 +6,7 @@ import { createDataSchema } from './database';
 import { dataQueries } from './queries';
 import { members, memberPreferences as preferencesTable } from './schema';
 import { memberPreferences, memberPreferencesQuery, type MemberPreferencesData, type MemberPreferenceRow } from '../../../web/src/shell/member-preferences';
-const identity = { status: 'live' as const, records: [{ id: 'sam', member: 'sam', prefs: { look: 'neon' } }] };
+const identity = { status: 'live' as const, data: { homeComms: { member: 'sam', agents: [], summaries: [] } } };
 const row: MemberPreferenceRow = { member: 'sam', look: 'daylight', ground: 'wash', sound: false, pixel: false, icons: true, haptics: false, oneWindow: true, zoom: true, motion: 'on', contrast: 'off', changedAt: '2026-11-14T00:00:00.000Z' };
 const query = { status: 'live' as const, data: { memberPreferences: [{ ...row, member: 'other', look: 'lowlight' as const }, row] } };
 const opened: Database.Database[] = [];
