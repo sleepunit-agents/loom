@@ -14,9 +14,10 @@ import {httpWorkerControl} from './runtime/worker-http.js';
 import {commandWorkerExecutor,type ProcessRuntime} from './runtime/worker-process.js';
 import {workOnce} from './runtime/worker.js';
 import {privateSecretClient} from './pieces/secrets/private-client.js';
+import {bodyStartupSecrets} from './runtime/body-secrets.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-it.each([Buffer.from('PRIVATE_HOUSE_TOKEN'),Buffer.from([80,82,73,86,65,84,69,0,255,128,13,10,69,78,68])])('carries an enrolled credential after running ACK and preserves private startup bytes %j',async expected=>{
+it.each([{expected:Buffer.from('PRIVATE_HOUSE_TOKEN'),environment:false},{expected:Buffer.from([80,82,73,86,65,84,69,0,255,128,13,10,69,78,68]),environment:false},{expected:Buffer.from('PRIVATE_NATIVE_ENVIRONMENT'),environment:true}])('carries an enrolled credential after running ACK and preserves private startup bytes $environment $expected',async ({expected,environment})=>{
  const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),runner='r'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
  db.insert(boxes).values({id:'worker',name:'Worker',owner:'owner',sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:now(),lastSeenAt:now()}).run();db.insert(tokens).values({fingerprint:hash(runner),label:'Worker',kind:'runner',box:'worker',createdAt:now()}).run();db.insert(agentBoxes).values({agent:'art',box:'worker',position:0}).run();db.insert(agentModels).values({agent:'art',model:'model',position:0}).run();db.insert(agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
@@ -35,7 +36,13 @@ it.each([Buffer.from('PRIVATE_HOUSE_TOKEN'),Buffer.from([80,82,73,86,65,84,69,0,
     if(plan.command==='/fake/build'){expect(JSON.parse(input)).toEqual({job:saved.id,house:{repository:'repo',file:'Housefile',branch:'next'}});child.stdout.emit('data',Buffer.from('{"build":"artifact"}'));}
     else{
      const payload=JSON.parse(input);expect(payload.job.id).toBe(saved.id);expect(payload.job.brief).toBe('');expect(payload.bootstrap).toMatchObject({job:saved.id,origin:root.url});expect(db.select().from(jobs).get()?.state).toBe('running');expect(source).not.toHaveBeenCalled();receivedToken=payload.bootstrap.token;expect(receivedToken).toMatch(/^body_[a-f0-9]{64}$/);
-     const recipient=privateSecretClient({url:payload.bootstrap.origin,token:receivedToken,signal:new AbortController().signal,clock});try{const values=await recipient.startup();expect([...values.keys()]).toEqual(['API_TOKEN']);expect(values.get('API_TOKEN')).toEqual(expected);accepted();for(const bytes of values.values())bytes.fill(0);}finally{recipient.close();}
+     if(environment){
+      const env:NodeJS.ProcessEnv={ACCOUNT_PROFILE:'/account'},recipient=bodyStartupSecrets(env,{clock});
+      try{await recipient.startup(payload.job,{...payload.bootstrap,token:Buffer.from(receivedToken)},new AbortController().signal);expect(env).toEqual({ACCOUNT_PROFILE:'/account',API_TOKEN:expected.toString()});accepted();}finally{recipient.close();}
+      expect(env).toEqual({ACCOUNT_PROFILE:'/account'});
+     }else{
+      const recipient=privateSecretClient({url:payload.bootstrap.origin,token:receivedToken,signal:new AbortController().signal,clock});try{const values=await recipient.startup();expect([...values.keys()]).toEqual(['API_TOKEN']);expect(values.get('API_TOKEN')).toEqual(expected);accepted();for(const bytes of values.values())bytes.fill(0);}finally{recipient.close();}
+     }
      child.stdout.emit('data',Buffer.concat([Buffer.from(expected),Buffer.from(receivedToken)]));child.stderr.emit('data',Buffer.concat([Buffer.from(expected),Buffer.from(receivedToken)]));
     }
     closed.add(child);child.emit('close',0,null);
