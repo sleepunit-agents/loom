@@ -237,3 +237,47 @@ it('cleans acquired socket resources when web asset initialization throws before
     expect(tracked.attachments).toHaveLength(0);tracked.expectDisposed();
   } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
 });
+
+
+it('refreshes Knowledge at exact clock boundaries without writes and cancels its owned deadline',async()=>{
+  const f=await setup(['127.0.0.1','127.0.0.2']);
+  const writer=new Database(join(f.home,'commons/knowledge.db'));
+  try {
+    const now=f.clock.now(),day=86400_000;
+    for(const [slug,age] of [['recent',7],['aging',20],['due',30]] as const){
+      await f.knowledge.writePage({slug,title:slug,domain:'fiction',body:'Fictional fact'});
+      writer.prepare('UPDATE pages SET verified_at=? WHERE slug=?').run(new Date(now-age*day+1000).toISOString(),slug);
+    }
+    // Source delivery arms the one shared deadline before the subscriptions.
+    const scheduled=vi.spyOn(f.clock,'at');
+    touched(join(f.home,'commons'),'knowledge','due',f.clock);
+    await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1000,expect.any(Function)));
+    scheduled.mockRestore();
+    const selection='{ memoryKnowledge { pages { slug fresh recent } } memoryKnowledgePage(slug:"due") { fresh } }';
+    const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'time',type:'subscribe',payload:{
+      query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection},
+    }})));
+    const first=await f.open(),second=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+    const initial=await subscribe(first);await subscribe(second);
+    expect(JSON.stringify(initial)).toContain('"fresh":"aging"');
+    expect(JSON.stringify(initial)).toContain('"recent":true');
+    const observed:Message[]=[];first.on('message',raw=>observed.push(JSON.parse(String(raw))));
+    f.clock.advance(999);await Promise.resolve();expect(observed).toEqual([]);
+    const pending=message(second,()=>f.clock.advance(1));
+    const changed=await pending;
+    expect(changed).toMatchObject({payload:{data:{observe:{revision:2,patches:expect.arrayContaining([
+      {path:['memoryKnowledgePage','fresh'],removed:false,value:'due'},
+      expect.objectContaining({path:expect.arrayContaining(['recent']),value:null}),
+      expect.objectContaining({path:expect.arrayContaining(['fresh']),value:'aging'}),
+    ])}}}});
+    await vi.waitFor(()=>expect(observed).toHaveLength(1));
+    expect(observed[0]).toEqual(changed);
+    const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query:selection})});
+    expect(await response.json()).toMatchObject({data:{memoryKnowledge:{pages:expect.arrayContaining([
+      {slug:'recent',fresh:'fresh',recent:null},{slug:'aging',fresh:'aging',recent:null},{slug:'due',fresh:'due',recent:null},
+    ])},memoryKnowledgePage:{fresh:'due'}}});
+    // Shutdown owns the timer too, rather than leaving a read of a closed store.
+    const at=vi.spyOn(f.clock,'at');await f.loom.close();at.mockClear();
+    f.clock.advance(day);expect(at).not.toHaveBeenCalled();at.mockRestore();
+  } finally {writer.close();await f.close();}
+},2000);

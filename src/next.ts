@@ -1,4 +1,3 @@
-import type { GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from './core/index.js';
 import { memoryQueryFields } from './transport/memory-queries.js';
 import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
@@ -110,7 +109,7 @@ import { approvalAnswers } from './pieces/approvals/role.js';
 import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
-const memoryQueries = new WeakMap<Foundation, GraphQLFieldConfigMap<unknown, { viewer: Viewer }>>();
+const memoryQueries = new WeakMap<Foundation, ReturnType<typeof memoryQueryFields>>();
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
@@ -275,7 +274,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
       mind: mindRole(app.operations), activity, conversationHref,
       projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
-    memoryQueries.set(app, queries.fields);
+    memoryQueries.set(app, queries);
     app.onClose(() => { queries.close(); memoryQueries.delete(app); });
   }
   const sources = mindTouchSources(inventory);
@@ -377,8 +376,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   let liveData: DataLive | undefined;
   let socketData: ReturnType<typeof dataSocket> | undefined;
   let stopDataChanges: (() => void) | undefined;
+  let stopDataDeadline: (() => void) | undefined;
   const close = async () => {
     stopDataChanges?.();
+    stopDataDeadline?.();
     liveData?.close();
     await socketData?.close();
     detaches.forEach(detach => detach());
@@ -398,7 +399,8 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
     const authenticateData = dataAuthentication(sharedData, () => app.operations.clock.now());
-    const fields = memoryQueries.get(app);
+    const memory = memoryQueries.get(app);
+    const fields = memory?.fields;
     const data = dataHttp(sharedData, authenticateData, relyingParty(process.env)?.origin, fields);
     liveData = new DataLive();
     socketData = dataSocket({live: liveData, clock: app.operations.clock,
@@ -408,9 +410,19 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         return authenticateData(new Request('http://localhost/graphql', {headers}));
       },
       schema: viewer => dataReadSchema(sharedData, viewer, fields), originAllowed: sameOrigin});
-    // Private file-source touches commit through core.touched, so they share
-    // this signal with operation and access changes. Clock deadlines are separate.
-    stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); });
+    // One owned deadline across all bind addresses. No periodic source polling:
+    // writes re-arm it, and a deadline reruns projections at the current clock.
+    const scheduleDeadline = () => {
+      stopDataDeadline?.(); stopDataDeadline = undefined;
+      const at = memory?.nextDeadline();
+      if (at !== undefined) stopDataDeadline = app.operations.clock.at(at, () => {
+        stopDataDeadline = undefined;
+        liveData!.changed(); scheduleDeadline();
+      });
+    };
+    // Private source touches commit through core.touched just like operations.
+    stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); scheduleDeadline(); });
+    scheduleDeadline();
     routes.all('/graphql', c => data.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
     routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
