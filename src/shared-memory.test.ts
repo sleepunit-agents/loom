@@ -1,6 +1,7 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
 import {afterEach,expect,it,vi} from 'vitest';
 import {memoryCall} from '../web/src/memory/commands.js';
+import {GraphQLString} from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
@@ -164,4 +165,16 @@ it('refreshes Knowledge and Activity together at the shared root deadline withou
  ])}}}});
  const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});
  expect(await response.json()).toMatchObject({data:{memoryKnowledge:{pages:expect.arrayContaining([{slug:'recent',fresh:'fresh',recent:null},{slug:'aging',fresh:'aging',recent:null},{slug:'due',fresh:'due',recent:null}])},memoryKnowledgePage:{fresh:'due'},memoryActivity:{entries:[]},memoryActivityEntry:null}});
+});
+it('withdraws a selected private Memory card when sharing changes during a sibling await',async()=>{
+ const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'PRIVATE selected Memory card'});}finally{people.close();}
+ let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
+ const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
+ try{
+  const pending=fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryPerson(id:"fiction:friend") { name } held }'})});
+  await started;app.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());release();
+  const response=await pending,body=await response.text();
+  expect(body).not.toContain('PRIVATE selected Memory card');expect(response.status).toBe(503);
+ }finally{release();}
 });
