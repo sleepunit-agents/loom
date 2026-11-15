@@ -29,7 +29,7 @@ async function fixture(){
 it('selects actual versioned layout/sheet bytes under the existing current agent visibility and clears withdrawal',async()=>{
  const f=await fixture(),own=await f.read('art',f.art);expect(own.errors).toBeUndefined();expect(own.data.deskSprite.version).toBe(f.art);
  expect(JSON.parse(own.data.deskSprite.layout)).toEqual(checkSpriteLayout(manifest));expect(Buffer.from(JSON.parse(own.data.deskSprite.sheets)['sheet.png'],'base64').equals(sample.png)).toBe(true);
- expect(await f.read('mark',f.mark)).toEqual({data:{deskSprite:null}});expect((await f.read('mark',f.mark,'owner')).data.deskSprite.version).toBe(f.mark);expect(await f.read('art','stale')).toEqual({data:{deskSprite:null}});
+ expect(await f.read('mark',f.mark)).toEqual({data:{deskSprite:null}});expect((await f.read('mark',f.mark,'owner')).data.deskSprite.id).toBe(JSON.stringify(['mark',f.mark]));expect(await f.read('missing',f.art,'owner')).toEqual({data:{deskSprite:null}});expect(await f.read('art','stale')).toEqual({data:{deskSprite:null}});
  f.app.writes.run(()=>f.db.delete(memberAgents).run());expect(await f.read('art',f.art)).toEqual({data:{deskSprite:null}});expect(f.db.select().from(agentSprites).all()).toHaveLength(2);
 });
 it('keeps version and bytes atomic, rejects malformed input without effects and refuses inconsistent direct writes',async()=>{
