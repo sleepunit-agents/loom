@@ -75,7 +75,7 @@ import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
-import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
+import { sweepComms } from '../comms.js';
 import { watchComms } from '../ui/comms-live.js';
 import { piecesMoved } from '../ui/live.js';
 import { backfillRefs } from '../comms-work.js';
@@ -883,10 +883,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const runOf = (header: string | undefined): string =>
     `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
 
-  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. Activity carries
-   * steps' words (t-2109: a command, a diff, the body's own words, each card's bounded): 1 MB, the runtime posting at
-   * most half that a time. */
-  const bodyCap = (subpath: string) => subpath === 'comms/activity' ? 1024 * 1024 : subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
+  /** Raw audit text, audit result references, and small metadata-only routes. */
+  const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
     if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
@@ -898,7 +896,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Each route waits out the locks it will take, off the event loop (lock-gate.ts). A spent budget fails nothing:
   // the route goes on to its own synchronous wait, as before, and only a lock still held after that is a 503.
   const householdDb = (h: Household) => join(h.home, HOUSEHOLD_DB);
-  const commsDbs = (h: Household) => [householdDb(h), join(h.home, COMMS_DB)];
 
   /**
    * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
@@ -939,12 +936,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       const write = subpath === 'conversations/turn' ? [householdDb(h), ...memories]
         : subpath === 'audit' ? [join(h.home, AUDIT_DB), householdDb(h), ...memories]
         : subpath === 'conversations/house' ? [householdDb(h)]
-        : subpath === 'comms/adapter' || subpath === 'comms/activity' ? commsDbs(h)
         : [];
-      // A reconciliation only reads household.db and writes comms.db, and answers a store it can't take as unresolved
-      // itself (comms.ts): it waits the read budget, then asks as before.
-      if (subpath === 'comms/adapter' && (body as { op?: unknown } | null)?.op === 'reconcile') await waitForLocks({ read: [householdDb(h)], write: [join(h.home, COMMS_DB)] });
-      else if (write.length) await waitForLocks({ write, budgetMs: turnish ? TURN_WAIT_MS : WRITE_WAIT_MS });
+      if (write.length) await waitForLocks({ write, budgetMs: turnish ? TURN_WAIT_MS : WRITE_WAIT_MS });
     }
     // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
     if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {
@@ -984,18 +977,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       const runtime = runtimePieces(process.env);
       piecesMoved(live!().home, runtime.length === 1 ? listPieces(process.env).find((p) => p.name === runtime[0])?.path : undefined);
       return sendJson(res, 200, { ok: true });
-    }
-    // Venue loom's adapter calls and tool cards (docs/specs/comms.md, sections 1 and 3): the runtime's only.
-    if ((subpath === 'comms/adapter' || subpath === 'comms/activity') && role.kind === 'runtime') {
-      if (!body || typeof body !== 'object' || Array.isArray(body)) return sendError(res, 400, 'bad-input: a JSON object');
-      try {
-        return sendJson(res, 200, subpath === 'comms/adapter' ? commsAdapter(live!(), process.env, body as Record<string, unknown>) : postActivity(live!(), process.env, body as Record<string, unknown>));
-      } catch (e) {
-        if (e instanceof CommsError) return sendError(res, e.status, e.message.startsWith(`${statusWord(e.status)}:`) ? e.message : `${statusWord(e.status)}: ${e.message}`);
-        process.stderr.write(`loom: a Comms runtime call failed: ${(e as Error).name}\n`);
-        if (isSqliteBusy(e)) res.setHeader('retry-after', '1');
-        return sendError(res, 503, 'unavailable: Comms couldn\'t answer; see the daemon log');
-      }
     }
     // The review run's routes (docs/specs/conversations.md, "Review tokens"), all scoped to its run.
     if (role.kind === 'review') {
