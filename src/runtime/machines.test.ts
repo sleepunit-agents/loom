@@ -34,16 +34,16 @@ it('alerts only silent live always-on machines, including same-machine and repor
   expect(db.select().from(inbox).all()).toHaveLength(3);
 });
 
-it('deduplicates outages across restarts, resolves recovery, and alerts for a later outage', () => {
+it.each(['dim','mute'] as const)('deduplicates outages, resolves recovery with %s, and alerts for a later outage', volume => {
   const { db, service, add, advance, now } = fixture();
   add('worker'); advance(120_001);
   const first = service.sweep()[0];
   const restarted = new Machines(db, now);
   expect(restarted.sweep()[0].id).toBe(first.id);
   expect(db.select().from(inbox).all()).toHaveLength(1);
-  db.update(inbox).set({volume:'dim',quietUntil:'2026-11-15T18:00:00.000Z'}).where(eq(inbox.id,first.id)).run();
+  db.update(inbox).set({volume,quietUntil:'2026-11-15T18:00:00.000Z'}).where(eq(inbox.id,first.id)).run();
   expect(restarted.heartbeat('worker').lastSeenAt).toBe(now());
-  expect(db.select().from(inbox).where(eq(inbox.id, first.id)).get()).toMatchObject({ state: 'resolved', resolution: 'Machine is reporting again', changedAt: now(), volume:'full', quietUntil:null });
+  expect(db.select().from(inbox).where(eq(inbox.id, first.id)).get()).toMatchObject({ state: 'resolved', resolution: 'Machine is reporting again', changedAt: now(), volume:volume==='dim'?'full':'mute', quietUntil:volume==='dim'?null:'2026-11-15T18:00:00.000Z' });
   expect(restarted.sweep()).toEqual([]);
   advance(120_001);
   const second = restarted.sweep()[0];

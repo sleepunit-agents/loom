@@ -56,14 +56,15 @@ it('leaves muted mail waiting when a running job takes other mail in the same co
   const { db, service, cv } = fixture();
   const send = () => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'trigger', fromKind: 'schedule' });
   const muted = send(), dim = send();
-  db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, muted.id)).run();
-  db.update(inbox).set({ volume: 'dim' }).where(eq(inbox.id, dim.id)).run();
+  const quietUntil='2026-11-16T18:00:00.000Z';
+  db.update(inbox).set({ volume: 'mute', quietUntil }).where(eq(inbox.id, muted.id)).run();
+  db.update(inbox).set({ volume: 'dim', quietUntil }).where(eq(inbox.id, dim.id)).run();
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
   db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([dim.id]);
-  expect(service.item(dim.id).volume).toBe('dim');
+  expect(service.item(dim.id)).toMatchObject({volume:'dim',quietUntil});
   expect(service.item(muted.id)).toMatchObject({ state: 'waiting', job: null, takenAt: null });
-  db.update(inbox).set({ volume: 'full' }).where(eq(inbox.id, muted.id)).run();
+  db.update(inbox).set({ volume: 'full',quietUntil:null }).where(eq(inbox.id, muted.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([muted.id, dim.id]);
   db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, dim.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([muted.id]);
@@ -134,4 +135,16 @@ it.each(['dim','mute'] as const)('a real public answer changes %s volume atomica
  db.$client.exec('BEGIN');expect(()=>service.answer(item.id,'jonathan','yes')).not.toThrow();db.$client.exec('ROLLBACK');expect(service.item(item.id)).toMatchObject({state:'waiting',volume,quietUntil:until});
  expect(service.answer(item.id,'jonathan','yes')).toMatchObject({state:'answered',volume:volume==='dim'?'full':'mute',quietUntil:volume==='dim'?null:until});
  db.update(inbox).set({volume:'dim',quietUntil:until}).where(eq(inbox.id,item.id)).run();expect(service.answer(item.id,'jonathan','yes')).toMatchObject({volume:'dim',quietUntil:until});
+});
+
+it.each(['dim','mute'] as const)('acknowledging already-taken mail preserves a later %s preference and its deadline',level=>{
+ const {db,service,cv}=fixture();
+ const item=service.send({toKind:'agent',to:'art',conversation:cv.id,source:'trigger',fromKind:'schedule'});
+ db.insert(jobs).values({id:'job-quiet',agent:'art',conversation:cv.id,title:'Mail',state:'running',brief:'',model:'model',startedByKind:'member',startedBy:'jonathan',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:service.now()}).run();
+ db.update(conversations).set({job:'job-quiet'}).where(eq(conversations.id,cv.id)).run();
+ service.take(cv.id,'job-quiet');
+ const quietUntil='2026-11-16T18:00:00.000Z';
+ db.update(inbox).set({volume:level,quietUntil}).where(eq(inbox.id,item.id)).run();
+ expect(service.confirm(item.id,'job-quiet')).toMatchObject({state:'done',volume:level,quietUntil});
+ expect(service.confirm(item.id,'job-quiet')).toMatchObject({state:'done',volume:level,quietUntil});
 });
