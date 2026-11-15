@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import {createServer} from 'node:http';
 import {sharedSigninLinks} from '../core/signin/shared-links.js';
 import {createHash} from 'node:crypto';
-import {existsSync,mkdirSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {chromium} from 'playwright-core';
 import {FakeClock} from '../core/clock.js';
@@ -15,6 +15,7 @@ import {serveShared} from '../shared-serve.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Account evidence needs Chrome and the built app');
 it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live and signs other and current browsers out over the one door',async()=>{
+ rmSync(resolve('artifacts/household-account/account-session.json'),{force:true});
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),cookie='c'.repeat(64);
  db.insert(members).values({id:'sam',role:'member',joinedAt:now()}).run();
  db.insert(tokens).values({fingerprint:hash('a'.repeat(64)),kind:'owner',member:'sam',label:'Sam',createdAt:now()}).run();
@@ -43,7 +44,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
   const self=a.getByRole('heading',{name:'Current browser',exact:true}).locator('..');await self.getByRole('button',{name:'Sign out browser',exact:true}).click();
-  await a.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();expect(db.select().from(sessions).all()).toEqual([]);expect((await context.request.get(app.url+'/auth/session')).ok()).toBe(true);expect(await (await context.request.get(app.url+'/auth/session')).json()).toMatchObject({viewer:null});
+  await a.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();expect(await a.locator('body').innerText()).not.toContain('Could not');expect(db.select().from(sessions).all()).toEqual([]);expect((await context.request.get(app.url+'/auth/session')).ok()).toBe(true);expect(await (await context.request.get(app.url+'/auth/session')).json()).toMatchObject({viewer:null});
   expect(legacy).toBe(0);expect(errors).toEqual([]);
  }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
  finally{await browser.close();await app.close();client.close();}
@@ -51,6 +52,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
 });
 
 it.runIf(enabled)('registers and uses a real browser passkey against the shared sign-in door',async()=>{
+ rmSync(resolve('artifacts/household-account/passkey.json'),{force:true});
  // Reserve a disposable loopback port so the RP origin is known before Root.
  const reservation=createServer();await new Promise<void>(resolve=>reservation.listen(0,'127.0.0.1',resolve));
  const address=reservation.address();if(!address||typeof address==='string')throw Error('No fixture port');

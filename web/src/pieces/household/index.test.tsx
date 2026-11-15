@@ -113,7 +113,7 @@ it('prechecks exactly the existing record and operation grants',async()=>{
 });
 
 it.each(['token','session'] as const)('reconciles current browser identity after household %s revocation',async kind=>{
- const saved=f.feed.data;f.feed.data={...original as object,householdSetup:{...(original as any).householdSetup,sessions:[{ref:'b'.repeat(64),device:'Owner browser',member:'sam',tokenLabel:'Fixture token',isAgent:false,ended:false,issuedAt:'2026-11-15T00:00:00Z',seenAt:'2026-11-15T00:00:00Z'}]}};
+ const saved=f.feed.data;f.feed.data={...original as object,householdSetup:{...(original as {householdSetup:Record<string,unknown>}).householdSetup,sessions:[{ref:'b'.repeat(64),device:'Owner browser',member:'sam',tokenLabel:'Fixture token',isAgent:false,ended:false,issuedAt:'2026-11-15T00:00:00Z',seenAt:'2026-11-15T00:00:00Z'}]}};
  f.operation.mockRejectedValue(Error('Could not save'));const fetch=vi.fn().mockResolvedValue(Response.json({viewer:null}));vi.stubGlobal('fetch',fetch);vi.stubGlobal('location',{reload:vi.fn()});
  try{await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children===(kind==='token'?'Revoke token':'Sign out browser')).props.onClick());expect(location.reload).toHaveBeenCalledOnce();expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).not.toContain('Could not');expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');expect(f.operation).toHaveBeenCalledExactlyOnceWith(kind==='token'?'token.revoke':'sessions.revoke',kind==='token'?{fingerprint:'f'.repeat(64)}:{ref:'b'.repeat(64)});}finally{f.feed.data=saved;}
 });
