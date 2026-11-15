@@ -68,7 +68,10 @@ export function bridgeChannelApi(input: {
         });
         return current() ? result : undefined;
       };
-      try { return await Promise.race([read().catch(() => undefined), deadline]); }
+      try {
+        const result = await Promise.race([read().catch(() => undefined), deadline]);
+        return current() ? result : undefined;
+      }
       finally { expired = true; cancel(); abort.abort(); cancelBody(); }
     },
   };

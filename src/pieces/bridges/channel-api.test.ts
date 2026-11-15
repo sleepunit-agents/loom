@@ -155,3 +155,20 @@ it.each(['discord', 'slack'] as const)('leaves %s kind and workspace validation 
     expect(await f.api.channel(f.id)).toEqual(raw);
   }
 });
+
+
+it.each([
+  ['discord', 'lifetime'], ['discord', 'absolute deadline'],
+  ['slack', 'lifetime'], ['slack', 'absolute deadline'],
+] as const)('fences queued %s %s changes before the public return', async (platform, phase) => {
+  const f = fixture(platform); let returned = false, checks = 0, now = 0, live = true;
+  f.secrets.withValue = async (_name, use) => { const value = await use('private'); returned = true; return value; };
+  const current = () => {
+    if (returned && ++checks === 1) queueMicrotask(() => { if (phase === 'lifetime') live = false; else now = 15_000; });
+    return live;
+  };
+  const clock = { now: () => now, at: () => () => {} };
+  const api = bridgeChannelApi({ platform, workspace: f.workspace, tokenSecret: 'bot-token', secrets: f.secrets, clock, current, request: f.request });
+  expect(await api.channel(f.id), phase).toBeUndefined();
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
