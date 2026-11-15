@@ -8,6 +8,12 @@ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function evaluate(promise,run){
  const p=promise.probe;
  if(!p)return {status:'not checkable yet',reason:'No behavioral probe for this promise in the walkthrough. Opening an app is not proof.'};
+ if(p.kind==='all'){
+  if(!Array.isArray(p.probes)||!p.probes.length)return {status:'not checkable yet',reason:'No component probes were provided.'};
+  const results=p.probes.map(probe=>evaluate({probe},run));
+  const status=results.some(row=>row.status==='not met')?'not met':results.some(row=>row.status==='not checkable yet')?'not checkable yet':'met';
+  return {status,reason:results.map((row,index)=>`${index+1}. ${row.reason}`).join(' '),evidence:'walkthrough.json#actions'};
+ }
  if(p.kind==='legacy-data-socket'){
   const sockets=run.transport?.sockets;
   if(!sockets)return{status:'not checkable yet',reason:'The walkthrough did not record websocket paths.'};
@@ -20,7 +26,7 @@ export function evaluate(promise,run){
  if(p.kind==='action'){
   const action=p.app?run.apps?.find(app=>app.title===p.app)?.action:run.actions?.[p.action];
   if(!action)return {status:'not checkable yet',reason:run.fatal??'The browser action did not run.'};
-  return {status:action.ok===true?'met':'not met',reason:action.ok===true?'The browser action and its persisted result were verified.':action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
+  return {status:action.ok===true?'met':'not met',reason:action.ok===true?(action.reason??'The browser action and its persisted result were verified.'):action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
  }
  if(p.kind==='ui'){
   const app=run.apps.find(app=>app.title===p.app);
