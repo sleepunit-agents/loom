@@ -324,3 +324,30 @@ it.each(['authenticate', 'activity'])('fences reentrant HTTP stop from %s before
   expect(response.status).toBe(503); expect((await response.json()).data).toBeUndefined();
   expect(lateValidity).toBe(0); await app.drain();
 });
+
+it.each(['commit','deadline'])('withholds selected data when %s changes during serialization', async kind => {
+  const { db }=fixture(); let version=0,now=0;
+  const { keepReadUntil }=await import('./read-lease.js');
+  const step=new GraphQLScalarType({name:'PublicationStep',serialize:()=>({toJSON(){if(kind==='commit')version++;else now=1;return 'public';}})});
+  const app=dataHttp(db,()=>({viewer:{kind:'member',id:'sam'},valid:()=>true}),undefined,{
+    private:{type:GraphQLString,resolve:(_row,_args,context)=>{keepReadUntil(context,1);return 'PRIVATE SELECTED';}},
+    step:{type:step,resolve:()=>true},
+  },{},()=>version,()=>now);
+  const response=await app.request('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{private step}'})});
+  expect(response.status).toBe(503);expect(await response.text()).not.toContain('PRIVATE SELECTED');
+});
+it.each(['commit','deadline'].flatMap(kind => ['none','direct','wrapped'].map(clone=>({kind,clone}))))('withdraws an unread HTTP response after $kind changes (clone=$clone)', async ({kind,clone}) => {
+  const { db }=fixture();let version=0,now=0;
+  const { keepReadUntil }=await import('./read-lease.js');
+  const app=dataHttp(db,()=>({viewer:{kind:'member',id:'sam'},valid:()=>true}),undefined,{
+    private:{type:GraphQLString,resolve:(_row,_args,context)=>{keepReadUntil(context,1);return 'PRIVATE BUFFERED';}},
+  },{},()=>version,()=>now);
+  const response=await app.request('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{private}'})});
+  expect(response.status).toBe(200);response.headers.set('x-fixture','kept');
+  const holder=clone==='wrapped'?new Response(response.body,response):response;
+  const copy=clone==='none'?holder:holder.clone();
+  expect(copy.headers.get('cache-control')).toBe('no-store');expect(copy.headers.get('x-fixture')).toBe('kept');
+  await Promise.resolve();if(kind==='commit')version++;else now=1;
+  if(clone!=='none') await expect(holder.text()).rejects.toThrow('Data access ended');
+  await expect(copy.text()).rejects.toThrow('Data access ended');
+});
