@@ -9,6 +9,7 @@ import { dataQueries } from '../../core/data/queries.js';
 import { withQueryFields } from '../../core/data/http.js';
 import { CommsQueries, commsQueryFields } from '../../core/conversations/comms-query.js';
 import { members, agents, secrets, household, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSends, jobs, secretGrants, secretRequests, secretRules, secretRuleAgents, secretUses, secretChanges } from '../../core/data/schema.js';
+import { BridgeQueries, bridgeQueryFields } from './queries.js';
 import { bridgesQuery, bridgesSnapshot, type BridgesData } from '../../../web/src/pieces/bridges/data';
 import { settingsQuery, settingsSnapshot, type SettingsData } from '../../../web/src/pieces/settings/data';
 const opened: Database.Database[] = [];
@@ -36,14 +37,14 @@ function fixture() {
   const unreachable = () => { throw Error('Metadata query touched private words'); };
   const comms = new CommsQueries(db, { seal: unreachable, open: unreachable, hash: unreachable }, () => sql`true`, now);
   const tables = ['household', 'secrets', 'secretGrants', 'secretRequests', 'secretRules', 'secretRuleAgents', 'secretUses', 'secretChanges', 'bridgeConnections', 'bridgeChannelFilters', 'bridgeChannels', 'bridgePeople', 'bridgeSends'] as const;
-  const schema = withQueryFields(dataQueries(client, { tables: [...tables], visibility: Object.fromEntries(tables.map(table => [table, () => sql`true`])) }), commsQueryFields(comms));
+  const schema = withQueryFields(dataQueries(client, { tables: [...tables], visibility: Object.fromEntries(tables.map(table => [table, () => sql`true`])) }), { ...commsQueryFields(comms), ...bridgeQueryFields(new BridgeQueries(db, () => Date.parse(now())), () => ({ connections: sql`true`, incoming: sql`true` })) });
   return { schema };
 }
 it('executes the actual Bridges app query without legacy records or a guessed member', async () => {
   const { schema } = fixture(), result = await graphql({ schema, source: bridgesQuery, contextValue: { viewer: { kind: 'member', id: 'owner' } } });
   expect(result.errors).toBeUndefined();
   const snapshot = bridgesSnapshot({ status: 'live', data: result.data as unknown as BridgesData });
-  expect(snapshot).toMatchObject({ status: 'live', member: 'owner', connections: [{ id: 'c', state: 'connected', tokenSecret: 'API' }], filters: [{ channel: 'room', rule: 'only' }], channels: [{ answers: 'art' }], people: [{ member: 'owner' }], sends: [{ id: 'out', state: 'held' }] });
+  expect(snapshot).toMatchObject({ status: 'live', member: 'owner', connections: [{ id: 'c', state: 'connected', tokenSecret: 'API' }], filters: [{ channel: 'room', rule: 'only' }], channels: [{ answers: 'art' }], people: [{ member: 'owner' }], sends: [{ id: 'out', state: 'held' }], activity: [{ connection: 'c', received: 1, delivered: 1, held: 0 }] });
 });
 it('executes the actual Settings app query including job use/audit and household default, with no value field', async () => {
   const { schema } = fixture(), result = await graphql({ schema, source: settingsQuery, contextValue: { viewer: { kind: 'member', id: 'owner' } } });

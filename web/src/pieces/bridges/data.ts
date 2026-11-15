@@ -5,6 +5,7 @@ import type { BridgesSnapshot } from '../bridges-view';
  * member field on the same schema. No viewer id comes from the URL or storage. */
 export const bridgesQuery = `query Bridges {
   homeComms { member }
+  bridgeActivity { id received delivered held }
   bridgeConnections { id platform agent workspace botUser tokenSecret appSecret enabled state stateAt }
   bridgeChannelFilters { connection channel rule }
   bridgeChannels { platform workspace channel answers botsMayTalk }
@@ -13,6 +14,7 @@ export const bridgesQuery = `query Bridges {
 }`;
 export interface BridgesData {
   homeComms: { member: string } | null;
+  bridgeActivity: readonly { id: string; received: number; delivered: number; held: number }[];
   bridgeConnections: BridgesSnapshot['connections'];
   bridgeChannelFilters: BridgesSnapshot['filters'];
   bridgeChannels: BridgesSnapshot['channels'];
@@ -26,5 +28,5 @@ export function bridgesSnapshot(query: DataQuerySnapshot<BridgesData>): BridgesS
   const data = query.data;
   return { status: 'live', member: data.homeComms!.member, connections: data.bridgeConnections,
     filters: data.bridgeChannelFilters, channels: data.bridgeChannels, people: data.bridgePeople,
-    sends: data.bridgeSends, activity: [] };
+    sends: data.bridgeSends, activity: data.bridgeActivity.map(({ id, ...counts }) => ({ connection: id, ...counts })) };
 }

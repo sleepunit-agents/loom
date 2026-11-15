@@ -19,7 +19,7 @@ let tree: any;
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; feed.hook.mockClear(); });
 const text = () => JSON.stringify(tree.toJSON());
 function data(): BridgesData {
-  return { homeComms: { member: 'jonathan' }, bridgeConnections: [{ id: 'connection', platform: 'slack', agent: 'art', workspace: 'Pond workspace', botUser: 'U-BOT', tokenSecret: 'bot-token', appSecret: 'app-token', enabled: true, state: 'connected', stateAt: '2026-11-14T12:00:00.000Z' }], bridgeChannelFilters: [], bridgeChannels: [], bridgePeople: [], bridgeSends: [] };
+  return { homeComms: { member: 'jonathan' }, bridgeActivity: [{ id: 'connection', received: 12, delivered: 10, held: 2 }], bridgeConnections: [{ id: 'connection', platform: 'slack', agent: 'art', workspace: 'Pond workspace', botUser: 'U-BOT', tokenSecret: 'bot-token', appSecret: 'app-token', enabled: true, state: 'connected', stateAt: '2026-11-14T12:00:00.000Z' }], bridgeChannelFilters: [], bridgeChannels: [], bridgePeople: [], bridgeSends: [] };
 }
 async function draw(path = '/p/bridges-preview', go = vi.fn()) {
   await act(async () => { const app = h(BridgesApp, { path, go }); if (tree) tree.update(app); else tree = create(app); });
@@ -31,7 +31,7 @@ it('the registered app reads generated rows itself and selects a connection thro
   const row = tree.root.findAllByType('button').find((b: any) => b.children.includes('art · slack'));
   await act(async () => row.props.onClick());
   expect(go).toHaveBeenCalledWith('/p/bridges-preview/item/connections/connection');
-  await draw(go.mock.calls[0][0], go); expect(text()).toContain('Bot token: '); expect(text()).toContain('bot-token');
+  await draw(go.mock.calls[0][0], go); expect(text()).toContain('Bot token: '); expect(text()).toContain('bot-token'); expect(text()).toContain('12');
 });
 it.each(['loading', 'offline', 'denied'] as const)('hides retained rows while %s', async status => {
   feed.query = { status: 'live', data: data() }; await draw(); expect(text()).toContain('Pond workspace');
