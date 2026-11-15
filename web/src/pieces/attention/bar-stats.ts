@@ -48,7 +48,7 @@ export function useDeskStats() {
   const enabledConnections = bridgeData?.bridgeConnections.filter(c=>c.enabled).length ?? 0;
   const parts: TickPart[] = [
     {text:taskData ? `Tasks · ${taskData.inProgress.length} in progress · ${taskData.readyTasks.length} ready` : 'Tasks unavailable',href:'/p/tasks-preview'},
-    {text:tempoData ? `Tempo · ${activeTriggers} active trigger${activeTriggers===1?'':'s'} · ${paused} paused agent${paused===1?'':'s'}${failedTriggers?` · ${failedTriggers} failed`:''}${latest?` · Last event: ${latest.event}`:''}` : 'Tempo unavailable',href:'/p/tempo-preview',tone:failedTriggers?'bad':undefined},
+    {text:tempoData ? `Tempo · ${activeTriggers} active trigger${activeTriggers===1?'':'s'} · ${paused} paused agent${paused===1?'':'s'}${failedTriggers?` · ${failedTriggers} failed`:''}${latest?` · Last event: ${latest.event}`:''}` : 'Tempo unavailable',href:'/p/tempo',tone:failedTriggers?'bad':undefined},
     {text:bridgeData ? `Bridges · ${enabledConnections} enabled connection${enabledConnections===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
     {text:changeData ? `Changes · ${open.length} open${failing?` · ${failing} CI red`:''}` : 'Changes unavailable',href:'/p/changes-preview',tone:failing?'bad':undefined},
   ];

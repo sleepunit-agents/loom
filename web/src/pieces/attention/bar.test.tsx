@@ -66,7 +66,7 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
  expect(tree.root.findByType('ticker-test').props.parts.slice(2)).toEqual([
   {text:'Changes · 1 open · 1 CI red',href:'/p/changes-preview',tone:'bad'},
   {text:'Tasks · 1 in progress · 1 ready',href:'/p/tasks-preview'},
-  {text:'Tempo · 1 active trigger · 1 paused agent · Last event: fired',href:'/p/tempo-preview',tone:undefined},
+  {text:'Tempo · 1 active trigger · 1 paused agent · Last event: fired',href:'/p/tempo',tone:undefined},
   {text:'Bridges · 1 enabled connection',href:'/p/bridges-preview'},
   {text:'1 enrolled box · health unavailable'},
  ]);
@@ -85,12 +85,12 @@ it('updates Tempo independently, clears retained failures and keeps an empty liv
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
  f.tempo={status:'live',data:{triggers:[{id:'failed',enabled:false,state:'failed'},{id:'held',enabled:true,state:'held'}],triggerLog:[{seq:3,event:'held'}],agentPauses:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
- const tempo=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tempo-preview');
- expect(tempo()).toEqual({text:'Tempo · 1 active trigger · 0 paused agents · 1 failed · Last event: held',href:'/p/tempo-preview',tone:'bad'});
+ const tempo=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tempo');
+ expect(tempo()).toEqual({text:'Tempo · 1 active trigger · 0 paused agents · 1 failed · Last event: held',href:'/p/tempo',tone:'bad'});
  for(const status of ['offline','denied','loading']){
   f.tempo={...f.tempo,status};
   await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
-  expect(tempo()).toEqual({text:'Tempo unavailable',href:'/p/tempo-preview',tone:undefined});
+  expect(tempo()).toEqual({text:'Tempo unavailable',href:'/p/tempo',tone:undefined});
  }
  f.tempo={status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
