@@ -44,6 +44,9 @@ it('lets a current chat body set its recorded member volume, with a finite mute 
  f.root.writes.run(()=>f.root.services.tempo.volume.changed({kind:'person',id:'sam'},f.item.id,true));
  expect(f.root.services.conversations.item(f.item.id)).toMatchObject({volume:'full',quietUntil:null});
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute-again')).status).toBe(200);
+ // Isolate the seven-day volume boundary from worker-silence reconciliation;
+ // this fixture supplies no worker heartbeats during the simulated week.
+ f.root.services.runtime.close();
  f.clock.advance(7*86400000);expect(f.root.services.conversations.item(f.item.id).volume).toBe('full');
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute-before-full')).status).toBe(200);
  expect(f.root.services.conversations.item(f.item.id).volume).toBe('mute');
