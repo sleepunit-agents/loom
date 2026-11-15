@@ -65,3 +65,13 @@ it('rejects cross-origin cookie commands before their window capability is used'
   expect(f.db.select().from(tasks).get()?.title).toBe('Private fixture');
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
 });
+it.each([undefined, 'text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data'])('refuses a cookie window POST with content type %s before effects or receipt', async contentType => {
+  const f = fixture('all');
+  const request = new Request('http://loom/api/private/save', { method: 'POST', headers: { cookie: 'loom_ui='+cookie },
+    body: JSON.stringify({ input: { id: f.id }, id: 'csrf-media' }) });
+  if (contentType === undefined) request.headers.delete('content-type');
+  else request.headers.set('content-type', contentType);
+  expect((await f.root.http.fetch(request)).status).toBe(415);
+  expect(f.db.select().from(tasks).get()?.title).toBe('Private fixture');
+  expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
+});
