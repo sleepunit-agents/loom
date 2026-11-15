@@ -3,7 +3,7 @@ import {join} from 'node:path';
 import {redactSignin} from './rebuild-conversation-visibility.mjs';
 class ObservedSourceFailure extends Error {}
 const check=(yes,message)=>{if(!yes)throw new ObservedSourceFailure(message);};
-export async function inboxTaskSource({page,tile,app,example,out,approval}){
+export async function inboxTaskSource({page,tile,app,example,out,approval,open}){
  const pending=()=>({inconclusive:true,reason:'The task-source observation did not complete.'});
  const evidence={inboxTaskArrival:pending(),inboxTaskSettlement:pending()};let stage='inboxTaskArrival';
  try{
@@ -20,11 +20,22 @@ export async function inboxTaskSource({page,tile,app,example,out,approval}){
   await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();
   await tile.locator('[data-split-row]:visible').filter({hasText:ask}).click();
   await tile.getByRole('heading',{name:ask,exact:true}).waitFor();
-  check(await tile.getByRole('button',{name:'Open task',exact:true}).count()===1,'The task question did not offer its source link');
-  await tile.getByRole('button',{name:'Open task',exact:true}).click();
-  const tasks=page.getByRole('region',{name:'Tasks tile',exact:true});await tasks.getByRole('heading',{name:title,exact:true}).waitFor();
-  check(new URL(page.url()).pathname==='/p/tasks-preview/task/'+encodeURIComponent(task.id),'The source link opened a different task');
-  evidence.inboxTaskArrival={ok:true,reason:'One waiting question for Alex opened its exact task through the Inbox source link.',task:task.id,item:items[0].id};
+  await tile.getByRole('region',{name:'Answer task question',exact:true}).waitFor();
+  const source=tile.getByRole('button',{name:'Open task',exact:true});let tasks;
+  if(await source.count()){
+   await source.first().click();tasks=page.getByRole('region',{name:'Tasks tile',exact:true});await tasks.getByRole('heading',{name:title,exact:true}).waitFor();
+   check(new URL(page.url()).pathname==='/p/tasks-preview/task/'+encodeURIComponent(task.id),'The source link opened a different task');
+   evidence.inboxTaskArrival={ok:true,reason:'One waiting question for Alex opened its exact task through the Inbox source link.',task:task.id,item:items[0].id};
+  }else{
+   const screenshot='action-inboxTaskSource-missing-link.png';let captured=false;
+   try{await page.screenshot({path:join(out,screenshot),fullPage:true});captured=true;}catch{}
+   evidence.inboxTaskArrival={ok:false,error:'The task question rendered its inline answer controls but did not offer a source link.',task:task.id,item:items[0].id,...(captured?{screenshot}:{})};
+   // An ordinary manual visit can still measure outcome settlement. It is not
+   // evidence that the missing Inbox source navigation worked.
+   tasks=await open('Tasks');const back=tasks.locator('.loom-split__back:visible');if(await back.count())await back.click();
+   await tasks.getByRole('button',{name:/^All open(?:\s|$)/}).first().click();
+   await tasks.getByText(title,{exact:true}).first().click();await tasks.getByRole('heading',{name:title,exact:true}).waitFor();
+  }
   stage='inboxTaskSettlement';
   await tasks.getByRole('button',{name:'Close',exact:true}).click();
   const form=page.getByRole('dialog').getByRole('form');await form.waitFor();

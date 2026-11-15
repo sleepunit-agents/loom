@@ -213,7 +213,7 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
   report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
-  Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox}));
+  Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
 
 
