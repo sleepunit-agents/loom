@@ -5,7 +5,9 @@ import { eq } from 'drizzle-orm';
 import { FakeClock } from '../clock.js';
 import { Operations, type Change } from '../operations/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
+import { OperationResults } from '../data/operation-results.js';
+import { DataWrites } from '../data/writes.js';
+import { actionResults, agents, inbox, inboxReads, members, messages, operationResults, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { registerConversationOperations, type ConversationAccess } from './operations.js';
 import type { Viewer } from '../../policy.js';
@@ -19,11 +21,10 @@ function fixture() {
   const db = createDataSchema(client, now);
   for (const id of ['jonathan', 'other']) db.insert(members).values({ id, role: 'member', joinedAt: now() }).run();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  // Operations still bootstraps its interim retry table. The composition switch
-  // is owned elsewhere; this test binds both services to one fresh connection.
-  client.exec('CREATE TABLE core_migrations(piece TEXT,number INTEGER,sql TEXT,PRIMARY KEY(piece,number))');
   const changes: Change[][] = [], publicationTransactions: boolean[] = [];
-  const operations = new Operations(client, clock, batch => { changes.push(batch); publicationTransactions.push(client.inTransaction); });
+  const operations = new Operations(client, clock, batch => { changes.push(batch); publicationTransactions.push(client.inTransaction); }, {
+    receipts: new OperationResults(db), writes: new DataWrites(db, { refreshAccess() {}, changed() {} }), reportError(error) { throw error; },
+  });
   dispatchers.push(operations);
   let encryptionGate: (() => Promise<void>) | undefined;
   let seals = 0;
@@ -38,7 +39,8 @@ function fixture() {
   const viewer: Viewer = { kind: 'member', id: 'jonathan' };
   const call = (name: string, input: unknown, id: string, valid = () => true) => operations.callAsync('socket', viewer, name, input, id, true, valid);
   const thread = service.threads.open({ id: 'th:one', member: 'jonathan', agent: 'art', title: 'Pump' });
-  return { client, db, clock, statements, service, operations, changes, publicationTransactions, policyCalls, thread, call,
+  return { client, db, clock, statements, service, operations,
+    receipts: () => db.select().from(operationResults).all().map(row => ({ ...row, result: row.result.toString('utf8') })), changes, publicationTransactions, policyCalls, thread, call,
     seals: () => seals,
     gate: (fn: () => Promise<void>) => { encryptionGate = fn; }, allow: (value: boolean) => { allowed = value; } };
 }
@@ -50,13 +52,14 @@ it('dispatches prepared encrypted messages with metadata-only receipts and postc
   expect(await f.call('comms.send', input, 'send-1')).toEqual(first);
   expect(f.db.select().from(messages).all()).toHaveLength(1);
   expect(f.db.select().from(inbox).all()).toMatchObject([{ words: null, messageSeq: 1 }]);
-  expect(JSON.stringify(f.client.prepare('SELECT * FROM core_operations').all())).not.toContain('private-message-sentinel');
-  expect(f.client.prepare('SELECT input_hash FROM core_operations').get()).toEqual({
+  expect(JSON.stringify(f.receipts())).not.toContain('private-message-sentinel');
+  expect(f.client.prepare('SELECT input_hash FROM operation_results').get()).toEqual({
     input_hash: f.service.key.hash(`conversation-operation\0${JSON.stringify({ clientId: input.clientId, thread: input.thread, words: input.words })}`),
   });
   expect(f.changes).toHaveLength(1);
   expect(f.changes[0].map(c => c.type)).toEqual(['threads', 'conversations', 'messages', 'inbox']);
   expect(f.publicationTransactions).toEqual([false]);
+  expect(f.client.prepare("SELECT name FROM sqlite_schema WHERE name GLOB 'core_*'").all()).toEqual([]);
   f.allow(false);
   expect(await f.call('comms.send', input, 'send-1')).toMatchObject({ ok: false, code: 'denied' });
 });
@@ -71,7 +74,7 @@ it('rejects an initially denied request before encryption starts', async () => {
 
 it('refuses a different SQLite connection before registering any operation', () => {
   const first = fixture(), second = fixture();
-  const operations = new Operations(first.client, new FakeClock(), () => {}); dispatchers.push(operations);
+  const operations = new Operations(first.client, new FakeClock(), () => {}, { receipts: new OperationResults(first.db) }); dispatchers.push(operations);
   expect(() => registerConversationOperations(operations, second.service, { authorize: () => true })).toThrow('shared connection');
   expect(operations.offered('socket')).toEqual([]);
 });
@@ -88,14 +91,14 @@ it('rechecks authentication and current resource policy after encryption without
     release();
     expect(await pending).toMatchObject({ ok: false, code: 'denied' });
     expect(f.db.select().from(inbox).all()).toEqual([]);
-    expect(f.client.prepare('SELECT * FROM core_operations').all()).toEqual([]);
+    expect(f.receipts()).toEqual([]);
     expect(f.changes).toEqual([]);
   }
 });
 
 it('rolls prepared effects back when the operation receipt cannot commit', async () => {
   const f = fixture();
-  f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'receipt refused'); END");
+  f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'receipt refused'); END");
   expect(await f.call('comms.send', { thread: f.thread.id, clientId: 'one', words: 'secret' }, 'one')).toMatchObject({ ok: false });
   expect(f.db.select().from(messages).all()).toEqual([]);
   expect(f.db.select().from(inbox).all()).toEqual([]);
@@ -111,7 +114,7 @@ it('answers private questions through the encrypted seam and never records words
   expect(await f.call('inbox.answer', input, 'answer')).toEqual(result);
   expect(f.service.threads.conversations.item(input.item)).toMatchObject({ state: 'answered', answerText: null, answeredBy: 'jonathan' });
   expect(await f.service.words(f.thread.id, 2)).toBe(input.words);
-  expect(JSON.stringify(f.client.prepare('SELECT * FROM core_operations').all())).not.toContain(input.words);
+  expect(JSON.stringify(f.receipts())).not.toContain(input.words);
   expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain(input.words);
   expect(f.db.select().from(inboxReads).all()).toEqual([]);
 });
@@ -126,7 +129,7 @@ it('checks Inbox authorization before preparation and before replay of answers a
   expect(f.seals()).toBe(1); // only the agent's original ask, no answer encryption
   expect(f.service.threads.conversations.item(input.item).state).toBe('waiting');
   expect(f.db.select().from(inboxReads).all()).toEqual([]);
-  expect(f.client.prepare('SELECT * FROM core_operations').all()).toEqual([]);
+  expect(f.receipts()).toEqual([]);
   f.allow(true);
   expect(await f.call('inbox.answer', input, 'answer')).toMatchObject({ ok: true });
   expect(await f.call('inbox.read', { item: input.item }, 'read')).toMatchObject({ ok: true });
@@ -150,7 +153,7 @@ it('rechecks Inbox authorization after private-answer encryption without answeri
   expect(f.service.threads.conversations.item(ask.inboxItem!).state).toBe('waiting');
   expect(f.db.select().from(messages).all()).toHaveLength(1);
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
-  expect(f.client.prepare('SELECT * FROM core_operations').all()).toEqual([]);
+  expect(f.receipts()).toEqual([]);
   expect(f.changes).toEqual([]);
 });
 
@@ -237,7 +240,7 @@ it('dismisses only the signed-in member own action result through an authenticat
 it('rolls action-result dismissal back if the shared operation receipt cannot commit', async () => {
   const f = fixture();
   f.db.insert(actionResults).values({ id: 'mine', member: 'jonathan', at: new Date(f.clock.now()).toISOString(), ok: true, text: 'Saved', page: '/inbox' }).run();
-  f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'receipt refused'); END");
+  f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'receipt refused'); END");
   expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss')).toMatchObject({ ok: false });
   expect(f.db.select().from(actionResults).get()?.readAt).toBeNull(); expect(f.changes).toEqual([]);
 });

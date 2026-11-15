@@ -5,10 +5,10 @@ the shared-schema `comms.open`, `comms.send`, `comms.change`, `inbox.answer` and
 `inbox.read` and `inbox.dismissResult` operations. Both services must use the same SQLite connection. The
 root installs this instead of the old Comms/Attention operation registrations;
 installing both would duplicate operation names. This adapter does not bootstrap
-the data schema or switch the root. The root's Operations retry-table bootstrap
-must be compatible with its fresh shared database before adoption.
+the data schema or switch the root. The root supplies OperationResults and DataWrites to Operations on that same
+shared database; no legacy core retry-table bootstrap is needed.
 
-All five are writes from a signed-in member window, through the existing socket
+All six are writes from a signed-in member window, through the existing socket
 door. Dispatch with `callAsync` and the door's current-authentication predicate.
 The predicate is essential: a captured Viewer alone cannot prove that a session
 remains signed in after encryption. The adapter uses the same member identity for
