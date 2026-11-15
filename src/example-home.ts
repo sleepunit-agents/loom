@@ -1,6 +1,7 @@
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
 import Database from 'better-sqlite3';
+import {pathToFileURL} from 'node:url';
 import {z} from 'zod';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -55,7 +56,10 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
    account=answer.data.value;
   }finally{root.writes.run(()=>s.signin.revoke(setup.fingerprint));}
   const commons=join(home,'commons');
-  const program={database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
+  const adapters=join(home,'example-adapters.mjs');
+  const adapterModule=pathToFileURL(join(import.meta.dirname,import.meta.filename.endsWith('.ts')?'example-home-adapters.ts':'example-home-adapters.js')).href;
+  writeFileSync(adapters,`export {default} from ${JSON.stringify(adapterModule)};\n`,{mode:0o600});
+  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
   const manifest={fictional:true,createdAt:at,members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,gaps:[
    {page:'machines',promise:'An enrolled machine with a job',reason:'No shared machine enrollment operation is registered. A worker and assigned job cannot be fabricated through application operations.'},
   ]};

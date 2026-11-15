@@ -7,7 +7,11 @@
     {
       "id": "approvals-001",
       "promise": "Permission from a person for an agent to do one specific thing. An approval covers one of four things: a merge, running a command on a machine, changing a setting, or another dangerous action.",
-      "source": "docs/how-it-works/site/approvals.html"
+      "source": "docs/how-it-works/site/approvals.html",
+      "probe": {
+        "kind": "action",
+        "action": "approvalPreparedChanges"
+      }
     },
     {
       "id": "approvals-002",
@@ -22,12 +26,20 @@
     {
       "id": "approvals-004",
       "promise": "Shows a card inline in chat when a setting change or a dangerous action is asked for there.",
-      "source": "docs/how-it-works/site/approvals.html"
+      "source": "docs/how-it-works/site/approvals.html",
+      "probe": {
+        "kind": "action",
+        "action": "approvalPreparedChanges"
+      }
     },
     {
       "id": "approvals-005",
       "promise": "Holds standing rules, and keeps a permanent record of every request, answer and use.",
-      "source": "docs/how-it-works/site/approvals.html"
+      "source": "docs/how-it-works/site/approvals.html",
+      "probe": {
+        "kind": "action",
+        "action": "approvalRulesAndExpiry"
+      }
     },
     {
       "id": "approvals-006",
@@ -42,7 +54,11 @@
     {
       "id": "approvals-008",
       "promise": "An approval records the conversation it was asked in.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalRulesAndExpiry"
+      }
     },
     {
       "id": "approvals-009",
@@ -52,7 +68,11 @@
     {
       "id": "approvals-010",
       "promise": "Work that waits on an approval is a trigger that fires once, when it is answered.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalRulesAndExpiry"
+      }
     },
     {
       "id": "approvals-011",
@@ -62,17 +82,29 @@
     {
       "id": "approvals-012",
       "promise": "A rule answers one kind of request the same way every time, for a scope such as certain repositories or commands. A rule that names a person is a grant to that person. Only the household owner edits rules.",
-      "source": "docs/how-it-works/site/approvals.html#how-h"
+      "source": "docs/how-it-works/site/approvals.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalRulesAndExpiry"
+      }
     },
     {
       "id": "approvals-013",
       "promise": "When a person asks an agent in chat to change a setting or do something dangerous, the agent proposes it. Loom shows an approval card inline, with exactly what will change, before and after. On Allow loom makes the change itself and records it. Ordinary work needs no card.",
-      "source": "docs/how-it-works/site/approvals.html#how-h"
+      "source": "docs/how-it-works/site/approvals.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalPreparedChanges"
+      }
     },
     {
       "id": "approvals-014",
       "promise": "Loom keeps every request, answer and use in a record that is never edited. Steps an agent took under a tell-me-after rule are listed as reported steps.",
-      "source": "docs/how-it-works/site/approvals.html#how-h"
+      "source": "docs/how-it-works/site/approvals.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalRulesAndExpiry"
+      }
     },
     {
       "id": "approvals-015",

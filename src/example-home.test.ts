@@ -38,6 +38,13 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const result=await query.json();expect(result.errors).toBeUndefined();
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
+  const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
+  const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
+  expect(app.services.tasks.get(draft.id).status).toBe('open');
+  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow'}})});
+  expect((await answer()).status).toBe(200);expect((await answer()).status).toBe(200);
+  expect(app.services.tasks.get(draft.id)).toMatchObject({status:'closed',closeReason:'cancelled'});
+  expect(app.services.approvals.record(card.id).map(row=>row.event)).toEqual(['request','allow','use']);
   expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);
   const token=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Fictitious sharing proof'})).value;
   try{
