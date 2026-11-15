@@ -1,3 +1,5 @@
+import { sharedPasskeys } from './shared-passkeys.js';
+import { bodyLimit } from 'hono/body-limit';
 /** Shared-model sign-in links. Trusted issuers name an existing member token;
  * the HTTP door binds that token to the authenticated bearer. */
 import { createHash, randomBytes } from 'node:crypto';
@@ -59,6 +61,9 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   const signin = sharedSigninLinks(options.db, options.clock);
   const authenticate = dataAuthentication(options.db, () => options.clock.now());
   const routes = new Hono();
+  const rp=options.publicOrigin?new URL(options.publicOrigin):undefined;
+  const passkeys=rp&&(rp.protocol==='https:'||rp.hostname==='localhost')?sharedPasskeys(options.db,options.clock,{origin:rp.origin,rpId:rp.hostname}):undefined;
+  routes.use('*',bodyLimit({maxSize:32768}));
   const guard: MiddlewareHandler = async (c, next) => {
     c.header('cache-control', 'no-store'); c.header('referrer-policy', 'no-referrer');
     c.header('x-content-type-options', 'nosniff');
@@ -71,10 +76,11 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     await next();
   };
   routes.use('/api/signin/token', guard); routes.use('/api/signin/link', guard); routes.use('/login/*', guard);
+  for(const path of ['/login/passkey/options','/login/passkey','/passkeys/options','/passkeys'])routes.use(path,guard);
   routes.use('/auth/session', guard); routes.use('/logout', guard);
   routes.onError(() => Response.json({ error: 'Sign-in could not complete' }, { status: 401, headers: { 'cache-control': 'no-store' } }));
   const write = <T>(action: () => T): T => {
-    const committed = options.writes.run(action);
+    const committed = options.writes.run(() => { if(!options.admitted())throw Error('Sign-in unavailable'); return action(); });
     for (const error of committed.notificationErrors) { try { options.reportError(error); } catch { /* preserve committed sign-in */ } }
     return committed.value;
   };
@@ -98,10 +104,13 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   });
   routes.post('/api/signin/link', c => {
     const bearer = /^Bearer ([^\s]{32,4096})$/i.exec(c.req.header('authorization') ?? '')?.[1];
-    const auth = bearer ? authenticate(c.req.raw) : undefined;
-    if (!auth?.valid() || auth.viewer.kind !== 'member') return c.json({ error: 'Member bearer authentication required' }, 401);
+    const auth = authenticate(c.req.raw);
+    if (!auth?.valid() || auth.viewer.kind !== 'member') return c.json({ error: 'Member authentication required' }, 401);
+    const cookie = c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
+    const token = bearer ? fingerprint(bearer) : cookie ? options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,fingerprint(cookie))).get()?.token : undefined;
+    if(!token)return c.json({error:'Member authentication required'},401);
     // Request input cannot choose a token/member or impersonate an agent.
-    return c.json({ ok: true, value: write(() => signin.makeLink(fingerprint(bearer!))) });
+    return c.json({ ok: true, value: write(() => { if(!auth.valid())throw Error('Authentication ended'); return signin.makeLink(token); }) });
   });
   routes.get('/auth/session', c => {
     const auth = authenticate(c.req.raw);
@@ -119,6 +128,21 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     });
     c.header('set-cookie', cookieHeader('', 0, c.req.url));
     return c.json({ ok: true });
+  });
+  for(const path of ['/login/passkey/options','/login/passkey','/passkeys/options','/passkeys'])routes.post(path,async c=>{
+    if(!passkeys||new URL(c.req.url).host!==rp!.host)return c.json({error:'Passkeys unavailable at this address'},404);
+    const body=await c.req.json().catch(()=>null);
+    if(!body||typeof body!=='object'||Array.isArray(body))return c.json({error:'Invalid request'},400);
+    if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
+    if(path==='/login/passkey/options')return c.json(passkeys.loginOptions());
+    if(path==='/login/passkey'){
+      const value=write(()=>passkeys.login(body,c.req.header('user-agent')??'Browser'));
+      c.header('set-cookie',cookieHeader(value.cookie,value.maxAge,c.req.url));return c.json({ok:true});
+    }
+    const cookie=c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
+    if(!cookie)return c.json({error:'Sign in again before adding a passkey'},403);
+    if(path==='/passkeys/options')return c.json(passkeys.registrationOptions(cookie));
+    return c.json(write(()=>passkeys.register(cookie,body)));
   });
   routes.get('/login/:code', c => {
     if (!/^[0-9a-f]{64}$/.test(c.req.param('code'))) return c.notFound();
