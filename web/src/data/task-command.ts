@@ -1,15 +1,22 @@
 import { useMemo } from 'react';
 import type { TaskCommand } from '../pieces/tasks/shared-form';
 
-/** Keep only pending intent IDs, never returned rows or optimistic Task state. */
+type PendingIntents = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+/** Tab-scoped pending IDs survive screen remount/reload; task text is never stored. */
 export function taskCommandSubmitter(request: typeof fetch = fetch, makeId = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}, pending: PendingIntents = {
+  getItem: key => sessionStorage.getItem(key),
+  setItem: (key, value) => sessionStorage.setItem(key, value),
+  removeItem: key => sessionStorage.removeItem(key),
 }) {
-  const pending = new Map<string, string>();
   return async (input: TaskCommand): Promise<void> => {
-    const key = JSON.stringify(input), id = pending.get(key) ?? makeId();
-    pending.set(key, id);
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(input)));
+    const key = 'loom:pending-task:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+    const id = pending.getItem(key) ?? makeId();
+    // Persist before sending: unavailable storage must not risk an untracked write.
+    pending.setItem(key, id);
     let response: Response, result: unknown;
     try {
       response = await request('/api/tasks/command', { method: 'POST', credentials: 'same-origin',
@@ -22,7 +29,7 @@ export function taskCommandSubmitter(request: typeof fetch = fetch, makeId = () 
     }
     if (!('value' in result) || !result.value || typeof result.value !== 'object' || Array.isArray(result.value)
       || ('id' in result.value && typeof result.value.id !== 'string')) throw new Error('Could not confirm the task. Try again.');
-    pending.delete(key);
+    pending.removeItem(key);
   };
 }
 export function useTaskCommandSubmitter() { return useMemo(() => taskCommandSubmitter(), []); }
