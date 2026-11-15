@@ -1,3 +1,4 @@
+import { sharedNotifications, type SharedNotificationOptions } from './core/signin/shared-notifications.js';
 import { sharedAccount, sharedAccountFields, registerSharedAccount } from './core/signin/shared-account.js';
 import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
@@ -100,6 +101,7 @@ export function sharedRoot(options: {
   commsKey?: WordsKey;
   /** Explicit authenticated holder source for the private recipient channel. */
   secretInputs?: {source:SecretValueSource};
+  notifications?: SharedNotificationOptions;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
@@ -133,8 +135,9 @@ export function sharedRoot(options: {
   try{
   const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
   startupCleanups.push(notices.close);
+  let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...sharedAccountFields(db, clock), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
@@ -142,6 +145,7 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   startupCleanups.push(()=>operations.close());
+  pushes=sharedNotifications({db,clock,writes:data.writes,config:options.notifications,browser:credentials.browser,visible:conversationQuestionPolicy(db).visibility,reportError:options.reportError});pushes.install(operations);startupCleanups.push(()=>{void pushes?.close();});
   memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
@@ -222,6 +226,7 @@ export function sharedRoot(options: {
     household: householdService(db, now),
     signin: sharedTokens(db, clock),
     account: sharedAccount(db, clock),
+    notifications: pushes,
     approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
@@ -240,7 +245,7 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>commsLifetime?.close());
   const settingsBinding = sharedTempoSettings(db, clock, bodyScope, services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, notify: options.tempo?.notify ?? ((member,ids)=>{const result=notices.publish(member,ids);pushes?.publish(member,ids);return result;}), chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
@@ -344,11 +349,12 @@ export function sharedRoot(options: {
       cancelSecretRecovery?.(); values?.close();
       const inputsStopped = privateInputs.close();
       const stopped = data.close();
+      const pushesStopped=pushes?.close();
       for (const stop of stops.splice(0).reverse()) stop();
       const measured = measuringReady!.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, pushesStopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

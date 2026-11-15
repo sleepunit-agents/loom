@@ -1,12 +1,12 @@
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
-import { members, tokens, sessions, passkeys, notificationDevices } from '../data/schema.js';
+import { members, tokens, sessions, passkeys, notificationDevices, notificationQueue } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
 const ref = (kind: string, id: string) => createHash('sha256').update(kind+':'+id).digest('hex');
 const live = (token: typeof tokens.$inferSelect, now: number) => !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt)>now);
@@ -29,6 +29,7 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
     revokeSession(member: string, reference: string) {
       const own = new Set(ownTokens(member).map(t=>t.fingerprint)), session = db.select().from(sessions).all().find(s=>ref('session',s.id)===reference&&own.has(s.token));
       if(!session)throw new OperationError('not-found','Browser not found');
+      db.delete(notificationQueue).where(inArray(notificationQueue.device,db.select({endpoint:notificationDevices.endpoint}).from(notificationDevices).where(eq(notificationDevices.session,session.id)))).run();
       db.delete(notificationDevices).where(eq(notificationDevices.session,session.id)).run();
       db.delete(sessions).where(eq(sessions.id,session.id)).run();
       return {revoked:true as const};
@@ -43,10 +44,12 @@ export function registerSharedAccount(operations: Operations, db: DataDatabase, 
   operations.register({name:'account.revokeSession',write:true,recheckPolicy:true,input:reference,output:z.object({revoked:z.literal(true)}),may:member,
     run(ctx,input){const result=service.revokeSession(ctx.viewer.id,input.ref);ctx.changed('core.access',ctx.viewer.id);return result;}});
 }
-export function sharedAccountFields(db: DataDatabase, clock: Clock): GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
+export function sharedAccountFields(db: DataDatabase, clock: Clock, notifications?: (member: string) => {publicKey:string|null;devices:{ref:string;device:string;createdAt:string;seenAt:string}[]}): GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
   const passkey=new GraphQLObjectType({name:'PersonalPasskey',fields:{ref:{type:GraphQLString},label:{type:GraphQLString},createdAt:{type:GraphQLString},lastUsedAt:{type:GraphQLString},ended:{type:GraphQLBoolean}}});
   const session=new GraphQLObjectType({name:'PersonalBrowser',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},issuedAt:{type:GraphQLString},seenAt:{type:GraphQLString},ended:{type:GraphQLBoolean}}});
-  const account=new GraphQLObjectType({name:'PersonalAccount',fields:{member:{type:GraphQLString},passkeys:{type:new GraphQLList(passkey)},sessions:{type:new GraphQLList(session)}}});
+  const device=new GraphQLObjectType({name:'PersonalNotificationDevice',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},createdAt:{type:GraphQLString},seenAt:{type:GraphQLString}}});
+  const push=new GraphQLObjectType({name:'PersonalNotifications',fields:{publicKey:{type:GraphQLString},devices:{type:new GraphQLList(device)}}});
+  const account=new GraphQLObjectType({name:'PersonalAccount',fields:{member:{type:GraphQLString},notifications:{type:push},passkeys:{type:new GraphQLList(passkey)},sessions:{type:new GraphQLList(session)}}});
   const service=sharedAccount(db,clock);
-  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?service.read(viewer.id):null;}}};
+  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
 }
