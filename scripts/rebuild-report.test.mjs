@@ -39,3 +39,11 @@ it('summarizes each page without treating untested promises as passing',()=>{
   {page:'unmeasured',title:'unmeasured',ownerTask:'t-example',status:'not checkable yet',counts:{met:0,'not met':0,'not checkable yet':1}},
  ]);
 });
+
+it('reports a measured app action without counting a visible control as an outcome',()=>{
+ const promise={probe:{kind:'action',app:'Knowledge'}};
+ expect(evaluate(promise,{apps:[{title:'Knowledge',opened:true,text:'Still true'}]}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{apps:[{title:'Knowledge',action:{ok:false,error:'Fresh words did not survive reload',screenshot:'failed.png'}}]})).toMatchObject({status:'not met',reason:'Fresh words did not survive reload',evidence:'failed.png'});
+ expect(evaluate(promise,{apps:[{title:'Knowledge',action:{ok:true,screenshot:'verified.png'}}]})).toMatchObject({status:'met',evidence:'verified.png'});
+ expect(evaluate(promise,{apps:[{title:'Other app',action:{ok:true}}]}).status).toBe('not checkable yet');
+});
