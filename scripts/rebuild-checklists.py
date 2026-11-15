@@ -87,6 +87,10 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='conversations':
   for row in rows:
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
+ if f.stem=='inbox':
+  for row in rows:
+   if row['promise'].startswith(('Takes a yes, a no', 'An item that is a question says')):row['probe']={'kind':'action','action':'inboxDecisions'}
+   if row['promise'].startswith(('Marks what you have read', 'Opening an item marks it read')):row['probe']={'kind':'action','action':'inboxHistory'}
  if f.stem=='desk':
   for row in rows:
    if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
@@ -104,6 +108,15 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='tasks':
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
+ if f.stem=='data':
+  for row in rows:
+   if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}
+   if row['promise'].startswith(('Loom runs one query', 'Loom turns the request into one database query')):row['probe']={'kind':'action','action':'dataSharingSQL'}
+   if row['promise'].startswith(('After the first rows, loom sends only', 'After the first rows, changes arrive')):row['probe']={'kind':'action','action':'dataTaskPatches'}
+   if row['promise'].startswith('A new inbox item reaches an open Inbox'):row['probe']={'kind':'action','action':'dataInboxChange'}
+ if f.stem=='desk':
+  for row in rows:
+   if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'action','action':'dataDoor'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':source_hash,'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  (out/(f.stem+'.json')).write_text(json.dumps(obj,indent=2,ensure_ascii=False)+'\n')
