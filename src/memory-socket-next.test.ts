@@ -4,7 +4,7 @@ import { Live } from './core/live/index.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -164,6 +164,31 @@ it('disposes socket resources and the change observer when a later bind fails',a
     expect(attachments.every(server=>!server.listening && server.listenerCount('upgrade')===0)).toBe(true);
     expect(disposal).toHaveBeenCalledOnce();
     expect(stops.length).toBeGreaterThan(0);expect(stops.at(-1)).toHaveBeenCalledOnce();
+    const changed=vi.spyOn(owned!.live,'changed');observeChanges!();expect(changed).not.toHaveBeenCalled();
+    expect(()=>owned!.live.watch({schema:owned!.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
+  } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
+});
+
+
+it('cleans acquired socket resources when web asset initialization throws before binding',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'memory-socket-assets-failure-'));
+  writeFileSync(join(home,'assets'),'Fictional invalid assets entry');
+  const original=socketModule.dataSocket;
+  let owned: Parameters<typeof socketModule.dataSocket>[0]|undefined;
+  let disposal: ReturnType<typeof vi.spyOn>|undefined;
+  let observeChanges: (()=>void)|undefined;
+  const observeOriginal=Live.prototype.observe;
+  const stops: ReturnType<typeof vi.fn>[]=[];
+  vi.spyOn(Live.prototype,'observe').mockImplementation(function(this:Live,fn){
+    const stop=vi.fn(observeOriginal.call(this,fn));stops.push(stop);
+    observeChanges=()=>this.changed([{type:'core.access',id:'after-assets-failure'}]);return stop;
+  });
+  vi.spyOn(socketModule,'dataSocket').mockImplementation(options=>{
+    owned=options;const socket=original(options);disposal=vi.spyOn(socket,'close');return socket;
+  });
+  try {
+    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),webRoot:home,stdout:()=>{}})).rejects.toThrow(/ENOTDIR/);
+    expect(disposal).toHaveBeenCalledOnce();expect(stops.at(-1)).toHaveBeenCalledOnce();
     const changed=vi.spyOn(owned!.live,'changed');observeChanges!();expect(changed).not.toHaveBeenCalled();
     expect(()=>owned!.live.watch({schema:owned!.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
   } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
