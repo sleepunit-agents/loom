@@ -25,6 +25,10 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Setup changes are live acr
   const form=(page:typeof a,id:string)=>page.getByRole('form',{name:`Save membership for ${id}`,exact:true});
   await expect.poll(()=>form(a,'pollock').count()).toBe(1);
   await form(a,'pollock').getByRole('checkbox',{name:'mark',exact:true}).check();
+  let membershipRequests=0;a.on('request',request=>{if(request.method()==='POST'&&new URL(request.url()).pathname==='/api/household/setMember')membershipRequests++;});
+  await form(a,'pollock').getByRole('button').click();
+  expect(await form(a,'pollock').evaluate(element=>(element as HTMLFormElement).checkValidity())).toBe(false);
+  expect(membershipRequests).toBe(0);expect(db.select().from(memberAgents).all()).toEqual([]);
   await form(a,'pollock').getByRole('checkbox',{name:'I confirm this membership change',exact:true}).check();await form(a,'pollock').getByRole('button').click();
   await expect.poll(()=>form(b,'pollock').getByRole('checkbox',{name:'mark',exact:true}).isChecked()).toBe(true);
   expect(db.select().from(memberAgents).all()).toEqual([{member:'pollock',agent:'mark'}]);

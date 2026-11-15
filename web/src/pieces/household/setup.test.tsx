@@ -2,6 +2,9 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {createElement as h} from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import {act,create} from 'react-test-renderer';
+// Test-only `any` bridges the existing untyped renderer and lightweight kit
+// stand-ins; mutable snapshots deliberately include unavailable/stale states.
+// Production query values remain typed as SetupData in the consumer.
 const f=vi.hoisted(()=>({reading:{} as any,save:vi.fn()}));
 vi.mock('../../data/graphql',()=>({useDataQuery:()=>f.reading}));
 vi.mock('../../data/operation',()=>({memberOperation:f.save}));
@@ -26,4 +29,20 @@ it('keeps household role separate from every-agent ownership and sends the exist
  vi.stubGlobal('FormData',class{getAll(){return ['art'];}});
  await act(async()=>form().props.onSubmit({preventDefault(){},currentTarget:{}}));
  expect(f.save).toHaveBeenCalledWith('household.setMember',{id:'peer',role:'owner',fullOwner:false,agents:['art']});
+ expect(JSON.stringify(form().toJSON?.()??tree.toJSON())).toContain('Saved');
+});
+it('shows success only for the exact acknowledged member ID',async()=>{
+ seed();await act(async()=>{tree=create(h(Setup));});
+ vi.stubGlobal('FormData',class{getAll(){return [];}});
+ const form=()=>tree.root.findByProps({'aria-label':'Save membership for peer'});
+ for(const result of [{id:'other'},{},undefined]){
+  f.save.mockResolvedValueOnce(result);
+  await act(async()=>form().props.onSubmit({preventDefault(){},currentTarget:{}}));
+  expect(form().findAllByProps({role:'alert'})).toHaveLength(1);
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Saved');
+ }
+ f.save.mockResolvedValueOnce({id:'peer'});
+ await act(async()=>form().props.onSubmit({preventDefault(){},currentTarget:{}}));
+ expect(form().findAllByProps({role:'alert'})).toHaveLength(0);
+ expect(JSON.stringify(tree.toJSON())).toContain('Saved');
 });
