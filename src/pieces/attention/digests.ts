@@ -1,5 +1,5 @@
 import { statement } from '../../core/db/index.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 /** Agent-authored summaries. Delivered messages never pass through this operation. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
