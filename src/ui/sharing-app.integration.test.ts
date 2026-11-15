@@ -7,7 +7,7 @@ import {join,resolve} from 'node:path';
 import {chromium} from 'playwright-core';
 import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
-import {members,tokens,sessions,agents,projectMembers,projectAgents} from '../core/data/schema.js';
+import {members,tokens,sessions,agents,projectMembers,projectAgents,projectRepositories} from '../core/data/schema.js';
 import {serveShared} from '../shared-serve.js';
 import {deskMemoryFixture} from './desk-memory.fixture.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
@@ -26,6 +26,9 @@ it.runIf(enabled)('Sharing creates projects and changes member and agent lists l
   expect(db.select().from(projectMembers).all()).toEqual([{project:'garden',member:'sam'}]);expect(db.select().from(projectAgents).all()).toEqual([{project:'garden',agent:'art'}]);
   await a.getByRole('checkbox',{name:'sam',exact:true}).uncheck();await a.getByRole('button',{name:'Save project',exact:true}).click();await expect.poll(()=>b.getByRole('checkbox',{name:'sam',exact:true}).isChecked()).toBe(false);
   await b.getByRole('checkbox',{name:'art',exact:true}).uncheck();await b.getByRole('button',{name:'Save project',exact:true}).click();await expect.poll(()=>a.getByRole('checkbox',{name:'art',exact:true}).isChecked()).toBe(false);
+  await a.getByRole('textbox',{name:'Repositories',exact:true}).fill('github:Fixture/Garden');await a.getByRole('button',{name:'Save project',exact:true}).click();
+  await expect.poll(()=>b.getByRole('textbox',{name:'Repositories',exact:true}).inputValue()).toBe('github:fixture/garden');
+  expect(db.select().from(projectRepositories).all()).toEqual([{project:'garden',repository:'github:fixture/garden'}]);
   const shots=resolve('artifacts/household-sharing');mkdirSync(shots,{recursive:true});await a.screenshot({path:join(shots,'sharing-shared.png'),animations:'disabled'});expect(errors).toEqual([]);expect(legacy).toBe(0);
  }finally{await browser.close();await app.close();memory.close();client.close();}
 });
