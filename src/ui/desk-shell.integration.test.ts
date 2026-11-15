@@ -78,7 +78,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   expect(new URL(b.url()).searchParams.get('e')).toBe(`d~art~${digest.id}`);
   const activityTile=b.locator('[data-tile=activity]');
   await expect.poll(()=>activityTile.getByRole('heading',{name:activityTitle,exact:true}).count()).toBe(1);
-  expect(await activityTile.getByText(activitySummary,{exact:true}).count()).toBeGreaterThan(0);
+  await expect.poll(()=>activityTile.getByText(activitySummary,{exact:true}).count()).toBeGreaterThan(0);
   await b.goto(app.url);
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
   for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
