@@ -37,7 +37,13 @@ Worker-local command children receive only the configured environment; the worke
 are not inherited. Keep the configuration and token file private.
 
 The builder receives one JSON line on stdin with `job` (the id) and `house`
-(`repository`, `file`, `branch`). It writes only `{"build":"<artifact>"}` to
+(`repository`, `file`, `branch`). When the configured repository needs a secret,
+loom checks the assigned starting worker and its startup permission, then sends
+`repositoryInput: {encoding: "base64", value: "…"}` on that same private stdin.
+The builder decodes it for repository access and must not print or persist it.
+It is absent for public repositories. Credentials never enter command arguments,
+the assignment, build results or environment; the worker erases its input buffer
+after the build settles. It writes only `{"build":"<artifact>"}` to
 stdout, with diagnostics on stderr, and exits zero. Build stdout is limited to
 64 KiB. The runner receives one JSON line with `job` (the full assignment) and
 `build`, after loom acknowledges that the process is running. The assignment
@@ -56,6 +62,7 @@ claim only assigned work, and implement:
 
 | Operation | Input | Value in the standard success envelope |
 | --- | --- | --- |
+| `runtime.health` | `{facts?}` | `{ok:true}` |
 | `runtime.next` | `{}` | assignment or `null` |
 | `runtime.started` | `{job, build}` | `{ok:true}` |
 | `runtime.heartbeat` | `{job, state}` | `{active:boolean}` |
@@ -67,7 +74,7 @@ failed process cleanup, so it cannot claim more work after uncertain reaping.
 SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
-The fresh `sharedRoot` mounts these four authenticated runner operations on the
+The fresh `sharedRoot` mounts these authenticated runner operations on the
 same shared connection and write/receipt boundary. The canonical current bearer
 runner proof supplies the machine identity; runner-labelled cookies are refused.
 Only that live machine may claim or report its jobs; caller-supplied machine identity is refused.

@@ -4,7 +4,7 @@ import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { signInAccount } from './account-signin.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
-import { httpWorkerControl, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
@@ -47,6 +47,7 @@ export async function workerProgram(input: {
   reportUsage?: typeof reportWorkerAccountUsage;
   usageBasis?: typeof readWorkerAccountBasis;
   usageUnavailable?: typeof reportWorkerAccountUnavailable;
+  health?: typeof reportWorkerHealth;
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
   run?: typeof runWorker; control?: typeof httpWorkerControl; executor?: typeof commandWorkerExecutor;
   containerExecutor?: typeof containerWorkerExecutor;
@@ -112,7 +113,21 @@ export async function workerProgram(input: {
         catch { if (!abort.signal.aborted) input.error('Worker quota refresh unavailable\n'); }
       }
     };
-    await scan();
+    if (config.accountUsage) {
+      const health = async () => { await (input.health ?? reportWorkerHealth)(config.facts === undefined ? remote : { ...remote, facts: config.facts }); };
+      if (abort.signal.aborted) return 0;
+      await health();
+      let heartbeat: Promise<void> | undefined, failed = false;
+      const timer = setInterval(() => {
+        if (heartbeat || abort.signal.aborted) return;
+        heartbeat = health().then(() => {}, () => {
+          if (!abort.signal.aborted) { failed = true; abort.abort(); }
+        }).finally(() => { heartbeat = undefined; });
+      }, 15_000);
+      try { await scan(); }
+      finally { clearInterval(timer); await heartbeat; }
+      if (failed) throw new Error('Startup health unavailable');
+    } else await scan();
     const refresh = config.accountUsage ? (async () => {
       while (!abort.signal.aborted) {
         try { await (input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); }))(config.accountUsage!.intervalMs ?? 60_000, abort.signal); }
