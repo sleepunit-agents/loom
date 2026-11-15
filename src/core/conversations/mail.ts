@@ -2,6 +2,7 @@
  * never save them in jobs.brief, generic operation receipts or Inbox columns.
  * External runner doors must recheck their current authentication after await
  * and before committing. This service does not authenticate a machine. */
+import {prepareHistoryContext,type HistoryLine} from './history-context.js';
 import {prepareAnswerContext,type AnswerContext} from './answer-context.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { household, inbox, inboxRefs, messages, threads } from '../data/schema.js';
@@ -9,7 +10,7 @@ import { mailWords } from './volume.js';
 import { CommsMessages } from './messages.js';
 
 type Item = typeof inbox.$inferSelect;
-export type Delivery = { item: Item; words: string | null; answerContext?:AnswerContext };
+export type Delivery = { item: Item; words: string | null; answerContext?:AnswerContext; history?:HistoryLine[] };
 // Taking a prepared batch changes only its lease bookkeeping. Changes to any
 // content, reference, recipient or label require a fresh preparation.
 const content = (item: Item) => JSON.stringify({ ...item, state: null, job: null, takenAt: null, changedAt: null });
@@ -51,6 +52,8 @@ export class ConversationMail {
     }
     const contexts=new Map<string,()=>AnswerContext|null>();
     for(const item of items)if(item.volume==='full'&&prepared.get(item.id)!==null)contexts.set(item.id,await prepareAnswerContext(this.comms,item));
+    const first=items[0],cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
+    const history=first?.volume==='full'&&prepared.get(first.id)!==null?await prepareHistoryContext(this.comms,conversation,cutoff,new Set(items.filter(item=>item.source==='answer'&&item.sourceId).map(item=>item.sourceId!))):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
@@ -70,9 +73,10 @@ export class ConversationMail {
           throw new Error('Private message changed; prepare again');
       }
       const answerContexts=new Map(items.map(item=>[item.id,contexts.get(item.id)?.()]));
+      const dialogue=history();
       const taken=conversations.take(conversation, job, items.map(item => item.id));
       if(taken.length)db.update(messages).set({delivery:'sending'}).where(and(eq(messages.kind,'message'),inArray(messages.inboxItem,taken.map(item=>item.id)))).run();
-      return taken.map(item => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null;return {item,words:visible,...(answerContext?{answerContext}:{})};});
+      return taken.map((item,index) => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null;return {item,words:visible,...(answerContext?{answerContext}:{}),...(index===0&&visible!==null&&dialogue.length?{history:dialogue}:{})};});
     });
   }
 

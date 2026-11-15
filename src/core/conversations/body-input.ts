@@ -51,7 +51,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   const refs=deliveries.length?db.select().from(inboxRefs).where(inArray(inboxRefs.item,deliveries.map(row=>row.item.id))).all():[];
   const days=db.select({days:household.commsDays}).from(household).get()?.days??14;
   let until=Infinity;
-  const items=deliveries.map(({item,words,answerContext})=>{
+  const items=deliveries.map(({item,words,answerContext,history})=>{
    let keepUntil:string|null=null,verdict:string|null=null;
    if(item.thread&&item.messageSeq!==null){
     const message=db.select().from(messages).where(and(eq(messages.thread,item.thread),eq(messages.seq,item.messageSeq),eq(messages.inboxItem,item.id))).get();
@@ -59,7 +59,8 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
     if(words!==null){const deadline=wordsDeadline(message,days);until=Math.min(until,deadline);keepUntil=Number.isFinite(deadline)?new Date(deadline).toISOString():null;}
    }
    if(answerContext){if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
-   return {...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};
+   for(const line of history??[])until=Math.min(until,Date.parse(line.keepUntil));
+   return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};
   });
   const thread=db.select({stop:threads.stopRequested}).from(threads).where(eq(threads.conversation,before.cv.id)).get();
   const payload=JSON.stringify({ok:true,value:{job:before.job.id,conversation:before.cv.id,items,stopRequested:thread?.stop??false}});
