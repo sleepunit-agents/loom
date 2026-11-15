@@ -6,7 +6,7 @@ import { runWorker } from './worker-loop.js';
 const command = z.object({ command: z.string().min(1), args: z.array(z.string()), cwd: z.string().min(1), env: z.record(z.string(), z.string()) }).strict();
 const configSchema = z.object({
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
-  build: command, runners: z.record(z.string(), command),
+  build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), command),
 }).strict();
 export async function workerProgram(input: {
   args: readonly string[];
