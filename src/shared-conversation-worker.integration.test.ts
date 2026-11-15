@@ -28,13 +28,16 @@ it('builds and runs a real private Comms recipient through production worker enr
  const enroll=control.enrollBody!;let owned:Uint8Array|undefined,tokenCopy:Buffer|undefined;
  clean.push(()=>{tokenCopy?.fill(0);});
  control.enrollBody=async(...args)=>{const result=await enroll(...args);owned=result.token;tokenCopy=Buffer.from(result.token);expect(f.db.select().from(s.jobs).get()?.state).toBe('starting');return result;};
- const started=control.started.bind(control);control.started=async(...args)=>{expect(f.db.select().from(s.jobs).get()?.state).toBe('starting');await started(...args);expect(f.db.select().from(s.jobs).get()?.state).toBe('running');};
+ let acknowledged=false;const started=control.started.bind(control);control.started=async(...args)=>{expect(f.db.select().from(s.jobs).get()?.state).toBe('starting');await started(...args);expect(f.db.select().from(s.jobs).get()?.state).toBe('running');acknowledged=true;};
  const finish=vi.spyOn(control,'finish');
  const env={PATH:process.env.PATH??'',NODE_NO_WARNINGS:'1'},cwd=resolve(import.meta.dirname,'..');
  const executor=commandWorkerExecutor({build:{command:process.execPath,args:['-e',"let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{const value=JSON.parse(input);if(typeof value.job!=='string'||value.bootstrap||value.house.repository!=='fixture')process.exitCode=1;else process.stdout.write(JSON.stringify({build:'fixture-image'}));});"],cwd,env},runners:{fixture:{command:process.execPath,args:['--import','tsx','test/fixtures/conversation-worker-child.mjs'],cwd,env,bodyBootstrap:true}}});
+ // Retain the native executor; observe its exact release boundary against the real ACK.
+ const start=executor.start.bind(executor);executor.start=(...args)=>{const body=start(...args),release=body.release.bind(body);body.release=(...input)=>{expect(acknowledged).toBe(true);return release(...input);};return body;};
  const running=workOnce({box:'box',control,executor,signal:abort.signal,schedule:{every:()=>()=>{}}});clean.push(async()=>{abort.abort();await running.catch(()=>{});});
  expect(await running).toBe('finished');const job=f.db.select().from(s.jobs).get()!;
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
+ // The callback pause before confirmation is independently asserted by the real native recipient proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
  expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:'answered',latencyMs:23}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2});
  expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:'Fictitious work complete'});
