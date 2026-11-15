@@ -24,8 +24,9 @@ export async function changeActions({page,tile,app,example,out}){
   await reader.getByRole('button',{name:'Yes, merge it',exact:true}).click();
   const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Merge answer was refused');
   check(a.get(request.id).state==='allowed'&&a.get(request.id).decidedBy==='alex'&&s.get(current.id).waitingOn==='agent'&&s.get(current.id).state==='open','Merge answer did not return the exact open head to its agent');
-  check(write(()=>a.use(request.id,'fern','merge',request.target)).ok,'Agent could not spend the exact merge allowance');
   check(!write(()=>a.use(request.id,'fern','merge',`${current.id}@${'b'.repeat(40)}`)).ok,'Merge allowance could be spent on another head');
+  check(a.get(request.id).state==='allowed','Wrong-head refusal consumed the correct allowance');
+  check(write(()=>a.use(request.id,'fern','merge',request.target)).ok,'Agent could not spend the exact merge allowance');
   const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();
   await tile.locator('.loom-split__rows [data-split-row]').filter({hasText:'Fictitious owner decision'}).waitFor();
   const order=await tile.locator('.loom-split__rows [data-split-row]').allTextContents();
