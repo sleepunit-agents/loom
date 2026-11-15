@@ -32,7 +32,10 @@
     {
       "id": "data-006",
       "promise": "A query names a table from the model and the fields it wants. Any app's tile asks the same way.",
-      "source": "docs/how-it-works/site/data.html#con-h"
+      "source": "docs/how-it-works/site/data.html#con-h",
+      "probe": {
+        "kind": "legacy-data-socket"
+      }
     },
     {
       "id": "data-007",

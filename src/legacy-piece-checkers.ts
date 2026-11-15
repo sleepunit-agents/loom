@@ -1,23 +1,9 @@
-/**
- * Needs you that clear themselves (docs/specs/conversations.md, "Needs you"): an ask that says what it waits on
- * (`waits_on`: an approval, a task) is checked on a tick, and once that's resolved it leaves the owner's Inbox as a
- * quiet FYI ("Cleared itself: the approval was allowed and used"), answered `resolved` by loom. An ask that only
- * named an approval in its words, written before the object, waits on that approval too: that's how the one that
- * asked Jonathan to allow a card he'd already allowed and that was already spent (2026-11-03) goes.
- *
- * What's resolved is each piece's to say, through its own API, as the household owner: an approval's state from
- * the approvals piece (role `approvals`: `state`), a task's from the tasks piece (role `tasks`: `run show`). A pull
- * request isn't checked: loom has no sanctioned way to read GitHub, so `waits_on` refuses one (needs.ts). A piece
- * that's absent or doesn't answer resolves nothing: the ask stays, as it would have.
- */
-import { answerNeeds, ConversationError, openNeeds } from './backends/conversations.js';
-import type { WaitsOn } from './backends/needs.js';
+/** Readers for replaced installed-piece cards, retained by the legacy page adapters.
+ * Canonical Inbox settlement belongs to the shared conversation service. */
 import { findPiece } from './cli/pieces.js';
 import { managedPieces, readSettings } from './cli/pieces-managed.js';
-import { agentDir, type Household } from './household.js';
 import { pieceApi } from './ui/pieces.js';
 import { sameAskWords } from './ui/ask-words.js';
-
 /** An approval as the approvals piece tells core: its state, and whose it is. */
 export interface ApprovalState { state: string; agent?: string; kind?: string;
   /** An owner-applied one's target only (a `grant`'s `<piece>:<agent>[:<paths>]`, t-1970; a `vouch-wake`'s or a
@@ -39,56 +25,6 @@ export interface WaitCheckers {
    * so his answer there is his answer to it. Undefined: couldn't tell.
    */
   taskAnswered?(id: string, ask: string, since: string): Promise<boolean | undefined>;
-}
-
-/** Why an approval's state clears the ask, in words for the FYI; undefined while it still waits (pending). */
-export function approvalCleared(a: ApprovalState | null): string | undefined {
-  if (a === null) return 'the approval it asked about is gone';
-  return ({ allowed: 'the approval was allowed', used: 'the approval was allowed and used', denied: 'the approval was denied', expired: 'the approval was allowed, and expired unused', withdrawn: 'the approval was withdrawn unanswered (asked again with an up-to-date list)' } as Record<string, string>)[a.state];
-}
-
-export interface Resolved { agent: string; conversation: string; digest: string; reason: string }
-
-/**
- * One pass: every agent's open asks that wait on something, checked, and each one that's resolved answered so
- * (`resolved`, by loom, with its reason). Several listeners may run it at once; an ask already answered is skipped.
- */
-export async function resolveNeeds(h: Household, check: WaitCheckers, now: () => Date = () => new Date()): Promise<Resolved[]> {
-  const waiting = h.agents.flatMap((agent) => {
-    let open: ReturnType<typeof openNeeds>;
-    try { open = openNeeds(agentDir(h, agent)); } catch { return []; }
-    return open.flatMap(({ conversation: c, digest: d }) => (d.needs?.waits_on ? [{ agent, conversation: c.id, digest: d.id, on: d.needs.waits_on, ask: d.needs.ask, at: d.at }] : []));
-  });
-  if (!waiting.length) return [];
-  const ids = [...new Set(waiting.flatMap((w) => ('approval' in w.on ? [w.on.approval] : [])))];
-  const approvals = ids.length ? await check.approvals(ids).catch(() => undefined) : {};
-  const out: Resolved[] = [];
-  for (const w of waiting) {
-    const reason = await clearedBy(w.on, approvals, check, w);
-    if (!reason) continue;
-    try {
-      answerNeeds(agentDir(h, w.agent), { conversation: w.conversation, digest: w.digest, verdict: 'resolved', by: 'loom', reason }, now());
-      out.push({ agent: w.agent, conversation: w.conversation, digest: w.digest, reason });
-    } catch (e) {
-      // Answered meanwhile (another listener, the owner, a newer digest): nothing to clear.
-      if (!(e instanceof ConversationError)) throw e;
-    }
-  }
-  return out;
-}
-
-async function clearedBy(on: WaitsOn, approvals: Record<string, ApprovalState | null> | undefined, check: WaitCheckers,
-  asked: { ask?: string; at?: string } = {}): Promise<string | undefined> {
-  if ('approval' in on) {
-    if (!approvals || !(on.approval in approvals)) return undefined;
-    return approvalCleared(approvals[on.approval]);
-  }
-  const status = await check.task(on.task).catch(() => undefined);
-  if (status === undefined) return undefined;
-  if (status === null) return `${on.task} is gone`;
-  if (status === 'closed') return `${on.task} is closed`;
-  if (!check.taskAnswered || !asked.ask?.trim() || !asked.at) return undefined;
-  return (await check.taskAnswered(on.task, asked.ask, asked.at).catch(() => undefined)) ? `you answered it on ${on.task}` : undefined;
 }
 
 /** The ask an owner's answer on a task names, as the tasks page writes it ("Yes, to: <ask>", "No, to: …", "Answer, to: …"). */

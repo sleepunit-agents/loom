@@ -472,6 +472,13 @@ approved operation rechecks current ownership, configured model roles and the
 previous ordering; stale cards require a new request. It has no shell or provider
 side effects. The ordinary member-only agentModelsSet command remains unchanged.
 
+A member-private conversation reports its actual status state, but its progress
+words never enter the global agent status row. That row is shared with other
+owners of the agent: working and waiting use “Working privately” and “Waiting
+privately”; idle and offline use an empty work description. Public conversation
+progress keeps its reported words. Receipt rollback and replay preserve the same
+transaction boundary as other conversation output.
+
 runtime.proposeBoxSettings files a private chat request for the machine owner or
 a household owner. Its card includes the current and proposed name, hosting
 flags, agent lending and owner facts. Allow rechecks the current member's
