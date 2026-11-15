@@ -194,7 +194,10 @@ it('closes an acquired native connection if extension setup fails and closes exe
  expect((await f.call('remember',input,'async-failure')).status).toBe(503);embed.gate=undefined;
  const execution=owned.connections.filter(db=>!opened.has(db)&&db.name===f.path);expect(execution.length).toBeGreaterThan(0);expect(execution.every(db=>!db.open)).toBe(true);expect(f.count()).toBe(0);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name IN ('memories','vec_memories')").all()).toEqual([]);
+ const deadline=(f.source.prepare('SELECT expires FROM memory_command_preparations WHERE id=?').get('async-failure') as {expires:number}).expires;
+ vi.spyOn(f.clock,'now').mockReturnValue(f.clock.now()+29*86400000);
  expect((await f.call('remember',input,'async-failure')).status).toBe(200);
+ expect(f.source.prepare('SELECT expires FROM memory_command_receipts WHERE id=?').get('async-failure')).toEqual({expires:deadline});expect(f.db.select().from(s.operationResults).all().find(row=>row.id==='async-failure')?.expiresAt).toBe(new Date(deadline).toISOString());
 });
 it('drains an active command on shutdown, rolls back its source and releases command and reader connections',async()=>{
  const f=await fixture(),before=new Set(owned.connections),readers=owned.connections.filter(db=>db.name===f.path&&db.readonly&&db.open),gate=hold(),pending=f.call('remember',input,'shutdown');await gate.began;

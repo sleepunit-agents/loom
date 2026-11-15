@@ -63,7 +63,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
    const raw=await run(backend,db),agent=options.body(viewer)?.agent;
    const result={ids:raw.ids.map(id=>`${agent}:${id}`),...(raw.matches?{matches:raw.matches.map(match=>({...match,id:`${agent}:${match.id}`}))}:{})};
    if(current(viewer)?.path!==source.path||pending.expires<=options.now())throw new OperationError('denied','Memory access ended');
-   db.prepare('INSERT INTO memory_command_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),pending.expires);
+   db.prepare('INSERT INTO memory_command_receipts (viewer,id,name,input_hash,result,expires) VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),pending.expires);
    db.prepare('DELETE FROM memory_command_preparations WHERE viewer=? AND id=?').run(receipt.viewer,receipt.id);
   });}finally{backend.close();}
  };
