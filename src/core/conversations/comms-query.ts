@@ -28,7 +28,7 @@ export class CommsQueries {
       .where(and(this.allowed(viewer), member ? eq(conversations.member, member) : undefined,
         input.agent ? eq(conversations.agent, input.agent) : undefined,
         input.archived ? isNotNull(threads.archivedAt) : isNull(threads.archivedAt)))
-      .orderBy(desc(threads.pinned), desc(threads.lastAt), asc(threads.id)).limit(count).offset(offset).all();
+      .orderBy(desc(threads.pinned), desc(sql`julianday(${threads.lastAt})`), asc(threads.id)).limit(count).offset(offset).all();
   }
   /** Home is the signed-in member's own mailbox, including only agents they
    * can give work to. Reply metadata suffices; no private words are loaded. */
