@@ -32,9 +32,9 @@ export async function runAccessClient(piece: 'token'|'sessions'|'account'|'house
   try {
     input = JSON.parse(inputText);
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error();
-  } catch { io.stderr(`loom-${piece}: expected a JSON object\n`); return 2; }
-  if((read||link)&&Object.keys(input as object).length){io.stderr(`loom-${piece}: this command takes an empty JSON object\n`);return 2;}
-  const fail = (message: string) => { io.stderr(`loom-${piece}: ${message}\n`); return 1; };
+  } catch { io.stderr(`${program}: expected a JSON object\n`); return 2; }
+  if((read||link)&&Object.keys(input as object).length){io.stderr(`${program}: this command takes an empty JSON object\n`);return 2;}
+  const fail = (message: string) => { io.stderr(`${program}: ${message}\n`); return 1; };
   let base: URL, token: string;
   try {
     if (!io.env.LOOM_URL) return fail('LOOM_URL is required');

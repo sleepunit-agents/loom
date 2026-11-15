@@ -41,7 +41,7 @@ Commands:
   migrate           Apply pending schema migrations to memories.db
   pieces            Installed pieces; install, update, roll back, remove them
   household         Read roster and edit members, agents and projects through the API
-  token             Mint, list and revoke the household's tokens
+  token             Mint, list, revoke tokens or make a one-time sign-in link
   sessions          List browsers or end one through the API
   account           Read personal Account or end a browser/remove a passkey
   export            Write the whole household to one encrypted bundle
@@ -58,7 +58,7 @@ Global flags:
   --client <name>        Harness adapter hint (default: $LOOM_CLIENT)
   --model <name>         Model manifest hint (default: $LOOM_MODEL)
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
-                         http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
+                         http://host:8787. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
                          memory, knowledge, person, project, household, token, sessions, account.
   --json                 Machine-readable output
@@ -104,6 +104,7 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
 
   if (sub === 'household' || sub === 'token' || sub === 'sessions' || sub === 'account') {
     const parsed=extractGlobalFlags(rest);
+    if(parsed.flags.contextDir!==undefined||parsed.flags.client!==undefined||parsed.flags.model!==undefined){io.stderr(`Context, client and model flags do not apply to loom ${sub}.\n`);return 2;}
     if(rest.includes('--url')&&!parsed.flags.url){io.stderr('--url needs a value\n');return 2;}
     const {runAccessClient}=await import('./access-client.js');
     return runAccessClient(sub,parsed.rest,{...io,env:{...io.env,...(parsed.flags.url?{LOOM_URL:parsed.flags.url}:{})}},undefined,`loom ${sub}`);

@@ -1,7 +1,9 @@
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,rmSync,readFileSync,openSync} from 'node:fs';
 import {join} from 'node:path';
+import {readFile} from 'node:fs/promises';
+import {runHouseholdClient} from './household-client.js';
 import {tmpdir} from 'node:os';
 import {Readable} from 'node:stream';
 import {afterEach,expect,it,vi} from 'vitest';
@@ -12,6 +14,8 @@ import {members,tokens,sessions,passkeys} from '../core/data/schema.js';
 import {sharedRoot} from '../shared-root.js';
 import {runCli,runCliLocal} from './index.js';
 import {runAccessClient} from './access-client.js';
+vi.mock('node:fs',async original=>{const fs=await original<typeof import('node:fs')>();return{...fs,readFileSync:vi.fn(fs.readFileSync),openSync:vi.fn(fs.openSync)};});
+vi.mock('node:fs/promises',async original=>{const fs=await original<typeof import('node:fs/promises')>();return{...fs,readFile:vi.fn(fs.readFile)};});
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{try{for(const close of clean.splice(0).reverse())await close();}finally{vi.unstubAllGlobals();}});
 function fixture(){
  const home=mkdtempSync(join(tmpdir(),'fictional-signin-cli-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),raw={owner:'a'.repeat(64),sam:'b'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -155,4 +159,20 @@ it('keeps the same household receipt when the successful reply is lost',async()=
  const f=fixture();let attempts=0;
  const result=await f.invoke('household',['setMember',JSON.stringify({id:'pat',role:'member',agents:[]})],'owner',async(input,init)=>{const response=await f.transport(input,init);if(++attempts===1){await response.body?.cancel();throw Error('lost');}return response;});
  expect(result).toMatchObject({code:0,calls:2});expect(new Set(result.bodies).size).toBe(1);
+});
+
+it('rejects irrelevant global flags before issuing links or changing household data',async()=>{
+ const f=fixture();let calls=0;vi.stubGlobal('fetch',async(input:Parameters<typeof fetch>[0],init?:RequestInit)=>{calls++;return f.transport(input,init);});
+ const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner')},stdout:()=>{},stderr:()=>{}};
+ for(const args of [['token','link','--model','x'],['household','setMember','{"id":"pat","role":"member","agents":[]}','--client','y'],['--context-dir','/forbidden','token','create','{}']])expect(await runCli(args,io)).toBe(2);
+ expect(calls).toBe(0);
+});
+it('the dedicated household binding uses shared HTTP and never reads a local household',async()=>{
+ const f=fixture(),local=join(f.home,'must-not-open');let out='',err='';
+ const before=[vi.mocked(readFileSync).mock.calls.length,vi.mocked(openSync).mock.calls.length,vi.mocked(readFile).mock.calls.length];
+ const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner'),LOOM_HOME:local},stdout:(text:string)=>out+=text,stderr:(text:string)=>err+=text};
+ expect(await runHouseholdClient(['read'],io,{request:f.transport,retry:async()=>{}})).toBe(0);expect(JSON.parse(out)).toMatchObject({members:expect.arrayContaining([expect.objectContaining({id:'owner'})])});
+ vi.stubGlobal('fetch',f.transport);expect(await runCli(['token','list'],io)).toBe(0);
+ const reads=[...vi.mocked(readFileSync).mock.calls.slice(before[0]),...vi.mocked(openSync).mock.calls.slice(before[1]),...vi.mocked(readFile).mock.calls.slice(before[2])].map(args=>String(args[0]));
+ expect(reads.some(path=>path.startsWith(local))).toBe(false);expect(reads).toContain(join(f.home,'owner'));expect(err).toBe('');
 });
