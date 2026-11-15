@@ -3,13 +3,14 @@ import {graphql,GraphQLObjectType,GraphQLSchema} from 'graphql/index.js';
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from '../data/database.js';
-import {members,inbox,projects,projectMembers} from '../data/schema.js';
+import {members,agents,inbox,projects,projectMembers} from '../data/schema.js';
 import {DataLive} from '../data/live.js';
 import {settledNotices} from './notices.js';
 const closes:(()=>void)[]=[];afterEach(()=>closes.splice(0).reverse().forEach(close=>close()));
 function fixture(){
  const client=new Database(':memory:'),db=createDataSchema(client),live=new DataLive(),notices=settledNotices(db,()=>live.changed()),at='2026-11-14T12:00:00Z';
  db.insert(members).values([{id:'sam',role:'member',joinedAt:at},{id:'other',role:'member',joinedAt:at},{id:'owner',role:'owner',joinedAt:at}]).run();
+ db.insert(agents).values({id:'sam',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();db.insert(projectMembers).values({member:'sam',project:'pond'}).run();
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:notices.fields})}),query='{ settledInboxNotice { id count } }';
  const read=async(kind='member',id='sam')=>{const result=await graphql({schema,source:query,contextValue:{viewer:{kind,id}}});expect(result.errors).toBeUndefined();return result.data?.settledInboxNotice;};
@@ -30,11 +31,15 @@ it('never exposes another recipient notice to an owner, agent, runner or service
  expect(await f.read()).toMatchObject({count:1});
 });
 it('filters mute, finished, other-recipient and hidden items before publishing, then rechecks current sharing',async()=>{
- const f=fixture();f.item('public',{member:null,project:'pond'});f.item('hidden',{member:'other'});f.item('mute',{volume:'mute',quietUntil:'2026-11-15T00:00:00Z'});f.item('done',{state:'done'});f.item('other',{to:'other',member:'other'});
- expect(f.notices.publish('sam',['hidden','mute','done','other'])).toBe(false);expect(await f.read()).toBeNull();
- expect(f.notices.publish('sam',['public','hidden','mute','done','other'])).toBe(true);expect(await f.read()).toMatchObject({count:1});
+ const f=fixture();f.item('public',{member:null,project:'pond'});f.item('hidden',{member:'other'});f.item('mute',{volume:'mute',quietUntil:'2026-11-15T00:00:00Z'});f.item('done',{state:'done'});f.item('other',{to:'other',member:'other'});f.item('wrong-person',{to:'other',member:'sam'});f.item('wrong-kind',{toKind:'agent',to:'sam',member:'sam'});
+ expect(f.notices.publish('sam',['hidden','mute','done','other','wrong-person','wrong-kind'])).toBe(false);expect(await f.read()).toBeNull();
+ expect(f.notices.publish('sam',['public','hidden','mute','done','other','wrong-person','wrong-kind'])).toBe(true);expect(await f.read()).toMatchObject({count:1});
  f.db.delete(projectMembers).run();f.live.changed();expect(await f.read()).toBeNull();
  f.item('own');f.notices.publish('sam',['own']);expect(await f.read()).toMatchObject({count:1});
+ f.db.update(inbox).set({to:'other'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toBeNull();
+ f.db.update(inbox).set({to:'sam'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toMatchObject({count:1});
+ f.db.update(inbox).set({toKind:'agent'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toBeNull();
+ f.db.update(inbox).set({toKind:'person'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toMatchObject({count:1});
  f.db.update(inbox).set({volume:'mute',quietUntil:'2026-11-15T00:00:00Z'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toBeNull();
  f.db.update(inbox).set({volume:'full',quietUntil:null}).where(eq(inbox.id,'own')).run();expect(await f.read()).toMatchObject({count:1});
  f.db.update(inbox).set({state:'done'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toBeNull();
