@@ -16,6 +16,7 @@ import { sharedRunProposals } from './shared-run-proposals.js';
 import { registerBoxSettings } from './shared-box-settings.js';
 import {registerMachineRegistry} from './shared-machine-registry.js';
 import { registerAgentModels } from './shared-agent-models.js';
+import { sharedModelProposals } from './shared-model-proposals.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
@@ -131,6 +132,7 @@ export function sharedRoot(options: {
   const now = () => new Date(clock.now()).toISOString();
   householdService(db,now).synchronizeFullOwners();
   const settings = tempoSettingsProposals(db, clock);
+  const modelProposals = sharedModelProposals(db, roles);
   const runProposals = sharedRunProposals(db);
   const secretProposals=sharedSecretProposals(db,now);
   const bridgeProposals=sharedBridgeProposals(db,now);
@@ -141,7 +143,7 @@ export function sharedRoot(options: {
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation]);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
@@ -282,6 +284,9 @@ export function sharedRoot(options: {
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
   startupCleanups.push(()=>commsLifetime?.close());
+  if (options.commsKey) modelProposals.register(operations, bodyScope, services.approvals, value => options.commsKey!.hash(value));
+  const stopModelProposals = data.writes.observe(() => modelProposals.committed(() => tempo?.capacityChanged()));
+  startupCleanups.push(stopModelProposals);
   if (options.commsKey) runProposals.register(operations, bodyScope, services.approvals, value => options.commsKey!.hash(value));
   const stopRunProposals = data.writes.observe(() => runProposals.committed(() => tempo?.capacityChanged()));
   startupCleanups.push(stopRunProposals);
@@ -395,7 +400,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      stopMemoryWrites();stopRunProposals();stopBoxProposals();memorySignals?.close();
+      stopMemoryWrites();stopModelProposals();stopRunProposals();stopBoxProposals();memorySignals?.close();
       accountReports.close();
       commsLifetime?.close();workLife.close();
       runtime.close();

@@ -46,6 +46,14 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   const command=async(operation:string,input:unknown,id:string)=>z.object({ok:z.literal(true),value:z.record(z.string(),z.unknown())}).parse(await invoke('loom_command',{operation,input,id})).value;
   const read=async(query:string)=>z.object({data:z.record(z.string(),z.unknown())}).parse(await invoke('loom_query',{query})).data;
   const id=z.array(z.string()).parse((await command('memory.remember',{category:'user',title:'Fictional retained lesson',content:words,ttl:'permanent'},'startup-remember')).ids)[0];
+  const personId=z.array(z.string()).parse((await command('memory.personWrite',{slug:'fiction-private-friend',name:'PRIVATE_STARTUP_PERSON',summary:'PRIVATE_STARTUP_PERSON_ORIGINAL',where:{ready:{value:false}}},'startup-person')).ids)[0];
+  const projectId=z.array(z.string()).parse((await command('memory.projectWrite',{slug:'fiction-private-project',name:'PRIVATE_STARTUP_PROJECT',links:{aliases:['fiction-private-alias']}},'startup-project')).ids)[0];
+  expect(personId).toMatch(/^art:person:[a-f0-9-]{36}$/);expect(projectId).toMatch(/^art:project:[a-f0-9-]{36}$/);
+  expect((await command('memory.personWrite',{slug:'fiction-private-friend',summary:'PRIVATE_STARTUP_PERSON_EDIT'},'startup-person-edit')).ids).toEqual([personId]);
+  const personHistory=z.array(z.object({id:z.number(),card:z.object({summary:z.string()})})).parse(z.object({history:z.unknown()}).parse((await read(`{memoryPerson(id:"${personId}"){history{id card{summary}}}}`)).memoryPerson).history);expect(personHistory).toHaveLength(1);expect(personHistory[0].card.summary).toBe('PRIVATE_STARTUP_PERSON_ORIGINAL');
+  expect((await command('memory.personRestoreRevision',{slug:'fiction-private-friend',revision_id:personHistory[0].id},'startup-person-restore')).ids).toEqual([personId]);
+  const cardsQuery=`{memoryPerson(id:"${personId}"){mergedFrom card{name summary where{key value{boolean}}}} memoryProject(id:"${projectId}"){card{name links{aliases}}}}`,cards=await read(cardsQuery);
+  expect(cards).toEqual({memoryPerson:{mergedFrom:null,card:{name:'PRIVATE_STARTUP_PERSON',summary:'PRIVATE_STARTUP_PERSON_ORIGINAL',where:[{key:'ready',value:{boolean:false}}]}},memoryProject:{card:{name:'PRIVATE_STARTUP_PROJECT',links:{aliases:['fiction-private-alias']}}}});
   // Seed a retained Proposal with the existing core helper, not an unreviewed native writer.
   const proposal=propose(join(p.home,'agents/art'),{category:'rough capture',title:'Fictional Proposal',content:'PRIVATE_STARTUP_PROPOSAL'},null);
   expect(await read('{memoryProposals(agent:"art"){entries{id content}}}')).toEqual({memoryProposals:{entries:[{id:'art:proposal:'+proposal.uuid,content:'PRIVATE_STARTUP_PROPOSAL'}]}});
@@ -59,16 +67,18 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   expect(await peerRead(p.url)).toEqual({data:{memoryProjectMemory:null}});
   p.composition.writes.run(()=>p!.db.insert(s.memberAgents).values({member:'peer',agent:'art'}).run());expect(await peerRead(p.url)).toEqual({data:{memoryProjectMemory:{content:words}}});
   const privatePath=join(p.home,'agents/art/memories.db'),snapshot=()=>{const db=new Database(privatePath,{readonly:true,fileMustExist:true});try{return db.serialize();}finally{db.close();}};
-  const before=snapshot();for(const value of [words,creed,'PRIVATE_NORMAL_STARTUP_EDIT','PRIVATE_STARTUP_PROPOSAL',privatePath])expect(p.client.serialize().includes(Buffer.from(value))).toBe(false);
+  const before=snapshot();for(const value of [words,creed,'PRIVATE_NORMAL_STARTUP_EDIT','PRIVATE_STARTUP_PROPOSAL','PRIVATE_STARTUP_PERSON','PRIVATE_STARTUP_PROJECT','fiction-private-friend','fiction-private-project','fiction-private-alias',privatePath])expect(p.client.serialize().includes(Buffer.from(value))).toBe(false);
   tools.close();await p.composition.close();
   restarted=await startSharedHome({home:p.home,clock,host:'127.0.0.1',port:0,stdout(){},reportError:error=>{throw error;}});tools=port(restarted.url);
   expect(await read(`{memoryProjectMemory(id:"${id}"){content} memoryHistory(id:"${id}"){content}}`)).toEqual(expected);expect(snapshot()).toEqual(before);
+  expect(await read(cardsQuery)).toEqual(cards);
   expect(await peerRead(restarted.url)).toEqual({data:{memoryProjectMemory:{content:words}}});restarted.writes.run(()=>restarted!.services.comms!.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'peer')).run());expect(await peerRead(restarted.url)).toEqual({data:{memoryProjectMemory:null}});
   expect((await command('memory.recall',{query:'retained lesson'},'startup-recall')).ids).toEqual([id]);
   await command('memory.archive',{id,note:'PRIVATE_STARTUP_ARCHIVE_REASON'},'startup-archive');expect((await read(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
   expect(await read('{memoryArchive(agent:"art"){entries{id content note}}}')).toEqual({memoryArchive:{entries:[{id,content:words,note:'PRIVATE_STARTUP_ARCHIVE_REASON'}]}});
   await command('memory.restore',{id},'startup-restore');expect((await read(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toEqual({content:words});
   await command('memory.forget',{id},'startup-forget');expect((await read(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
+  expect(await read(cardsQuery)).toEqual(cards);
   restarted.writes.run(()=>restarted!.services.comms!.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'memory-job')).run());
   expect((await tools.call('loom_query',{query:'{memoryIdentity(agent:"art"){creed}}'})).isError).toBe(true);
   expect(p.errors).toEqual([]);
