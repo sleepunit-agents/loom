@@ -1,4 +1,5 @@
 /** Shared-data transport composition. No schema creation or legacy credentials. */
+import { tempoQueryFields } from './core/tempo/queries.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
@@ -25,7 +26,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync',
       'triggers', 'triggerLog', 'agentPauses'],
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...tempoVisibility(viewer) },
-  }), fields);
+  }), { ...fields, ...tempoQueryFields(db, viewer) });
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
       const headers = new Headers();

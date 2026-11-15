@@ -4,20 +4,22 @@ import { graphql } from 'graphql/index.js';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database';
 import { dataQueries } from '../data/queries';
+import { withQueryFields } from '../data/http';
+import { tempoQueryFields } from './queries';
 import { tempoQuery } from '../../../web/src/pieces/tempo/query';
 
 it('executes the actual browser selection against generated shared tables and bounds recent logs', async () => {
   const db = new Database(':memory:');
   try {
-    createDataSchema(db);
+    const shared=createDataSchema(db);
     db.exec(`INSERT INTO triggers (id,owner_kind,source_kind,lifespan,target_kind,target,note,enabled,state,created_at,changed_at)
       VALUES ('tr-1','household','time','once','operation','test','Example',1,'standing','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z')`);
     const insert = db.prepare("INSERT INTO trigger_log (seq,trigger,at,event,note) VALUES (?,'tr-1','2026-11-14T00:00:00Z','set','Example')");
     db.transaction(() => { for (let i = 1; i <= 201; i++) insert.run(i); })();
     // Trusted fixture policies test the generated shape, not external authority.
-    const schema = dataQueries(db, { tables: ['triggers', 'triggerLog', 'agentPauses'], visibility: {
+    const schema = withQueryFields(dataQueries(db, { tables: ['triggers', 'triggerLog', 'agentPauses'], visibility: {
       triggers: () => sql`true`, triggerLog: () => sql`true`, agentPauses: () => sql`true`,
-    } });
+    } }), tempoQueryFields(shared,{kind:'member',id:'owner'}));
     const result = await graphql({ schema, source: tempoQuery });
     expect(result.errors).toBeUndefined();
     expect(result.data?.triggers).toMatchObject([{ id: 'tr-1', enabled: true, note: 'Example' }]);
