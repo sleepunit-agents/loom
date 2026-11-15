@@ -66,11 +66,17 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
      if(!current())throw unavailable();
      const deadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil);
      if(!Number.isFinite(deadline)&&row.keepUntil!==null)throw unavailable();
+     const privateWords=row.words!==null&&clock.now()<deadline;
+     const sinkAbort=new AbortController(),sinkSignal=AbortSignal.any([lifetime,sinkAbort.signal]);
+     const cancelExpiry=privateWords&&Number.isFinite(deadline)?clock.at(deadline,()=>sinkAbort.abort()):undefined;
      let rejectStopped!:()=>void;
-     const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=()=>reject(unavailable());lifetime.addEventListener('abort',rejectStopped,{once:true});});
-     try { await Promise.race([accept(Object.freeze({...row,refs:Object.freeze([...row.refs]),words:clock.now()<deadline?row.words:null}),lifetime),stopped]); }
-     finally { lifetime.removeEventListener('abort',rejectStopped); }
-     if(!current())throw unavailable();
+     const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=()=>reject(unavailable());sinkSignal.addEventListener('abort',rejectStopped,{once:true});});
+     try {
+      if(sinkSignal.aborted)throw unavailable();
+      await Promise.race([accept(Object.freeze({...row,refs:Object.freeze([...row.refs]),words:privateWords?row.words:null}),sinkSignal),stopped]);
+      if(!current()||privateWords&&clock.now()>=deadline){sinkAbort.abort();throw unavailable();}
+     }catch{sinkAbort.abort();throw unavailable();}
+     finally { cancelExpiry?.();sinkSignal.removeEventListener('abort',rejectStopped); }
      pending??={id:randomUUID(),items:[]};pending.items.push(row.id);accepted++;
     }
     await confirmPending();return {accepted,stopRequested:input.stopRequested};
