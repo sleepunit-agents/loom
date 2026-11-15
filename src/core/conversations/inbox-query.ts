@@ -69,9 +69,11 @@ export class InboxQueries {
       answered: sql<number>`coalesce(sum(case when ${this.folderWhere('answered')} then 1 else 0 end),0)`,
       all: count(),
     }).from(inbox).where(where).get()!;
-    const agents = this.db.select({ id: inbox.agent, count: count() }).from(inbox)
+    const agents = this.db.select({ id: inbox.agent, count: count(),
+      needs: sql<number>`coalesce(sum(case when ${this.folderWhere('needs')} then 1 else 0 end),0)`,
+    }).from(inbox)
       .where(and(where, isNotNull(inbox.agent))).groupBy(inbox.agent).orderBy(asc(inbox.agent)).all()
-      .map(row => ({ id: row.id!, count: row.count }));
+      .map(row => ({ id: row.id!, count: row.count, needs: row.needs }));
     return { ...totals, agents };
   }
 
@@ -227,6 +229,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   } });
   const agentCount = new GraphQLObjectType({ name: 'InboxAgentCount', fields: {
     id: { type: new GraphQLNonNull(GraphQLString) }, count: { type: new GraphQLNonNull(GraphQLInt) },
+    needs: { type: new GraphQLNonNull(GraphQLInt) },
   } });
   const folders = new GraphQLObjectType({ name: 'InboxFolders', fields: {
     ...Object.fromEntries(['needs', 'alerts', 'answered', 'fyi', 'all'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])),

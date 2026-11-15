@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createElement as h, useSyncExternalStore } from 'react';
+import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>()}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),queryStatus:"live" as "live"|"offline"|"denied"}));
+function homeFixture() {
+ const snapshot=f.snapshots.thread;
+ return {status:snapshot.status,data:{homeComms:{member:'owner',agents:f.snapshots['attention.ownedAgent'].records.map((a:any)=>a.id),summaries:f.snapshots['attention.ownedAgent'].records.map((a:any)=>{
+  const recent=snapshot.records.filter((t:any)=>t.agent===a.id&&t.archived===null).sort((a:any,b:any)=>b.last-a.last||a.id.localeCompare(b.id));
+  const last=recent[0],first=recent.find((t:any)=>t.unread);
+  return {agent:a.id,unread:recent.filter((t:any)=>t.unread).length,last:last?{thread:last.id,title:last.title??'',at:new Date(last.last).toISOString()}:null,first:first?{thread:first.id}:null};
+ })}}};
+}
+vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?homeFixture():document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.snapshots['attention.ownedAgent'].status!=='live'?f.snapshots['attention.ownedAgent'].status:f.queryStatus,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['household.agentDisplay'],f.snapshots.person,f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['household.agentDisplay','person','thread','attention.agent','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]))}));
 import Rail from './rail';
 import { RailContext } from '../../desk-rail';
 import DeskSignals from './desk-signals';
@@ -14,15 +24,15 @@ const live=(records:object[])=>({records,status:'live' as const});
 const text=()=>JSON.stringify(tree.toJSON());
 async function publish(type:string,status:Snapshot['status'],records=f.snapshots[type].records){await act(async()=>{f.snapshots[type]={status,records};f.listeners.forEach(fn=>fn());});}
 let events:EventTarget;
-beforeEach(()=>{events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
+beforeEach(()=>{f.queryStatus='live';events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
  'attention.ownedAgent':live([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),
- 'household.agentDisplay':live([]),'runtime.job':live([]),
+ 'household.agentDisplay':live([]),'generated.jobs':live([]),
  'person':live([]),'attention.ask':live([{id:'first',ask:'Proceed with backup?',agent:'art',state:'open',createdAt:1}]),
  'attention.agent':live([{id:'report',agent:'art',state:'working',work:'Checking the backup',changedAt:1}]),
  'thread':live([{id:'th:abc',agent:'art',title:'Unread conversation',unread:true,last:1,archived:null},{id:'th:recent',agent:'art',title:'Newest read thread',unread:false,last:2,archived:null}]),
 };});
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
-it('keeps only the owned roster alphabetical, opens the first unread thread and reads full asks in Inbox',async()=>{
+it('keeps only the owned roster in saved order, opens the first unread thread and reads full asks in Inbox',async()=>{
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
  expect(text()).toContain('Checking the backup');expect(text()).toContain('1 unread thread');
@@ -39,7 +49,7 @@ it.each(['offline','denied','loading'] as const)('drops stale names, asks, work 
  await publish('attention.ownedAgent',status);expect(text()).not.toContain('Art rail card');
 });
 
-it('folds measured overflow, keeps talking before asks/unread, and unfolds when room returns',async()=>{
+it('folds measured overflow, keeps current working state before asks/unread, and unfolds when room returns',async()=>{
  const element={clientWidth:296,clientHeight:120,scrollHeight:700};let resize:()=>void=()=>{};
  vi.stubGlobal('document',{fonts:undefined});
  vi.stubGlobal('ResizeObserver',class{constructor(fn:()=>void){resize=fn;}observe(){}disconnect(){}});
@@ -49,13 +59,14 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBe(true);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('art');
   expect(tree.root.findByProps({className:'desk-rail-compact'}).props['data-agent']).toBe('mark');
-  // An actual working private thread takes priority over Art's ask.
-  await publish('thread','live',[...f.snapshots.thread.records,{id:'th:mark',agent:'mark',title:'In flight',unread:false,working:true,last:3,archived:null}]);
+  // Current working state takes priority over Art's ask.
+  await publish('attention.agent','live',[{id:'mark',agent:'mark',state:'working',work:'In flight',changedAt:2}]);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('mark');
   await act(async()=>tree.root.findByProps({'aria-label':'Open Art conversation'}).props.onClick());
   expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
-  // Losing this source immediately drops its talking priority and stale unread count.
+  // Conversation loss clears unread independently; status loss clears working priority.
   await publish('thread','offline');
+  await publish('attention.agent','offline');
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('art');
   expect(text()).not.toContain('1 unread thread');expect(text()).toContain('Conversations unavailable');
   element.clientHeight=900;await act(async()=>resize());
@@ -69,7 +80,7 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
  } finally {await act(async()=>tree.unmount());vi.unstubAllGlobals();}
 });
 
-it('reports only live attention and opens alphabetical agents by shortcut while typing',async()=>{
+it('reports only live attention and opens agents in saved order by shortcut while typing',async()=>{
  const go=vi.fn(),onAttention=vi.fn();await act(async()=>{tree=create(h(DeskSignals,{go,onAttention}));});
  expect(onAttention).toHaveBeenLastCalledWith(true);
  const press=(code:string)=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{code,ctrlKey:true,shiftKey:true});return event;};
@@ -82,7 +93,7 @@ it('reports only live attention and opens alphabetical agents by shortcut while 
  await act(async()=>{events.dispatchEvent(press('Digit1'));});expect(go).not.toHaveBeenCalled();
 });
 
-it('puts the selected owned Comms companion above Needs you and returns it to alphabetical order',async()=>{
+it('puts the selected owned Comms companion above Needs you and returns it to saved order',async()=>{
  const go=vi.fn(),onAir=vi.fn();const view=(selected?:string)=>h(RailContext.Provider,{value:{onAir,shown:true,screen:null,selected}},h(Rail,{go}));
  await act(async()=>{tree=create(view('mark'));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['mark','art']);
@@ -96,18 +107,41 @@ it('puts the selected owned Comms companion above Needs you and returns it to al
 });
 
 it('lists each agent current jobs and drops stale jobs when disconnected',async()=>{
- f.snapshots['runtime.job']=live([
-  {id:'j:running',agent:'art',title:'Compare pumps',state:'running',box:'workbench',createdAt:2},
-  {id:'j:queued',agent:'art',title:'Order hose',state:'queued',box:'workbench',createdAt:1},
-  {id:'j:done',agent:'art',title:'Finished job',state:'done',box:'workbench',createdAt:0},
-  {id:'j:other',agent:'other',title:'Other agent job',state:'running',box:'workbench',createdAt:0},
+ f.snapshots['generated.jobs']=live([
+  {id:'j:running',agent:'art',title:'Compare pumps',state:'running',box:'workbench',queuedAt:'2026-11-14T01:00:00Z'},
+  {id:'j:queued',agent:'art',title:'Order hose',state:'queued',box:'workbench',queuedAt:'2026-11-14T02:00:00Z'},
+  {id:'j:other',agent:'other',title:'Other agent job',state:'running',box:'workbench',queuedAt:'2026-11-14T03:00:00Z'},
  ]);
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  const jobs=()=>tree.root.findByProps({'aria-label':'Art current jobs'});
  expect(jobs().findAllByType('li').map((n:any)=>n.findByType('strong').children[0])).toEqual(['Compare pumps','Order hose']);
- expect(text()).not.toContain('Finished job');expect(text()).not.toContain('Other agent job');
- await publish('runtime.job','offline');expect(text()).not.toContain('Compare pumps');expect(text()).toContain('Jobs unavailable');
- await publish('runtime.job','live',[]);expect(text()).toContain('No current jobs.');
+ expect(text()).not.toContain('Other agent job');
+ await publish('generated.jobs','offline');expect(text()).not.toContain('Compare pumps');expect(text()).toContain('Jobs unavailable');
+ await publish('generated.jobs','live',[]);expect(text()).toContain('No current jobs.');
+});
+it('uses saved positions for rail cards and keyboard shortcuts after a live reorder',async()=>{
+ const go=vi.fn();
+ f.snapshots['attention.ownedAgent']=live([{id:'art',name:'Art',position:4},{id:'mark',name:'Mark',position:1}]);
+ await act(async()=>{tree=create(h('div',null,h(Rail,{go}),h(DeskSignals,{go,onAttention:vi.fn()})));});
+ const order=()=>tree.root.findAllByType('section').map((n:any)=>n.props['data-agent']).filter(Boolean);
+ expect(order()).toEqual(['mark','art']);
+ const shortcut=()=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{ctrlKey:true,shiftKey:true,altKey:false,metaKey:false,code:'Digit1'});events.dispatchEvent(event);};
+ await act(async()=>shortcut());expect(go).toHaveBeenLastCalledWith('/p/comms-preview');
+ await publish('attention.ownedAgent','live',[{id:'art',name:'Art',position:0},{id:'mark',name:'Mark',position:1}]);
+ expect(order()).toEqual(['art','mark']);
+ await act(async()=>shortcut());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
+});
+
+it.each(['offline','denied'] as const)('clears rail details and shortcuts when generated directory is %s, then accepts fresh order',async status=>{
+ const go=vi.fn();await act(async()=>{tree=create(h('div',null,h(Rail,{go}),h(DeskSignals,{go,onAttention:vi.fn()})));});
+ expect(text()).toContain('Art rail card');
+ f.queryStatus=status;
+ await publish('attention.ownedAgent','live');
+ expect(text()).not.toContain('Art rail card');expect(text()).not.toContain('Checking the backup');
+ const event=new Event('keydown',{cancelable:true});Object.assign(event,{ctrlKey:true,shiftKey:true,altKey:false,metaKey:false,code:'Digit1'});
+ go.mockClear();await act(async()=>events.dispatchEvent(event));expect(go).not.toHaveBeenCalled();
+ f.queryStatus='live';await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark',position:0}]);
+ expect(text()).toContain('Mark rail card');expect(text()).not.toContain('Art rail card');
 });
 
 it('shows the first waiting item and how many more, updates on answers, and clears disconnected counts',async()=>{
