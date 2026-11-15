@@ -198,3 +198,13 @@ it('preserves the old form’s normalized forty-character, letter-leading slug r
   if(result.ok)expect((result.value as {slug:string}).slug).toHaveLength(40);
   expect(app.operations.call('direct',owner,'mind.personAdd',{name:'123'},'no-letter')).toMatchObject({code:'invalid'});
 });
+
+it('keeps hidden malformed sources from failing authorized list and unscoped Live reads',async()=>{
+ const d=source(),a=source(),b=source();a.write({slug:'friend',name:'Healthy'});
+ b.database.exec('DROP TABLE people; CREATE TABLE people(broken TEXT)');
+ const app=await fixture(d.database.name,a.database.name,b.database.name);
+ expect(app.operations.call('direct',partial,'mind.peopleList',{})).toMatchObject({ok:true,value:[{id:'art:friend',name:'Healthy'}]});
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/live?partial');closes.push(()=>ws.close());
+ const response=once(ws,'message');await once(ws,'open');ws.send(JSON.stringify({kind:'subscribe',type:'person'}));
+ expect(JSON.parse((await response)[0].toString())).toMatchObject({kind:'set',records:[{id:'art:friend',name:'Healthy'}]});
+});
