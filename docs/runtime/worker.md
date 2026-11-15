@@ -425,3 +425,5 @@ after response completion prevent cancellation from publishing decoded data.
 GraphQL responses validate standard error locations, paths and extensions. HTTP400
 is accepted only for errors without a data entry; partial execution data and its
 errors remain HTTP200 results. Loopback HTTP includes localhost,127.0.0.1 and::1.
+The client rejects whitespace or controls in its fixed bearer before Fetch can
+normalize a header. A GraphQL errors entry is nonempty whenever present.

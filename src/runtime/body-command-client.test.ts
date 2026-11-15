@@ -64,7 +64,7 @@ it('returns GraphQL validation errors through the same generated read door',asyn
  const value=client(async()=>Response.json({errors:[{message:'Unknown selected field'}]},{status:400}));expect(await value.query({query:'{unknown}'})).toEqual({errors:[{message:'Unknown selected field'}]});
 });
 
-it.each([{data:7},{data:[]},{errors:[{message:7}]},{errors:[]},{unrelated:'value'}])('rejects invalid GraphQL envelopes: %j',async response=>{
+it.each([{data:7},{data:[]},{errors:[{message:7}]},{errors:[]},{data:{},errors:[]},{unrelated:'value'}])('rejects invalid GraphQL envelopes: %j',async response=>{
  const value=client(async()=>Response.json(response));await expect(value.query({query:'{agents{id}}'})).rejects.toThrow(error);
 });
 
@@ -125,4 +125,14 @@ it.each([{status:200,body:{errors:[{message:'x',path:7}]}},{status:200,body:{err
 });
 it('preserves standard GraphQL partial-data error locations, paths and extensions',async()=>{
  const body={data:{value:null},errors:[{message:'Resolver refused value',path:['value',0],locations:[{line:1,column:2}],extensions:{code:'FORBIDDEN'}}],extensions:{trace:'synthetic'}},value=client(async()=>Response.json(body));expect(await value.query({query:'{value}'})).toEqual(body);
+});
+
+it.each([' ', '\t', '\n', '\r'])('rejects whitespace-normalized credentials before sending %j',suffix=>{
+ const fetcher=vi.fn<typeof fetch>();for(const token of[raw.body+suffix,suffix+raw.body])expect(()=>bodyCommandClient({url:'https://loom.example',token,signal:new AbortController().signal,fetch:fetcher})).toThrow(error);expect(fetcher).not.toHaveBeenCalled();
+});
+it.each(['json','utf8'])('erases received chunks, owned copies and joined bytes on %s parsing failure',async mode=>{
+ const marker=Buffer.from('PRIVATE_PARSE_FAILURE'),original=mode==='json'?Buffer.from('{"secret":"PRIVATE_PARSE_FAILURE",'):Buffer.concat([marker,Buffer.from([255])]),copy=Buffer.from,join=Buffer.concat,owned:Buffer[]=[];
+ vi.spyOn(Buffer,'from').mockImplementation((...args:Parameters<typeof Buffer.from>)=>{const value=Reflect.apply(copy,Buffer,args)as ReturnType<typeof Buffer.from>;if((args[0]as unknown)===original)owned.push(value);return value;});
+ vi.spyOn(Buffer,'concat').mockImplementation((list,length)=>{const value=join(list,length);if(value.includes(marker))owned.push(value);return value;});
+ const value=client(async()=>new Response(new ReadableStream({start(controller){controller.enqueue(original);controller.close();}}),{headers:{'content-type':'application/json'}}));await expect(value.command('fixture.read',{},'one')).rejects.toThrow(error);expect(owned).toHaveLength(2);for(const bytes of[original,...owned])expect(bytes.every(byte=>byte===0)).toBe(true);
 });

@@ -13,7 +13,7 @@ const name=z.string().regex(/^[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)
 const receipt=z.string().min(1).max(200);
 const query=z.object({query:z.string().min(1),variables:z.record(z.string(),json).nullable().optional(),operationName:z.string().min(1).nullable().optional()}).strict();
 const queryError=z.object({message:z.string(),locations:z.array(z.object({line:z.number().int().positive(),column:z.number().int().positive()}).strict()).optional(),path:z.array(z.union([z.string(),z.number().int().nonnegative()])).optional(),extensions:z.record(z.string(),json).optional()}).strict();
-const queryResult=z.object({data:z.record(z.string(),json).nullable().optional(),errors:z.array(queryError).optional(),extensions:z.record(z.string(),json).optional()}).strict().refine(value=>value.data!==undefined||!!value.errors?.length);
+const queryResult=z.object({data:z.record(z.string(),json).nullable().optional(),errors:z.array(queryError).min(1).optional(),extensions:z.record(z.string(),json).optional()}).strict().refine(value=>value.data!==undefined||!!value.errors?.length);
 function echoesCredential(text:string,token:string):boolean{
  if(text.includes(token))return true;
  // Inspect every valid JSON string, including values discarded by duplicate keys.
@@ -27,7 +27,7 @@ function echoesCredential(text:string,token:string):boolean{
 export function bodyCommandClient(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
  let origin:URL;try{origin=bodyOrigin(options.url);}catch{throw unavailable();}
  const token=options.token,clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??15000;
- if(!token||/[\0\r\n]/.test(token)||!Number.isSafeInteger(timeout)||timeout<1||timeout>30000)throw unavailable();
+ if(!token||/[\s\u0000-\u001f\u007f]/u.test(token)||!Number.isSafeInteger(timeout)||timeout<1||timeout>30000)throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]),active=new Set<AbortController>();
  let closed=false;const current=()=>!closed&&!lifetime.aborted;
  async function post(path:string,payload:unknown){
