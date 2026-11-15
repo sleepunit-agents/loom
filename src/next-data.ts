@@ -22,19 +22,21 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const authenticate = dataAuthentication(db, () => clock.now());
   const live = new DataLive();
   const bridges = new BridgeQueries(db, () => clock.now());
+  let activityRead = false;
   const ownFields = { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
     const visibility = bridgeSecretsVisibility(viewer);
     return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
-  }) };
+  }, () => { activityRead = true; schedule(); }) };
   let cancelDeadline: (() => void) | undefined;
   let stopped = false;
   const schedule = () => {
     cancelDeadline?.(); cancelDeadline = undefined;
-    if (stopped) return;
+    if (stopped || !activityRead) return;
     const at = bridges.nextDeadline();
     if (at !== undefined) cancelDeadline = clock.at(at, () => { live.changed(); schedule(); });
   };
-  schedule();
+  // No query is executed at composition startup. Deadlines belong to actual
+  // activity readers; a failed/unavailable selection never starts a scan.
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {

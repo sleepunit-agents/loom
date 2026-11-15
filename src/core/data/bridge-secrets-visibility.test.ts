@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { graphql } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
-import { createDataSchema } from './database.js';
+import { createDataSchema, dataDatabase } from './database.js';
 import { dataQueries } from './queries.js';
 import { bridgeSecretsTables, bridgeSecretsVisibility } from './bridge-secrets-visibility.js';
 import { members, memberAgents, agents, secrets, bridgeConnections, bridgeIncoming, bridgeSends, conversations, projects, projectMembers, projectAgents, tokens, bridgePeople, bridgeChannelFilters, bridgeChannels, secretGrants, secretRequests, secretRules, secretRuleAgents, secretUses, secretChanges, jobs } from './schema.js';
@@ -143,4 +143,11 @@ it('rechecks project-only outside agent access in retained incoming and reply re
  expect(await f.read(viewer,schema)).toMatchObject({bridgeIncoming:[{id:'project'}],bridgeSends:[{id:'project'}]});
  f.db.delete(projectAgents).where(eq(projectAgents.agent,'art')).run();
  expect(await f.read(viewer,schema)).toMatchObject({bridgeIncoming:[],bridgeSends:[]});
+});
+
+it('does not scan application data until a real activity selection succeeds',async()=>{
+ const statements:string[]=[],client=new Database(':memory:',{verbose:sql=>statements.push(sql)});opened.push(client);
+ const db=dataDatabase(client),clock=new FakeClock(),root=nextData(db,clock,()=>true);
+ expect(statements).toEqual([]);root.changed();expect(statements).toEqual([]);
+ await root.close();clock.advance(86400_000);expect(statements).toEqual([]);
 });

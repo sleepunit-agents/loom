@@ -36,11 +36,11 @@ export class BridgeQueries {
 }
 /** Root MUST supply the same current connection and message-label visibility
  * used by its generated table reads. No permissive default is available. */
-export function bridgeQueryFields(service: BridgeQueries, scope: (viewer: Viewer) => BridgeActivityScope): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
+export function bridgeQueryFields(service: BridgeQueries, scope: (viewer: Viewer) => BridgeActivityScope, observed?: () => void): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   const item = new GraphQLObjectType({ name: 'BridgeConnectionActivity', fields: {
     id: { type: new GraphQLNonNull(GraphQLString) },
     received: { type: new GraphQLNonNull(GraphQLInt) }, delivered: { type: new GraphQLNonNull(GraphQLInt) }, held: { type: new GraphQLNonNull(GraphQLInt) },
   } });
   return { bridgeActivity: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
-    resolve: (_source, _args, context) => service.activity(scope(context.viewer)) } };
+    resolve: (_source, _args, context) => { const rows = service.activity(scope(context.viewer)); observed?.(); return rows; } } };
 }
