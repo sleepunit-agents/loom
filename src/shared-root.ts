@@ -38,6 +38,7 @@ import { changeService, type PullRequestReader, type MergeRuleReader } from './a
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
+import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
 import { approvalRulesService } from './apps/approval-rules.js';
@@ -288,6 +289,7 @@ export function sharedRoot(options: {
   });
   registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
   registerSharedApprovalRules(operations,db,services.approvalRules);
+  registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules,options.workAnswerAuthority);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
