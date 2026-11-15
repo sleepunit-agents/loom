@@ -111,7 +111,11 @@
     {
       "id": "tasks-017",
       "promise": "Status, priority, project, owner and assignee are columns, so the ready queue, a project's task list and a person's assignments are each one query.",
-      "source": "docs/how-it-works/site/tasks.html"
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "action",
+        "action": "taskQueries"
+      }
     },
     {
       "id": "tasks-018",

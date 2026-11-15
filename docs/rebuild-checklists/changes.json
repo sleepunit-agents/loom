@@ -16,7 +16,11 @@
     {
       "id": "changes-002",
       "promise": "Lists pull requests across the household's projects.",
-      "source": "docs/how-it-works/site/changes.html"
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "changes-003",
