@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, agentPeople, agentDeniedTools, inbox, inboxRefs, jobs } from '../core/data/schema.js';
+import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, agentPeople, agentDeniedTools, inbox, inboxRefs, jobs, bridgeIncoming } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { workerPolicy } from './body-policy.js';
 const clients: Database.Database[] = [];
@@ -63,4 +63,31 @@ it('keeps prior done mail out of a fresh job and includes newly waiting mail onl
   expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'outside', person: JSON.stringify(['discord', 'w', 'new']), tier: null }]);
   f.db.update(inbox).set({ volume: 'mute' }).run();
   expect(workerPolicy(f.db, job).people).toEqual([]);
+});
+
+it('does not select either configured tier when receipt keys conflict', () => {
+  const f = fixture(), other = f.receive('second', 'second');
+  const originalItem = f.db.select().from(inbox).where(eq(inbox.job, f.job.id)).get()!.id;
+  const otherItem = f.db.select().from(inboxRefs).where(eq(inboxRefs.ref, other.id)).get()!.item;
+  f.db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, otherItem)).run();
+  f.db.insert(inboxRefs).values({ item: originalItem, ref: other.id }).run();
+  f.db.insert(agentPeople).values([{ agent: 'art', person: f.key, tier: 3 }, { agent: 'art', person: JSON.stringify(['discord', 'w', 'second']), tier: 3 }]).run();
+  expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
+});
+for (const fromKind of ['agent', 'schedule'] as const) it(`does not turn a known ${fromKind} into a person`, () => {
+  const f = fixture(); f.db.update(inbox).set({ fromKind, fromId: 'mark' }).run();
+  expect(f.read().people).toEqual([]);
+});
+for (const guard of ['state', 'member', 'agent', 'platform'] as const) it(`requires matching receipt ${guard} before using an outside tier`, () => {
+  const f = fixture(); f.db.insert(agentPeople).values({ agent: 'art', person: f.key, tier: 3 }).run();
+  if (guard === 'state') f.db.update(bridgeIncoming).set({ state: 'held' }).run();
+  if (guard === 'member') f.db.update(bridgeIncoming).set({ member: 'owner' }).run();
+  if (guard === 'agent') f.db.update(bridgeConnections).set({ agent: 'mark' }).run();
+  if (guard === 'platform') f.db.update(bridgeConnections).set({ platform: 'slack' }).run();
+  expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
+});
+it('keeps a linked thread sender key and configured tier across venues', () => {
+  const f = fixture(); f.db.update(inbox).set({ source: 'thread', fromKind: 'person', fromId: 'owner' }).run();
+  f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 2 }).run();
+  expect(f.read().people).toEqual([{ kind: 'person', person: 'owner', tier: 2 }]);
 });

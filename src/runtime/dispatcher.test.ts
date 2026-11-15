@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools } from '../core/data/schema.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -34,7 +34,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', harness: 'codex', brief: 'Private brief', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
@@ -175,7 +175,32 @@ it('projects current agent capabilities and only its configured ports at claim',
   ]).run();
   const assignment = f.runtime.next('first')!;
   expect(assignment.run).toEqual({ nestedContainers: true, gpu: true,
-    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [] } });
+    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } });
   f.db.update(agentRunSettings).set({ nestedContainers: false }).run();
   expect(assignment.run.nestedContainers).toBe(true);
+});
+
+it('hands the configured outside tier and tool rules to the runner on actual claim', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  const conversation = f.comms.open({ agent: 'art', venue: 'discord', place: 'room', label: 'Outside work' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'discord', fromKind: 'person', fromId: 'owner', words: 'Work' });
+  const job = f.runtime.jobs.admit(conversation.id)!;
+  f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 2 }).run();
+  f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.id).toBe(job.id);
+  expect(assignment.run.policy).toEqual({ people: [{ kind: 'person', person: 'owner', tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }] });
+});
+
+it('reads tool and person policy within the same placement and claim transaction', () => {
+  const f = fixture(), prepare = f.client.prepare.bind(f.client);
+  let policyReads = 0;
+  vi.spyOn(f.client, 'prepare').mockImplementation((sql: string) => {
+    if (sql.includes('"agent_denied_tools"') || sql.includes('"agent_people"')) {
+      policyReads++; expect(f.client.inTransaction).toBe(true);
+    }
+    return prepare(sql);
+  });
+  expect(f.runtime.next('first')?.id).toBe(f.job.id);
+  expect(policyReads).toBeGreaterThanOrEqual(2);
 });
