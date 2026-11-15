@@ -53,11 +53,9 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
-import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
 import { runBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
-const NEEDS_TICK_MS = 60_000;
 import { forgetPiecePages, pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { stopPieceServers } from '../ui/piece-server.js';
 import { closePieceSockets } from '../ui/piece-socket.js';
@@ -1096,17 +1094,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`))));
   }, WATCH_S * 1000);
   pushTimer?.unref();
-  // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
-  // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
-  const resolveAll = () => {
-    if (!backgroundActive || !live) return;
-    void periodic?.run('needs resolve', () => backgroundJob('needs resolve', () => resolveNeeds(live!(), pieceCheckers(process.env))
-      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`))));
-  };
-  const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
-  needsTimer?.unref();
-  const needsFirst = needsTimer ? setTimeout(resolveAll, 2_000) : undefined;
-  needsFirst?.unref();
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
@@ -1383,10 +1370,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       await stopManifests?.();
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
-      if (needsTimer) clearInterval(needsTimer);
       if (backupTimer) clearInterval(backupTimer);
       if (backupFirst) clearTimeout(backupFirst);
-      if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
       if (commsTimer) { clearInterval(commsTimer); stopComms?.(); }

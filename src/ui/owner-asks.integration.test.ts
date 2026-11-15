@@ -94,7 +94,7 @@ function piece(home: string, name: string, raw: Record<string, unknown>, src: st
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
   writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
-    bins: [`loom-${name}`], loom: { settings: [], services: [], ...loom } }));
+    bins: [`loom-${name}`], loom }));
   writeFileSync(join(dir, 'current', 'cli'), src);
   chmodSync(join(dir, 'current', 'cli'), 0o755);
   mkdirSync(join(home, 'pieces', 'bin'), { recursive: true });
@@ -333,21 +333,6 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
       expect(r.ok).toBe(false);
       expect(r.message).toMatch(/It wasn't applied: Nothing changed: the approval could not be spent\.$/);
     }
-  });
-
-  it('an ask waiting on a card that was withdrawn (asked again with an up-to-date list) clears itself', async () => {
-    const art = agentDir(h, 'art');
-    const conv = recordTurn(art, 'art', { venue: 'wake', place: 'wake:w-000002', label: 'A check', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:runtime').conversation;
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'asked', needs_owner: { ask: 'Count these 5 scheduled jobs as your work?', why: 'w',
-      if_yes: 'y', if_no: 'n', refs: ['a-0000beef'], waits_on: { approval: 'a-0000beef' } } });
-    const cookie = await login('jonathan');
-    const ask = (x: Data) => (x.items as Data[]).find((i) => i.kind === 'alert' && i.source.id === 'loom');
-    expect(ask(await inbox(cookie))).toBeDefined();
-    approvals({ ...CARDS, 'a-0000beef': { ...CARDS['a-0000beef'], state: 'withdrawn' } });
-    const { resolveNeeds, pieceCheckers } = await import('../needs-resolve.js');
-    const done = await resolveNeeds(h, pieceCheckers(process.env));
-    expect(done.map((d) => d.reason)).toContain('the approval was withdrawn unanswered (asked again with an up-to-date list)');
-    expect(ask(await inbox(cookie))).toBeUndefined();
   });
 
   it('a reset for a conversation core has as another agent\'s is refused', async () => {

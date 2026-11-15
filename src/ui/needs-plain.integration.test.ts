@@ -1,14 +1,4 @@
-/**
- * Needs you in plain words (t-1778, after "I don't know wtf that wants from me"): an ask written as the object reads
- * as its ask (row and sheet), with why, what happens either way, its links and details apart; one that waits on an
- * approval holds that approval's own Allow and Deny (the card isn't a second item); and one whose wait is resolved
- * clears itself, leaving a quiet FYI. The stale one of 2026-11-03 (a plain string naming an approval already allowed
- * and spent) clears the same way.
- *
- * The approvals and tasks pieces are stubs with their roles (`approvals`, `tasks`) and the verbs core uses: the
- * approvals piece's card (`ui --json`), its Allow (`ui act`) and its owner-only `state` (`api`); the tasks piece's
- * `run show`. Their state is a JSON file in $LOOM_HOME, which a test sets as the piece's world.
- */
+/** Retained legacy card rendering; canonical Inbox owns settlement. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,7 +10,6 @@ import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { createConversationTables, openNeeds, recordTurn, writeDigest } from '../backends/conversations.js';
 import { clearPieceCache } from './pieces.js';
 import { closeAllBackends } from '../backends/index.js';
-import { pieceCheckers, resolveNeeds, type WaitCheckers } from '../needs-resolve.js';
 
 /** The approvals piece, as core sees it: its pending cards, Allow and Deny, and the owner's `state`. */
 const APPROVALS_BIN = `#!${process.execPath}
@@ -78,7 +67,7 @@ function piece(home: string, name: string, role: string, src: string): void {
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
   writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
-    bins: [`loom-${name}`], loom: { settings: [], services: [], ...loom } }));
+    bins: [`loom-${name}`], loom }));
   writeFileSync(join(dir, 'current', 'cli'), src);
   chmodSync(join(dir, 'current', 'cli'), 0o755);
   mkdirSync(join(home, 'pieces', 'bin'), { recursive: true });
@@ -209,89 +198,6 @@ describe('a Needs you in plain words', () => {
     const d = await inbox(await login());
     expect(alertOf(d).approval).toBeUndefined();
     expect((d.items as Data[]).filter((i) => i.source.id === 'approvals' && i.attention)).toHaveLength(1);
-  });
-
-  it('clears itself on the pass once what it waits on is resolved, through the pieces\' own APIs', async () => {
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: ASK });
-    const check = pieceCheckers(process.env);
-    expect(await resolveNeeds(h, check)).toEqual([]);
-    expect(openNeeds(art)).toHaveLength(1);
-    approvals({ 'a-1234abcd': { state: 'used', agent: 'art' } });
-    expect(await resolveNeeds(h, check)).toEqual([{ agent: 'art', conversation: conv, digest: expect.stringMatching(/^dg-/), reason: 'the approval was allowed and used' }]);
-    expect(openNeeds(art)).toEqual([]);
-    // Once: a second pass (another listener) finds nothing to clear.
-    expect(await resolveNeeds(h, check)).toEqual([]);
-  });
-
-  it('a task it waits on clears it when closed; a gone one too', async () => {
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you check the backup restored?', waits_on: { task: 't-40' } } });
-    const check = pieceCheckers(process.env);
-    expect(await resolveNeeds(h, check)).toEqual([]);
-    writeFileSync(join(h.home, 'tasks.json'), JSON.stringify({ 't-40': 'closed' }));
-    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['t-40 is closed']);
-    const later = recordTurn(art, 'art', { venue: 'wake', place: 'wake:w-000001', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
-    writeDigest(art, { conversation: later, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you look at the other one?', waits_on: { task: 't-41' } } });
-    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['t-41 is gone']);
-  });
-
-  it('a task it waits on clears it once the owner answers that same ask on the task (t-2098), never another', async () => {
-    const at = new Date().toISOString();
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you check the backup restored?', waits_on: { task: 't-40' } } });
-    const asked: [string, string, string][] = [];
-    let answered: boolean | undefined = false;
-    const check: WaitCheckers = { approvals: async () => ({}), task: async () => 'open', taskAnswered: async (id, ask, since) => { asked.push([id, ask, since]); return answered; } };
-    expect(await resolveNeeds(h, check)).toEqual([]);
-    expect(asked[0][0]).toBe('t-40');
-    expect(asked[0][1]).toBe('Can you check the backup restored?');
-    expect(asked[0][2] >= at.slice(0, 16)).toBe(true);
-    answered = undefined;
-    expect(await resolveNeeds(h, check)).toEqual([]);
-    answered = true;
-    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['you answered it on t-40']);
-  });
-
-  it('through the tasks piece: only the owner\'s answer to the same ask, written since, clears it', async () => {
-    const since = new Date(Date.now() - 1000).toISOString();
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: { ask: 'Can you check the backup restored?', waits_on: { task: 't-40' } } });
-    const task = (comments: { actor: string; at: string; text: string }[]) =>
-      writeFileSync(join(h.home, 'tasks.json'), JSON.stringify({ 't-40': { status: 'open', comments } }));
-    const later = new Date(Date.now() + 1000).toISOString();
-    const check = pieceCheckers(process.env);
-    // No owner set on the tasks piece: it can't tell whose answer is whose, so nothing clears.
-    task([{ actor: 'jonathan', at: later, text: 'Yes, to: Can you check the backup restored?' }]);
-    expect(await resolveNeeds(h, check)).toEqual([]);
-    writeFileSync(join(h.home, 'pieces', 'tasks', 'settings.json'), JSON.stringify({ TASKSTORE_OWNER: 'jonathan' }));
-    // An agent's comment in his words, his answer to another ask, or one from before it was asked: nothing.
-    task([{ actor: 'mark', at: later, text: 'Yes, to: Can you check the backup restored?' },
-      { actor: 'jonathan', at: later, text: 'No, to: Can you buy a spare?' },
-      { actor: 'jonathan', at: '2020-01-01T00:00:00.000Z', text: 'Yes, to: Can you check the backup restored?' }]);
-    expect(await resolveNeeds(h, check)).toEqual([]);
-    expect(since < later).toBe(true);
-    task([{ actor: 'jonathan', at: later, text: 'Yes, to: Can you check the backup restored?\nIf yes, you said: I restore it.' }]);
-    expect((await resolveNeeds(h, check)).map((r) => r.reason)).toEqual(['you answered it on t-40']);
-  });
-
-  it('the stale one of 2026-11-03, a plain string naming an approval already spent, clears the same way', async () => {
-    // Written before the lint, as it is in the live store: straight into the table.
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Asked for the wake approval.', needs_owner: 'Allow the wake card on Home' });
-    const db = new BetterSqlite3(join(art, 'memories.db'));
-    db.prepare('UPDATE conversation_digests SET needs_owner = ? WHERE conversation = ?').run(STALE, conv);
-    db.close();
-    approvals({ 'a-7693c00e': { state: 'used', agent: 'art' } });
-    expect(openNeeds(art)[0].digest.needs?.waits_on).toEqual({ approval: 'a-7693c00e' });
-    expect((await resolveNeeds(h, pieceCheckers(process.env))).map((r) => r.reason)).toEqual(['the approval was allowed and used']);
-    const after = await inbox(await login());
-    expect(alertOf(after)).toBeUndefined();
-    expect((after.items as Data[]).find((i) => i.kind === 'fyi' && i.source.id === 'loom')).toMatchObject({ text: `Art E Fish needs you: ${STALE}`, meta: 'Cleared itself: the approval was allowed and used' });
-  });
-
-  it('a piece that can\'t tell clears nothing', async () => {
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 's', needs_owner: ASK });
-    const blind: WaitCheckers = { approvals: async () => undefined, task: async () => undefined };
-    const failing: WaitCheckers = { approvals: async () => { throw new Error('down'); }, task: async () => { throw new Error('down'); } };
-    expect(await resolveNeeds(h, blind)).toEqual([]);
-    expect(await resolveNeeds(h, failing)).toEqual([]);
-    expect(openNeeds(art)).toHaveLength(1);
   });
 
   it('the digest tool refuses an ask Jonathan couldn\'t read, and says why', async () => {
