@@ -10,7 +10,7 @@ import type { WordsKey } from './words.js';
 type Item = typeof inbox.$inferSelect;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
-export type InboxFilter = { state?: Item['state']; source?: Item['source']; agent?: string; limit?: number; offset?: number };
+export type InboxFilter = { state?: Item['state']; source?: Item['source']; agent?: string; limit?: number; offset?: number; search?: string };
 
 export class InboxQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
@@ -37,6 +37,50 @@ export class InboxQueries {
       filter.source ? eq(inbox.source, filter.source) : undefined,
       filter.agent ? eq(inbox.agent, filter.agent) : undefined))
       .orderBy(desc(inbox.at), desc(inbox.id)).limit(limit).offset(offset).all();
+  }
+  /** Search the recipient's whole mailbox before paging. Private text is opened
+   * only through body(), and is never indexed or written back to the database. */
+  async search(viewer: Viewer, filter: InboxFilter = {}): Promise<Item[]> {
+    const query = filter.search?.trim().toLocaleLowerCase() ?? '';
+    if (query.length > 500) throw new Error('Invalid Inbox search');
+    // Validate the same page bounds even for an empty or unauthorized mailbox.
+    this.list(viewer, filter);
+    if (!query) return this.list(viewer, filter);
+    if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
+    const candidates = this.db.select().from(inbox).where(and(this.allowed(viewer), eq(inbox.to, viewer.id),
+      eq(inbox.toKind, viewer.kind === 'member' ? 'person' : 'agent'),
+      filter.state ? eq(inbox.state, filter.state) : undefined,
+      filter.source ? eq(inbox.source, filter.source) : undefined,
+      filter.agent ? eq(inbox.agent, filter.agent) : undefined))
+      .orderBy(desc(inbox.at), desc(inbox.id)).all();
+    const privateState = (item: Item) => {
+      const message = item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
+        eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;
+      const keep = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+      const thread = item.thread ? this.db.select().from(threads).where(eq(threads.id, item.thread)).get() : undefined;
+      return { message, keep, thread };
+    };
+    const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
+        ...this.refs(viewer, item.id)].some(value => value?.toLocaleLowerCase().includes(query));
+    const matches: { item: Item; metadata?: true; state?: ReturnType<typeof privateState> }[] = [];
+    for (const item of candidates) {
+      if (metadata(item)) { matches.push({ item, metadata: true }); continue; }
+      const state = item.thread ? privateState(item) : undefined;
+      const body = await this.body(viewer, item.id);
+      if (body && Object.values(body).some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
+    }
+    // A later decrypt may yield while earlier matches lose access, change words
+    // or expire. Validate every match again synchronously before returning ids.
+    const current = matches.filter(({ item, state, metadata: byMetadata }) => {
+      if (JSON.stringify(this.current(viewer, item.id)) !== JSON.stringify(item)) return false;
+      if (byMetadata) return metadata(item);
+      if (!state) return true;
+      const after = privateState(item), message = after.message;
+      return JSON.stringify(after) === JSON.stringify(state) && !!message?.words && !!message.keepUntil
+        && Number.isInteger(after.keep) && after.keep >= 1 && after.keep <= 14
+        && message.keepUntil > this.now() && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
+    });
+    return current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50)).map(({ item }) => item);
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
@@ -114,7 +158,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     resolve: (_row, args, context) => service.results(context.viewer, args.limit),
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
-    args: { state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
-    resolve: (_row, args, context) => service.list(context.viewer, args),
+    args: { search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
+    resolve: (_row, args, context) => args.search === undefined ? service.list(context.viewer, args) : service.search(context.viewer, args),
   } };
 }
