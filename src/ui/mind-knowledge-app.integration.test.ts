@@ -75,25 +75,47 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       const link=document.querySelector('article a[href="https://loom.invalid/knowledge/clock-tempo"]');
       const trace:string[]=[];
       (window as unknown as {knowledgeClickTrace:string[]}).knowledgeClickTrace=trace;
-      const snapshot=(type:string,event:Event)=>{
-        if(trace.length>=32)return;
-        const target=event.target instanceof Element ? event.target : null;
-        const rect=link?.getBoundingClientRect();
-        const reader=link?.closest('.loom-split__reader');
-        const point=event instanceof MouseEvent ? [event.clientX,event.clientY] : undefined;
-        // Geometry and fixed role flags only: never retain text, URLs or HTML.
-        trace.push(JSON.stringify({type,citation:target?.closest('a')===link,
-          connected:!!link?.isConnected,prevented:event.defaultPrevented,
-          target:target===reader?'reader':target?.closest('.loom-prose')?'prose':target?.closest('article')?'article':'other',
-          point,rect:rect?[rect.x,rect.y,rect.width,rect.height]:null,
-          readerScroll:reader?.scrollTop,pageScroll:scrollY,
-          focused:document.activeElement===link}));
+      const tile=link?.closest('[data-tile]'),reader=link?.closest('.loom-split__reader');
+      const header=link?.closest('article')?.querySelector('header');
+      let complete=false;
+      const geometry=(element:Element|null|undefined)=>{
+        const r=element?.getBoundingClientRect();return r?[r.x,r.y,r.width,r.height]:null;
       };
-      for(const type of ['pointerdown','mousedown','focusin','pointerup','mouseup','click','scroll']){
-        document.addEventListener(type,event=>{
+      const snapshot=(type:string,event?:Event)=>{
+        if(complete||trace.length>=32)return;
+        const target=event?.target instanceof Element?event.target:null;
+        const look=document.documentElement.dataset.look;
+        // Capture before/hover geometry, ancestor scroll, header row heights and
+        // font readiness. Link focus and tile focus are separate fixed flags.
+        trace.push(JSON.stringify({type,citation:target?.closest('a')===link,
+          connected:!!link?.isConnected,prevented:event?.defaultPrevented??false,
+          target:target===reader?'reader':target?.closest('.loom-prose')?'prose':target?.closest('article')?'article':'other',
+          point:event instanceof MouseEvent?[event.clientX,event.clientY]:undefined,rect:geometry(link),
+          readerScroll:reader?.scrollTop,pageScroll:scrollY,
+          focused:document.activeElement===link,tileFocused:tile?.hasAttribute('data-focused')??false,
+          fontsReady:document.fonts.status==='loaded',look:['neon','lowlight','daylight'].includes(look??'')?look:'other',
+          header:geometry(header),paragraphs:[...header?.querySelectorAll('p')??[]].map(geometry),
+          ancestors:['.loom-split__reader','.loom-split','.next-page','.next-tile','.next-ground'].map(selector=>{
+            const element=link?.closest(selector);return {rect:geometry(element),scroll:element?[element.scrollLeft,element.scrollTop]:null};
+          })}));
+      };
+      const observer=new MutationObserver(()=>snapshot('header mutation'));
+      if(header)observer.observe(header,{subtree:true,childList:true,characterData:true});
+      const fonts=()=>snapshot('fonts loaded');document.fonts.addEventListener('loadingdone',fonts);
+      const listeners:{type:string;handler:(event:Event)=>void}[]=[];
+      snapshot('before click');
+      for(const type of ['pointerover','pointermove','pointerdown','mousedown','focusin','pointerup','mouseup','click','scroll']){
+        const handler=(event:Event)=>{
           snapshot(type,event);
-          if(type==='click'||type==='pointerdown')queueMicrotask(()=>snapshot(`after ${type}`,event));
-        },{capture:true});
+          if(type==='click'||type==='pointerdown')queueMicrotask(()=>{
+            snapshot(`after ${type}`,event);
+            if(type==='click'){
+              complete=true;observer.disconnect();document.fonts.removeEventListener('loadingdone',fonts);
+              for(const listener of listeners)document.removeEventListener(listener.type,listener.handler,true);
+            }
+          });
+        };
+        listeners.push({type,handler});document.addEventListener(type,handler,{capture:true});
       }
     });
     await b.locator('article a[href^="https://loom.invalid/knowledge/"]').click();
