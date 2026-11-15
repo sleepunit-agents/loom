@@ -1,3 +1,4 @@
+import { isRetiredMcpTool } from './offers.js';
 import type { KnowledgeSelection, MemorySelection } from './config.js';
 import type { PeopleSelection } from './tools/person.js';
 import { IDENTITY_SECTIONS } from './identity/sections.js';
@@ -566,6 +567,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   );
 
   for (const t of config.tools ?? []) {
+    if (isRetiredMcpTool(t.name)) continue;
     // A name already registered (core's own, should one ever slip past install's check) is left out, never the session.
     try { server.registerTool(
       t.name,

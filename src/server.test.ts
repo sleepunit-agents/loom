@@ -37,6 +37,13 @@ describe('createLoomServer', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+it('never advertises retired Comms names even when a piece descriptor supplies them directly',async()=>{
+ const {server}=createLoomServer({...makeConfig(tmpDir),tools:['comms_title','comms_thread'].map(name=>({name,description:'Retired fixture',inputSchema:{type:'object'},call:async()=>({text:'Must never be offered'})}))});
+ const client=new Client({name:'retired-comms',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();
+ try{await server.connect(a);await client.connect(b);const names=(await client.listTools()).tools.map(tool=>tool.name);expect(names).not.toContain('comms_title');expect(names).not.toContain('comms_thread');}
+ finally{await client.close();await server.close();}
+});
+
   it('creates a server without errors', () => {
     const config = makeConfig(tmpDir);
     const { server } = createLoomServer(config);
@@ -450,3 +457,4 @@ describe('createLoomServer — person cards over MCP', () => {
     }
   });
 });
+
