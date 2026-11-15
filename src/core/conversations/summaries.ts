@@ -44,7 +44,7 @@ export class ConversationSummaries {
     const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
     const retained = (row: ReturnType<typeof latest>, days: number) => !!row?.words && !!row.keepUntil
       && Number.isInteger(days) && days >= 1 && days <= 14
-      && row.keepUntil > this.now() && Date.parse(row.at) + days * 86400000 > Date.parse(this.now());
+      && Date.parse(row.keepUntil) > Date.parse(this.now()) && Date.parse(row.at) + days * 86400000 > Date.parse(this.now());
     const row = latest(), days = keepDays();
     if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
