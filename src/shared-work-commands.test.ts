@@ -23,13 +23,14 @@ function fixture(install = true, permissive = false) {
   db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
   db.insert(tokens).values({ fingerprint: hash(token), label: 'Sam', kind: 'owner', member: 'sam', createdAt: at }).run();
   db.insert(sessions).values({ id: hash(cookie), token: hash(token), device: 'Browser', via: 'token', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
+  const restrictions = {approval:true,change:true};
   const scope = (row: Approval): RecordScope => ({ type: 'approval', agent: row.agent, project: row.project ?? undefined, member: row.member ?? undefined });
   // Optional fixture restrictions cannot broaden the built-in current-owner rule.
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {},
     approvedOperations: new Map([['fixture.change', () => {}]]),
     workAnswerAuthority: install ? {
-      approval: (viewer, row) => permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household'),
-      change: (viewer, row, approval) => permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household'),
+      approval: (viewer, row) => restrictions.approval && (permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household')),
+      change: (viewer, row, approval) => restrictions.change && (permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household')),
     } : undefined,
   });
   cleanup.push(() => root.close());
@@ -37,7 +38,7 @@ function fixture(install = true, permissive = false) {
   const send = (piece: string, input: unknown, id = 'answer') => root.http.request(`http://loom/api/${piece}/answer`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ input, id }) });
   const seedChange = () => db.insert(changes).values({ id: changeId, repository: 'house/pond', number: 1, title: 'Pump', body: '', url: 'https://github.com/house/pond/pull/1', state: 'open', draft: false, authorLogin: 'art', project: 'pond', agent: 'art', branch: 'pump', headCommit: head, baseBranch: 'next', checks: 'passing', review: 'approved', mergeable: 'yes', waitingOn: 'you', openedAt: at, updatedAt: at }).onConflictDoNothing().run();
   seedChange();
-  return { db, root, request, send, seedChange };
+  return { db, root, request, send, seedChange, restrictions };
 }
 
 it('installs the current-owner answer rule without custom authority callbacks', async () => {
@@ -188,4 +189,21 @@ it('keeps non-merge approvals independent of the Changes cache', async () => {
   f.root.writes.run(() => f.db.delete(changes).run());
   expect((await f.send('approvals', { id: request.id, answer: 'allow' })).status).toBe(200);
   expect(f.root.services.approvals.get(request.id)).toMatchObject({ state: 'allowed', decidedBy: 'sam' });
+});
+
+it('honors restrictive approval and change callbacks for fresh answers and cached replay through both merge doors', async () => {
+  for (const piece of ['approvals','changes']) for (const gate of ['approval','change'] as const) {
+    const f = fixture(true,true), request = f.request();
+    const input = piece === 'approvals' ? {id:request.id,answer:'allow'} : {id:changeId,head,approval:request.id,answer:'yes'};
+    f.restrictions[gate] = false;
+    expect((await f.send(piece,input,'restricted-fresh')).status).toBe(403);
+    expect(f.db.select().from(operationResults).all()).toEqual([]);
+    f.restrictions[gate] = true;
+    expect((await f.send(piece,input,'confirmed')).status).toBe(200);
+    const receipts = f.db.select().from(operationResults).all();
+    f.restrictions[gate] = false;
+    expect((await f.send(piece,input,'confirmed')).status).toBe(403);
+    expect((await f.send(piece,input,'restricted-after-confirmation')).status).toBe(403);
+    expect(f.db.select().from(operationResults).all()).toEqual(receipts);
+  }
 });
