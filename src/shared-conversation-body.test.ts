@@ -28,10 +28,10 @@ it('records actual body turns and encrypted digest questions through the mounted
  const f=await fixture();const turn={kind:'reply',model:'ACTUAL MODEL',outcome:'answered',latencyMs:12};
  for(const credential of [raw.member,raw.agent,raw.runner])expect((await f.call('turn',turn,'denied-'+credential[0],credential)).status).toBe(403);
  expect((await f.call('turn',{...turn,conversation:f.thread.conversation},'forged')).status).toBe(400);expect(f.db.select().from(s.operationResults).all()).toEqual([]);
- expect((await f.call('turn',turn,'turn')).status).toBe(200);expect((await f.call('turn',turn,'turn')).status).toBe(200);
+ expect(await (await f.call('turn',turn,'turn')).json()).toEqual({ok:true,value:{saved:true,conversation:f.thread.conversation,seq:1}});expect((await f.call('turn',turn,'turn')).status).toBe(200);
  expect(f.db.select().from(s.turns).all()).toMatchObject([{conversation:f.thread.conversation,seq:1,fromKind:'agent',fromId:'art',run:'job',model:'ACTUAL MODEL',latencyMs:12}]);
  const input={summary:'Picked a pump',items:[{kind:'task',text:'t-fixture'}],question:{to:'alice',answers:'yes-no',words:'PRIVATE QUESTION',ifYes:'PRIVATE YES',ifNo:'PRIVATE NO'}};
- expect((await f.call('digest',input,'digest')).status).toBe(200);expect((await f.call('digest',input,'digest')).status).toBe(200);expect(f.db.select().from(s.digests).all()).toMatchObject([{run:'job',revision:1,summary:'Picked a pump'}]);
+ const response=await (await f.call('digest',input,'digest')).json();const dg=f.db.select().from(s.digests).get()!;expect(response).toEqual({ok:true,value:{saved:true,digest:dg.id,revision:1,item:dg.inboxItem}});expect((await f.call('digest',input,'digest')).status).toBe(200);expect(f.db.select().from(s.turns).all()[1]).toMatchObject({fromKind:'agent',fromId:'art',run:'job'});expect(f.db.select().from(s.digests).all()).toMatchObject([{run:'job',revision:1,summary:'Picked a pump'}]);
  const old=f.db.select().from(s.digests).get()!.inboxItem!;
  expect((await f.call('digest',{...input,summary:'Revised'},'rewrite')).status).toBe(200);expect(f.db.select().from(s.digests).get()?.revision).toBe(2);expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,old)).get()?.state).toBe('resolved');
  expect(JSON.stringify(f.db.select().from(s.inbox).all())).not.toContain('PRIVATE');expect(JSON.stringify(f.db.select().from(s.operationResults).all())).not.toContain('PRIVATE');expect((await f.root.services.comms!.words(f.thread.id,1))).toContain('PRIVATE QUESTION');
@@ -65,4 +65,17 @@ it('reports a memberless conversation through its assigned body without borrowin
  const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,venue:'wake'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null}).where(eq(s.jobs.id,'job')).run();});
  expect((await f.call('turn',{kind:'note'},'public-turn')).status).toBe(200);expect((await f.call('digest',{summary:'Public scheduled work'},'public-digest')).status).toBe(200);
  expect(f.db.select().from(s.turns).get()).toMatchObject({conversation:f.thread.conversation,run:'job',fromId:'art'});expect(f.db.select().from(s.digests).get()).toMatchObject({run:'job',summary:'Public scheduled work',inboxItem:null});
+});
+it('keeps successive jobs in the same conversation on independent digest revisions',async()=>{
+ const f=await fixture();const question={to:'alice',answers:'words',words:'PRIVATE RUN QUESTION'};
+ expect((await f.call('digest',{summary:'First',question},'run1')).status).toBe(200);const first=f.db.select().from(s.digests).get()!,job=f.db.select().from(s.jobs).get()!;
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run();f.db.insert(s.jobs).values({...job,id:'job2'}).run();f.db.update(s.conversations).set({job:'job2'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.tokens).set({job:'job2'}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();});
+ expect((await f.call('digest',{summary:'Second',question},'run2')).status).toBe(200);expect(f.db.select().from(s.digests).all()).toMatchObject([{run:'job',revision:1,summary:'First'},{run:'job2',revision:1,summary:'Second'}]);
+ expect((await f.call('digest',{summary:'Second revised'},'run2-rewrite')).status).toBe(200);expect(f.db.select().from(s.digests).all()).toMatchObject([{run:'job',revision:1,summary:'First'},{run:'job2',revision:2,summary:'Second revised'}]);
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,first.inboxItem!)).get()?.state).toBe('waiting');expect(f.db.select().from(s.turns).all()).toMatchObject([{run:'job'},{run:'job2'}]);
+});
+it('records a public digest question as a wordless turn of the authenticated run',async()=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,venue:'wake'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null}).where(eq(s.jobs.id,'job')).run();});
+ const response=await f.call('digest',{summary:'Project work',question:{to:'alice',answers:'yes-no',words:'Proceed with the public plan?'}},'public-question');expect(response.status).toBe(200);
+ expect(f.db.select().from(s.turns).all()).toMatchObject([{conversation:f.thread.conversation,run:'job',kind:'note',fromKind:'agent',fromId:'art'}]);expect(f.db.select().from(s.conversationPeople).all()).toEqual([{conversation:f.thread.conversation,whoKind:'agent',who:'art'}]);
 });

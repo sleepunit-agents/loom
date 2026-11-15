@@ -90,7 +90,7 @@ export class CommsMessages {
     return (await this.prepareAsk(threadId, agent, clientId, question))();
   }
 
-  async prepareAsk(threadId: string, agent: string, clientId: string, question: PrivateQuestion): Promise<() => Message> {
+  async prepareAsk(threadId: string, agent: string, clientId: string, question: PrivateQuestion, run?: string): Promise<() => Message> {
     question = { ...question, refs: question.refs ? [...question.refs] : undefined };
     const { cv } = this.context(threadId);
     if (agent !== cv.agent || !cv.member) throw new Error('Agent differs from private thread');
@@ -104,7 +104,7 @@ export class CommsMessages {
       if (agent !== cv.agent || !cv.member) throw new Error('Agent differs from private thread');
       const retry = this.retry(threadId, agent, clientId);
       if (retry) return retry;
-      const row = this.append({ thread: threadId, sender: agent, kind: 'ask', clientId, words }, refs);
+      const row = this.append({ thread: threadId, sender: agent, kind: 'ask', clientId, words, run }, refs);
       return this.attach(row, this.threads.conversations.send({ toKind: 'person', to: cv.member!, conversation: cv.id,
         source: 'thread', sourceId: `${threadId}:${row.seq}`, fromKind: 'agent', fromId: agent,
         answers: question.answers, waitsOnKind: question.waitsOnKind, waitsOnId: question.waitsOnId, thread: threadId, messageSeq: row.seq, refs }));
@@ -137,7 +137,7 @@ export class CommsMessages {
       ifYes: question.ifYes ?? undefined, ifNo: question.ifNo ?? undefined, link: question.link ?? undefined,
       waitsOnKind: question.waitsOnKind === 'task' || question.waitsOnKind === 'approval' ? question.waitsOnKind : undefined,
       waitsOnId: question.waitsOnId ?? undefined, refs: question.refs,
-    });
+    }, input.run);
     return () => this.db.transaction(() => {
       validate();
       const message = ask();
