@@ -13,8 +13,8 @@ function homeFixture() {
  })}}};
 }
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['attention.ownedAgent']);return useMemo(()=>document.includes('DeskHomeComms')?homeFixture():({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots.thread,f.snapshots['attention.ownedAgent'],document]);}}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['thread','attention.agent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.call}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['attention.ownedAgent']);return useMemo(()=>document.includes('DeskHomeComms')?homeFixture():({status:f.snapshots['attention.ownedAgent'].status,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots.thread,f.snapshots['attention.ownedAgent'],document]);}}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['thread','attention.agent','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.call}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import AgentApp from './agent';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;

@@ -1,23 +1,24 @@
 import { useMemo } from 'react';
-import { useRecords, type Snapshot } from '../../data';
+import type { Snapshot } from '../../data';
 import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import type { OwnedAgent } from './home-model';
 
-/** Visible agents include project colleagues. Ownership is a separate fact:
- * until the generated ownership projection is composed, intersect the existing
- * owned roster with current generated rows, never turn directory access into ownership. */
-export const deskRosterQuery = `query DeskRoster { agents { id position } }`;
-export type DeskRosterData = { agents: { id: string; position: number }[] };
-export function deskRoster(owned: Snapshot<OwnedAgent>, query: DataQuerySnapshot<DeskRosterData>): Snapshot<OwnedAgent> {
-  if (owned.status !== 'live') return { status: owned.status, records: [] };
+/** Directory visibility includes colleagues; only current memberAgents-owned
+ * IDs from the authenticated mailbox projection become owned cards. */
+export const deskRosterQuery = `query DeskRoster {
+  homeComms { member agents }
+  agents { id position }
+}`;
+export type DeskRosterData = { homeComms: { member: string; agents: string[] } | null; agents: { id: string; position: number }[] };
+export function deskRoster(query: DataQuerySnapshot<DeskRosterData>): Snapshot<OwnedAgent> {
   if (query.status !== 'live') return { status: query.status, records: [] };
   if (!query.data) return { status: 'loading', records: [] };
-  const positions = new Map(query.data.agents.map(agent => [agent.id, agent.position]));
-  return { status: 'live', records: owned.records.filter(agent => positions.has(agent.id))
-    .map(agent => ({ ...agent, position: positions.get(agent.id)! })) };
+  if (!query.data.homeComms) return { status: 'denied', records: [] };
+  const owned = new Set(query.data.homeComms.agents);
+  return { status: 'live', records: query.data.agents.filter(agent => owned.has(agent.id))
+    .map(agent => ({ ...agent, name: agent.id.replace(/^./, c => c.toUpperCase()) })) };
 }
 export function useDeskRoster(): Snapshot<OwnedAgent> {
-  const owned = useRecords<OwnedAgent>('attention.ownedAgent');
   const query = useDataQuery<DeskRosterData>(deskRosterQuery);
-  return useMemo(() => deskRoster(owned, query), [owned, query]);
+  return useMemo(() => deskRoster(query), [query]);
 }
