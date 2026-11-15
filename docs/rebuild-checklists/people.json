@@ -118,6 +118,24 @@
         "app": "Household setup",
         "contains": []
       }
+    },
+    {
+      "id": "people-022",
+      "promise": "Adding a household member through the normal built program persists that member.",
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "action",
+        "app": "Household setup"
+      }
+    },
+    {
+      "id": "people-023",
+      "promise": "Creating a project through the normal built program persists its member list.",
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "action",
+        "app": "Project sharing"
+      }
     }
   ],
   "modelTables": [
