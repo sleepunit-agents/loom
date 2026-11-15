@@ -2,7 +2,7 @@ import { statement } from '../../core/db/index.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { mayAct, maySee, type Db, type Live, type LiveRecord, type Operations, type Sharing, type Viewer } from '../../core/index.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 import type { Ask } from './role.js';
 interface ReadMark { id: string; ask: string; member: string; readAt: number }
 const markId = (member: string, ask: string) => `read-${createHash('sha256').update(JSON.stringify([member, ask])).digest('hex')}`;

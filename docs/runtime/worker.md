@@ -362,6 +362,23 @@ agent. The command checks this against current ownership. An existing explicit
 non-lending row cannot authorize a foreign agent after ownership changes. Remove
 an agent from the explicit list to withdraw that permission.
 
+## Command discovery inside a receiving body
+
+The current body can call `POST /api/runtime/commandCatalog` with the ordinary
+`{input}` envelope. Empty input lists code-defined HTTP command names and write
+flags; `{name:"conversation.status"}` returns that command's structural JSON
+input schema from its registered Zod definition. Input transforms and refinements
+remain enforced by the actual command; the structural hint does not replace
+validation or imply permission to invoke it.
+
+Discovery returns no household records and invokes no discovered command. Direct-only
+operations are excluded. Bare agent, member, runner and service credentials cannot
+inspect this catalogue; the existing current conversation/body scope applies,
+including job lifetime, machine revocation, current conversation linkage and
+private ownership. A still-bound waiting body may inspect it. Calling a discovered
+command uses the normal HTTP operation door and current permission checks; the
+catalogue grants no worker control, private read access or household authority.
+
 ## Stop while preparing a body
 
 Claiming a private Comms job marks its thread as working while the worker prepares

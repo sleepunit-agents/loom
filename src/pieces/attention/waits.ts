@@ -3,7 +3,7 @@ import { statement } from '../../core/db/index.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { mayAct, maySee, operation as coreOperation, OperationError, type Db, type Operations, type Sharing, type Viewer, type Context } from '../../core/index.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 import type { Ask } from './role.js';
 
 export interface AttentionWaits {

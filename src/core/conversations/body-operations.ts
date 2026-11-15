@@ -9,9 +9,10 @@ import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
-import { members, turns } from '../data/schema.js';
+import { turns } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
-export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean): void {
+export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent:string;member:string|null;project:string|null}>,question:Readonly<{to:string;waitsOnKind?:'task'|'approval';waitsOnId?:string}>)=>boolean;
+export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
  registerConversationBodyOutput(operations,service,proof,privateAssignment);
  const conversationsService=service.threads.conversations,db=service.db;
@@ -39,11 +40,11 @@ export function registerConversationBodyOperations(operations:Operations, servic
   may(viewer,input){const found=current(viewer);return !!found&&input.items.every(id=>{try{const item=conversationsService.item(id);return item.conversation===found.cv.id&&item.toKind==='agent'&&item.to===found.cv.agent&&item.job===found.job.id&&['taken','done'].includes(item.state)&&sameMailScope(item,found.cv);}catch{return false;}});},
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items){mail.confirm(cv.id,job.id,id);ctx.changed('inbox',id);}ctx.changed('messages',cv.id);return {saved:true as const};},
  }));
- const question=z.object({to:z.string().min(1),answers:z.enum(['yes-no','words']),words:z.string().min(1).max(100_000),why:z.string().max(100_000).optional(),ifYes:z.string().max(100_000).optional(),ifNo:z.string().max(100_000).optional(),link:z.string().max(2000).optional(),waitsOnKind:z.enum(['approval','task']).optional(),waitsOnId:z.string().min(1).optional(),refs:z.array(z.string().min(1)).max(100).optional()}).strict();
+ const question=z.object({to:z.string().min(1),answers:z.enum(['yes-no','words']),words:z.string().min(1).max(100_000),why:z.string().max(100_000).optional(),ifYes:z.string().max(100_000).optional(),ifNo:z.string().max(100_000).optional(),link:z.string().max(2000).optional(),waitsOnKind:z.enum(['approval','task']).optional(),waitsOnId:z.string().min(1).optional(),refs:z.array(z.string().min(1)).max(100).optional()}).strict().refine(q=>!!q.waitsOnKind===!!q.waitsOnId,'Use both wait-on kind and id');
  operations.register(operation({...common,name:'conversation.digest',
   input:z.object({summary:z.string().max(600),items:z.array(z.object({kind:z.enum(['decision','ask','task','project']),text:z.string().min(1).max(2000)}).strict()).max(100).optional(),question:question.optional()}).strict(),
   output:z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),
-  may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||found.cv.venue==='loom')&&(!found.cv.member||input.question.to===found.cv.member)&&!!db.select({id:members.id}).from(members).where(eq(members.id,input.question.to)).get());},
+  may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||found.cv.venue==='loom')&&(!found.cv.member||input.question.to===found.cv.member)&&questionAllowed?.(viewer,found.cv,input.question)===true);},
   async prepare(input,ctx){const {job,cv}=requireCurrent(ctx.viewer);return service.prepareDigest({conversation:cv.id,run:job.id,...input});},
   run(ctx,_input,prepared){const {cv}=requireCurrent(ctx.viewer);const digest=(prepared as Awaited<ReturnType<CommsMessages['prepareDigest']>>)();ctx.changed('digests',digest.id);if(digest.inboxItem)ctx.changed('inbox',digest.inboxItem);ctx.changed('conversations',cv.id);return {saved:true as const,digest:digest.id,revision:digest.revision,item:digest.inboxItem};},
  }));
