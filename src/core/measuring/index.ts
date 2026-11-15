@@ -50,7 +50,7 @@ export async function createMeasuring(
 ): Promise<Measuring> {
   if (!settings.on) return off;
   const keepDays = settings.keep_days;
-  if (!Number.isInteger(keepDays) || keepDays < 1 || keepDays > 3650) throw new Error('keep_days must be 1–3650');
+  if (!Number.isInteger(keepDays) || keepDays < 0 || keepDays > 3650 || (keepDays === 0 && (!settings.send_outside || store))) throw new Error('keep_days must be 0–3650, with at least one day for local history');
   if (targets.length > 2048 || targets.some(t =>
     !['request', 'operation', 'job'].includes(t.kind) || !/^[a-zA-Z][a-zA-Z0-9_.:-]{0,119}$/.test(t.name)))
     throw new Error('Measuring needs a bounded inventory of code-defined names');

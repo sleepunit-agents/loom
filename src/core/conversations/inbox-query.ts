@@ -32,6 +32,12 @@ export class InboxQueries {
     return this.db.select().from(inbox).where(and(eq(inbox.id, id), this.allowed(viewer))).get();
   }
   item(viewer: Viewer, id: string): Item | null { return this.current(viewer, id) ?? null; }
+  canAnswer(viewer: Viewer, id: string): boolean {
+    const item = this.current(viewer, id);
+    return viewer.kind === 'member' && !!item && item.toKind === 'person' && item.to === viewer.id
+      && item.state === 'waiting' && !!item.answers && !item.waitsOnKind
+      && !['task','approval','secret-request'].includes(item.source);
+  }
   list(viewer: Viewer, filter: InboxFilter = {}): Item[] {
     const { limit = 50, offset = 0 } = filter;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0 || offset > 10000) throw new Error('Invalid Inbox page');
@@ -229,6 +235,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     answerText: { type: GraphQLString, resolve: (row, _args, context) => service.answerText(context.viewer, row.id, until => keepReadUntil(context, until)) },
     body: { type: body, resolve: (row, _args, context) => service.body(context.viewer, row.id, until => keepReadUntil(context, until)) },
     refs: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))), resolve: (row, _args, context) => service.refs(context.viewer, row.id) },
+    canAnswer: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.canAnswer(context.viewer, row.id) },
     read: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.read(context.viewer, row.id) },
   } });
   const result = new GraphQLObjectType({ name: 'InboxActionResult', fields: {

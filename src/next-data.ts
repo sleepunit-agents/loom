@@ -13,7 +13,7 @@ import type { DataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
 import { dataHttp, withQueryFields } from './core/data/http.js';
 import type { memoryQueryFields } from './transport/memory-queries.js';
-import { DataLive } from './core/data/live.js';
+import { DataLive, type MeasureRead } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
@@ -21,9 +21,10 @@ import { workVisibility } from './core/data/work-visibility.js';
 import { tempoVisibility } from './core/tempo/visibility.js';
 import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
+import { measuringVisibility } from './core/measuring/visibility.js';
 import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>) {
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
@@ -31,7 +32,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     const auth = resolve(request);
     return auth && { ...auth, valid: () => admitted() && auth.valid() && accounts.valid(auth.viewer) };
   };
-  const live = new DataLive();
+  const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
   let activityRead = false;
   const ownFields = { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
@@ -47,13 +48,16 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     if (at !== undefined) cancelDeadline = clock.at(at, () => { live.changed(); schedule(); });
   };
   // Start deadline scans only after an actual activity selection succeeds.
+
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents', 'agentStatus', 'triggers', 'triggerLog', 'agentPauses',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables, ...conversationTables],
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables, ...conversationTables,
+      'timingDays', 'measuringSettings'],
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer), ...tempoVisibility(viewer),
+      ...measuringVisibility(viewer),
       // Status has the same scope as its agent; keep the existing current SQL policy.
       agentStatus: fields => taskVisibility(viewer).agents!({ id: fields.agent }),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
@@ -63,7 +67,8 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     // Reuse its canonical SQL rather than maintain another sharing policy.
     ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
   });
-  const socket = dataSocket({ live, clock, originAllowed,
+  const socket = dataSocket({ live, clock, originAllowed, measure,
+
     authenticate(request) {
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {
@@ -83,6 +88,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     http,
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
+    timingsChanged() { live.timingsChanged(); },
     writes,
     close() {
       if (closing) return closing;

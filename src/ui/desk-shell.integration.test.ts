@@ -1,6 +1,6 @@
 /** The shipped desk on the actual shared HTTP/socket listener; CI owns Chromium.
- * Query contributors are real SQL readers passed through the root's public
- * composition seam. No legacy home, JSON records, copied app or route feeds. */
+ * Production root composition owns the readers and lifetime. No legacy home,
+ * JSON records, copied app or route feeds. */
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
@@ -12,11 +12,7 @@ import {generateX25519Identity} from 'age-encryption';
 import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
 import {agents,agentStatus,household,members,memberAgents,tokens,jobs} from '../core/data/schema.js';
-import {workVisibility} from '../core/data/work-visibility.js';
 import {CommsMessages} from '../core/conversations/messages.js';
-import {CommsQueries,commsQueryFields} from '../core/conversations/comms-query.js';
-import {InboxQueries,inboxQueryFields} from '../core/conversations/inbox-query.js';
-import {ConversationSummaries,conversationSummaryFields} from '../core/conversations/summaries.js';
 import {wordsKey} from '../pieces/comms/crypto.js';
 import {serveShared} from '../shared-serve.js';
 import {storeDeskSprite} from '../desk-sprites.js';
@@ -40,10 +36,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  const thread=messages.threads.open({member:'owner',agent:'art',title:'Desk fixture conversation'});
  await messages.send({thread:thread.id,sender:'art',kind:'reply',words:'The shared desk reader is ready.'});
  const question=await messages.ask(thread.id,'art','desk-question',{words:'OK to run the backup now?',why:'A disposable browser fixture question.',answers:'yes-no'});
- // Existing source policy and readers, rather than hand-written fixture results.
- const policy:ConstructorParameters<typeof CommsQueries>[2]=(viewer,fields)=>workVisibility(viewer).approvals!(fields);
- const fields={...commsQueryFields(new CommsQueries(db,key,policy,now)),...inboxQueryFields(new InboxQueries(db,key,policy,now)),...conversationSummaryFields(new ConversationSummaries(db,key,now))};
- const app=await serveShared({db,clock,webRoot,fields,originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
+ const app=await serveShared({db,clock,webRoot,commsKey:key,originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -105,7 +98,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.locator('.next-preferences summary').click();
     await b.getByText('The shared desk reader is ready.',{exact:true}).scrollIntoViewIfNeeded();
     await b.screenshot({path:join(shots,`new-home-answer-${look}-${width}.png`),animations:'disabled'});
-    const first=b.getByRole('list',{name:'First waiting item',exact:true});
+    const first=b.getByRole('group',{name:'First waiting item',exact:true});
     await first.getByRole('button').click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/inbox-preview/ask/'+encodeURIComponent(question.inboxItem!));
     await expect.poll(()=>b.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBeGreaterThan(0);

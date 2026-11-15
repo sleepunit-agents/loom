@@ -24,6 +24,11 @@ export class BridgeSettings {
     case 'connection':{
      if(input.platform==='slack'&&!input.appSecret)throw Error('Slack app secret required');
      if(input.platform==='discord'&&input.appSecret)throw Error('Discord app secret unsupported');
+     const existing=this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,input.id)).get();
+     // Retained frames and history belong to one bot/workspace/agent identity.
+     // Credential names, filters and enablement may change; a new identity needs
+     // a new connection rather than reinterpretation of old private receipts.
+     if(existing&&(['platform','workspace','botUser','agent'] as const).some(key=>existing[key]!==input[key]))throw Error('Connection identity is fixed');
      const {action:_action,only,ignore,...config}=input;
      const fields={...config,state:'disconnected' as const,stateAt:this.now()};
      // Every edit retires the prior socket/config lifetime before reconnect.
