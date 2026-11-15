@@ -34,8 +34,8 @@ and also before the first completed span of a new UTC day. Closing cancels
 the timer. Disabled and outside-only instances schedule no retention work. Storage failures are reported through a payload-free callback and do
 not change the outcome of application work.
 
-Choices where the page is silent: 90 days by default, configurable from 1 to
-3650; at most 2048 registered code names; arithmetic mean for typical;
+Choices where the page is silent: 90 days by default, configurable from 0 to
+3650 (zero selects outside-only, requiring an enabled outside destination); at most 2048 registered code names; arithmetic mean for typical;
 HTTP/protobuf for outside export. The configured address is the full OTLP
 traces URL (usually ending in `/v1/traces`). No outside exporter is created
 unless explicitly enabled with an address. Export batches and queue are

@@ -36,6 +36,8 @@ it('next installs approvals without a fixture installer and persists guarded dec
     principal: 'owner', conversation: 'cv-123456789abc', project: 'pond' };
   try {
     expect(loom.operations.has('approvals.list')).toBe(true);
+    expect(loom.db.prepare("SELECT name FROM sqlite_schema WHERE name IN ('measuring_settings','timing_days')").all()).toEqual([]);
+    expect(loom.operations.has('measuring.propose')).toBe(false);
     const requested = await call('request', ask, 'art', 'request-once');
     expect(requested).toMatchObject({ ok: true, value: { state: 'pending', for: '?', who: { agent: 'art' } } });
     const card = requested.value;
@@ -47,6 +49,7 @@ it('next installs approvals without a fixture installer and persists guarded dec
     expect(await call('use', { id: card.id, kind: 'merge', target }, 'art', 'spend-once')).toMatchObject({ ok: true, value: { state: 'used' } });
     expect(await call('use', { id: card.id, kind: 'merge', target }, 'art', 'spend-once')).toMatchObject({ ok: true, value: { state: 'used' } });
     await loom.close(); loom = await startLoom(options);
+    expect(loom.db.prepare("SELECT name FROM sqlite_schema WHERE name IN ('measuring_settings','timing_days')").all()).toEqual([]);
     expect(await call('history', {}, 'jonathan')).toMatchObject({ ok: true, value: { approvals: [{ id: card.id, state: 'used' }] } });
     expect(await call('use', { id: card.id, kind: 'merge', target })).toMatchObject({ ok: false, code: 'denied' });
     const grant = await call('request', { kind: 'grant', target: 'tasks:art', ask: 'Give Art access to Tasks?', why: 'Work needs Tasks.', if_yes: 'I grant access.', if_no: 'Access stays unchanged.' });
@@ -228,7 +231,7 @@ it('next serves real PWA files and rejects missing resources instead of returnin
 
 it('mounts shared-credential GraphQL HTTP and websocket doors in the next listener', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-next-data-'));
-  const token = 'shared-root-token-'.repeat(4), at = '2026-11-12T00:00:00.000Z';
+  const token = 'shared-root-token-'.repeat(4), agentToken=token+'agent', at = '2026-11-12T00:00:00.000Z';
   const clock = new FakeClock(), expiry = clock.now()+3600000;
   let credentialTimer = false, databaseClosed = false;
   const schedule = clock.at.bind(clock);
@@ -244,6 +247,8 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
       app.db.exec(readFileSync(new URL('../assets/data/schema.sql', import.meta.url), 'utf8'));
       app.db.prepare('INSERT INTO members (id,role,joined_at) VALUES (?,?,?)').run('sam','owner',at);
       app.db.prepare('INSERT INTO measuring_settings(singleton, "on", send_outside, outside_address, keep_days) VALUES (1,1,0,NULL,90)').run();
+      app.db.prepare("INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES('art','','#fff','#000','pebble','dot')").run();
+      app.db.prepare('INSERT INTO tokens(fingerprint,label,kind,agent,created_at) VALUES(?,?,?,?,?)').run(createHash('sha256').update(agentToken).digest('hex'),'Art','agent','art',at);
       app.db.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'Sam','owner','sam',at,new Date(expiry).toISOString());
       app.db.prepare('INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at) VALUES (?,?,?,?,?,?,?,?)').run('pump','Pump','member','sam','member','sam',at,at);
     },
@@ -259,13 +264,22 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     const measured = await timings.json() as {data:{timingDays:unknown[];measuringSettings:unknown[]}};
     expect(measured.data.measuringSettings).toEqual([{on:true}]);
     expect(measured.data.timingDays).toContainEqual(expect.objectContaining({kind:'request',name:'web',count:1}));
-    expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[],memoryKnowledge:{total:0}}});
+    const command=(authorization:string,verb:string,input:unknown,id:string)=>fetch(loom.url+'/api/measuring/'+verb,{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({input,id})});
+    const proposal={after:{on:false,send_outside:false,outside_address:'',keep_days:90},agent:'art',why:'Stop timing'};
+    expect((await command('legacy','propose',proposal,'bad')).status).toBe(401);
+    expect((await fetch(loom.url+'/api/%6deasuring/propose',{method:'POST',headers:{authorization:'legacy','content-type':'application/json'},body:JSON.stringify({input:proposal,id:'encoded'})})).status).toBe(401);
+    const proposed=await (await command('Bearer '+agentToken,'propose',proposal,'propose')).json() as {ok:boolean;value:{id:string}};
+    expect(proposed.ok).toBe(true);
+    expect(await (await command('Bearer '+token,'answer',{id:proposed.value.id,allow:true},'answer')).json()).toMatchObject({ok:true});
+    expect(loom.db.prepare('SELECT "on" FROM measuring_settings').get()).toEqual({on:0});
+
+    expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}],memoryKnowledge:{total:0}}});
     ws = new WebSocket(loom.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+token}});
     await once(ws,'open');
     const ack = once(ws,'message'); ws.send(JSON.stringify({type:'connection_init'})); await ack;
     const first = once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } approvals { id } memoryKnowledge { total } }") { revision patches { path value } } }'}}));
-    expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[],memoryKnowledge:{total:0}});
+    expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}],memoryKnowledge:{total:0}});
     expect(credentialTimer).toBe(true);
     const databaseClose = loom.db.close.bind(loom.db);
     loom.db.close = () => { expect(credentialTimer).toBe(false); databaseClosed = true; return databaseClose(); };

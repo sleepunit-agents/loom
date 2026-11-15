@@ -1250,7 +1250,7 @@ export const measuringSettings = sqliteTable('measuring_settings', {
   check('measuring_settings_singleton', sql`${t.singleton} = 1`),
   check('measuring_settings_on_boolean', sql`${t.on} in (0, 1)`),
   check('measuring_settings_send_outside_boolean', sql`${t.sendOutside} in (0, 1)`),
-  check('measuring_settings_keep_days_range', sql`${t.keepDays} between 1 and 3650`),
+  check('measuring_settings_keep_days_range', sql`${t.keepDays} between 0 and 3650`),
 ]);
 
 export const membersRelations = relations(members, ({ one, many }) => ({

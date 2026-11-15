@@ -35,7 +35,7 @@ export function measuringRuntime(
         await drained;
         if (stopped || ticket !== generation) return;
         const settings = { ...read() };
-        const replacement = await createMeasuring(settings, targets, store, report, clock);
+        const replacement = await createMeasuring(settings, targets, settings.keep_days === 0 ? undefined : store, report, clock);
         if (stopped || ticket !== generation) await replacement.close();
         else current = replacement;
       });

@@ -14,7 +14,7 @@ function Values({ value }: { value: Readonly<MeasuringSettings> }) {
     <div><dt>Measuring</dt><dd>{value.on ? 'On' : 'Off'}</dd></div>
     <div><dt>Outside monitoring tool</dt><dd>{value.send_outside ? 'Send measurements' : 'Do not send measurements'}</dd></div>
     <div><dt>Monitoring address</dt><dd className="[overflow-wrap:anywhere]">{value.outside_address || 'None'}</dd></div>
-    <div><dt>Local history</dt><dd>{value.keep_days} days</dd></div>
+    <div><dt>Local history</dt><dd>{value.keep_days === 0 ? 'No local history' : `${value.keep_days} days`}</dd></div>
   </dl>;
 }
 
@@ -74,7 +74,7 @@ function Proposal({ current, propose }: {
       <label><input type="checkbox" checked={draft.on} onChange={e => setDraft({ ...draft, on: e.target.checked })} /> Measure how long things take</label>
       <label><input type="checkbox" checked={draft.send_outside} onChange={e => setDraft({ ...draft, send_outside: e.target.checked })} /> Also send to an outside monitoring tool</label>
       <label>Monitoring address<Input type="url" value={draft.outside_address} required={draft.send_outside} onChange={e => setDraft({ ...draft, outside_address: e.target.value })} /></label>
-      <label>Days of local history<Input type="number" min={1} max={3650} step={1} required value={draft.keep_days} onChange={e => setDraft({ ...draft, keep_days: e.target.valueAsNumber })} /></label>
+      <label>Days of local history<Input type="number" min={0} max={3650} step={1} required value={draft.keep_days} onChange={e => setDraft({ ...draft, keep_days: e.target.valueAsNumber })} /></label>
       {changed && <MeasuringChange before={current} after={draft} />}
       <Button type="submit" disabled={!changed || pending || result === 'sent'}>Request approval</Button>
     </fieldset>

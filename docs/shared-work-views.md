@@ -2,7 +2,7 @@
 
 The registered Approvals and Changes tiles load `web/src/data/work-views.tsx`.
 Their selections in `work-query.ts` use the generated shared schema through
-`useDataQuery`, sharing the browser's Graphcache and `/graphql` socket. They
+`useDataQuery`, sharing the browser's existing query store and `/graphql` socket. They
 do not subscribe to the replaced approval/change record feeds.
 
 `ApprovalsApp` and `LiveApprovalCard` bind the same snapshot and validated

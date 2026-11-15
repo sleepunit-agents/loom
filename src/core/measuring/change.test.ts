@@ -9,14 +9,14 @@ it('reads persisted exact values without requiring JSON property order', () => {
 });
 it.each([
   { kind: 'command' }, { target: 'other' }, { details: '{' }, { changeSummary: null }, { changeSummary: 'A different change' },
-  ...[{}, { ...after, extra: true }, { ...after, on: 'true' }, { ...after, keep_days: 0 },
+  ...[{}, { ...after, extra: true }, { ...after, on: 'true' }, { ...after, keep_days: -1 },
     { ...after, keep_days: 1.5 }, { ...after, keep_days: 3651 },
     { ...after, outside_address: '' }, { ...after, outside_address: 'file:///tmp/traces' },
     { ...after, outside_address: 'https://user:secret@monitor.example' },
     { ...after, outside_address: 'https://monitor.example?token=secret' },
     { ...after, outside_address: 'https://monitor.example#private' },
   ].map(after => ({ details: JSON.stringify({ before, after }) })),
-  { details: JSON.stringify({ before: { ...before, keep_days: 0 }, after }) },
+  { details: JSON.stringify({ before: { ...before, keep_days: -1 }, after }) },
   { details: JSON.stringify({ before, after, extra: true }) },
 ])('declines malformed, unrelated or mismatched persisted changes: %j', patch => {
   expect(readMeasuringChange({ ...card, ...patch })).toBeUndefined();

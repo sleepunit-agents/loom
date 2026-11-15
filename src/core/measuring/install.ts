@@ -19,7 +19,7 @@ export async function installMeasuring(app: Foundation, db: DataDatabase) {
   const approvals = approvalService(db, new Map([proposals.operation]), () => new Date(app.operations.clock.now()).toISOString());
   const owner = (viewer: { kind: string; id: string }) => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner';
   app.operations.register({
-    name: 'measuring.propose', write: true, recheckPolicy: true,
+    name: 'measuring.propose', doors: ['http', 'direct'], write: true, recheckPolicy: true,
     input: z.object({ after: measuringValues, agent: z.string().min(1), conversation: z.string().min(1).optional(), why: z.string().trim().min(1) }).strict(), output: z.unknown(),
     may: (viewer, input) => !!db.select().from(agents).where(eq(agents.id, input.agent)).get() &&
       (owner(viewer) || viewer.kind === 'agent' && viewer.id === input.agent) &&
@@ -33,7 +33,7 @@ export async function installMeasuring(app: Foundation, db: DataDatabase) {
     },
   });
   app.operations.register({
-    name: 'measuring.answer', write: true, recheckPolicy: true,
+    name: 'measuring.answer', doors: ['http', 'direct'], write: true, recheckPolicy: true,
     input: z.object({ id: z.string().min(1), allow: z.boolean() }).strict(), output: z.unknown(),
     may: viewer => owner(viewer),
     run(ctx, input) {

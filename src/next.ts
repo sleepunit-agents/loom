@@ -1,3 +1,4 @@
+import { measuringHttp } from './core/measuring/http.js';
 import { installMeasuring } from './core/measuring/install.js';
 import { nextData } from './next-data.js';
 import type { Viewer } from './core/index.js';
@@ -402,6 +403,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // The generated door uses the SAME connection and fresh shared credentials.
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+    const measuringApi = measuringHttp(app, sharedData);
     const memory=memoryQueries.get(app);
     data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields);
     memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
@@ -471,6 +473,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         if (!sameOrigin(req)) { res.writeHead(403); res.end(); return; }
         // The ephemeral credential endpoint authenticates a bearer itself. Generic
         // operation routing cannot mint a link, even with encoded path parameters.
+        let parts: string[];
+        try { parts = new URL(req.url ?? '/', 'http://localhost').pathname.split('/').map(decodeURIComponent); }
+        catch { res.writeHead(400); res.end(); return; }
+        if (parts[1] === 'api' && parts[2] === 'measuring') return measuringApi(req, res);
         if (req.url?.startsWith('/api/') && req.url.split('?')[0] !== '/api/signin/link') return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
         };

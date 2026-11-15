@@ -1,27 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { createRequest, type AnyVariables, type TypedDocumentNode } from '@urql/core';
-import type { DocumentNode } from 'graphql';
-import { browserQueryTransport, generatedDataClient } from './client';
+import { useMemo } from 'react';
+import { useQuery } from '../query';
 
 export type DataQuerySnapshot<T> = { status: 'loading' | 'live' | 'offline' | 'denied'; data?: T };
-let shared: ReturnType<typeof generatedDataClient> | undefined;
-function client() {
-  return shared ??= generatedDataClient(browserQueryTransport(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/graphql`));
-}
-/** Stable browser feed seam for every tile. Queries are against the generated
- * schema; Graphcache supplies shared normalized entities and graphql-ws shares
- * one reconnecting connection. Hide retained data as soon as a feed fails. */
-export function useDataQuery<T, V extends AnyVariables = AnyVariables>(document: DocumentNode | TypedDocumentNode<T, V> | string, variables?: V): DataQuerySnapshot<T> {
-  const request = createRequest(document, variables as V);
-  const key = request.key;
-  const stable = useMemo(() => request, [key]);
-  const [state, setState] = useState<{ key: number; snapshot: DataQuerySnapshot<T> }>({ key, snapshot: { status: 'loading' } });
-  useEffect(() => {
-    setState({ key, snapshot: { status: 'loading' } });
-    const sub = client().query<T, V>(stable.query, stable.variables as V, { requestPolicy: 'network-only' }).subscribe(result => {
-      setState({ key, snapshot: result.error ? { status: 'offline' } : result.data ? { status: 'live', data: result.data } : { status: 'loading' } });
-    });
-    return () => sub.unsubscribe();
-  }, [key, stable]);
-  return state.key === key ? state.snapshot : { status: 'loading' };
+/** Approvals, Changes and inline cards share the window's existing query store
+ * and websocket with every other tile. No second client or cache is created. */
+export function useDataQuery<T>(query: string, variables?: Record<string, unknown>): DataQuerySnapshot<T> {
+  const selection = useMemo(() => ({ query, variables, decode: (data: Record<string, unknown>) => data as T }), [query, variables]);
+  const snapshot = useQuery(selection);
+  return { status: snapshot.status === 'error' ? 'offline' : snapshot.status,
+    data: snapshot.status === 'live' ? snapshot.data : undefined };
 }

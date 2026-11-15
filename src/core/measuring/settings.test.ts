@@ -45,7 +45,7 @@ it('refuses stale proposals and rolls its edit back with the enclosing approval 
 
 it('validates every setting before a card is issued and binds application to the exact displayed change', () => {
   const service = measuringSettingsService(db);
-  for (const patch of [{ keep_days: 0 }, { keep_days: 1.5 }, { keep_days: 3651 }, { send_outside: true },
+  for (const patch of [{ keep_days: -1 }, { keep_days: 1.5 }, { keep_days: 3651 }, { send_outside: true },
     { outside_address: 'file:///tmp/traces' }, { outside_address: 'https://user:pass@example.com' },
     { outside_address: 'https://example.com/?token=hidden' }, { outside_address: 'https://example.com/#fragment' }]) {
     expect(() => service.prepare({ ...DEFAULT_MEASURING, ...patch })).toThrow();
