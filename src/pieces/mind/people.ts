@@ -56,7 +56,8 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       const directory=sources.get('commons');
       try {
         available('commons');
-        slug=directory?resolve(directory,reference):resolve(db,reference);
+        slug=directory?resolve(directory,reference):reference;
+        if(agent)slug=resolve(db,slug);
         if(agent&&directory&&has(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at)return;}
       } catch(error) {if(allowed(viewer))throw error;slug=resolve(db,reference);}
       const row = db.prepare('SELECT slug,card_json,updated,synthesized_at,archived_at FROM people WHERE slug=? AND archived_at IS NULL').get(slug) as Row | undefined;

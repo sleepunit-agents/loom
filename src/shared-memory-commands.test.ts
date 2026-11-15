@@ -3,7 +3,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import Database,{type Database as Connection} from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {getRequestListener} from '@hono/node-server';
@@ -32,6 +32,7 @@ import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixture
 import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
 import {PeopleStore} from './backends/people.js';
+import {mergePeople} from './backends/people-merge.js';
 import * as s from './core/data/schema.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
@@ -78,6 +79,12 @@ it('authors private person and project cards through native commands, with typed
  expect(f.db.select().from(s.members).all().find(row=>row.id==='alice')?.role).toBe('member');expect(f.db.select().from(s.projectMembers).all()).toHaveLength(1);
  expect(await f.query(`{memoryPerson(id:"${projectId}"){name} memoryProject(id:"${personId}"){name}}`)).toEqual({memoryPerson:null,memoryProject:null});
  for(const value of ['friend','repair','garden-repair','PRIVATE_FRIEND','PRIVATE_REPAIR','PRIVATE_CARD_SUMMARY','PRIVATE_PROJECT_EDIT','PRIVATE_PERSON_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('reports an actual private person redirect when read through the original opaque reference',async()=>{
+ const f=await fixture(),from=await f.call('personWrite',{slug:'former-friend',name:'Former friend'},'merge-from'),into=await f.call('personWrite',{slug:'current-friend',name:'Current friend'},'merge-into');expect(from.status).toBe(200);expect(into.status).toBe(200);const opaque=from.result.value.ids[0];
+ expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug}}}`)).memoryPerson).toEqual({mergedFrom:null,card:{slug:'former-friend'}});
+ mergePeople({contextDir:dirname(f.path),agentName:'art',actor:'art',memorySelection:null,now:()=>f.clock.now()},{from:'former-friend',into:'current-friend'});
+ expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug name}}}`)).memoryPerson).toMatchObject({mergedFrom:'former-friend',card:{slug:'current-friend',name:'Current friend'}});
 });
 it('restricts card writes to the current body source and keeps card claims separate from grants',async()=>{
  const f=await fixture();
