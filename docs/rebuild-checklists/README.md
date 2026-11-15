@@ -43,3 +43,7 @@ creates its own disposable home, starts the built program, signs in, visits
 every launcher app and writes the report. Set `LOOM_TEST_CHROME` to the browser
 executable when needed. Run browser measurement on a worker or in CI, never on
 loom's machine. No installed home or household data is used.
+
+The browser job also writes the per-page table into the Actions run summary,
+so the coordinator can see failures and missing coverage before downloading the
+artifact. Keep the artifact for promise-level reasons, screenshots and raw facts.
