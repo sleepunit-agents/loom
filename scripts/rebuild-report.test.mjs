@@ -64,3 +64,10 @@ it('keeps the measured revision and every page count in both regenerated reports
   for(const page of report.summary)expect(md).toContain('](#page-'+page.page+')');
  }finally{rmSync(out,{recursive:true,force:true});}
 });
+
+it('can disprove a one-query-door promise without claiming the converse proves it',()=>{
+ const promise={probe:{kind:'legacy-data-socket'}};
+ expect(evaluate(promise,{}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{transport:{sockets:[{path:'/graphql',phase:'Tasks'}]}}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{transport:{sockets:[{path:'/live',phase:'Project sharing',failed:true}]}})).toMatchObject({status:'not met',evidence:'walkthrough.json#transport'});
+});

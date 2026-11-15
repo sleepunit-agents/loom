@@ -61,7 +61,7 @@ import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
 import { commsRoute, pageRefused } from './comms-routes.js';
 import { OWNER_KINDS, recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
-import { pieceCheckers, pieceWithRole, resolveNeeds, type ApprovalState } from '../needs-resolve.js';
+import { pieceCheckers, pieceWithRole, type ApprovalState } from '../legacy-piece-checkers.js';
 import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
 import { HOUSEHOLD_DB, venueLabel } from '../household-store.js';
 import { waitForLocks, WRITE_WAIT_MS } from '../lock-gate.js';
@@ -1141,7 +1141,7 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv, { tasks
  * One card, not two (t-2098): a Needs you that waits on a task the owner is already asked the same thing on (the tasks
  * piece's own card for it, `task/<id>`, in the same words) is that card. The task's card stays, with its page, where
  * his answer lands on the task; it keeps the ask's call on his attention (a quiet To do card never hides a counted
- * ask). The conversation's ask clears itself once he answers it there (needs-resolve, taskAnswered) or the task closes.
+ * ask). Legacy task folds read the source answer; canonical Inbox settlement owns the current row.
  * Only an ask is dropped, never put under another card's words: one in other words, or waiting on a task with no card
  * of its own (not his to answer), stays as it was.
  */
@@ -2479,8 +2479,6 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       if (result.ok && hh && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
         // An Allow on a grant, a vouch or a reset applies it (t-1970, t-1975): the owner's yes does it, nothing left for him to do.
         if (action === 'allow') result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
-        // An approval answered: the Needs you that waited on it clears now, not at the next minute's pass.
-        await resolveNeeds(hh, pieceCheckers(opts.env)).catch(() => undefined);
       }
       if (answered && hh) {
         const by = who?.member?.person ?? firstOwner(hh).person;
