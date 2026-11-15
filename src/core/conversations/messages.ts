@@ -1,4 +1,4 @@
-import { changedInboxContent } from '../tempo/volume.js';
+import { inboxContentChanged } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 /** Trusted private-message service. External doors authenticate and authorize;
  * encrypted words never enter operation receipts or the plaintext Inbox. */
@@ -179,7 +179,8 @@ export class CommsMessages {
         fromKind: 'person', fromId: member, thread: row.thread, messageSeq: row.seq, refs: [item.id, ...refs] });
       this.attach(row, mail);
       const at = this.now();
-      return this.db.update(inbox).set({ ...changedInboxContent(), state: 'answered', answer, answerText: null, answeredBy: member, answeredAt: at, changedAt: at })
+      inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
+      return this.db.update(inbox).set({ state: 'answered', answer, answerText: null, answeredBy: member, answeredAt: at, changedAt: at })
         .where(eq(inbox.id, item.id)).returning().get()!;
     });
   }
@@ -215,7 +216,7 @@ export class CommsMessages {
       const { thread } = this.context(threadId), at = this.now();
       this.db.insert(deletedThreads).values({ id: threadId, conversation: thread.conversation, at }).run();
       this.db.delete(inboxRefs).where(inArray(inboxRefs.item, this.db.select({ id: inbox.id }).from(inbox).where(eq(inbox.thread, threadId)))).run();
-      this.db.update(inbox).set({ ...changedInboxContent(), thread: null, messageSeq: null,
+      this.db.update(inbox).set({ thread: null, messageSeq: null,
         state: sql`case when ${inbox.state} in ('waiting', 'taken') then 'resolved' else ${inbox.state} end`,
         resolution: 'Thread deleted', changedAt: at }).where(eq(inbox.thread, threadId)).run();
       this.db.delete(threads).where(eq(threads.id, threadId)).run();

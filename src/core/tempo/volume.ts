@@ -1,4 +1,4 @@
-import { and, eq, ne, or, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, tempoSettings } from '../data/schema.js';
 import type { Clock } from '../clock.js';
@@ -8,20 +8,6 @@ export type Volume = 'full' | 'dim' | 'mute';
 export const defaultTimings = Object.freeze({ settleSeconds: 5, dimDays: 1, muteDays: 7 });
 export type Timings = { settleSeconds: number; dimDays: number; muteDays: number };
 const day = 86_400_000;
-
-/** Source producers spread this into the same SQL update as their new content.
- * A structured named ask breaks mute only for the explicitly addressed recipient.
- * Reads, claims, retention expiry and preference writes do not use this patch. */
-export function changedInboxContent(named?: Recipient | true) {
-  const lift = named === true ? sql`true` : named
-    ? or(eq(inbox.volume, 'dim'), and(eq(inbox.toKind, named.kind), eq(inbox.to, named.id)))!
-    : eq(inbox.volume, 'dim');
-  return {
-    volume: sql`case when ${lift} then 'full' else ${inbox.volume} end`,
-    quietUntil: sql`case when ${lift} then null else ${inbox.quietUntil} end`,
-  };
-}
-
 
 /** Trusted in-process API. External callers must pass through the household door.
  * Inbox owns content and answers; Tempo owns only volume and its timings. */
@@ -59,10 +45,7 @@ export class InboxVolume {
   /** Call alongside an actual content change, never a read or a volume edit.
    * Explicitly addressing the recipient breaks either quiet level. */
   changed(who: Recipient, item: string, askedByName = false): void {
-    this.db.update(inbox).set(changedInboxContent(askedByName ? true : undefined)).where(and(
-      eq(inbox.id, item), eq(inbox.toKind, who.kind), eq(inbox.to, who.id),
-      askedByName ? ne(inbox.volume, 'full') : eq(inbox.volume, 'dim'),
-    )).run();
+    inboxContentChanged(this.db, who, item, askedByName);
   }
 
   /** Run at startup and each quiet deadline. Returns the next deadline;
@@ -79,4 +62,12 @@ export class InboxVolume {
     if (expired) changed?.();
     return next;
   }
+}
+
+/** Shared content producers call this within their own atomic write. */
+export function inboxContentChanged(db: DataDatabase, who: Recipient, item: string, askedByName = false): void {
+  db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(
+    eq(inbox.id, item), eq(inbox.toKind, who.kind), eq(inbox.to, who.id),
+    askedByName ? ne(inbox.volume, 'full') : eq(inbox.volume, 'dim'),
+  )).run();
 }

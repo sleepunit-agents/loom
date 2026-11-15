@@ -1,4 +1,4 @@
-import { changedInboxContent } from '../../core/tempo/volume.js';
+import { inboxContentChanged } from '../../core/tempo/volume.js';
 /** Trusted metadata service. External operations authenticate callers and check
  * Settings ownership before invoking answer/setRule/revoke. No value enters it. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -144,7 +144,10 @@ export class SecretRequests {
   }
   private resolve(id: string, reason: string): void {
     // Source-specific resolution until Conversations exposes secret-request.
-    this.db.update(inbox).set({ ...changedInboxContent(), state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, id), eq(inbox.state, 'waiting'))).run();
+    this.db.transaction(() => {
+      const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, id), eq(inbox.state, 'waiting'))).returning().all();
+      for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
+    });
   }
 }
 
