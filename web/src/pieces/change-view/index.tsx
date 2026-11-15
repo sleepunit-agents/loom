@@ -12,7 +12,7 @@ function Unavailable({ status }: { status: ChangeSnapshot['status'] }) {
   return status === 'loading' ? <Loading label="Opening Changes…" /> : <Error text={status === 'denied' ? 'Sign in with access to see Changes.' : 'Waiting for connection.'} />;
 }
 /** Reference only in a conversation; merge answers belong in the tile. */
-export function ChangeCard({ id, snapshot, open }: { id: string; snapshot: ChangeSnapshot; open(id: string): void }) {
+export function ChangeCard({ id, snapshot, open }: { id: string; snapshot: { status: ChangeSnapshot['status']; changes: readonly Pick<Change,'id'|'title'|'state'|'checks'|'review'|'waitingOn'|'draft'>[] }; open(id: string): void }) {
   if (snapshot.status !== 'live') return <Unavailable status={snapshot.status} />;
   const change = snapshot.changes.find(c => c.id === id);
   return change ? <article className="grid gap-2 p-3"><p>Pull request</p><h3>{change.title}</h3><p>{summary(change)}</p><Button variant="outline" onClick={() => open(change.id)}>Open</Button></article> : <Empty title="Change unavailable" />;

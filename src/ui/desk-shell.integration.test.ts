@@ -43,7 +43,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
   const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
   seedSteps(old.h.home,Date.now()-60000);
   old.ask('art','OK to run the backup now?');
-  const oldThread=old.thread('owner','art','A Home conversation','A Home conversation');
   const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
   expect(raised.ok).toBe(true);
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -157,74 +156,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     // Account actions belong to the registered app, never a floating corner toolbar.
     expect(await a.getByRole('button',{name:'Add a passkey',exact:true}).count()).toBe(0);
     expect(await a.getByRole('button',{name:'Sign out',exact:true}).count()).toBe(0);
-    // Home shares Comms' durable draft and opens exactly the acknowledged thread.
-    const homeComposer=b.locator('.desk-home-compose').first();
-    await expect.poll(()=>homeComposer.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
-    await homeComposer.getByRole('textbox',{name:'Message',exact:true}).fill('A Home conversation');
-    await b.reload();
-    await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('A Home conversation');
-    await b.locator('.desk-home-compose').first().getByRole('button',{name:'Send',exact:true}).click();
-    await expect.poll(()=>b.locator('.comms-thread').count()).toBe(1);
-    await expect.poll(()=>b.getByText('A Home conversation',{exact:true}).count()).toBe(1);
-    expect(app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
-    const commsId=(app.db.prepare('SELECT id FROM comms_threads').get() as {id:string}).id.replace(/^th:/,'');
-    // A visible Comms thread is the companion even while another app has focus.
-    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
-    expect(await b.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
-    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
-    expect(await b.locator('.comms-thread .next-comm-screen').count()).toBe(0);
-    // Overlay rails never steal the portrait. Returning to Always show moves it back once.
-    await b.locator('.next-rail').click({button:'right'});
-    await b.getByRole('menuitem',{name:'Minimize to strip',exact:true}).click();
-    await expect.poll(()=>b.locator('.comms-thread .next-comm-screen').count()).toBe(1);
-    await b.getByRole('button',{name:'Show agents rail',exact:true}).click();
-    expect(await b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(0);
-    await b.locator('.next-rail').click({button:'right'});
-    await b.getByRole('menuitem',{name:'Always show',exact:true}).click();
-    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
-    expect(await b.locator('.next-comm-screen').count()).toBe(1);
-    // Same five-agent scenario: a real sprite uses integer pixels in the rail and compact phone reader.
-    const commSample=sheet(),commManifest=manifestFromPixelLab(JSON.parse(commSample.json.toString()));
-    new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest:commManifest,rawManifest:Buffer.from(JSON.stringify(commManifest)).toString('base64'),sheets:{'sheet.png':commSample.png.toString('base64')},v:'comms-scale-fixture'});
-    app.live.changed([{type:'household.agentDisplay',id:'art'}]);
-    await expect.poll(()=>painted(b,'.next-comm-screen canvas')).toBe(true);
-    const pixelWidth=()=>b.locator('.next-comm-screen canvas').evaluate(cv=>cv.getBoundingClientRect().width);
-    await expect.poll(pixelWidth).toBe(192);
-    await b.setViewportSize({width:390,height:900});
-    await expect.poll(()=>b.locator('.comms-thread .next-comm-screen').count()).toBe(1);
-    await expect.poll(pixelWidth).toBe(96);
-    await b.setViewportSize({width:1280,height:900});
-    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
-    await expect.poll(pixelWidth).toBe(192);
-    new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
-    app.live.changed([{type:'household.agentDisplay',id:'art'}]);
-    await b.getByRole('button',{name:'Open Inbox',exact:true}).click();
-    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
-    // Observe real FLIP requests while exercising full and reduced motion, without racing260ms.
-    set({motion:'off'},'companion-full-motion');
-    await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
-    await b.evaluate(()=>{
-      const state=window as Window & {deskMoves?:{agent:string;duration:number;from:string}[];deskAnimate?:HTMLElement['animate']};
-      state.deskMoves=[];state.deskAnimate=HTMLElement.prototype.animate;
-      HTMLElement.prototype.animate=function(frames,options){
-        if(this.dataset.agent&&this.closest('.desk-agent-rail')&&Array.isArray(frames))state.deskMoves!.push({agent:this.dataset.agent,duration:typeof options==='object'?Number(options?.duration):Number(options),from:String(frames[0]?.transform)});
-        return state.deskAnimate!.call(this,frames,options);
-      };
-    });
-    await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
-    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(0);
-    expect(await b.evaluate(()=>(window as Window & {deskMoves:{agent:string;duration:number;from:string}[]}).deskMoves.some(m=>m.agent==='art'&&m.duration===260&&m.from!=='translateY(0px)'))).toBe(true);
-    set({motion:'on'},'companion-reduced-motion');
-    await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('reduce');
-    await b.evaluate(()=>{(window as Window & {deskMoves:unknown[]}).deskMoves=[];});
-    await b.getByRole('button',{name:'Open Comms',exact:true}).click();
-    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
-
-    expect(await b.evaluate(()=>(window as Window & {deskMoves:unknown[]}).deskMoves.length)).toBe(0);
-    await b.evaluate(()=>{const state=window as Window & {deskAnimate:HTMLElement['animate']};HTMLElement.prototype.animate=state.deskAnimate;});
-    await b.getByRole('button',{name:'Home',exact:true}).click();
-    await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
-    await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
+    // Comms and Inbox now have actual sharedRoot proofs in their own integration files.
     // Comparison boards intentionally retain the fixture's ordinary drawn identity.
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
@@ -265,7 +197,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
-        for (const surface of ['home','home-steps','work','companion','launcher','agent']) {
+        for (const surface of ['home','home-steps','work','launcher','agent']) {
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
@@ -358,24 +290,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
               await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
             }
-          }
-          if(surface==='companion') {
-            await page.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(commsId));
-            await expect.poll(()=>page.locator('.comms-thread').count()).toBe(1);
-            await reference.goto(old.base+'/comms/'+oldThread.id.slice(3)+(width<1024?'':'?t=*comms'));
-            await expect.poll(()=>reference.locator('.comms-thread').count()).toBe(1);
-            await expect.poll(()=>reference.locator('.comms-screen').isVisible()).toBe(true);
-            await expect.poll(()=>page.locator('.next-comm-screen').count()).toBe(1);
-            if(width>=1280){
-              await expect.poll(()=>page.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
-              expect(await page.locator('.comms-thread .next-comm-screen').count()).toBe(0);
-            }else{
-              expect(await page.locator('.comms-thread .next-comm-screen').count()).toBe(1);
-            }
-            if(width>=1024){
-              await expect.poll(()=>page.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
-              expect(await page.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
-            }else expect(await page.locator('.desk-rail-card[data-companion]').count()).toBe(0);
           }
           if(surface==='launcher') {
             if(look==='neon'&&width===1280){

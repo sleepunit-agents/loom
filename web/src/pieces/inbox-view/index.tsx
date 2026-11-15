@@ -15,11 +15,12 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
   const lock = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setDraft(''); setError(false); }, [item.id, item.body?.words]);
+  const canRead = !!actions?.read;
   useEffect(() => {
     if (!item.read && actions?.read) void actions.read(item.id).catch(() => { if (mounted.current) setError(true); });
-  }, [item.id]);
+  }, [item.id, canRead]);
   const answer = async (verdict: InboxAnswer, words?: string) => {
-    if (lock.current || item.state !== 'waiting' || !item.answers || !item.body || managed(item) || !actions) return;
+    if (lock.current || item.state !== 'waiting' || !item.answers || !item.body || managed(item) || !actions?.answer) return;
     if (verdict === 'words' && !words?.trim()) return;
     lock.current = true; setBusy(true); setError(false);
     try { await actions.answer(item.id, verdict, words?.trim()); }
@@ -36,7 +37,7 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     {item.refs.length > 0 && <p>About: {item.refs.join(' · ')}</p>}
     {waiting && managed(item) && <p>Answer this at its source.</p>}
     {waiting && managed(item) && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}
-    {waiting && item.answers && item.body && !managed(item) && actions && <section aria-label="Record your answer" className="grid gap-2">
+    {waiting && item.answers && item.body && !managed(item) && actions?.answer && <section aria-label="Record your answer" className="grid gap-2">
       {item.answers === 'yes-no' && <div><Button disabled={busy} onClick={() => void answer('yes')}>{inline ? 'Allow' : 'Yes'}</Button><Button disabled={busy} onClick={() => void answer('no')}>{inline ? 'Deny' : 'No'}</Button></div>}
       <Textarea aria-label="Answer in your own words" value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} />
       <div><Button disabled={busy || !draft.trim()} onClick={() => void answer('words', draft)}>Record answer</Button><Button disabled={busy} onClick={() => void answer('done')}>Mark done</Button><Button disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</Button></div>
@@ -75,7 +76,7 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
   return <Split label="Inbox" folders={folders} folder={folder} onFolder={id => navigation ? navigation.onFolder(id) : setFolder(id)} listTitle="Inbox"
     listTop={<>{navigation && folder !== 'errors' && <nav aria-label="Inbox pages"><Button disabled={!live || navigation.offset === 0} onClick={navigation.previous}>Previous page</Button><Button disabled={!live || !navigation.hasNext} onClick={navigation.next}>Next page</Button></nav>}{currentResults && (folder === 'fyi' || folder === 'errors' || folder === 'all') && <InboxActionNotices snapshot={currentResults} errorsOnly={folder === 'errors'} dismiss={dismissResult} />}</>}
     search={<Input aria-label="Search asks" value={live ? query : ''} disabled={!live} onChange={event => navigation ? navigation.onQuery(event.target.value) : setQuery(event.target.value)} />}
-    list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : shown.length ? shown.map(row => <Row key={row.id} title={row.body?.words ?? `Item from ${row.agent ?? row.fromId ?? 'Loom'}`} meta={row.body?.why ?? row.source} status={`${row.agent ?? 'Loom'} · ${row.state} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : folder === 'errors' && currentResults?.results.some(row => !row.ok && !row.readAt) ? null : <Empty title="No items here" />}
+    list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : shown.length ? shown.map(row => <Row key={row.id} title={row.body?.words ?? `Item from ${row.agent ?? row.fromId ?? 'Loom'}`} className={row.volume === 'dim' ? '[&_.loom-kit-title]:line-clamp-1' : undefined} meta={row.volume === 'dim' ? undefined : row.body?.why ?? row.source} status={row.volume === 'dim' ? undefined : `${row.agent ?? 'Loom'} · ${row.state} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : folder === 'errors' && currentResults?.results.some(row => !row.ok && !row.readAt) ? null : <Empty title="No items here" />}
     reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
 }

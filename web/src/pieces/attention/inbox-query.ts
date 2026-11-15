@@ -1,8 +1,10 @@
 import { taskSegment } from '../tasks/route';
+import { useSelection } from '../../data/graphql/selection';
+import type { DataQuerySnapshot } from '../../data/graphql';
 import type { InboxFolders, InboxItem } from '../inbox-view/model';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
-const fields = `id source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
+const fields = `id canAnswer source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
  bodyKeepUntil answerKeepUntil body { words why ifYes ifNo link } read refs answer answerText answeredBy answeredAt resolution`;
 export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$id:String!,$hasItem:Boolean!,$onlyErrors:Boolean!){
  inboxItems(folder:$folder,search:$search,agent:$agent,limit:51,offset:$offset) @skip(if:$onlyErrors){${fields}}
@@ -37,6 +39,9 @@ export function inboxSelection(folder: string, search: string, offset: number, s
   };
 }
 /** Decode the selected fields over the single canonical query client. */
+export function useInboxSelection(selection: InboxSelection): DataQuerySnapshot<InboxReading> {
+  return useSelection(selection);
+}
 /** Private question and answer wording have separate deadlines. A missing or
  * invalid private deadline is unavailable, while plain Inbox text has none. */
 export function retainedInboxItem(row: InboxItem, now: number): InboxItem {
