@@ -1,10 +1,11 @@
+import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskAgentStatuses } from './agent-status';
 import { CurrentJobs } from './current-jobs';
 import { useDeskRoster } from './roster';
 import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
-import AgentFace, { faceState, useAgentDisplays } from './agent-face';
+import AgentFace, { faceState } from './agent-face';
 import { Row } from '../../kit';
 import { useRecords } from '../../data';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
@@ -21,7 +22,7 @@ function CompanionSlot({agent}:{agent:string}) {
 /** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
 export default function AgentRail({ go }: { go(path: string): void }) {
   const roster = useDeskRoster();
-  const displays = useAgentDisplays();
+  const displays = useDeskAgentDisplays();
   const people = useDeskAgentDirectory();
   const statuses = useDeskAgentStatuses();
   const asks = useRecords<Ask>('attention.ask');

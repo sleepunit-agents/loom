@@ -1,3 +1,4 @@
+import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskRecentActivity } from './recent-activity';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
@@ -8,7 +9,7 @@ import { HomeSteps } from './home-steps';
 import { CurrentJobs } from './current-jobs';
 import { LastAnswer } from './last-answer';
 import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
-import AgentFace, { faceState, useAgentDisplays } from './agent-face';
+import AgentFace, { faceState } from './agent-face';
 import './home.css';
 import { useEffect, useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
@@ -24,7 +25,7 @@ function Unavailable({ status, label }: { status: Snapshot['status']; label: str
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useDeskRoster();
   const activity = useDeskRecentActivity();
-  const displays = useAgentDisplays();
+  const displays = useDeskAgentDisplays();
   const { reading:conversations, status:threadStatus } = useHomeComms();
   const [phone,setPhone] = useState(()=>globalThis.window?.matchMedia?.('(max-width: 1023px)').matches ?? false);
   useEffect(()=>{const query=globalThis.window?.matchMedia?.('(max-width: 1023px)');if(!query)return;const change=()=>setPhone(query.matches);change();query.addEventListener('change',change);return()=>query.removeEventListener('change',change);},[]);

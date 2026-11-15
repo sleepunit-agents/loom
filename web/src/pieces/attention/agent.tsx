@@ -1,3 +1,4 @@
+import { useDeskAgentDisplays } from './agent-displays';
 import { useDeskAgentProfiles } from './agent-profiles';
 import { useDeskRecentActivity } from './recent-activity';
 import { useDeskAgentDirectory } from './agent-directory';
@@ -5,7 +6,7 @@ import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { useRecords } from '../../data';
 import { AppFrame, List, Row, Empty, Error, Loading, Button } from '../../kit';
-import AgentFace, { faceState, useAgentDisplays } from './agent-face';
+import AgentFace, { faceState } from './agent-face';
 import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
 import { HomeSteps } from './home-steps';
 import { useHomeComms, threadPath } from './home-comms-data';
@@ -16,7 +17,7 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
   const roster=useDeskRoster(), people=useDeskAgentDirectory();
   const profiles=useDeskAgentProfiles(), statuses=useDeskAgentStatuses();
   const asks=useRecords<Ask>('attention.ask'), comms=useHomeComms();
-  const activity=useDeskRecentActivity(), displays=useAgentDisplays();
+  const activity=useDeskRecentActivity(), displays=useDeskAgentDisplays();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));
   const pathname=new URL(path,'http://loom').pathname, prefix='/p/agents-preview/agent/';
   let id:string|undefined;
