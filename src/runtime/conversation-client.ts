@@ -6,13 +6,18 @@ import { z } from 'zod';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
+const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
 const item=z.object({
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),
  fromKind:z.enum(['person','agent','schedule','unknown']),fromId:z.string().nullable(),at:z.iso.datetime({offset:true}),
- words:z.string().nullable(),keepUntil:z.iso.datetime({offset:true}).nullable(),verdict:z.enum(['yes','no']).nullable(),refs:z.array(z.string()),
-}).strict();
+ question:question.nullable().optional().default(null),questionKeepUntil:z.iso.datetime({offset:true}).nullable().optional().default(null),words:z.string().nullable(),keepUntil:z.iso.datetime({offset:true}).nullable(),verdict:z.enum(['yes','no']).nullable(),refs:z.array(z.string()),
+}).strict().refine(row=>!!row.question===!!row.questionKeepUntil,'Question context needs its deadline');
 const batch=z.object({job:z.string(),conversation:z.string(),items:z.array(item).max(100),stopRequested:z.boolean()}).strict();
-export type BodyMail=Readonly<Omit<z.infer<typeof item>,'refs'>&{refs:readonly string[]}>;
+export type BodyMail=Readonly<Omit<z.infer<typeof item>,'refs'|'question'>&{refs:readonly string[];question:Readonly<z.infer<typeof question>>|null}>;
+export function bodyMailContext(item:BodyMail):string|null{
+ if(item.words===null)return null;
+ return item.question?JSON.stringify({question:item.question,answer:item.words,verdict:item.verdict}):item.words;
+}
 type Turn={model?:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none';latencyMs?:number};
 type Reply=Turn&{clientId:string;words:string};
 type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
@@ -26,7 +31,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  let closed=false,taking=false,pending:{id:string;items:string[]}|undefined;
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
- async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'='conversation'):Promise<T>{
+ async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation'):Promise<T>{
   if(!current())throw unavailable();
   const abort=new AbortController(),end=clock.now()+timeout;controllers.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
@@ -64,16 +69,17 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     let accepted=0;
     for(const row of input.items){
      if(!current())throw unavailable();
-     const deadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil);
-     if(!Number.isFinite(deadline)&&row.keepUntil!==null)throw unavailable();
-     const privateWords=row.words!==null&&clock.now()<deadline;
+     const answerDeadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil),questionDeadline=row.questionKeepUntil===null?Infinity:Date.parse(row.questionKeepUntil);
+     if(!Number.isFinite(answerDeadline)&&row.keepUntil!==null||!Number.isFinite(questionDeadline)&&row.questionKeepUntil!==null)throw unavailable();
+     const privateWords=row.words!==null&&clock.now()<answerDeadline,questionCurrent=privateWords&&row.question!==null&&clock.now()<questionDeadline;
+     const deadline=questionCurrent?Math.min(answerDeadline,questionDeadline):answerDeadline;
      const sinkAbort=new AbortController(),sinkSignal=AbortSignal.any([lifetime,sinkAbort.signal]);
      const cancelExpiry=privateWords&&Number.isFinite(deadline)?clock.at(deadline,()=>sinkAbort.abort()):undefined;
      let rejectStopped!:()=>void;
      const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=()=>reject(unavailable());sinkSignal.addEventListener('abort',rejectStopped,{once:true});});
      try {
       if(sinkSignal.aborted)throw unavailable();
-      await Promise.race([accept(Object.freeze({...row,refs:Object.freeze([...row.refs]),words:privateWords?row.words:null}),sinkSignal),stopped]);
+      await Promise.race([accept(Object.freeze({...row,refs:Object.freeze([...row.refs]),words:privateWords?row.words:null,question:questionCurrent&&row.question?Object.freeze({...row.question}):null,questionKeepUntil:questionCurrent?row.questionKeepUntil:null}),sinkSignal),stopped]);
       if(!current()||privateWords&&clock.now()>=deadline){sinkAbort.abort();throw unavailable();}
      }catch{sinkAbort.abort();throw unavailable();}
      finally { cancelExpiry?.();sinkSignal.removeEventListener('abort',rejectStopped); }
@@ -82,6 +88,8 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     await confirmPending();return {accepted,stopRequested:input.stopRequested};
    }catch{throw unavailable();}finally{taking=false;}
   },
+  requestSecret(input:{id:string;secret:string;why:string;minutes:number;scope:'agent'|'job'}){return call('request',input,z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),input.id,'secrets');},
+  secretRequestStatus(id:string){return call('requestStatus',{id},z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),undefined,'secrets');},
   bridgeReply(input:{incoming:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
   reply(input:Reply,id=randomUUID()){return call('message',{kind:'reply',...input},messageResult,id);},
   card(input:Card,id=randomUUID()){return call('message',{kind:'card',...input},messageResult,id);},
