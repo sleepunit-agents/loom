@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import Database from 'better-sqlite3';
+import {eq} from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
@@ -9,11 +10,19 @@ import { createDataSchema } from './core/data/database.js';
 import { agentSprites, agents, members, memberAgents, tokens } from './core/data/schema.js';
 import { householdService } from './apps/household.js';
 import { sharedRoot } from './shared-root.js';
+import { setupQuery } from '../web/src/pieces/household/query.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
 const credentials = { sam: 'a'.repeat(64), lee: 'b'.repeat(64), art: 'c'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const visual = { about: 'Fixture agent', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble' as const, faceEyes: 'dot' as const };
+it('admits the exact Setup consumer selection and withdraws owner metadata with current role',async()=>{
+ const f=fixture();
+ const read=async(actor:keyof typeof credentials)=>(await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credentials[actor]},body:JSON.stringify({query:setupQuery})})).json();
+ expect((await read('sam')).data).toMatchObject({members:[{id:'sam',role:'owner',fullOwner:false},{id:'lee',role:'member',fullOwner:false}],agents:[{id:'art',...visual},{id:'mark',...visual}]});
+ f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
+ expect(await read('sam')).toEqual({data:{members:[{id:'sam',role:'member',fullOwner:false,memberAgentsByMember:[]}],agents:[]}});
+});
 function fixture() {
   const client = new Database(':memory:'); clean.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
