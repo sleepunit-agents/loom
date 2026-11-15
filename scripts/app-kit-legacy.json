@@ -14,9 +14,6 @@
   "looks/looks.css": [
     "loom-find-row"
   ],
-  "people.css": [
-    "loom-people__row"
-  ],
   "row-more.css": [
     "loom-row-more"
   ],

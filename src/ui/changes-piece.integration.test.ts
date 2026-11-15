@@ -15,6 +15,7 @@ import { changesQuery } from '../../web/src/data/work-query.js';
 
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
+if(process.env.CI==='true'&&(!chrome||!existsSync(join(root,'index.html'))))throw Error('Changes evidence requires Chrome and the built app');
 const title = 'Keep shared changes current', hiddenTitle = 'Private other project change';
 const changeId = 'github:acme/app#3';
 
