@@ -19,7 +19,7 @@
 import { agentDir, type Household } from './household.js';
 import { answeredNeeds } from './backends/conversations.js';
 import { answerKeptAsk, keepThreadAsk, keptAsksOf, threadOfAgentConversation, type AskAnswer, type Thread } from './comms.js';
-import type { WaitCheckers } from './needs-resolve.js';
+import type { WaitCheckers } from './legacy-piece-checkers.js';
 import type { InboxItem, Source } from './ui/render.js';
 import type { Button } from './ui/vocab.js';
 
@@ -163,7 +163,7 @@ export interface ThreadAsksDeps {
   householdOwner: boolean;
   /** The approvals piece's source id (its ids are approvals; another piece's aren't). */
   approvals?: string;
-  /** The approvals piece's state of these ids (needs-resolve.ts pieceCheckers): for an ask that left without core
+  /** The approvals piece's state of these ids (legacy-piece-checkers.ts pieceCheckers): for an ask that left without core
    * seeing its answer (it expired, or was answered elsewhere). */
   checkers?: Pick<WaitCheckers, 'approvals'>;
 }

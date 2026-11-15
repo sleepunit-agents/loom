@@ -33,7 +33,7 @@ function fixture(){
   });return child;
  });
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
- const options={args:['config'],read:async()=>JSON.stringify({command:'/native/claude',cwd:'/house'}),stdin:async()=>bytes,env,signal:abort.signal,clock,fetch:fetcher,error:errors,schedule:{every:(ms:number,callback:()=>void)=>{expect(ms).toBe(15000);tick=callback;return cancel;}}};
+ const options={args:['config'],read:async()=>JSON.stringify({command:'/native/claude',cwd:'/house'}),stdin:async()=>bytes,env,signal:abort.signal,clock,fetch:fetcher,loadMemory:async()=>null,error:errors,schedule:{every:(ms:number,callback:()=>void)=>{expect(ms).toBe(15000);tick=callback;return cancel;}}};
  return{env,abort,clock,calls,errors,options,bytes,planned,cancel,words:()=>words,stop:()=>{stop=true;tick();},tick:()=>tick(),pending:()=>{pending=true;}};
 }
 it('uses default startup delivery before the actual native constructor and removes its environment on completion',async()=>{
