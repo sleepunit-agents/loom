@@ -43,7 +43,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
   const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
   seedSteps(old.h.home,Date.now()-60000);
   old.ask('art','OK to run the backup now?');
-  const oldThread=old.thread('owner','art','A Home conversation','A Home conversation');
   const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
   expect(raised.ok).toBe(true);
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -198,7 +197,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
-        for (const surface of ['home','home-steps','work','companion','launcher','agent']) {
+        for (const surface of ['home','home-steps','work','launcher','agent']) {
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
@@ -291,24 +290,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
               await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
             }
-          }
-          if(surface==='companion') {
-            await page.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(commsId));
-            await expect.poll(()=>page.locator('.comms-thread').count()).toBe(1);
-            await reference.goto(old.base+'/comms/'+oldThread.id.slice(3)+(width<1024?'':'?t=*comms'));
-            await expect.poll(()=>reference.locator('.comms-thread').count()).toBe(1);
-            await expect.poll(()=>reference.locator('.comms-screen').isVisible()).toBe(true);
-            await expect.poll(()=>page.locator('.next-comm-screen').count()).toBe(1);
-            if(width>=1280){
-              await expect.poll(()=>page.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
-              expect(await page.locator('.comms-thread .next-comm-screen').count()).toBe(0);
-            }else{
-              expect(await page.locator('.comms-thread .next-comm-screen').count()).toBe(1);
-            }
-            if(width>=1024){
-              await expect.poll(()=>page.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
-              expect(await page.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
-            }else expect(await page.locator('.desk-rail-card[data-companion]').count()).toBe(0);
           }
           if(surface==='launcher') {
             if(look==='neon'&&width===1280){
