@@ -15,8 +15,8 @@ export async function conversationActions({page,app,example,out,open}){
   phase='send-message';const pending=response('/api/comms/send');await tile.getByRole('button',{name:'Send',exact:true}).click();const sent=await result(pending);
   phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   phase='reload';await page.reload();await page.locator('.next-shell').waitFor();phase='reopen-after-reload';tile=await open('Comms');phase='select-after-reload';await select(tile);phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
-  const rows=app.services.comms.db.$client.prepare('SELECT id,conversation,to_kind,"to",source,thread,message_seq FROM inbox WHERE id=?').all(sent.body.item);
-  const ok=rows.length===1&&rows[0].conversation===example.conversation&&rows[0].to_kind==='agent'&&rows[0].to==='fern'&&rows[0].source==='thread'&&rows[0].thread===example.thread&&rows[0].message_seq===sent.body.seq;
+  const rows=app.services.comms.db.$client.prepare('SELECT id,conversation,to_kind,"to",source,thread,message_seq FROM inbox WHERE thread=? AND message_seq=?').all(example.thread,sent.body.seq);
+  const ok=rows.length===1&&rows[0].id===sent.body.item&&rows[0].conversation===example.conversation&&rows[0].to_kind==='agent'&&rows[0].to==='fern'&&rows[0].source==='thread'&&rows[0].thread===example.thread&&rows[0].message_seq===sent.body.seq;
   const screenshot='action-comms-send.png';await page.screenshot({path:join(out,screenshot),fullPage:true});
   return{ok,persistedAfterReload:true,inboxCopies:rows.length,screenshot};
  });
