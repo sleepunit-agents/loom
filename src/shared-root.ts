@@ -1,3 +1,4 @@
+import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
@@ -164,6 +165,7 @@ export function sharedRoot(options: {
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
+  registerTempoSettingsAnswer(operations, db, services.approvals);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,

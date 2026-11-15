@@ -1,4 +1,4 @@
-import { renderTempoChange } from '../pieces/tempo/settings';
+import { readTempoChange, renderTempoChange } from '../pieces/tempo/settings';
 import { readMeasuringChange } from '../../../src/core/measuring/change';
 import { newId } from './id';
 import { useEffect, useState } from 'react';
@@ -11,13 +11,17 @@ import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type Ap
 /** The owner answers the same durable card through the authenticated API.
  * Visibility of a button never confers permission; root rechecks current owner.
  */
-const measuringActions: ApprovalActions = {
-  supports: approval => !!readMeasuringChange(approval),
-  allow: id => answerMeasuring(id, true),
-  deny: id => answerMeasuring(id, false),
-};
-async function answerMeasuring(id: string, allow: boolean): Promise<void> {
-  const response = await fetch('/api/measuring/answer', {
+function settingsActions(snapshot: ReturnType<typeof useApprovalSnapshot>): ApprovalActions {
+  return { supports: approval => !!readTempoChange(approval) || !!readMeasuringChange(approval),
+    allow: id => answerSettings(snapshot.approvals.find(card => card.id === id), true),
+    deny: id => answerSettings(snapshot.approvals.find(card => card.id === id), false) };
+}
+async function answerSettings(card: ReturnType<typeof useApprovalSnapshot>['approvals'][number] | undefined, allow: boolean): Promise<void> {
+  if (!card) throw new Error('Approval unavailable');
+  const path = readTempoChange(card) ? '/api/tempo/answerSettings' : readMeasuringChange(card) ? '/api/measuring/answer' : undefined;
+  if (!path) throw new Error('Approval unavailable');
+  const id = card.id;
+  const response = await fetch(path, {
     method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ input: { id, allow }, id: newId() }),
   });
@@ -59,7 +63,8 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       setLocalPath(next);
     }
   };
-  return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions ?? measuringActions} renderChange={approval => renderTempoChange(approval) ?? renderMeasuringChange(approval)}
+  const snapshot = useApprovalSnapshot(timezone);
+  return <Approvals snapshot={snapshot} actions={actions ?? settingsActions(snapshot)} renderChange={approval => renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
       folder: folder,
@@ -102,7 +107,8 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 }
 /** Cards read the same current entities as the tiles, never copied payloads. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  return <ApprovalCard id={id} snapshot={useApprovalSnapshot(timezone)} actions={actions ?? measuringActions} renderChange={approval => renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
+  const snapshot = useApprovalSnapshot(timezone);
+  return <ApprovalCard id={id} snapshot={snapshot} actions={actions ?? settingsActions(snapshot)} renderChange={approval => renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   return <ChangeCard id={id} snapshot={useChangeSnapshot(timezone)} open={open} />;

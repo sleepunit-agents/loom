@@ -9,6 +9,7 @@ import { dataAuthentication } from './core/data/authentication.js';
 import { Operations } from './core/operations/index.js';
 import { sharedRoot } from './shared-root.js';
 const closes:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
+const ownerToken='tempo-owner-answer-'.repeat(4),otherToken='tempo-other-answer-'.repeat(4);
 const body='body-credential-'.repeat(4),unbound='unbound-agent-'.repeat(4),hash=(s:string)=>createHash('sha256').update(s).digest('hex');
 function fixture(){
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
@@ -22,11 +23,14 @@ function fixture(){
  db.insert(jobs).values({id:'body',box:'box',agent:'art',conversation:conversation.id,member:'owner',title:'Chat',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  db.update(conversations).set({job:'body'}).where(eq(conversations.id,conversation.id)).run();
  db.insert(tokens).values([{fingerprint:hash(body),label:'Body',kind:'agent',agent:'art',job:'body',createdAt:now()},
-  {fingerprint:hash(unbound),label:'Agent',kind:'agent',agent:'art',createdAt:now()}]).run();
+  {fingerprint:hash(unbound),label:'Agent',kind:'agent',agent:'art',createdAt:now()},
+  {fingerprint:hash(ownerToken),label:'Owner answer',kind:'owner',member:'owner',createdAt:now()},
+  {fingerprint:hash(otherToken),label:'Other answer',kind:'owner',member:'other',createdAt:now()}]).run();
  closes.push(()=>{client.close();},()=>root.close());
  const call=async(input:unknown={who:{kind:'person',id:'owner'},patch:{settleSeconds:60}},id='settings',token=body)=>root.http.request('http://loom/api/tempo/proposeSettings',{
   method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input,id})});
- return {db,client,clock,root,conversation,call,errors};
+ const answer=(id:string,allow=true,receipt='answer',token=ownerToken)=>root.http.request('http://loom/api/tempo/answerSettings',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{id,allow},id:receipt})});
+ return {db,client,clock,root,conversation,call,answer,errors};
 }
 it('binds the actual chat body, files a before/after card, and applies only on the owner answer',async()=>{
  const f=fixture();const first=await f.call();expect(first.status).toBe(200);const result=await first.json();
@@ -37,7 +41,7 @@ it('binds the actual chat body, files a before/after card, and applies only on t
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
  expect(f.db.select().from(inbox).all()).toMatchObject([{toKind:'person',to:'owner',conversation:f.conversation.id,project:'pond',source:'approval',waitsOnId:card.id}]);
  expect(await (await f.call()).json()).toEqual(result);expect(f.db.select().from(approvals).all()).toHaveLength(1);
- f.root.writes.run(()=>f.root.services.approvals.allow(card.id,'owner'));
+ expect(await (await f.answer(card.id)).json()).toEqual({ok:true,value:{saved:true}});
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(60);
  expect(f.db.select().from(approvals).get()?.state).toBe('used');expect(f.errors).toEqual([]);
 });
@@ -119,4 +123,31 @@ it('refuses revocation during async dispatch for both a fresh proposal and recei
    expect(f.db.select().from(approvals).all()).toHaveLength(beforeCards);expect(f.db.select().from(inbox).all()).toHaveLength(beforeMail);
   } finally {release();await pending;spy.mockRestore();}
  }
+});
+
+it('answers through the actual owner door and rechecks role, credentials and card operation on replay',async()=>{
+ const f=fixture();expect((await f.call()).status).toBe(200);const card=f.db.select().from(approvals).get()!;
+ for(const token of [body,unbound,otherToken])expect((await f.answer(card.id,true,'denied-'+token[0],token)).status).toBe(403);
+ f.db.insert(approvals).values({...card,id:'different-operation',operation:'other.operation'}).run();
+ expect((await f.answer('different-operation')).status).toBe(403);expect((await f.answer('missing')).status).toBe(403);
+ expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
+ expect((await f.answer(card.id)).status).toBe(200);const after=f.db.select().from(inbox).all();
+ expect((await f.answer(card.id)).status).toBe(200);expect(f.db.select().from(inbox).all()).toEqual(after);
+ expect(f.db.select().from(approvals).where(eq(approvals.id,card.id)).get()).toMatchObject({state:'used',decidedBy:'owner'});
+ f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
+ expect((await f.answer(card.id)).status).toBe(403);
+ f.root.writes.run(()=>f.db.update(members).set({role:'owner'}).where(eq(members.id,'owner')).run());
+ f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(ownerToken))).run();
+ expect((await f.answer(card.id)).status).toBe(401);
+});
+it('denies through HTTP without applying timings, and rolls back an Allow whose receipt cannot commit',async()=>{
+ const f=fixture();expect((await f.call()).status).toBe(200);const card=f.db.select().from(approvals).get()!;
+ f.client.exec("CREATE TRIGGER reject_answer_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='tempo.answerSettings' BEGIN SELECT RAISE(ABORT,'receipt failed'); END");
+ expect((await f.answer(card.id)).status).toBe(503);
+ expect(f.db.select().from(approvals).get()?.state).toBe('pending');
+ expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
+ f.client.exec('DROP TRIGGER reject_answer_receipt');
+ expect((await f.answer(card.id,false)).status).toBe(200);
+ expect(f.db.select().from(approvals).get()).toMatchObject({state:'denied',decidedBy:'owner'});
+ expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
 });

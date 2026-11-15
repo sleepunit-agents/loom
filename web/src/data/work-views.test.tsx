@@ -223,3 +223,18 @@ it('answers a Measuring card through the mounted authenticated API without chang
   expect(feed.approvals.approvals[0].state).toBe('pending');
  } finally {vi.unstubAllGlobals();}
 });
+
+it.each([true,false])('answers a Tempo timing card through its current shared adapter (allow=%s)',async allow=>{
+ fixture();
+ const card=feed.approvals.approvals[0];
+ Object.assign(card,{target:'tempo:person:sam',details:JSON.stringify({who:{kind:'person',id:'sam'},before:{settleSeconds:5,dimDays:1,muteDays:7},after:{settleSeconds:60,dimDays:1,muteDays:7}}),changeSummary:'Tempo for person sam: settle 5 → 60 seconds; dim 1 → 1 days; mute 7 → 7 days'});
+ const request=vi.fn(async(_url:string,_options:RequestInit)=>({ok:true,json:async()=>({ok:true,value:{saved:true}})}));vi.stubGlobal('fetch',request);
+ try{
+  await draw(h(LiveApprovalCard,{id:card.id}));expect(words()).toContain('Tempo settings change');
+  const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children===(allow?'Allow':'Deny'))!;
+  await act(async()=>button.props.onClick());
+  expect(request).toHaveBeenCalledWith('/api/tempo/answerSettings',expect.objectContaining({method:'POST',credentials:'same-origin'}));
+  expect(JSON.parse(String(request.mock.calls[0][1].body))).toMatchObject({input:{id:card.id,allow}});
+  expect(card.state).toBe('pending');
+ }finally{vi.unstubAllGlobals();}
+});
