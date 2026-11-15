@@ -1,5 +1,8 @@
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { tempoSettingsProposals } from './core/tempo/proposal.js';
+import { sharedTempoSettings, type TempoChatAuthentication } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -32,6 +35,8 @@ export function sharedRoot(options: {
 }) {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
+  const chat = new AsyncLocalStorage<TempoChatAuthentication>();
+  const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
@@ -40,12 +45,16 @@ export function sharedRoot(options: {
   registerSharedPreferences(operations, db);
   const services = {
     tasks: taskService(db, now),
-    approvals: approvalService(db, options.approvedOperations, now),
+    approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: new Conversations(db, now),
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   let tempo: ReturnType<typeof installSharedTempo>;
-  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
+  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
+    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
+  }); }
   catch (error) { operations.close(); void data.close(); throw error; }
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -86,8 +95,9 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
+    const answer = await chat.run(auth, () => operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
+      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid()));
+
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
