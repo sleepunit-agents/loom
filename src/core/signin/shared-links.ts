@@ -13,6 +13,11 @@ const fingerprint = (secret: string) => createHash('sha256').update(secret).dige
 const secret = () => randomBytes(32).toString('hex');
 const LINK_MS = 5 * 60_000;
 const PERSON_MS = 30 * 86400_000, AGENT_MS = 6 * 3600_000;
+function browserDevice(ua: string): string {
+  const browser = /HeadlessChrome\//.test(ua) ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
+  return system ? `${browser} on ${system}` : browser;
+}
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
   const token = (id: string) => {
     const value = db.select().from(tokens).where(eq(tokens.fingerprint, id)).get();
@@ -35,7 +40,7 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
         if (!link || Date.parse(link.expiresAt) <= clock.now()) throw new Error('Sign-in refused');
         const current = token(link.token), cookie = secret(), at = new Date(clock.now()).toISOString();
         db.delete(signinLinks).where(eq(signinLinks.id, link.id)).run();
-        db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: device.replace(/[\p{Cc}\p{Cf}]/gu, ' ').slice(0, 120),
+        db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: browserDevice(device),
           via: 'link', isAgent, issuedAt: at, seenAt: at, provedAt: at }).run();
         const expires = Math.min(clock.now() + (isAgent ? AGENT_MS : PERSON_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity);
         return { cookie, maxAge: Math.floor((expires - clock.now()) / 1000) };
@@ -69,6 +74,10 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     for (const error of committed.notificationErrors) { try { options.reportError(error); } catch { /* preserve committed sign-in */ } }
     return committed.value;
   };
+  const cookieHeader = (cookie: string, maxAge: number, url: string) => {
+    const secure = (options.publicOrigin ?? new URL(url).origin).startsWith('https:');
+    return `loom_ui=${cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+  };
   routes.post('/api/signin/link', c => {
     const bearer = /^Bearer ([^\s]{32,4096})$/i.exec(c.req.header('authorization') ?? '')?.[1];
     const auth = bearer ? authenticate(c.req.raw) : undefined;
@@ -83,8 +92,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   routes.post('/logout', c => {
     const cookie = c.req.header('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('loom_ui='))?.slice(8);
     if (cookie && /^[a-zA-Z0-9_-]{32,4096}$/.test(cookie)) write(() => options.db.delete(sessions).where(eq(sessions.id, fingerprint(cookie))).run());
-    const secure = (options.publicOrigin ?? new URL(c.req.url).origin).startsWith('https:');
-    c.header('set-cookie', `loom_ui=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`);
+    c.header('set-cookie', cookieHeader('', 0, c.req.url));
     return c.json({ ok: true });
   });
   routes.get('/login/:code', c => {
@@ -94,8 +102,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   });
   routes.post('/login/:code', c => {
     const result = write(() => signin.redeem(c.req.param('code'), c.req.header('user-agent') ?? 'Browser', /HeadlessChrome\//.test(c.req.header('user-agent') ?? '')));
-    const secure = (options.publicOrigin ?? new URL(c.req.url).origin).startsWith('https:');
-    c.header('set-cookie', `loom_ui=${result.cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${result.maxAge}${secure ? '; Secure' : ''}`);
+    c.header('set-cookie', cookieHeader(result.cookie, result.maxAge, c.req.url));
     return c.redirect('/', 303);
   });
   return routes;

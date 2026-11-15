@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { sharedSigninLinks } from './shared-links.js';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createServer } from 'node:http';
@@ -43,12 +44,14 @@ it('mints only for the admitted bearer and spends one link into a shared fingerp
   const before = f.db.select().from(signinLinks).all();
   const page = await f.root.http.request('http://loom' + path);
   expect(page.status).toBe(200); expect(page.headers.get('referrer-policy')).toBe('no-referrer');
-  expect(await page.text()).not.toContain(code);
+  const html = await page.text();
+  expect(html).not.toContain(code);
+  expect(html).toContain('<form method="post">'); expect(html).toContain('<button>Sign in</button>');
   expect(f.db.select().from(signinLinks).all()).toEqual(before); // navigation/prefetch spends nothing
   const signed = await f.redeem(path);
   expect(signed.status).toBe(303); expect(signed.headers.get('cache-control')).toBe('no-store');
   const setCookie = signed.headers.get('set-cookie')!;
-  expect(setCookie).toContain('HttpOnly'); expect(setCookie).toContain('SameSite=Strict');
+  expect(setCookie).toContain('HttpOnly'); expect(setCookie).toContain('SameSite=Strict'); expect(setCookie).toContain('Max-Age=2592000');
   const cookie = setCookie.split(';', 1)[0], rawCookie = cookie.slice('loom_ui='.length);
   expect(f.db.select().from(sessions).get()).toMatchObject({ id: hash(rawCookie), token: hash(credential), via: 'link', isAgent: false });
   expect(await (await f.read(cookie)).json()).toEqual({ data: { tasks: [] } });
@@ -101,6 +104,7 @@ it('refuses cross-origin requests, cookies or a fingerprint as minting authority
 
 it('admits the newly issued cookie on the real shared socket and ends that same browser on logout', async () => {
   const f = fixture(), signed = await f.redeem(await f.link()), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  const second = await f.redeem(await f.link()), secondCookie = second.headers.get('set-cookie')!.split(';', 1)[0];
   const identity = await f.root.http.request('http://loom/auth/session', { headers: { cookie } });
   expect(await identity.json()).toEqual({ viewer: { kind: 'member', id: 'sam' } });
   const server = createServer(), detach = f.root.attach(server);
@@ -113,11 +117,18 @@ it('admits the newly issued cookie on the real shared socket and ends that same 
   let next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await next;
   next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'subscribe', id: 'tasks', payload: { query: '{ tasks { id } }' } }));
   expect(JSON.parse(String((await next)[0])).payload.data).toEqual({ tasks: [] });
+  const otherSocket = new WebSocket(origin.replace('http:', 'ws:') + '/graphql', 'graphql-transport-ws', { headers: { cookie: secondCookie, origin } });
+  cleanup.push(() => otherSocket.terminate()); await once(otherSocket, 'open');
+  const otherAck = once(otherSocket, 'message'); otherSocket.send(JSON.stringify({ type: 'connection_init' })); await otherAck;
   const closed = once(ws, 'close');
   const out = await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } });
   expect(out.status).toBe(200); expect(out.headers.get('set-cookie')).toContain('Max-Age=0');
   expect((await closed)[0]).toBe(4403);
   expect((await f.read(cookie)).status).toBe(401);
+  expect((await f.read(secondCookie)).status).toBe(200);
+  expect(otherSocket.readyState).toBe(WebSocket.OPEN);
+  const still = once(otherSocket, 'message'); otherSocket.send(JSON.stringify({ type: 'subscribe', id: 'still', payload: { query: '{ tasks { id } }' } }));
+  expect(JSON.parse(String((await still)[0])).payload.data).toEqual({ tasks: [] });
   expect(await (await f.root.http.request('http://loom/auth/session', { headers: { cookie } })).json()).toEqual({ viewer: null });
 });
 
@@ -128,4 +139,40 @@ it('caps links and browser cookie lifetime at their token deadline', async () =>
   const signed = await f.redeem(path); expect(signed.headers.get('set-cookie')).toContain('Max-Age=10');
   const cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
   f.clock.advance(10_000); expect((await f.read(cookie)).status).toBe(401);
+});
+
+it.each(['code', 'token'])('stores a recognized device name rather than a raw credential supplied as User-Agent: %s', async value => {
+  const f = fixture(), path = await f.link(), code = path.split('/').at(-1)!;
+  expect((await f.redeem(path, { 'user-agent': value === 'code' ? code : credential })).status).toBe(303);
+  expect(f.db.select().from(sessions).get()?.device).toBe('Browser');
+  const stored = JSON.stringify(f.db.select().from(sessions).all());
+  expect(stored).not.toContain(code); expect(stored).not.toContain(credential);
+});
+
+it('lets trusted callers explicitly create an agent session with a six-hour lifetime', () => {
+  const f = fixture(), signin = sharedSigninLinks(f.db, f.clock);
+  const path = f.root.writes.run(() => signin.makeLink(hash(credential))).value.path;
+  const result = f.root.writes.run(() => signin.redeem(path.split('/').at(-1)!, 'Agent browser', true)).value;
+  expect(result.maxAge).toBe(21600); expect(f.db.select().from(sessions).get()?.isAgent).toBe(true);
+});
+
+it.each([false, true])('keeps one committed session and reports notification failure without retry, even if reporter throws=%s', async throws => {
+  const f = fixture(), path = await f.link(), error = new Error('notification failed');
+  const run = f.root.writes.run.bind(f.root.writes);
+  const write = vi.spyOn(f.root.writes, 'run').mockImplementation(<T>(work: () => T) => ({ ...run(work), notificationErrors: [error] }));
+  const reporter = throws ? vi.spyOn(f.errors, 'push').mockImplementation(() => { throw new Error('reporter failed'); }) : undefined;
+  try {
+    const response = await f.redeem(path);
+    expect(response.status).toBe(303); expect(response.headers.get('set-cookie')).toContain('loom_ui=');
+    expect(f.db.select().from(sessions).all()).toHaveLength(1); expect(f.db.select().from(signinLinks).all()).toEqual([]);
+    if (reporter) expect(reporter).toHaveBeenCalledExactlyOnceWith(error); else expect(f.errors).toEqual([error]);
+    expect((await f.redeem(path)).status).toBe(401); expect(f.db.select().from(sessions).all()).toHaveLength(1);
+  } finally { write.mockRestore(); reporter?.mockRestore(); }
+});
+
+it('expires an ordinary browser after the thirty-day lifetime', async () => {
+  const f = fixture(), response = await f.redeem(await f.link()), cookie = response.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(response.headers.get('set-cookie')).toContain('Max-Age=2592000');
+  f.clock.advance(30 * 86400_000 - 1); expect((await f.read(cookie)).status).toBe(200);
+  f.clock.advance(1); expect((await f.read(cookie)).status).toBe(401);
 });
