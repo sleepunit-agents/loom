@@ -41,6 +41,7 @@ it('full owners own existing and future agents while scoped members retain selec
 });
 it('normalizes account ownership, updates cached PR attribution, and rolls grants back with failed receipts',async()=>{
  const f=fixture();
+ expect((await f.call('household.setAgentAccounts',{agent:'art',github:['unauthorized']},'sam')).status).toBe(403);
  f.db.insert(changes).values({id:'github:fixture/repo#1',repository:'fixture/repo',number:1,title:'Cached PR',body:'',url:'https://github.com/fixture/repo/pull/1',state:'open',draft:false,authorLogin:'ArT-BoT',project:null,branch:'feature',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:f.at,updatedAt:f.at}).run();
  expect((await f.call('household.setAgentAccounts',{agent:'art',github:['ART-BOT']})).status).toBe(200);expect(f.db.select().from(changes).get()).toMatchObject({agent:'art',waitingOn:'you'});
  expect((await f.call('household.setAgentAccounts',{agent:'mark',github:['art-bot']},'owner','conflict')).status).toBe(409);
