@@ -67,7 +67,7 @@ it.each(['own','commons','missing','other','no-runtime'] as const)('composes %s 
   if(visibility==='no-runtime'){await until(()=>request.mock.calls.filter(([url])=>String(url).endsWith('users.info')).length>=2);await settle();expect(app.db.prepare('SELECT state,reason FROM bridges_inbox').get()).toEqual({state:'pending',reason:null});expect(app.db.prepare('SELECT retry_since FROM bridges_inbox').get()).toMatchObject({retry_since:expect.any(Number)});expect(deliveries).toEqual([]);expect(app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);expect(posts).toEqual([]);return;}
   await until(()=>deliveries.length===1);await settle();
   expect(deliveries[0]).toMatchObject(visibility==='own'?{label:'DM with Trusted Jonathan',text:'hello @Trusted Jonathan'}:{label:'DM',text:'hello @someone'});
-  expect(app.operations.call('direct',{kind:'agent',id:'art'},'mind.personRead',{id:'commons:jonathan'})).toMatchObject({ok:false,code:'denied'});
+  expect(app.operations.call('direct',{kind:'agent',id:'art'},'mind.personRead',{id:'commons:jonathan'})).toMatchObject({ok:false,code:'not-found'});
   // A durable reply fixture enters the actual installed engine's send path.
   const row=app.db.prepare('SELECT id,identity FROM bridges_inbox').get() as {id:string;identity:string};
   app.db.prepare("INSERT INTO bridges_outbox VALUES (?,?,?,?,?,?,'pending',NULL,?)").run('reply',row.id,venue.id,row.identity,JSON.stringify({channel:'D123',dm:true}),'reply <@U200>',clock.now());

@@ -17,7 +17,7 @@ it('injects confirmed aliases into only the private environment, erases byte buf
 it('preserves Unicode and a leading BOM instead of changing credential text',async()=>{
  const value='\uFEFF clé\nvalue',f=fixture(new Map([['API_TOKEN',Buffer.from(value)]]));await f.start();expect(f.environment.API_TOKEN).toBe(value);f.abort.abort();expect(f.environment.API_TOKEN).toBeUndefined();
 });
-it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','OPENAI_API_KEY','CODEX_HOME','HTTPS_PROXY'])('refuses %s without partially modifying the environment',async alias=>{
+it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','OPENAI_API_KEY','CODEX_HOME','HTTPS_PROXY','MCP_TOOL_TIMEOUT','MAX_MCP_OUTPUT_TOKENS'])('refuses %s without partially modifying the environment',async alias=>{
  const f=fixture(new Map([['GOOD_TOKEN',Buffer.from('FIRST_PRIVATE')],[alias,Buffer.from('SECOND_PRIVATE')]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);expect(JSON.stringify(f.environment)).not.toContain('PRIVATE');
 });
 it.each([Buffer.from([255]),Buffer.from('before\0after')])('refuses an unrepresentable environment value %j',async value=>{

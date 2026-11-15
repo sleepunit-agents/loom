@@ -38,7 +38,7 @@ it('serves all four Memory projections without legacy tables and rereads current
  const projects=createProjectsReader(clock,{agents:sources.agents,sharing,people});
  const conversations=new Conversations(db,()=>new Date(clock.now()).toISOString());conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'});
  const activity=createActivityReader(clock,{agents:sources.agents,sharing,timezone:'America/Chicago',conversations:sharedActivityConversations(db,{sharing})});
- const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),mind:projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
+ const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
  const data=nextData(db,clock,()=>true,undefined,queries.fields);
  try{
   const query='{ tasks { title } memoryKnowledge { pages { title } } memoryPerson(id:"fiction:friend") { name } memoryProject(id:"fiction:pond") { name sections { key available items { title } } } memoryActivity { entries { title } } }';

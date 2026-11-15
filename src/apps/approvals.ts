@@ -137,9 +137,24 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
       });
     },
     record(id: string) { get(id); return db.select().from(approvalRecord).where(eq(approvalRecord.approval, id)).orderBy(asc(approvalRecord.seq)).all(); },
-    report(input: Pick<typeof approvalNotices.$inferInsert, 'agent' | 'kind' | 'target' | 'what'>) {
-      z.object({ agent: z.string().min(1), kind: request.shape.kind, target: z.string().min(1), what: z.string().trim().min(1) }).parse(input);
-      return db.insert(approvalNotices).values({ ...input, id: `an-${randomUUID()}`, at: now() }).returning().get();
+    /** A body reports the step against the allowance it spent. Private words
+     * stay on that approval's labelled permanent record; the unlabelled notices
+     * table is used only for non-private steps. One report per allowance. */
+    reportUsed(id: string, agent: string, what: string) {
+      const text = z.string().trim().min(1).max(2000).parse(what);
+      return db.transaction(() => {
+        const row = get(id);
+        if (row.agent !== agent || row.state !== 'used' || row.operation) throw new Error('A spent body allowance is required');
+        const history = db.select().from(approvalRecord).where(eq(approvalRecord.approval,id)).orderBy(asc(approvalRecord.seq)).all();
+        if (!history.some(event => event.event === 'allow' && event.note.startsWith('Standing tell rule '))) throw new Error('A tell-rule allowance is required');
+        const old = history.find(event => event.event === 'use' && event.note.startsWith('Reported step: '));
+        if (old) {
+          if (old.note !== 'Reported step: '+text) throw new Error('Step was already reported');
+          return;
+        }
+        record(row,'use','Reported step: '+text);
+        if (!row.member) db.insert(approvalNotices).values({id:`an-${randomUUID()}`,agent:row.agent,kind:row.kind,target:row.target,what:text,at:now()}).run();
+      });
     },
     notices() { return db.select().from(approvalNotices).orderBy(asc(approvalNotices.at), asc(approvalNotices.id)).all(); },
   };
