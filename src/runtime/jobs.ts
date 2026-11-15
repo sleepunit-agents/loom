@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads } from '../core/data/schema.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
@@ -152,8 +152,14 @@ export class Jobs {
     if (state === 'done' || (state !== 'stopped' && job.state !== 'starting')) {
       this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
     }
-    if (job.conversation) this.db.update(conversations).set({ job: null })
-      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id))).run();
+    if (job.conversation) {
+      const detached=this.db.update(conversations).set({job:null})
+        .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();
+      // This exact body has ended. Clear its working indicator in the same
+      // transaction; an unobserved Stop and the last reported agent state stay.
+      if(detached)this.db.update(threads).set({working:false,workingSince:null,workingBeat:null})
+        .where(eq(threads.conversation,detached.id)).run();
+    }
     return ended;
   }
 }
