@@ -12,12 +12,20 @@
     {
       "id": "desk-002",
       "promise": "Places tiles by one rule, so the desk is full and nothing overlaps.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskGeometry"
+      }
     },
     {
       "id": "desk-003",
       "promise": "Keeps every installed app within reach in the launcher and the dock.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskLauncher"
+      }
     },
     {
       "id": "desk-004",
@@ -65,12 +73,20 @@
     {
       "id": "desk-012",
       "promise": "The first tile takes the big slot. The others share the space beside it on a wide screen, or below it on a tall one. When one more will not fit, the least recently used tile goes to the dock. A tile can be made the big one, minimized to the dock, or closed.",
-      "source": "docs/how-it-works/site/desk.html#how-h"
+      "source": "docs/how-it-works/site/desk.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskLayout"
+      }
     },
     {
       "id": "desk-013",
       "promise": "The launcher lists every app in groups and finds one as you type. Enter opens the first match. Every installed app also stays within reach in the dock.",
-      "source": "docs/how-it-works/site/desk.html#how-h"
+      "source": "docs/how-it-works/site/desk.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskLauncher"
+      }
     },
     {
       "id": "desk-014",

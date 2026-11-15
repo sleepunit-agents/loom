@@ -1,4 +1,5 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
+import {approvalActions} from './rebuild-approval-actions.mjs';
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {workVisibility} from './rebuild-work-visibility.mjs';
@@ -20,6 +21,7 @@ import {prepareRetention} from './rebuild-retention.mjs';
 import {FakeClock} from '../dist/core/clock.js';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskActions} from './rebuild-desk-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
 
@@ -127,19 +129,24 @@ export async function* walkthroughSteps(output) {
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());const failureScreenshot=row.actions?row.screenshot.replace('.png','-error.png'):row.screenshot;row.failureScreenshot=failureScreenshot;await page.screenshot({path:join(out,failureScreenshot),fullPage:true}).catch(()=>{});}
    if(row.actions)report.actions={...report.actions,...Object.fromEntries(Object.entries(row.actions).map(([name,value])=>['tempo'+name[0].toUpperCase()+name.slice(1),value]))};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
+   if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalActions({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
+   report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
-   report.apps.push(row);save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
+   save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
   }
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;}})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
+  save();yield {phase:'desk',actions:safeReport(report.actions)};
   report.actions.conversationRetention=await retention({page,clock,out});
   save();yield {phase:'retention',actions:safeReport(report.actions)};
+
  }catch(error){report.fatal=String(error);}
  finally{report.transport={sockets};report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}
  return safeReport(report);

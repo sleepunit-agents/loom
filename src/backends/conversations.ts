@@ -908,45 +908,6 @@ export function median(xs: readonly number[]): number | null {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-/**
- * The retention sweep: fold each UTC day whose every turn is older than 90 days into one
- * `conversation_days` row per conversation and day, then delete those turns. A day already
- * folded is never folded again (and takes no new turns). Conversations and digests stay.
- */
-export function foldConversations(contextDir: string, now: Date = new Date(), selection?: MemorySelection): { days: number; turns: number } {
-  const path = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(path)) return { days: 0, turns: 0 };
-  return withDb(contextDir, (db) => db.transaction(() => {
-    const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS).toISOString();
-    // A day's every turn is older than the cutoff: its newest turn is.
-    const groups = db.prepare(`SELECT conversation, substr(at, 1, 10) AS day, MAX(at) AS newest FROM conversation_turns
-      GROUP BY conversation, substr(at, 1, 10) HAVING MAX(at) < ?`).all(cutoff) as Array<{ conversation: string; day: string }>;
-    let days = 0;
-    let turns = 0;
-    for (const g of groups) {
-      if (db.prepare('SELECT 1 FROM conversation_days WHERE conversation = ? AND day = ?').get(g.conversation, g.day)) continue;
-      const rows = db.prepare('SELECT * FROM conversation_turns WHERE conversation = ? AND substr(at, 1, 10) = ?').all(g.conversation, g.day) as TurnRow[];
-      const counts: Record<string, number> = {};
-      const outcomes: Record<string, Record<string, number>> = {};
-      for (const r of rows) {
-        counts[r.kind] = (counts[r.kind] ?? 0) + 1;
-        if (r.outcome) {
-          const m = (outcomes[r.model ?? 'unknown'] ??= {});
-          m[r.outcome] = (m[r.outcome] ?? 0) + 1;
-        }
-      }
-      const mid = median(rows.filter((r) => r.kind === 'reply' && r.latency_ms !== null).map((r) => r.latency_ms!));
-      // Stored as whole milliseconds.
-      const lat = mid === null ? null : Math.round(mid);
-      db.prepare('INSERT INTO conversation_days (conversation, day, counts_json, median_latency_ms, outcomes_json) VALUES (?, ?, ?, ?, ?)').run(
-        g.conversation, g.day, JSON.stringify(counts), lat, JSON.stringify(outcomes));
-      turns += db.prepare('DELETE FROM conversation_turns WHERE conversation = ? AND substr(at, 1, 10) = ?').run(g.conversation, g.day).changes;
-      days++;
-    }
-    return { days, turns };
-  }).immediate(), selection);
-}
-
 // ─── Measures from metadata (conversations.md, "What each kind is measured on") ─
 
 /**
