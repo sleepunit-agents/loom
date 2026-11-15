@@ -77,7 +77,7 @@ it('startup aliases alone and household defaults do not grant; explicit startup 
  expect(await f.root.services.secrets.startup!.handTo('job')).toEqual([]);expect(f.handTo).not.toHaveBeenCalled();
  f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'OTHER',answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
  expect(await f.root.services.secrets.startup!.handTo('job')).toEqual([]);expect(f.handTo).not.toHaveBeenCalled();
- f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
+ f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
  const first=await f.root.services.secrets.startup!.handTo('job');expect(first).toMatchObject([{state:'released'}]);expect(await f.root.services.secrets.startup!.handTo('job')).toEqual(first);expect(f.handTo).toHaveBeenCalledOnce();
 });
 it('root close drains trusted startup delivery and leaves an unconfirmed audit that will not be replayed',async()=>{

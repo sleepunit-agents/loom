@@ -36,11 +36,11 @@ export function registerSharedSecretAgentCommands(operations:Operations,db:DataD
   may:(viewer,input)=>viewer.kind==='agent'&&db.select({agent:secretRequests.agent}).from(secretRequests).where(eq(secretRequests.id,input.id)).get()?.agent===viewer.id,
   run(_ctx,input){const row=db.select({id:secretRequests.id,state:secretRequests.state}).from(secretRequests).where(eq(secretRequests.id,input.id)).get();if(!row)throw new OperationError('not-found','Secret request not found');return row;},
  });
- if(!delivery)return;
  operations.register({name:'secrets.useStatus',input:z.object({id:z.string().min(1).max(200)}).strict(),output:handoff,
   may:(viewer,input)=>{const job=target(viewer),row=db.select({agent:secretUses.agent,job:secretUses.job}).from(secretUses).where(eq(secretUses.id,input.id)).get();return !!job&&row?.job===job.id&&row.agent===job.agent;},
   run(_ctx,input){const row=db.select({id:secretUses.id,state:secretUses.state}).from(secretUses).where(eq(secretUses.id,input.id)).get();if(!row)throw new OperationError('not-found','Secret handoff not found');return row;},
  });
+ if(!delivery)return;
  operations.register({name:'secrets.use',input:use,output:handoff,write:true,recheckPolicy:true,
   inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-secret-use-receipt-v1\0').update(JSON.stringify([target(actor)?.id??null,canonical])).digest('hex'),
   may:viewer=>!!target(viewer),

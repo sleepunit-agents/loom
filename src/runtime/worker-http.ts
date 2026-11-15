@@ -1,3 +1,4 @@
+import { privateSecretClient } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. No local retries: a lost
  * claim or report is reconciled by loom's job-silence sweep. */
 import { randomUUID } from 'node:crypto';
@@ -77,11 +78,16 @@ export function reportWorkerAccountUnavailable(input: WorkerHttpOptions, observa
 export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { windows: readonly QuotaWindow[]; basis: string }) {
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
 }
+export function reportWorkerHealth(input: WorkerHttpOptions & { facts?: readonly string[] }) {
+  const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
+  return operationCaller(input)('health', facts === undefined ? {} : { facts }, z.object({ ok: z.literal(true) }).strict());
+}
 export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[] }): WorkerControl {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
   return {
+    repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,timeoutMs:Math.min(input.timeoutMs??15000,15000),signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
     next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build) => { await call('started', { job, build }, ack); },
     heartbeat: async (job, state) => (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active,
