@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { dataAuthentication } from './core/data/authentication.js';
+import { sharedCredentials } from './shared-credentials.js';
 import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
@@ -38,7 +38,8 @@ export function sharedRoot(options: {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
+  const credentials = sharedCredentials(db, clock, () => !closing);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
@@ -63,7 +64,7 @@ export function sharedRoot(options: {
   registerSharedTaskCommands(operations, db, services.tasks);
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
   catch (error) { operations.close(); void data.close(); throw error; }
-  const authenticate = dataAuthentication(db, () => clock.now());
+  const authenticate = credentials.authenticate;
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -111,7 +112,7 @@ export function sharedRoot(options: {
   });
   runtime.start();
   return {
-    http, operations, services: { ...services, tempo }, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);

@@ -322,7 +322,7 @@ it.each(['http', 'socket'])('stops composition sibling callback admission synchr
     stop: { type: GraphQLString, resolve() { closing = f.data.close(); began(); return 'stop'; } },
     late: { type: GraphQLString, resolve() { late++; f.client.prepare('SELECT title FROM tasks').all(); return 'late'; } },
   });
-  let response: Promise<Response> | undefined;
+  let response: Promise<Response> | Response | undefined;
   if (mode === 'http') response = f.data.http.request('/graphql', { method: 'POST', headers: {
     authorization: `Bearer ${token}`, 'content-type': 'application/json',
   }, body: JSON.stringify({ query: '{ stop late }' }) });
