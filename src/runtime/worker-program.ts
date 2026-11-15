@@ -1,9 +1,10 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
 import { z } from 'zod';
+import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { signInAccount } from './account-signin.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
-import { httpWorkerControl, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
@@ -18,6 +19,7 @@ const accountCommand = z.object({
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
 const signInCommand = accountCommand.extend({ box: z.string().trim().min(1) });
 const configSchema = z.object({
+  facts: machineFacts.optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), command),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), command)).optional(),
@@ -45,6 +47,7 @@ export async function workerProgram(input: {
   reportUsage?: typeof reportWorkerAccountUsage;
   usageBasis?: typeof readWorkerAccountBasis;
   usageUnavailable?: typeof reportWorkerAccountUnavailable;
+  health?: typeof reportWorkerHealth;
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
   run?: typeof runWorker; control?: typeof httpWorkerControl; executor?: typeof commandWorkerExecutor;
   containerExecutor?: typeof containerWorkerExecutor;
@@ -97,7 +100,7 @@ export async function workerProgram(input: {
     const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
     const token = (await input.read(config.tokenFile)).trim();
     const remote = { url: config.url, token, signal: abort.signal };
-    const control = (input.control ?? httpWorkerControl)(remote);
+    const control = (input.control ?? httpWorkerControl)(config.facts === undefined ? remote : { ...remote, facts: config.facts });
     const executor = config.container
       ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: config.container })
       : (input.executor ?? commandWorkerExecutor)(config);
@@ -110,7 +113,21 @@ export async function workerProgram(input: {
         catch { if (!abort.signal.aborted) input.error('Worker quota refresh unavailable\n'); }
       }
     };
-    await scan();
+    if (config.accountUsage) {
+      const health = async () => { await (input.health ?? reportWorkerHealth)(config.facts === undefined ? remote : { ...remote, facts: config.facts }); };
+      if (abort.signal.aborted) return 0;
+      await health();
+      let heartbeat: Promise<void> | undefined, failed = false;
+      const timer = setInterval(() => {
+        if (heartbeat || abort.signal.aborted) return;
+        heartbeat = health().then(() => {}, () => {
+          if (!abort.signal.aborted) { failed = true; abort.abort(); }
+        }).finally(() => { heartbeat = undefined; });
+      }, 15_000);
+      try { await scan(); }
+      finally { clearInterval(timer); await heartbeat; }
+      if (failed) throw new Error('Startup health unavailable');
+    } else await scan();
     const refresh = config.accountUsage ? (async () => {
       while (!abort.signal.aborted) {
         try { await (input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); }))(config.accountUsage!.intervalMs ?? 60_000, abort.signal); }

@@ -156,3 +156,8 @@ for (const patch of [{ cwd: 'relative' }, { env: { 'BAD-KEY': 'value' } }]) it('
   const containerExecutor = vi.fn(); expect(await workerProgram({ ...f, containerExecutor })).toBe(1);
   expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
 });
+
+for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\0fact'], ['bad\nline'], ['bad\rfact'], ['x'.repeat(257)], Array.from({ length: 129 }, (_, i) => 'fact'+i), null, 'gpu:5090']) it('rejects invalid configured machine facts before reading a token or executing', async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, facts }));
+  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+});

@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
-import { boxes, inbox, members } from '../core/data/schema.js';
+import { boxes, boxFacts, inbox, members } from '../core/data/schema.js';
 import { Machines } from './machines.js';
 
 const clients: Database.Database[] = [];
@@ -59,4 +59,22 @@ it('rejects revoked or missing heartbeats and invalid scan intervals without cha
   for (const value of [0, -1, Infinity, NaN]) expect(() => service.sweep(value)).toThrow('Invalid silence interval');
   expect(db.select().from(boxes).get()?.lastSeenAt).toBeNull();
   expect(db.select().from(inbox).all()).toEqual([]);
+});
+
+it('replaces only machine-reported facts, preserving owner labels and other machines', () => {
+  const f = fixture(); f.add('worker'); f.add('other');
+  f.db.insert(boxFacts).values([{ box: 'worker', fact: 'gpu:old', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }, { box: 'other', fact: 'gpu:other', fromOwner: false }]).run();
+  f.service.heartbeat('worker', ['gpu:5090', 'rack:attic']);
+  expect(f.db.select().from(boxFacts).where(eq(boxFacts.box, 'worker')).all().sort((a,b) => a.fact.localeCompare(b.fact))).toEqual([{ box: 'worker', fact: 'gpu:5090', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
+  f.service.heartbeat('worker'); expect(f.db.select().from(boxFacts).all()).toHaveLength(3);
+  f.service.heartbeat('worker', []);
+  expect(f.db.select().from(boxFacts).all().sort((a,b) => a.box.localeCompare(b.box))).toEqual([{ box: 'other', fact: 'gpu:other', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
+});
+
+for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\rfact'], ['bad\nline'], ['bad\0fact'], ['x'.repeat(257)], Array.from({ length: 129 }, (_, i) => 'fact'+i)]) it('validates trusted reports before changing facts, health or outage recovery', () => {
+  const f = fixture(); f.add('worker'); f.advance(120001); f.service.sweep();
+  f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run();
+  const before = { boxes: f.db.select().from(boxes).all(), facts: f.db.select().from(boxFacts).all(), notices: f.db.select().from(inbox).all() };
+  expect(() => f.service.heartbeat('worker', facts)).toThrow();
+  expect({ boxes: f.db.select().from(boxes).all(), facts: f.db.select().from(boxFacts).all(), notices: f.db.select().from(inbox).all() }).toEqual(before);
 });

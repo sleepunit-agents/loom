@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Dialog, DialogContent, DialogTitle } from '../../components/ui/dialog';
 import { useDataQuery } from '../../data/graphql';
 import { SharedTasks, type TaskAction } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
@@ -37,17 +38,22 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
     window.addEventListener('popstate', pop);
     return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  // Drop forms on access/connection loss; no draft may reappear on reconnect.
-  useEffect(() => { if (status !== 'live') setAction(undefined); }, [status]);
   const target = tasks.find(task => task.id === action?.id);
+  // A removed row also revokes its draft while the rest of the query stays live.
+  useEffect(() => { if (status !== 'live' || (action?.id && !target)) setAction(undefined); }, [status, action?.id, target]);
   return <>
     <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor}
       changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
       links={tasks.flatMap(task => task.taskLinksByTask)} comments={tasks.flatMap(task => task.taskCommentsByTask)}
       ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
       act={submit ? (action, task) => { navigate(task?.id); setAction({action, id: task?.id}); } : undefined}/>
-    {submit && action && <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks}
+    {submit && <Dialog open={!!action && status === 'live' && (action.action === 'create' || !!target)} onOpenChange={open => { if (!open) setAction(undefined); }}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto p-0" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">Task form</DialogTitle>
+        {action && <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks}
       people={people} projects={projects} conversation={conversation} submit={submit}
       done={() => setAction(undefined)} cancel={() => setAction(undefined)}/>}
+      </DialogContent>
+    </Dialog>}
   </>;
 }
