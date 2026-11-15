@@ -33,7 +33,6 @@ export const TOOLS = [
   'project_write', 'project_verify', 'project_archive', 'project_restore', 'project_history',
   'project_revision_restore', 'project', 'project_list', 'project_hub', 'project_orphans',
   'note_write', 'note_read', 'note_list',
-  'conversation_digest', 'conversations', 'conversation', 'conversation_findings',
   'describe_self',
 ];
 
