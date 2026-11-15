@@ -26,7 +26,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  let closed=false,taking=false,pending:{id:string;items:string[]}|undefined;
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
- async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'='conversation'):Promise<T>{
+ async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation'):Promise<T>{
   if(!current())throw unavailable();
   const abort=new AbortController(),end=clock.now()+timeout;controllers.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
@@ -82,6 +82,8 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     await confirmPending();return {accepted,stopRequested:input.stopRequested};
    }catch{throw unavailable();}finally{taking=false;}
   },
+  requestSecret(input:{id:string;secret:string;why:string;minutes:number;scope:'agent'|'job'}){return call('request',input,z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),input.id,'secrets');},
+  secretRequestStatus(id:string){return call('requestStatus',{id},z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),undefined,'secrets');},
   bridgeReply(input:{incoming:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
   reply(input:Reply,id=randomUUID()){return call('message',{kind:'reply',...input},messageResult,id);},
   card(input:Card,id=randomUUID()){return call('message',{kind:'card',...input},messageResult,id);},
