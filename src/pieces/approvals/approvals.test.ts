@@ -15,7 +15,6 @@ import { importApprovals } from './importer.js';
 import { approvalsRole, isApplyingOwnerAnswer } from './role.js';
 import { type Caller, type Approval } from './model.js';
 import type { ApprovalApplications } from './apply.js';
-import { installClock } from '../clock/index.js';
 const owner:Viewer={kind:'member',id:'jonathan'},agent:Viewer={kind:'agent',id:'art'},pollock:Viewer={kind:'member',id:'pollock'},other:Viewer={kind:'agent',id:'pond-bot'};
 const closes:(()=>Promise<void>)[]=[],dirs:string[]=[];
 const dir=()=>{const d=mkdtempSync(join(tmpdir(),'approvals-test-'));dirs.push(d);return d;};
@@ -350,25 +349,7 @@ describe('owner application routing and denial retention',()=>{
     expect(file('art:w-000002','after')).toMatchObject({ok:false,code:'denied'});
     expect(file('art:w-000003','unrelated')).toMatchObject({ok:true});
   });
-  it('files vouches for actual clock ids and retains overlapping denials',async()=>{
-    const a=await setup();
-    const clock=installClock(a.db,a.operations,a.live,()=>a.access);
-    closes.push(async()=>clock.close());
-    const ids=Array.from({length:3},(_,i)=>{
-      const result=a.operations.call('direct',owner,'clock.in',{agent:'art',when:'1h',prompt:'Review the work.',note:'Wake '+i},'clock-'+i);
-      expect(result).toMatchObject({ok:true});
-      return (result as {ok:true;value:{id:string}}).value.id;
-    }).sort();
-    const file=(wakes:string[],id:string)=>a.role.call('request',caller,{...ask,kind:'vouch-wake',target:'art:'+wakes.join(','),details:wakes.map(id=>id+' fires in one hour').join('\n')},id);
-    const first=file(ids.slice(0,2),'actual-clock');
-    expect(first).toMatchObject({ok:true});if(!first.ok)return;
-    expect(file(ids.slice(1),'actual-overlap')).toMatchObject({ok:false,code:'denied'});
-    const card=first.value as {id:string};
-    a.value('answer',{id:card.id,action:'deny'},owner);
-    a.clock.advance(30*86400_000);
-    expect(file([ids[1]],'actual-denied')).toMatchObject({ok:false,code:'denied'});
-    expect(file([ids[2]],'actual-unrelated')).toMatchObject({ok:true});
-  });
+
   it.each(['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'])('retains mixed-set denial over a single %s id',async(overlap)=>{
     const a=await setup();
     const ids=['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'];

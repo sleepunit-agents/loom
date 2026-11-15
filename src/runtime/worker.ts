@@ -20,6 +20,8 @@ export interface WorkerAssignment {
   conversation: string | null;
   /** Current Comms reply surface, when present; not an authority witness. */
   thread?: string | null;
+  /** Saved conversation venue for selecting a receiving adapter; not authority. */
+  venue?: string | null;
   model: string;
   account: string;
   harness: string;

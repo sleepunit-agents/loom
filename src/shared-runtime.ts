@@ -20,6 +20,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   jobEnded(id: string): void;
 }) {
   const dispatcher = new Dispatcher(db, options.now, options.roles);
+  const stopped=new WeakSet<object>();
   const machine = (viewer: Viewer) => {
     if (viewer.kind !== 'runner' || options.runner(viewer)?.box !== viewer.id) return false;
     const row = db.select().from(boxes).where(eq(boxes.id, viewer.id)).get();
@@ -68,8 +69,10 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },
     run(ctx, input) {
       const result = dispatcher.heartbeat(runner(ctx.viewer), input.job, input.state);
-      ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return result;
+      if(result.stopped)stopped.add(input);
+      ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return {active:result.active};
     },
+    after(input){if(stopped.delete(input))options.jobEnded(input.job);},
   });
   operations.register({ name: 'runtime.finish', write: true, recheckPolicy: true, doors: ['http'],
     input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(16_384) }).strict(), output: ack,

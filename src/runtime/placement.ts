@@ -26,7 +26,7 @@ export function selectPlacement(db: DataDatabase, input: {
   const now = Date.parse(input.now);
   if (!Number.isFinite(now)) throw new Error('Invalid placement time');
   const owners = new Set(db.select().from(memberAgents).where(eq(memberAgents.agent, input.agent)).all().map(row => row.member));
-  const allowed = new Set(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => row.box));
+  const allowed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box,row.lent]));
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
   const models = db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
     .filter(row => input.model === undefined || row.model === input.model);
@@ -37,7 +37,7 @@ export function selectPlacement(db: DataDatabase, input: {
     if (!box || box.revokedAt || box.reportOnly || !box.lastSeenAt) continue;
     const silence = now - Date.parse(box.lastSeenAt);
     if (!Number.isFinite(silence) || silence < 0 || silence > WORKER_SILENCE_MS) continue;
-    if (!allowed.has(box.id) && !(box.hostsAny && owners.has(box.owner))) continue;
+    if (!(allowed.has(box.id) && (owners.has(box.owner) || allowed.get(box.id))) && !(box.hostsAny && owners.has(box.owner))) continue;
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all().map(row => row.fact);
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;
     for (const model of models) {
