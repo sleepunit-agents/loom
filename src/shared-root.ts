@@ -1,5 +1,9 @@
 import { installMeasuring } from './core/measuring/install.js';
 import { measuringSettingsProposals } from './core/measuring/proposal.js';
+import { SecretRequests } from './pieces/secrets/requests.js';
+import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
+import { registerSharedSecretCommands } from './shared-secret-commands.js';
+
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
 import type { IncomingMessage } from 'node:http';
@@ -27,9 +31,12 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  /** Explicit authenticated private holder and stable private retry key. */
+  secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
+  if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
@@ -48,13 +55,36 @@ export function sharedRoot(options: {
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
-    receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
+    receipts: new OperationResults(db), writes: data.writes,
+    reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
+  const requests = new SecretRequests(db, now);
+  const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
+    options.secretWrites.fingerprintKey, write => {
+      const result = data.writes.run(write);
+      for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
+    });
+  registerSharedSecretCommands(operations, db, requests, values && {
+    values, fingerprintKey:options.secretWrites!.fingerprintKey,
+  });
+  let secretRecovery:Promise<void>|undefined, cancelSecretRecovery:(()=>void)|undefined;
+  const recoverSecrets=()=>{
+    if(closing || !values)return Promise.resolve();
+    if(secretRecovery)return secretRecovery;
+    cancelSecretRecovery?.();
+    secretRecovery=(meter?.enabled() ? meter.runAsync('job','secrets.reconcile',()=>values.reconcilePending()) : values.reconcilePending()).catch(()=>{}).finally(()=>{
+      secretRecovery=undefined;
+      if(!closing)cancelSecretRecovery=clock.at(clock.now()+60_000,recoverSecrets);
+    });
+    return secretRecovery;
+  };
+  if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: new Conversations(db, now),
+    secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   measuringReady = installMeasuring({ operations, live: { changed: () => data.changed() },
@@ -124,12 +154,13 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
+      cancelSecretRecovery?.(); values?.close();
       const stopped = data.close();
       for (const stop of stops.splice(0).reverse()) stop();
       const measured = measuringReady.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, measured, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

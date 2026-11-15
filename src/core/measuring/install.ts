@@ -49,7 +49,7 @@ export async function installMeasuring(app: MeasuringHost, db: DataDatabase) {
   const runtime = measuringRuntime(settings.read, () => [
     ...app.operations.timingTargets(),
     ...['graphql', 'graphql.socket', 'api', 'mcp', 'web'].map(name => ({ kind: 'request' as const, name })),
-    { kind: 'job', name: 'changes.read' },
+    { kind: 'job', name: 'changes.read' }, { kind: 'job', name: 'secrets.reconcile' },
   ], { add(row) { store.add(row); app.live.changed([{type:'measuring', id:'timing'}]); }, prune: store.prune }, () => console.warn('Measuring could not record or export timings'), app.operations.clock);
   let signature = '';
   let generation = 0;

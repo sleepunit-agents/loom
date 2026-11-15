@@ -88,3 +88,13 @@ it('awaits the real exporter shutdown before root close permits SQLite close', a
  try {await started;await new Promise<void>(resolve=>setImmediate(resolve));expect(closed).toBe(false);expect(client.open).toBe(true);}
  finally {release();await stopping;exporter.stop=undefined;}
 });
+
+it('times shared Secrets recovery without passing values into telemetry',async()=>{
+ const client=new Database(':memory:');const clock=new FakeClock(Date.UTC(2026,10,14));
+ const db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
+ db.insert(measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:90}).run();
+ const holder={hasReceipt:vi.fn(async()=>false),set:vi.fn(async()=>{}),remove:vi.fn(async()=>{}),recover:vi.fn(async()=>'undone' as const)};
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError(){},secretWrites:{holder,fingerprintKey:Buffer.alloc(32)}});
+ try{await root.ready;await root.services.secrets.reconcile();expect(db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'job',name:'secrets.reconcile',count:1}));expect(holder.hasReceipt).not.toHaveBeenCalled();}
+ finally{await root.close();client.close();clock.advance(86400000);}
+});
