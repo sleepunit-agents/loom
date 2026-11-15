@@ -63,7 +63,31 @@ async function watch(page,query){
  const initial=await page.evaluate(()=>{const p=globalThis.__loomDataProbe.probe;return{error:p.error,delta:p.events[0]};});check(!initial.error,'Data subscription refused: '+initial.error);return initial.delta;
 }
 async function stop(page){await page.evaluate(()=>{const state=globalThis.__loomDataProbe,p=state?.probe;if(!p)return;p.socket.removeEventListener('message',p.listener);if(p.socket.readyState===WebSocket.OPEN)p.socket.send(JSON.stringify({id:p.id,type:'complete'}));delete state.probe;}).catch(()=>{});}
-export async function dataActions({page,app,example,apps,subscriptions,out}){
+export async function sharingGrowth({page,app,subscriptions,out}){
+ const screenshot='action-dataSharingSQL.png';let result;
+ try{
+  result=await (async()=>{
+  const query=subscriptions.find(s=>/\bhouseholdSharing\b/.test(s.query))?.query;check(query,'The actual Sharing selection was not observed');
+  const samples=[];
+  for(const size of [2,10]){
+   const existing=app.services.projects.read().projects.length;
+   check(existing<=size,'The fresh household already exceeds the growth sample');
+   for(let n=existing;n<size;n++)app.writes.run(()=>app.services.projects.save({id:'walkthrough-growth-'+n,name:'Fictional growth project '+n,members:['alex'],agents:['fern'],repositories:[]}));
+   const result=await sqlRead({page,app,query,caller:/(?:at Object\.read \(.*shared-projects\.[jt]s:|at readSharing \()/,match:/\b(?:from|join)\s+/i});
+   check(result.status===200&&!result.body.errors,'Sharing growth read failed');
+   const rows=result.body.data?.householdSharing?.projects;
+   check(Array.isArray(rows)&&rows.length===size,'The actual Sharing selection did not return the expected project count');
+   check(result.statements.length>0,'No actual Sharing SQL executions were attributed');
+   samples.push({projects:rows.length,sqlExecutions:result.statements.length,statements:[...new Set(result.statements)]});
+  }
+  const details={samples,statements:[...new Set(samples.flatMap(sample=>sample.statements))]};
+  if(samples[1].sqlExecutions>samples[0].sqlExecutions)return{ok:false,...details,error:'Sharing SQL executions grew from '+samples[0].sqlExecutions+' to '+samples[1].sqlExecutions+' as projects grew from 2 to 10.'};
+  return{...details,inconclusive:true,reason:'The actual Sharing selection uses a fixed SQL count at 2 and 10 projects, one API call each. The complete promise also requires filtering and caller visibility in the database; this growth measurement alone does not establish those clauses.'};
+  })();
+ }catch(error){result={inconclusive:true,reason:'The growth measurement did not complete: '+String(error)};}
+ await page.screenshot({path:join(out,screenshot),fullPage:true});return{...result,screenshot};
+}
+export async function dataActions({page,app,example,apps,subscriptions,out,sharingSQL}){
  const evidence={};
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{evidence[name]={ok:true,...await run(),screenshot};}catch(error){evidence[name]={ok:false,error:String(error),screenshot};}await stop(page);await page.screenshot({path:join(out,screenshot),fullPage:true});};
  const unknown=apps.filter(a=>!a.dataDoor?.known||!a.dataDoor.selectionSeen),bad=apps.filter(a=>!a.opened||a.dataDoor?.graphql!==1||a.dataDoor?.other?.length);
@@ -80,14 +104,7 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
   const child=root.selectionSet.selections.find(f=>f.kind==='Field'&&f.name.value==='taskCommentsByTask');check(JSON.stringify(Object.keys(rows[0].taskCommentsByTask[0]).sort())===JSON.stringify(fields(child.selectionSet)),'Connected rows did not contain exactly the selected fields');
   return{reason:'The observed Tasks selection named its fields and connected comments; its filtered browser replay returned exactly those selected fields.',statements:result.statements,factSQLExecutions:result.statements.length,fields:Object.keys(rows[0]),task:example.tasks[0]};
  });
- await attempt('dataSharingSQL',async()=>{
-  const query=subscriptions.find(s=>/\bhouseholdSharing\b/.test(s.query))?.query;check(query,'The actual Sharing selection was not observed');
-  const result=await sqlRead({page,app,query,caller:/at Object\.read \(.*shared-projects\.[jt]s:/,match:/\b(?:from|join)\s+"?project(?:s|_members|_agents|_repositories)"?\b/i});check(result.status===200&&!result.body.errors,'Sharing read failed');
-  const distinct=[...new Set(result.statements)];
-  // Jonathan's 2026-11-15 clarification permits sensible batched SQL behind
-  // one API call. Statement count alone cannot establish unnecessary or N+1 IO.
-  return{inconclusive:true,reason:'One browser API request was observed. Several batched SQL statements are permitted; query growth and necessity across larger results are not yet measured.',statements:distinct,sqlExecutions:result.statements.length};
- });
+ evidence.dataSharingSQL=sharingSQL??{inconclusive:true,reason:'The early fresh-household growth measurement is unavailable.'};
  await attempt('dataTaskPatches',async()=>{
   await open(page,'Tasks');
   await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,e=s.entries.get(s.sockets.find(x=>x.readyState===WebSocket.OPEN&&new URL(x.url).pathname==='/graphql'));return e&&[...e.active.values()].some(r=>/query\s+Tasks\b/.test(r.query)&&e.frames.some(f=>f.id===r.id));},undefined,{timeout:4000});
