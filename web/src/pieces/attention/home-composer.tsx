@@ -23,7 +23,7 @@ export function HomeMessageComposer({member,agent,onOpened}:{member:string;agent
     const sent=current.current,thread=`th:${sent.id}`;
     locked.current=true;setPending(true);setMessage('');
     try {
-      const opened=await memberOperation<{thread:string}>('comms.open',{thread,agent,title:'New conversation'});
+      const opened=await memberOperation<{thread:string}>('comms.open',{thread,agent});
       if(!mounted.current)return;
       if(opened?.thread!==thread)throw Error('Could not confirm the conversation. Draft kept.');
       const posted=await memberOperation<{thread:string;seq:number}>('comms.send',{thread,clientId:sent.id,words:sent.text});

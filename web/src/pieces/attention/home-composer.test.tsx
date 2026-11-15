@@ -27,7 +27,7 @@ it('opens with wordless metadata, sends through the shared contract, then clears
  await draw();await edit('Private message words');const sent=readDraft('sam','new:art');
  await act(async()=>submit());
  expect(f.once.mock.calls).toEqual([
-  ['comms.open',{thread:`th:${sent.id}`,agent:'art',title:'New conversation'}],
+  ['comms.open',{thread:`th:${sent.id}`,agent:'art'}],
   ['comms.send',{thread:`th:${sent.id}`,clientId:sent.id,words:'Private message words'}],
  ]);
  expect(JSON.stringify(f.once.mock.calls[0])).not.toContain('Private message words');
