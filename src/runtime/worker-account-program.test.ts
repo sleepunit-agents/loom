@@ -20,10 +20,17 @@ function fixture(mode: '--account-signin' | '--account-usage', timeoutMs?: numbe
   const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
   const handlers = new Map<string, () => void>();
   const config = { command, account: identity, ...(mode === '--account-signin' ? { box: 'worker' } : {}), ...(timeoutMs === undefined ? {} : { timeoutMs }) };
-  const input = { args: [mode, '/config'], read: vi.fn(async () => JSON.stringify(config)), output: vi.fn(), error: vi.fn(),
+  const input = { args: [mode, '/config'], read: vi.fn<(path: string) => Promise<string>>(async path => { if (path !== '/config') throw Error('Unexpected local read'); return JSON.stringify(config); }), output: vi.fn(), error: vi.fn(),
     on: (name: string, callback: () => void) => { handlers.set(name, callback); },
     off: (name: string) => { handlers.delete(name); }, control: vi.fn(), run: vi.fn() };
   return { child, input, handlers, kill, config, sent, stdin: () => stdin };
+}
+function configureReporting(f: ReturnType<typeof fixture>) {
+  f.input.read.mockImplementation(async path => {
+    if (path === '/token') return 'worker-credential';
+    if (path !== '/config') throw Error('Unexpected reporting read');
+    return JSON.stringify({ ...f.config, report: { url: 'https://loom.example', tokenFile: '/token' } });
+  });
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 async function spawned(f: ReturnType<typeof fixture>) {
@@ -43,6 +50,7 @@ for (const mode of ['--account-signin', '--account-usage'] as const) {
     expect(await result).toBe(0);
     expect(f.input.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify(mode === '--account-signin'
       ? { ...identity, box: 'worker', signedIn: true } : { ...identity, windows }) + '\n');
+    expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
     expect(f.input.error).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled(); expect(f.input.control).not.toHaveBeenCalled();
     expect(f.kill).toHaveBeenCalledExactlyOnceWith(-123, 'SIGKILL');
     expect(f.handlers.size).toBe(0); expect(vi.getTimerCount()).toBe(0);
@@ -109,4 +117,52 @@ it('rejects valid quota output when the private command exits unsuccessfully', a
 it('refuses a box field in a usage configuration', async () => {
   const f = fixture('--account-usage'); f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, box: 'unexpected' }));
   expect(await workerProgram(f.input)).toBe(1); expect(spawn).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
+});
+
+it('reports a successful configured quota read before acknowledging local completion', async () => {
+  const f = fixture('--account-usage'), report = vi.fn(async () => ({ recorded: true }));
+  configureReporting(f);
+  const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
+  f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 0, null);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(await pending).toBe(0);
+  expect(report).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url: 'https://loom.example', token: 'worker-credential' }), { ...identity, windows });
+  expect(f.input.read.mock.calls.map(call => call[0])).toEqual(['/config', '/token']);
+});
+it('does not retry or print a success after an uncertain quota report', async () => {
+  const f = fixture('--account-usage'), report = vi.fn(async () => { throw Error('private remote diagnostics'); });
+  configureReporting(f);
+  const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
+  f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
+  expect(await pending).toBe(1); expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
+  expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+});
+
+it('waits for a configured report and suppresses a late success after SIGTERM', async () => {
+  const f = fixture('--account-usage'); let release!: (value: { recorded: boolean }) => void;
+  const report = vi.fn(() => new Promise<{ recorded: boolean }>(resolve => { release = resolve; }));
+  configureReporting(f);
+  const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
+  f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 0, null); await flush();
+  expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
+  const signal = (report.mock.calls[0] as unknown as [ { signal: AbortSignal } ])[0].signal;
+  f.handlers.get('SIGTERM')!(); expect(signal.aborted).toBe(true);
+  release({ recorded: true }); expect(await pending).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
+});
+for (const output of ['invalid-json', '[{"name":"week","usage":2}]']) it('does not access a reporting token or endpoint after a failed provider read', async () => {
+  const f = fixture('--account-usage'), report = vi.fn();
+  f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, report: { url: 'https://loom.example', tokenFile: '/token' } }));
+  const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
+  f.child.stdout.emit('data', output); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
+  expect(await pending).toBe(1); expect(report).not.toHaveBeenCalled(); expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
+});
+it('prints a local success only after the reporting promise acknowledges', async () => {
+  const f = fixture('--account-usage'); let release!: (value: { recorded: boolean }) => void;
+  const report = vi.fn(() => new Promise<{ recorded: boolean }>(resolve => { release = resolve; }));
+  configureReporting(f);
+  const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
+  f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 0, null); await flush();
+  expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
+  release({ recorded: true }); expect(await pending).toBe(0);
+  expect(f.input.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ...identity, windows }) + '\n');
 });
