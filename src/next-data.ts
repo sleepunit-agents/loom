@@ -12,9 +12,15 @@ import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
+import { modelAccountQueries } from './runtime/account-query.js';
 
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}) {
-  const authenticate = dataAuthentication(db, () => clock.now());
+  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
+  const resolve = dataAuthentication(db, () => clock.now());
+  const authenticate = (request: Request) => {
+    const auth = resolve(request);
+    return auth && { ...auth, valid: () => auth.valid() && accounts.valid(auth.viewer) };
+  };
   const live = new DataLive();
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
@@ -23,7 +29,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync'],
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) },
-  }), fields);
+  }), { ...fields, ...accounts.fields });
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
       const headers = new Headers();
