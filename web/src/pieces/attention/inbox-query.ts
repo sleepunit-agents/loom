@@ -1,6 +1,4 @@
 import { taskSegment } from '../tasks/route';
-import { useMemo } from 'react';
-import { useDataQuery, type DataQuerySnapshot } from '../../data/graphql';
 import type { InboxFolders, InboxItem } from '../inbox-view/model';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
@@ -39,14 +37,6 @@ export function inboxSelection(folder: string, search: string, offset: number, s
   };
 }
 /** Decode the selected fields over the single canonical query client. */
-export function useInboxSelection(selection: InboxSelection): DataQuerySnapshot<InboxReading> {
-  const reading = useDataQuery<Record<string, unknown>>(selection.query, selection.variables);
-  return useMemo<DataQuerySnapshot<InboxReading>>(() => {
-    if (reading.status !== 'live' || !reading.data) return { status: reading.status };
-    try { return { status: 'live', data: selection.decode(reading.data) }; }
-    catch { return { status: 'offline' }; }
-  }, [reading.status, reading.data, selection]);
-}
 /** Private question and answer wording have separate deadlines. A missing or
  * invalid private deadline is unavailable, while plain Inbox text has none. */
 export function retainedInboxItem(row: InboxItem, now: number): InboxItem {

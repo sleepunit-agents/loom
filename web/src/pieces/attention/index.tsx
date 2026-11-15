@@ -5,7 +5,8 @@ import { Error, Loading, Button, Textarea } from '../../kit';
 import { commsThreadPath, isNotice, decisionLink, safeHref, type Ask, type Answer } from './model';
 import type { ReplyDraft } from './drafts';
 import { InboxView, type InboxActions } from '../inbox-view';
-import { inboxSelection, useInboxSelection, inboxPageSize, inboxSourcePath, retainedInboxItem } from './inbox-query';
+import { useQuery } from '../../data/query';
+import { inboxSelection, inboxPageSize, inboxSourcePath, retainedInboxItem } from './inbox-query';
 const idle: CallState<unknown> = { pending:false, status:'done' };
 const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
@@ -108,7 +109,8 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   let selected: string | undefined;
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/') + 5)) : undefined; } catch { /* Invalid routes select nothing. */ }
   const selection = useMemo(() => inboxSelection(folder, search, offset, selected), [folder, search, offset, selected]);
-  const reading = useInboxSelection(selection), live = reading.status === 'live';
+  const raw = useQuery(selection);
+  const reading = {...raw,status:raw.status === 'error' ? 'offline' as const : raw.status}, live = reading.status === 'live';
   const status = reading.status;
   const data = live ? reading.data : undefined;
   const navigate = (next: string) => {
