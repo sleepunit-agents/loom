@@ -25,6 +25,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  catch(error){for(const source of sources.values())source.db.close();throw error;}
  const close=()=>{if(closed)return;closed=true;for(const source of sources.values())source.db.close();sources.clear();};
  const selected=(viewer:Viewer)=>{if(closed)return;const body=options.body(viewer);return body?sources.get(body.agent):undefined;};
+ const author=(viewer:Viewer)=>{const body=options.body(viewer);if(!body)throw new OperationError('denied','Current body required');return body.agent;};
  const current=(viewer:Viewer)=>{const source=selected(viewer);return source&&semanticMemoryReady(source.db)?source:undefined;};
  // Keep lookups at their owning snapshot: recovery filters expiry, admission
  // deletes expired rows under its lock, execution retains the original deadline.
@@ -88,15 +89,15 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const cardIds=z.object({ids:z.array(z.string().min(3).max(300))}).strict();
  operations.register({...base,doors:[...base.doors],name:'memory.personWrite',input:person.describe('Write a person card in your own declared private Memory source. Read the returned ID with memoryPerson(id:) on GraphQL. Card claims never grant permission.'),output:cardIds,
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
-   try{const store=new PeopleStore({database:db,actor:viewer.id,now:options.now});try{return {ids:[store.write(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person card');throw error;}
+   try{const store=new PeopleStore({database:db,actor:author(viewer),now:options.now});try{return {ids:[store.write(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person card');throw error;}
   })});
  operations.register({...base,doors:[...base.doors],name:'memory.projectWrite',input:project.describe('Write a project card in your own declared private Memory source. Read the returned ID with memoryProject(id:) on GraphQL. Links do not grant sharing.'),output:cardIds,
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
-   try{const store=new ProjectsStore({database:db,actor:viewer.id,now:options.now});try{return {ids:[store.write(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid project card');throw error;}
+   try{const store=new ProjectsStore({database:db,actor:author(viewer),now:options.now});try{return {ids:[store.write(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid project card');throw error;}
   })});
  operations.register({...base,doors:[...base.doors],name:'memory.personRestoreRevision',input:z.object({slug:z.string().min(1).max(64),revision_id:z.number().int().positive().max(2147483647)}).strict().describe('Restore one retained person-card revision in your own source. Read revision IDs with memoryPerson(id:){history{id}}.'),output:cardIds,
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
-   try{const store=new PeopleStore({database:db,actor:viewer.id,now:options.now});try{return {ids:[store.revisionRestore(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person-card revision');throw error;}
+   try{const store=new PeopleStore({database:db,actor:author(viewer),now:options.now});try{return {ids:[store.revisionRestore(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person-card revision');throw error;}
   })});
  const target=z.object({id:scopedId}).strict();
  const ownTarget=(db:Database.Database,viewer:Viewer,id:string)=>{
