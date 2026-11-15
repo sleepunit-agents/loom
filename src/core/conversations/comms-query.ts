@@ -1,6 +1,6 @@
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
-import { and, asc, desc, eq, getTableColumns, is, isNotNull, isNull, lt, SQL, type AnyColumn } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, is, isNotNull, isNull, lt, sql, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
@@ -28,7 +28,7 @@ export class CommsQueries {
       .where(and(this.allowed(viewer), member ? eq(conversations.member, member) : undefined,
         input.agent ? eq(conversations.agent, input.agent) : undefined,
         input.archived ? isNotNull(threads.archivedAt) : isNull(threads.archivedAt)))
-      .orderBy(desc(threads.pinned), desc(threads.lastAt), asc(threads.id)).limit(count).offset(offset).all();
+      .orderBy(desc(threads.pinned), desc(sql`julianday(${threads.lastAt})`), asc(threads.id)).limit(count).offset(offset).all();
   }
   thread(viewer: Viewer, id: string) {
     return this.db.select(threadFields).from(threads).innerJoin(conversations, eq(conversations.id, threads.conversation))
@@ -55,7 +55,7 @@ export class CommsQueries {
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
     const days = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
     const retained = (entry: ReturnType<typeof row>, keep: number) => !!entry?.message.words && !!entry.message.keepUntil
-      && Number.isInteger(keep) && keep >= 1 && keep <= 14 && entry.message.keepUntil > this.now()
+      && Number.isInteger(keep) && keep >= 1 && keep <= 14 && Date.parse(entry.message.keepUntil) > Date.parse(this.now())
       && Date.parse(entry.message.at) + keep * 86400000 > Date.parse(this.now());
     const same = (message: Message) => ['at', 'sender', 'kind', 'keepUntil', 'inboxItem'].every(key => message[key as keyof Message] === expected[key as keyof typeof expected]);
     const scope = (entry: ReturnType<typeof row>) => !!entry && entry.agent === expected.agent && entry.project === expected.project && entry.member === expected.member && entry.conversation === expected.conversation;

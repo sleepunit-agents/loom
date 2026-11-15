@@ -7,7 +7,10 @@ export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
   conversation: z.string().nullable(), model: z.string(), account: z.string(),
   harness: z.string().min(1), brief: z.string(),
-  run: z.object({ nestedContainers: z.boolean(), gpu: z.boolean(),
+  run: z.object({ policy: z.object({
+    deniedTools: z.array(z.object({ pattern: z.string().min(1), guestsOnly: z.boolean() })),
+    people: z.array(z.object({ kind: z.enum(['person', 'outside', 'unknown']), person: z.string().nullable(), tier: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable() })),
+  }).optional(), nestedContainers: z.boolean(), gpu: z.boolean(),
     ports: z.array(z.object({ address: z.string(), port: z.number().int().min(1).max(65535) })),
   }).optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),
