@@ -273,3 +273,25 @@ it('serves real Memory and Work through the same HTTP and socket caller, includi
   f.data.writes.run(() => f.client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(new Date(f.clock.now()).toISOString(), hash(token)));
   expect((await closed)[0]).toBe(4403);
 });
+
+it('mounts Measuring on both shared doors and updates current owner visibility', async () => {
+ const f = await setup();
+ f.db.insert(s.timingDays).values({day:'2026-11-14',kind:'request',name:'graphql',count:3,totalMs:12,slowestMs:6,typicalMs:4}).run();
+ f.db.insert(s.measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:90}).run();
+ const query = '{ timingDays { kind name count } measuringSettings { on } }';
+ const post=()=>f.data.http.request('/graphql',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query})});
+ expect(await (await post()).json()).toEqual({data:{timingDays:[],measuringSettings:[]}});
+ const ws=await f.open();
+ const first=await read(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'measuring',payload:{query:'subscription($query:String!){observe(query:$query){revision patches{path value removed}}}',variables:{query}}})));
+ expect(first.payload.data.observe.patches[0].value).toEqual({timingDays:[],measuringSettings:[]});
+ const changed=await read(ws,()=>f.data.writes.run(()=>f.client.prepare("UPDATE members SET role='owner' WHERE id='sam'").run()));
+ expect(changed.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:['timingDays',0]}));
+ expect(await (await post()).json()).toEqual({data:{timingDays:[{kind:'request',name:'graphql',count:3}],measuringSettings:[{on:true}]}});
+ f.db.insert(s.agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+ const agentToken='m'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:hash(agentToken),label:'Art',kind:'agent',agent:'art',createdAt:new Date(f.clock.now()).toISOString()}).run();
+ const agent=await f.open(f.url,{authorization:`Bearer ${agentToken}`});
+ const result=await read(agent,()=>agent.send(JSON.stringify({type:'subscribe',id:'measure-agent',payload:{query:'subscription($query:String!){observe(query:$query){revision patches{path value removed}}}',variables:{query}}})));
+ expect(result.payload.data.observe.patches[0].value).toEqual({timingDays:[{kind:'request',name:'graphql',count:3}],measuringSettings:[]});
+
+});
