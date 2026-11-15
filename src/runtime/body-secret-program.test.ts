@@ -23,11 +23,11 @@ function fixture(){
   return Response.json({ok:true,value:values[path as keyof typeof values]});
  });
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
-  expect((options as {env:NodeJS.ProcessEnv}).env).toEqual({...env,GITHUB_TOKEN:privateValue});
+  expect((options as {env:NodeJS.ProcessEnv}).env).toEqual({...env,GITHUB_TOKEN:privateValue,CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS:'0',MAX_MCP_OUTPUT_TOKENS:'100000'});
   expect(JSON.stringify(args)).not.toContain(privateValue);expect(JSON.stringify(options)).not.toContain(raw);
   expect(calls.indexOf('read')).toBeGreaterThan(calls.indexOf('startup'));
   expect(calls.filter(p=>p==='confirm')).toHaveLength(2);
-  const child=Object.assign(new EventEmitter(),{stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();}}),stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn(()=>true)}) as unknown as ChildProcessWithoutNullStreams;
+  const child=Object.assign(new EventEmitter(),{stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();}}),stdout:new PassThrough(),stderr:new PassThrough(),stdio:[null,null,null,new Writable({write(_chunk,_encoding,done){done();}})],kill:vi.fn(()=>true)}) as unknown as ChildProcessWithoutNullStreams;
   queueMicrotask(()=>{const list=args as string[],session=list[list.indexOf('--session-id')+1];
    child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'Answer'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'Answer'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
   });return child;
