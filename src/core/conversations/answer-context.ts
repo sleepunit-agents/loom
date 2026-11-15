@@ -4,11 +4,21 @@ import {and,eq} from 'drizzle-orm';
 import {household,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
+import {privateInboxAnswer,privateInboxDeadline,privateInboxEnvelope,privateInboxQuestion,privateInboxWords} from './private-inbox-words.js';
 type Item=typeof inbox.$inferSelect;
 export type AnswerQuestion={words:string;why:string|null;ifYes:string|null;ifNo:string|null;link:string|null};
 export type AnswerContext={question:AnswerQuestion;until:number};
 export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Promise<()=>AnswerContext|null>{
  const {db}=comms;
+ if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&privateInboxWords(answer.words)){
+  const snapshot=()=>{const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();return q&&privateInboxAnswer(db,q)?.id===answer.id?q:undefined;};
+  const before=snapshot(),days=()=>db.select({days:household.commsDays}).from(household).get()?.days??14;
+  if(!before||privateInboxDeadline(before,days())<=Date.parse(comms.now()))return()=>null;
+  const envelope=privateInboxEnvelope(before.words);if(!envelope)return()=>null;
+  const value=privateInboxQuestion(await comms.key.open(Buffer.from(envelope.cipher,'base64')));
+  const question:AnswerQuestion={words:value.words,why:value.why??null,ifYes:value.ifYes??null,ifNo:value.ifNo??null,link:value.link??null};
+  return()=>{const after=snapshot();if(!after||privateInboxDeadline(after,days())<=Date.parse(comms.now()))return null;if(JSON.stringify(after)!==JSON.stringify(before))throw Error('Question context changed; prepare again');return {question,until:privateInboxDeadline(after,days())};};
+ }
  if(answer.source!=='answer'||!answer.thread||answer.messageSeq===null||!answer.sourceId||answer.fromKind!=='person'||!answer.fromId)return()=>null;
  const snapshot=()=>{
   const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();

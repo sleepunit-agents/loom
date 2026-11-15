@@ -524,3 +524,12 @@ For public work with neither a member nor a project, both agents must have a
 current explicit owner in common. Project work requires both agents to remain
 assigned to the project; private work requires the receiving agent to remain
 assigned to that member.
+
+A current private wake, handoff, Discord or Slack body can include an owner
+question in `conversation.digest`, addressed only to that conversation's private
+member. The question and its answer use retained encrypted words in their existing
+Inbox rows; no Comms thread is created. Inbox records the responder and outcome,
+and the same conversation's receiving body gets the answer with the original
+question while its words remain available. Both word stores obey the original
+keep deadline and any shorter current household policy. Rewriting a digest
+retires its previous waiting question without removing answered history.
