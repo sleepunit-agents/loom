@@ -7,6 +7,7 @@ import { join,resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
 import { PeopleStore } from '../backends/people.js';
+import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
 const enabled=!!process.env.CI&&process.env.LOOM_PEOPLE_EVIDENCE==='1';
@@ -24,6 +25,8 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   directory.write({slug:'casey',name:'Casey Smith'});
   relationship.write({slug:'jonathan',name:'Jonathan Barket',summary:'Builds the household',how:{mode:'direct'},may:[{text:'May discuss projects',source:'Jonathan'}]});
   other.write({slug:'casey',name:'Casey Smith',summary:'Knows the workshop'});
+  // Prepare only the fixture's newly created writable halves.
+  migrateMindReceipts(directory.database);migrateMindReceipts(relationship.database);
   const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art','other']}),{app}=fixture;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
