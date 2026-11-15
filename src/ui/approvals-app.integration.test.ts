@@ -142,14 +142,6 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [c,d]) page.on('pageerror',error=>errors.push(error.message));
     await Promise.all([c.goto(`${app.url}/p/approvals-preview/approval/shared`),d.goto(`${app.url}/p/approvals-preview/approval/shared`)]);
     for (const page of [c,d]) await expect.poll(()=>page.getByRole('button',{name:'Allow',exact:true}).count()).toBe(1);
-    const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-approvals-piece'); mkdirSync(shots, { recursive: true });
-    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
-      await d.setViewportSize({ width, height: 900 });
-      await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
-      await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
-      expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-      await d.screenshot({ path: join(shots, `approvals-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
-    }
     await c.getByRole('button',{name:'Allow',exact:true}).click();
     for (const page of [c,d]) await expect.poll(()=>page.getByText('setting · used',{exact:true}).count()).toBe(1);
     expect(app.db.select().from(s.tempoSettings).all()).toEqual(expect.arrayContaining([expect.objectContaining({whoKind:'agent',who:'art',settleSeconds:90})]));
@@ -168,6 +160,15 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     const ruleRow=(page:typeof c)=>page.locator('[data-split-row]').filter({hasText:'project:pond'});
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).textContent()).toContain('Tell me after');
     expect(app.db.select().from(s.approvalRules).all()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'project:pond',person:'',tier:'tell',setBy:'pat'})]));
+    await d.getByRole('form',{name:'Standing rule',exact:true}).getByLabel('Rule',{exact:true}).selectOption(JSON.stringify(['merge','project:pond','']));
+    const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-approvals-piece'); mkdirSync(shots, { recursive: true });
+    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
+      await d.setViewportSize({ width, height: 900 });
+      await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
+      await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await d.screenshot({ path: join(shots, `approvals-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+    }
     await form.getByLabel('Answer',{exact:true}).selectOption('do');
     await form.getByRole('button',{name:'Save rule',exact:true}).click();
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).textContent()).toContain('Just do it');
