@@ -1,3 +1,4 @@
+import {keepReadUntil} from '../../core/data/read-lease.js';
 /** Activity projections composed into the shared query schema. No endpoint or store of their own. */
 import {GraphQLBoolean,GraphQLError,GraphQLFloat,GraphQLInt,GraphQLList,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {QueryDeadlines} from './query-deadlines.js';
@@ -22,6 +23,7 @@ const access=new GraphQLObjectType({name:'MemoryActivityAccess',fields:{allowed:
 export function activityQueryFields(reader:Pick<ReturnType<typeof createActivityReader>,'window'|'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'>>,deadlines?:QueryDeadlines):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
  const safe=<T>(read:()=>T):T=>{try{return read();}catch{throw new GraphQLError('Activity is unavailable');}};
  const track=<T extends {expires?:number}>(value:T|undefined,context:{viewer:Viewer},kind:string,id:string)=>{
+  if(value?.expires!==undefined)keepReadUntil(context,value.expires);
   deadlines?.set(JSON.stringify([context.viewer.kind,context.viewer.id,kind,id]),value?.expires);return value??null;
  };
  return {
