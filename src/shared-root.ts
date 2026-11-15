@@ -7,8 +7,6 @@ import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
-import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
-import { SecretStartup } from './pieces/secrets/shared-startup.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
@@ -69,8 +67,7 @@ export function sharedRoot(options: {
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
   /** Trusted startup loads the household key, never an outside request. */
   commsKey?: WordsKey;
-  /** Authenticated private holder-to-worker sink; values never enter this root. */
-  secretDelivery?: SecretDeliveryHolder;
+  /** Explicit authenticated holder source for the private recipient channel. */
   secretInputs?: {source:SecretValueSource};
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
@@ -133,9 +130,7 @@ export function sharedRoot(options: {
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
     options.secretWrites.fingerprintKey, secretCommit);
   const privateInputs=new SecretPrivateInputs(db,clock,options.secretInputs?.source,secretCommit);
-  const delivery = options.secretDelivery && new SecretDelivery(db, now, options.secretDelivery, secretCommit);
-  const startup = delivery && new SecretStartup(db, requests, delivery, secretCommit);
-  registerSharedSecretAgentCommands(operations, db, requests, delivery, viewer => credentials.body(viewer));
+  registerSharedSecretAgentCommands(operations, db, requests, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
   });
@@ -171,7 +166,7 @@ export function sharedRoot(options: {
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
     runtime,
-    secrets: {requests,values,delivery,startup,inputs:privateInputs,reconcile:recoverSecrets},
+    secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
@@ -266,15 +261,14 @@ export function sharedRoot(options: {
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
       notices.close();
-      cancelSecretRecovery?.(); values?.close(); startup?.close();
-      const deliveryStopped = delivery?.close();
+      cancelSecretRecovery?.(); values?.close();
       const inputsStopped = privateInputs.close();
       const stopped = data.close();
       for (const stop of stops.splice(0).reverse()) stop();
       const measured = measuringReady.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, bridgesStopped, inputsStopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

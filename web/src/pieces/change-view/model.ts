@@ -18,7 +18,7 @@ export interface ChangeSnapshot {
   timezone: string;
 }
 const order = ['you', 'agent', 'ci', 'reviewer', 'author', 'done'];
-export const summary = (c: Change) => `${c.state === 'open' ? `CI ${c.checks}, ${c.review.replaceAll('_', ' ')}, Waiting on ${c.waitingOn}` : c.state}${c.draft ? ' · Draft' : ''}`;
+export const summary = (c: Pick<Change, 'state' | 'checks' | 'review' | 'waitingOn' | 'draft'>) => `${c.state === 'open' ? `CI ${c.checks}, ${c.review.replaceAll('_', ' ')}, Waiting on ${c.waitingOn}` : c.state}${c.draft ? ' · Draft' : ''}`;
 export function rows(snapshot: ChangeSnapshot, folder: string, query: string) {
   if (snapshot.status !== 'live') return [];
   const words = query.trim().toLowerCase().split(/\s+/);
