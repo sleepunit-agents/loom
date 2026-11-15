@@ -1,5 +1,5 @@
 import {it,expect} from 'vitest';
-import {evaluate} from './rebuild-report.mjs';
+import {evaluate,summarizePages} from './rebuild-report.mjs';
 const promise={probe:{kind:'ui',app:'Tasks',contains:['Claim','Close']}};
 it('never counts an open tile or a claim button as proof that its actions work',()=>{
  expect(evaluate({promise:'Claiming changes task state.'},{apps:[]} ).status).toBe('not checkable yet');
@@ -23,4 +23,19 @@ it('counts action evidence only when the browser observed the persisted outcome'
  expect(evaluate(promise,{actions:{inboxAnswer:{ok:false,answeredBy:'alex',agentAnswerCopies:0}}}).status).toBe('not met');
  expect(evaluate(promise,{actions:{inboxAnswer:{ok:true,screenshot:'action-inbox-answer.png'}}})).toMatchObject({status:'met',evidence:'action-inbox-answer.png'});
  expect(evaluate(promise,{fatal:'Startup failed'})).toMatchObject({status:'not checkable yet',reason:'Startup failed'});
+});
+
+it('summarizes each page without treating untested promises as passing',()=>{
+ const page=(name,statuses)=>({page:name,title:name,ownerTask:'t-example',promises:statuses.map(status=>({status}))});
+ expect(summarizePages([
+  page('passed',['met','met']),
+  page('unknown',['met','not checkable yet']),
+  page('failed',['not met','not checkable yet']),
+  page('unmeasured',['not checkable yet']),
+ ])).toEqual([
+  {page:'passed',title:'passed',ownerTask:'t-example',status:'met',counts:{met:2,'not met':0,'not checkable yet':0}},
+  {page:'unknown',title:'unknown',ownerTask:'t-example',status:'not checkable yet',counts:{met:1,'not met':0,'not checkable yet':1}},
+  {page:'failed',title:'failed',ownerTask:'t-example',status:'not met',counts:{met:0,'not met':1,'not checkable yet':1}},
+  {page:'unmeasured',title:'unmeasured',ownerTask:'t-example',status:'not checkable yet',counts:{met:0,'not met':0,'not checkable yet':1}},
+ ]);
 });
