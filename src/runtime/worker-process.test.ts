@@ -40,10 +40,11 @@ describe('worker command adapter (no child processes in tests)', () => {
     child.emit('close', 0, null); expect(await result).toBe('image:é');
   });
   it('holds body input until release and preserves model/account/harness independently', async () => {
-    const f = fixture(), body = f.executor.start(job, 'image@sha', new AbortController().signal);
+    const configured = { ...job, run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] } };
+    const f = fixture(), body = f.executor.start(configured, 'image@sha', new AbortController().signal);
     const child = f.children[0]; child.child.emit('spawn'); await body.spawned;
     expect(child.input()).toBe(''); await body.release();
-    expect(JSON.parse(child.input())).toEqual({ job, build: 'image@sha' });
+    expect(JSON.parse(child.input())).toEqual({ job: configured, build: 'image@sha' });
     await expect(body.release()).rejects.toThrow('unavailable');
     child.child.stderr.emit('data', 'error '); child.child.stdout.emit('data', 'result'); child.child.emit('close', 9, null);
     expect(await body.exited).toEqual({ exitCode: 9, logTail: 'error result' });
@@ -140,4 +141,57 @@ describe('worker command adapter (no child processes in tests)', () => {
     f.children[0].child.emit('error', new Error('ENOENT')); f.children[0].child.emit('close', -2, null);
     await expect(built).rejects.toThrow('could not start'); expect(f.runtime.kill).toHaveBeenCalled();
   });
+});
+
+it('times out a stuck build, reaps it, and leaves the worker available for the server retry', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture();
+    const executor = commandWorkerExecutor({ build: plan, buildTimeoutMs: 50, runners: { 'custom-runner': plan } }, f.runtime);
+    const worker = new AbortController();
+    const result = executor.build(job, worker.signal);
+    const failed = expect(result).rejects.toThrow('Worker build failed');
+    f.children[0].child.emit('spawn'); await flush();
+    await vi.advanceTimersByTimeAsync(49);
+    expect(f.runtime.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1); await failed;
+    expect(f.runtime.kill).toHaveBeenCalledOnce();
+    expect(worker.signal.aborted).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it('reaps a timed-out build before allowing its failure to settle', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(); vi.mocked(f.runtime.kill).mockImplementation(() => {});
+    const executor = commandWorkerExecutor({ build: plan, buildTimeoutMs: 50, runners: { 'custom-runner': plan } }, f.runtime);
+    const result = executor.build(job, new AbortController().signal);
+    let settled = false; void result.then(() => { settled = true; }, () => { settled = true; });
+    const failed = expect(result).rejects.toThrow('Worker build failed');
+    f.children[0].child.emit('spawn'); await flush();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(f.runtime.kill).toHaveBeenCalledOnce(); expect(settled).toBe(false);
+    f.children[0].child.emit('close', null, 'SIGKILL'); await failed;
+    expect(settled).toBe(true);
+  } finally { vi.useRealTimers(); }
+});
+it('removes the deadline when a build succeeds and never applies it to the body', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture();
+    const executor = commandWorkerExecutor({ build: plan, buildTimeoutMs: 50, runners: { 'custom-runner': plan } }, f.runtime);
+    const signal = new AbortController().signal, result = executor.build(job, signal);
+    f.children[0].child.emit('spawn'); await flush();
+    f.children[0].child.stdout.emit('data', '{"build":"image"}'); f.children[0].child.emit('close', 0, null);
+    expect(await result).toBe('image'); expect(vi.getTimerCount()).toBe(0);
+    const body = executor.start(job, 'image', signal); f.children[1].child.emit('spawn'); await body.spawned;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(f.runtime.kill).toHaveBeenCalledOnce();
+    await body.stop();
+  } finally { vi.useRealTimers(); }
+});
+for (const buildTimeoutMs of [0, -1, 1.5, Infinity, 3_600_001]) it(`rejects invalid build deadline ${buildTimeoutMs}`, () => {
+  const f = fixture();
+  expect(() => commandWorkerExecutor({ build: plan, buildTimeoutMs, runners: {} }, f.runtime)).toThrow('build deadline');
+  expect(f.runtime.spawn).not.toHaveBeenCalled();
 });
