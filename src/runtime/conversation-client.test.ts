@@ -97,3 +97,18 @@ it.each(['timer','after-await'] as const)('expires private input during its own 
  const checked=expect(pending).rejects.toThrow('Conversation body request failed');await started;if(phase==='timer')f.clock.advance(1000);await checked;
  expect(sinkSignal?.aborted).toBe(true);expect(f.requests.map(row=>row.url.split('/').at(-1))).toEqual(['take']);expect(f.db.select().from(s.messages).get()?.delivery).toBe('sending');expect(f.db.select().from(s.inbox).get()?.state).toBe('taken');if(phase==='timer')release();
 });
+it.each(['http','http-oversize','operation','fetch'] as const)('does not adapt an ordinary %s take failure',async mode=>{
+ const f=await fixture(),accept=vi.fn(async()=>{});
+ if(mode==='fetch')f.fetcher.mockRejectedValue(Error('Fictitious transport failure'));
+ else f.fetcher.mockResolvedValue(Response.json({ok:false,code:'unavailable',message:'Fictitious refusal'},{status:mode.startsWith('http')?503:200,headers:mode==='http-oversize'?{'content-length':'16777217'}:{}}));
+ await expect(f.client.takeAndAccept(accept)).rejects.toThrow('Conversation body request failed');
+ expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);
+ expect(new URL(String(f.fetcher.mock.calls[0][0])).pathname).toBe('/api/conversation/take');
+});
+it.each(['declared','streamed'] as const)('does not retry a %s oversized non-take response',async mode=>{
+ const f=await fixture();let cancelled=false,sent=false;
+ const bytes=new TextEncoder().encode(JSON.stringify({ok:true,value:{saved:true,seq:1,extra:mode==='streamed'?'x'.repeat(16_777_216):'Fictitious'}}));
+ f.fetcher.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({pull(controller){if(sent)controller.close();else{sent=true;controller.enqueue(bytes);}},cancel(){cancelled=true;}},{highWaterMark:0}),{headers:{'content-type':'application/json',...(mode==='declared'?{'content-length':'16777217'}:{})}}));
+ await expect(f.client.reply({clientId:'reply',words:'PRIVATE REPLY'})).rejects.toThrow('Conversation body request failed');
+ expect(f.fetcher).toHaveBeenCalledTimes(1);expect(new URL(String(f.fetcher.mock.calls[0][0])).pathname).toBe('/api/conversation/message');expect(cancelled).toBe(true);
+});
