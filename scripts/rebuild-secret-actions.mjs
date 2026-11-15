@@ -29,6 +29,8 @@ export async function verifySecretDefaultAfterReload({page,out,navigate=false}){
  try{
   const tile=page.getByRole('region',{name:'Settings tile',exact:true});
   if(navigate){
+   const back=tile.getByRole('button',{name:'Back to Settings',exact:true});
+   if(await back.isVisible())await back.click();
    await tile.getByText('Piece settings',{exact:true}).first().click();
    await tile.getByText('Secret default',{exact:true}).first().click();
   }

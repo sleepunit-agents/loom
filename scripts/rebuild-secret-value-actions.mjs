@@ -16,6 +16,8 @@ export async function secretValueAction({page,tile,out,home}){
   };
   const expectRecords=actions=>assertSecretAudit({home,name,member:'alex',writeIds,actions,values:[initial,replacement]});
   const reload=async()=>{await page.reload();await page.locator('.next-shell').waitFor();return page.getByRole('region',{name:'Settings tile',exact:true});};
+  const back=tile.getByRole('button',{name:'Back to Settings',exact:true});
+  if(await back.isVisible())await back.click();
   await tile.getByRole('button',{name:/^Secrets/}).click();
   await tile.getByText('Add a secret',{exact:true}).click();
   let form=tile.locator('form').filter({has:page.getByRole('button',{name:'Add secret',exact:true})});
@@ -59,8 +61,8 @@ export async function secretValueAction({page,tile,out,home}){
   if(await cleared.getByLabel('Value',{exact:true}).inputValue()!=='')throw Error('A value remained after removal');
   if(!await holderValueAbsent(home,name))throw Error('The holder still retained the removed value');
   expectRecords(['add','replace','removed']);
-  const screenshot='action-secret-removed.png';await page.screenshot({path:join(out,screenshot),fullPage:true});
-  return {ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true,holder:'Production openHolderStore code in an in-process test fixture; separate-process isolation is not exercised.',screenshot};
+  // The enclosing Settings case captures the final verified document once.
+  return {ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true,holder:'Production openHolderStore code in an in-process test fixture; separate-process isolation is not exercised.'};
  }catch(error){
   const screenshot='action-secret-value-failed.png';await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});
   return {ok:false,phase,error:String(error).replaceAll(initial,'[value redacted]').replaceAll(replacement,'[value redacted]'),screenshot};
