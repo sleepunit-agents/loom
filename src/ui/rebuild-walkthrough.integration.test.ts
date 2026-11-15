@@ -57,6 +57,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   for(const name of ['dataDoor','dataSelectionSQL','dataSharingSQL','dataTaskPatches','dataInboxChange']){const result=step.value.actions?.[name];expect(result?.inconclusive||typeof result?.ok==='boolean').toBe(true);if(result.ok===false)expect(result.error??result.reason).toBeTruthy();}
 
  });
+ it('checks owner and member conversation privacy through normal browser sign-in',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('visibility');
+  for(const name of ['conversationVisibility','inboxVisibility','inboxRecipients'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;

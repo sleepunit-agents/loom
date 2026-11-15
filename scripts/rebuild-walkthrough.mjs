@@ -18,6 +18,7 @@ import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
+import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
 import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
 import {exampleHome} from '../dist/example-home.js';
@@ -151,6 +152,8 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out}));
+  save();yield {phase:'visibility',actions:safeReport(report.actions)};
 
  }catch(error){report.fatal=String(error);}
  finally{report.transport={sockets};report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}
