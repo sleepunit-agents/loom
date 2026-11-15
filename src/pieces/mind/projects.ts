@@ -2,8 +2,7 @@
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
 import {z} from 'zod';
-import {operation,maySee,type Operations,type Live,type Viewer,type Sharing} from '../../core/index.js';
-import type {Mind} from './role.js';
+import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import type {Clock} from '../../core/clock.js';
 import {projectDeadline} from './project-deadlines.js';
 import type {PersonRecord} from './people-model.js';
@@ -18,10 +17,8 @@ const day=86400000;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
-export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:Mind|{list(viewer:Viewer):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
+export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:{list(viewer:Viewer):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
-const readers=new WeakMap<Operations,ProjectsReader>();
-export const installedMindProjects=(operations:Operations)=>readers.get(operations);
 /** Read-only sources and typed roles; no registry, live transport or schema initialization. */
 export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
  const sources=new Map<string,Database>();
@@ -45,10 +42,10 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  }
  function peopleSection(v:Viewer,q:ProjectQuery):ProjectSection{
   if(!options.people)return {key:'people',label:'People',available:false};
-  const result='call' in options.people?options.people.call(v,'peopleList',{}):{ok:true as const,value:options.people.list(v)};if(!result.ok)throw Error('People could not answer');
+  const people=options.people.list(v);
   const fields=q.names.map(n=>n.replace(/-/g,'_'));
   // A hub may use the household directory and its own agent relationships, never another agent's cards.
-  const rows=(result.value as PersonRecord[]).filter(p=>!p.agent||p.agent===q.agent);
+  const rows=people.filter(p=>!p.agent||p.agent===q.agent);
   return {key:'people',label:'People',available:true,items:rows.flatMap(p=>p.fields.filter(f=>fields.includes(f.key)).map(f=>({title:p.name,ref:p.id,status:f.state,body:`${f.key}: ${f.value}`,href:`/p/people-preview/person/${encodeURIComponent(p.slug)}`}))).sort((a,b)=>a.title.localeCompare(b.title))};
  }
  function read(id:string,viewer:Viewer,readingHub=false):ProjectRecord|undefined{
@@ -93,7 +90,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const activity=latest([row.updated,...sections.filter(s=>['memories','notes'].includes(s.key)&&s.available&&!s.error&&s.activity).map(s=>s.activity!)]);
   return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':now>Date.parse(f.verified_at)+(f.stale_after_days??14)*day?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
- // Live registers separate index/hub projections so paused cards never invoke roles just to list them.
+ // Keep separate index/hub projections so paused cards never invoke roles just to list them.
  const hub=(id:string,v:Viewer)=>read(id,v,true);
  const expires=(r:ProjectRecord)=>{
   const db=sources.get(r.agent),now=clock.now(),deadlines=[projectDeadline(r,now)];
@@ -110,19 +107,4 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  let closed=false;
  const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
-}
-
-/** Retiring operation/record binding over the same typed reader. */
-export function installMindProjects(operations:Operations,live:Live,options:ProjectsOptions){
- const reader=createProjectsReader(operations.clock,options);
- operations.register(operation({name:'mind.projectsList',input:z.object({}).strict(),output:z.unknown(),may:()=>true,run:ctx=>reader.list(ctx.viewer)}));
- operations.register(operation({name:'mind.projectRead',input:z.object({id:z.string().min(3).max(200)}).strict(),output:z.unknown(),may:(v,i)=>reader.allowed(v,i.id.split(':')[0]),run:(ctx,i)=>reader.read(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Project not found'}}));
- operations.register(operation({name:'mind.projectMemoryRead',input:z.object({id:z.string().min(3).max(300)}).strict(),output:z.unknown(),may:(v,i)=>maySee(v,{type:'memory',agent:i.id.split(':')[0]},options.sharing()),run:(ctx,i)=>reader.memoryRead(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Memory not found'}}));
- const changed=(c:{type:string})=>['project','memory','person','task','change','core.access','household.sharing'].includes(c.type)||c.type==='note'||c.type.startsWith('notes.')||c.type.startsWith('comms.')||c.type.startsWith('attention.');
- live.register({name:'project',ids:reader.ids,read:reader.readIndex,inScope:(r,s)=>s===undefined||r.id===s,refreshOn:changed,expires:r=>reader.expires(r as ProjectRecord)});
- live.register({name:'project.hub',ids:reader.ids,read:reader.read,inScope:(r,s)=>s!==undefined&&(r.id===s||((r as ProjectRecord).card.links.aliases??[]).some(a=>`${r.agent}:${a}`===s)),refreshOn:changed,expires:r=>reader.expires(r as ProjectRecord)});
- live.register({name:'project.memory',ids:scope=>scope?[scope]:[],read:reader.memoryRead,inScope:(r,s)=>r.id===s,refreshOn:c=>c.type==='memory',expires:r=>(r as ProjectMemory).expires});
- live.register({name:'projects.access',ids:()=>['projects'],read:(_id,v)=>reader.access(v),inScope:()=>true});
- const installed={...reader,close(){if(readers.get(operations)===installed)readers.delete(operations);reader.close();}};
- readers.set(operations,installed);return installed;
 }
