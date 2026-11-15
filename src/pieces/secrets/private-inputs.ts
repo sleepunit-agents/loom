@@ -5,9 +5,9 @@ import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Clock} from '../../core/clock.js';
 import type {DataDatabase} from '../../core/data/database.js';
-import {jobs,secretUses,secretWriteJournal,agentHouseSecrets} from '../../core/data/schema.js';
+import {jobs,secretUses,secretWriteJournal,agentHouseSecrets,secretRequests} from '../../core/data/schema.js';
 import type {SecretValueSource} from './role.js';
-import {SecretRequests} from './requests.js';
+import {SecretRequests,startupRequestId} from './requests.js';
 import {secretName} from './input.js';
 export class PrivateInputError extends Error {
  constructor(readonly code:'denied'|'conflict'|'unavailable'){super('Private secret input unavailable');}
@@ -22,14 +22,16 @@ export class SecretPrivateInputs {
  readonly requests:SecretRequests;
  constructor(private db:DataDatabase,private clock:Clock,private source:SecretValueSource|undefined,
   private commit:<T>(write:()=>T)=>T){this.requests=new SecretRequests(db,()=>new Date(clock.now()).toISOString());}
- startGrants(job:string){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job));}
- startup(job:string):{alias:string}[]{
+ startGrants(job:string,selected?:readonly string[]){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,selected));}
+ startup(job:string):{aliases:{alias:string}[];pending?:true}{
   if(this.closed)throw failed();
   return this.commit(()=>{
    const target=this.db.select().from(jobs).where(eq(jobs.id,job)).get();if(!target)throw failed('denied');
-   const allowed=new Set(this.requests.grantAtStart(job).map(grant=>grant.secret));
-   const aliases=this.db.select().from(agentHouseSecrets).where(eq(agentHouseSecrets.agent,target.agent)).all().filter(row=>allowed.has(row.secret));
-   if(aliases.length>128)throw failed();return aliases.map(({alias})=>({alias}));
+   const configured=this.db.select().from(agentHouseSecrets).where(eq(agentHouseSecrets.agent,target.agent)).all();
+   if(configured.length>128)throw failed();
+   const allowed=new Set(this.requests.grantAtStart(job,configured.map(row=>row.secret)).map(grant=>grant.secret));
+   const pending=configured.some(row=>this.db.select({state:secretRequests.state}).from(secretRequests).where(eq(secretRequests.id,startupRequestId(job,row.secret))).get()?.state==='pending');
+   return {aliases:configured.filter(row=>allowed.has(row.secret)).map(({alias})=>({alias})),...(pending?{pending:true as const}:{})};
   });
  }
  dispatch<T>(input:{job:string;secret:string;attempt:string},current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{

@@ -5,7 +5,7 @@ import {z} from 'zod';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
 class PendingRepository extends Error {}
 const unavailable=()=>new Error('Private secret input unavailable');
-const aliases=z.object({aliases:z.array(z.object({alias:z.string().min(1).max(200)}).strict()).max(128)}).strict();
+const aliases=z.object({aliases:z.array(z.object({alias:z.string().min(1).max(200)}).strict()).max(128),pending:z.literal(true).optional()}).strict();
 export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number}){
  let origin:URL;try{origin=new URL(options.url);}catch{throw unavailable();}
  const clock=options.clock??systemClock,request=options.fetch??fetch;
@@ -57,13 +57,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    owned.delete(value);return value;
   });}catch(error){value?.fill(0);if(value)owned.delete(value);if(error instanceof PendingRepository)throw error;throw unavailable();}
  }
- return {
-  granted(secret:string,id=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
-  async repository(job:string):Promise<Buffer|undefined>{
-   for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){
-    if(!(error instanceof PendingRepository))throw error;
-    // Only an authenticated metadata-pending response is retryable. No value
-    // attempt has started; a lost read or confirmation is never retried.
+ async function waitForConsent(){
     if(closed||options.signal.aborted)throw unavailable();
     const waiting=new AbortController();controllers.add(waiting);
     let cancel!:()=>void,stop!:()=>void;
@@ -73,12 +67,23 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
     });if(closed||options.signal.aborted||waiting.signal.aborted)throw unavailable();}
     finally{cancel();waiting.signal.removeEventListener('abort',stop);controllers.delete(waiting);}
 
+ }
+
+ return {
+  granted(secret:string,id=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
+  async repository(job:string):Promise<Buffer|undefined>{
+   for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){
+    if(!(error instanceof PendingRepository))throw error;
+    // Only an authenticated metadata-pending response is retryable. No value
+    // attempt has started; a lost read or confirmation is never retried.
+    await waitForConsent();
    }}
   },
   async startup():Promise<Map<string,Buffer>>{
    const result=new Map<string,Buffer>();batches.add(result);let total=0;
    try{
-    const plan=await attempt(async(current,signal)=>{const response=await post('startup',{},current,signal,131072);try{return aliases.parse(JSON.parse(response.bytes.toString('utf8')));}finally{response.bytes.fill(0);}});
+    let plan:z.infer<typeof aliases>;
+    for(;;){plan=await attempt(async(current,signal)=>{const response=await post('startup',{},current,signal,131072);try{return aliases.parse(JSON.parse(response.bytes.toString('utf8')));}finally{response.bytes.fill(0);}});if(!plan.pending)break;await waitForConsent();}
     for(const {alias} of plan.aliases){if(result.has(alias))throw unavailable();const value=await read({kind:'startup',alias});if(!value)throw unavailable();result.set(alias,value);total+=value.length;if(total>1048576)throw unavailable();}
     if(closed||options.signal.aborted)throw unavailable();batches.delete(result);return result;
    }catch{for(const bytes of result.values())bytes.fill(0);result.clear();batches.delete(result);throw unavailable();}
