@@ -35,7 +35,7 @@ it('deduplicates all sources and lets only the running conversation job take and
   const { db, service, cv } = fixture();
   const ids: string[] = [];
   for (const source of ['thread', 'discord', 'slack', 'trigger', 'handoff'] as const) {
-    const input = { toKind: 'agent' as const, to: 'art', conversation: cv.id, source, sourceId: 'external-1', fromKind: 'person' as const, fromId: 'jonathan', words: source, refs: ['t-1', 't-1'] };
+    const input = { toKind: 'agent' as const, to: 'art', conversation: cv.id, source, sourceId: 'external-1', fromKind: 'person' as const, fromId: 'jonathan', words: source === 'handoff' ? null : source, refs: ['t-1', 't-1'] };
     const item = service.send(input); ids.push(item.id);
     expect(service.send({ ...input, words: 'duplicate' })).toEqual(item);
   }

@@ -39,7 +39,24 @@
     {
       "id": "conversations-005",
       "promise": "A private chat in Comms between one person and one agent.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "conversationPrivatePair"
+          },
+          {
+            "kind": "action",
+            "action": "commsSend"
+          },
+          {
+            "kind": "action",
+            "action": "commsPrivacy"
+          }
+        ]
+      }
     },
     {
       "id": "conversations-006",
