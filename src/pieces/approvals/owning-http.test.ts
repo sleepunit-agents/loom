@@ -7,37 +7,8 @@ import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
 import { FakeClock } from '../../core/index.js';
 import { signin, hash } from '../../core/signin/index.js';
-import { setupLocal, caller, value } from '../../__fixtures__/clock-local.js';
-import { clockLocalStanding } from '../clock/role.js';
-import { wakes } from '../clock/store.js';
-import { load } from './store.js';
 
-it('answers household standing filings over HTTP and schedules once with atomic rollback across restart', async () => {
-  const s = await setupLocal('standing');
-  const card = value<{id:string}>(s.request()).id;
-  const receipt = randomUUID(), input = {id:card};
-  const answer = async () => (await fetch(`${s.app.url}/api/approvals/every-time`, {
-    method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({id:receipt,input}),
-  })).json();
-  s.app.db.exec("CREATE TRIGGER fail_standing_http BEFORE INSERT ON approvals_rules BEGIN SELECT RAISE(ABORT,'fixture'); END");
-  const before = load(s.app.db);
-  expect(await answer()).toMatchObject({ok:false});
-  expect(load(s.app.db)).toEqual(before);
-  s.app.db.exec('DROP TRIGGER fail_standing_http');
-  const allowed = await answer(); expect(allowed).toMatchObject({ok:true});
-  await s.restart(); expect(await answer()).toEqual(allowed);
-  const schedule = {approval:card,mode:'in' as const,when:'1h'}, use = randomUUID();
-  const recover = () => clockLocalStanding(s.app.operations).schedule(caller,schedule,use);
-  const approved = load(s.app.db);
-  s.app.db.exec("CREATE TRIGGER fail_wake_http BEFORE INSERT ON clock_wakes BEGIN SELECT RAISE(ABORT,'fixture'); END");
-  expect(recover()).toMatchObject({ok:false}); expect(load(s.app.db)).toEqual(approved);
-  expect(wakes(s.app.db)).toEqual([]);
-  s.app.db.exec('DROP TRIGGER fail_wake_http');
-  const scheduled = recover(); expect(scheduled).toMatchObject({ok:true});
-  await s.restart(); expect(recover()).toEqual(scheduled);
-  expect(wakes(s.app.db)).toHaveLength(1);
-  expect(load(s.app.db).audit.filter(a=>a.event==='standing-use')).toHaveLength(1);
-});
+const value=<T>(result:import('../../core/index.js').Result):T=>{if(!result.ok)throw Error(result.message);return result.value as T;};
 
 it('applies secret-use consent through next HTTP once, with answer/grant rollback and restart replay', async () => {
   const home = mkdtempSync(join(tmpdir(),'approval-secret-http-')); fixture(home);

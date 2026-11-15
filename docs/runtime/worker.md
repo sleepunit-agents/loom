@@ -270,6 +270,71 @@ The in-child bodyProgram.startup extension point precedes mail/model input;
 startup Secret alias retrieval is a separate integration. Codex, additional
 Comms tools and multi-turn question/wait handling remain unfinished.
 
+## Outside tiers and tool denials
+
+`POST /api/runtime/agentBodyPolicySet` uses the ordinary `{id,input}` envelope:
+
+```json
+{"agent":"art","people":[{"platform":"discord","workspace":"server-id","user":"user-id","tier":2}],"deniedTools":[{"pattern":"Bash","guestsOnly":true},{"pattern":"Write","guestsOnly":false}]}
+```
+
+Current agent owners, including co-owners, replace these two lists atomically
+with their receipt. Current ownership is rechecked on cached replay; runner,
+agent and service principals cannot edit them, and a household owner role alone
+is insufficient. Each list has at most 128 distinct entries. Outside-person keys
+include platform, workspace and user, with tiers 1, 2 or 3. These keys configure
+how the agent treats outside people; they never establish household identity.
+Workers derive each job's senders from its actual stored bridge receipts rather
+than trusting message words. A claim receives only its current senders' tiers.
+
+Tool patterns have 1–512 characters, cannot begin an option dash or contain NUL or
+line breaks, and can apply to all work or only guests. The same pattern may have
+both rules. The native receiving adapter applies the current denial rules; a
+claimed assignment keeps its snapshot across later settings edits. Failed writes
+preserve both lists, and replay never reinstates an earlier configuration.
+Configuration neither runs a model/provider nor changes the household policy.
+
+Outside workspace and user identifiers are preserved exactly, without trimming.
+Workspace/user identifiers must be nonblank and control-free. Tool patterns keep
+literal spaces; leading/trailing control characters and whitespace padding do not
+bypass their raw character or length checks. Option dashes after leading whitespace
+are rejected too.
+
+## Agent house settings
+
+`POST /api/runtime/agentRunSettingsSet` uses the ordinary `{id,input}` envelope:
+
+```json
+{"agent":"art","houseRepository":"https://example.com/house.git","houseFile":"Housefile","houseBranch":"next","nestedContainers":false,"gpu":false,"boxes":["workshop","attic"],"ports":[{"address":"127.0.0.1","port":9000}]}
+```
+
+Current agent owners configure their house, ordered preferred machines and allowed
+listening ports. The existing agent setup policy applies, including current
+ownership on receipt replay. Runner, agent and service principals cannot edit it;
+a household owner role alone does not replace agent ownership. Preferred machines
+must be enrolled, unrevoked and visible to the configuring member, or explicitly lent to the
+agent. Listing a machine does not grant permission to run there. An empty preference
+list holds work until a machine is configured.
+
+Repository references cannot contain URL passwords, HTTP user information, queries
+or fragments. The
+house file is a relative path inside the repository. Machine and port lists are
+distinct and bounded at 128 entries. Ports use literal IPv4/IPv6 addresses and
+integer ports 1–65535. This command preserves the existing Secrets-owned repository
+credential reference; secret aliases and grants stay with Secrets.
+
+All settings and the receipt commit together, followed by an existing Tempo
+capacity notification. Rollback preserves previous settings and cached replay
+does not apply the change again. First house setup wakes settled mail. Each job
+keeps the house repository/file/branch recorded at admission. Worker claims use
+current preferred machines, ports and capabilities; enabling GPU after admission
+also requires a GPU-capable machine. Already claimed assignment snapshots stay
+unchanged. Configuration does not execute a builder or model provider.
+
+Listening IP addresses are normalized before uniqueness checks and storage, so
+equivalent IPv6 spellings cannot configure duplicate endpoints. House reference
+text rejects control characters, including tabs that a URL parser would remove.
+
 ## Owner machine settings
 
 An authenticated current machine owner (or current household owner) sends
@@ -296,3 +361,19 @@ The lent flag is true for another member's agent and false for the machine owner
 agent. The command checks this against current ownership. An existing explicit
 non-lending row cannot authorize a foreign agent after ownership changes. Remove
 an agent from the explicit list to withdraw that permission.
+
+## Stop while preparing a body
+
+Claiming a private Comms job marks its thread as working while the worker prepares
+its repository and house. Starting heartbeats refresh that metadata. A thread Stop
+for that exact starting job atomically ends it as stopped, consumes the request,
+and returns inactive to the assigned worker. The normal worker cancellation path
+aborts a pending repository-consent wait; it does not build, launch a body, send a
+finish report or create a start retry. Untaken mail remains held by the stopped
+attempt until fresh mail resumes work.
+
+The terminal job and heartbeat receipt commit before Tempo is notified. A failed
+receipt preserves the previous active job and Stop request, while cached heartbeat
+replay cannot restore active authority. Running-body Stop remains with the receiving
+body's status protocol. Preparation changes the thread working indicator, without
+inventing a reported agent status or consuming another conversation's Stop.
