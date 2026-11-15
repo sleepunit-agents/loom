@@ -1744,6 +1744,7 @@ export const operationResults = sqliteTable('operation_results', {
   caller: text('caller').notNull(),
   id: text('id').notNull(),
   operation: text('operation').notNull(),
+  inputHash: text('input_hash').notNull(),
   result: blob('result', { mode: 'buffer' }).notNull(),
   expiresAt: text('expires_at').notNull(),
 }, t => [
@@ -1797,6 +1798,11 @@ export const bridgeResume = sqliteTable('bridge_resume', {
 export const secretWriteJournal = sqliteTable('secret_write_journal', {
   id: text('id').primaryKey().notNull(),
   secret: text('secret').notNull(),
+  member: text('member').notNull().references(() => members.id),
+  description: text('description').notNull().default(''),
+  /** Consumer supplies a daemon-keyed canonical-input HMAC, never value bytes
+   * or an unkeyed value hash. Its encoding belongs to the write service. */
+  inputHash: text('input_hash').notNull(),
   operation: text('operation', { enum: ['add', 'replace', 'remove'] }).notNull(),
   state: text('state', { enum: ['prepared', 'committed', 'undone'] }).notNull(),
   startedAt: text('started_at').notNull(),
@@ -1806,6 +1812,8 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   check('secretWriteJournal_completedAt_utc', utc(t.completedAt)),
   check('secret_write_journal_operation_choice', sql`${t.operation} in ('add', 'replace', 'remove')`),
   check('secret_write_journal_state_choice', sql`${t.state} in ('prepared', 'committed', 'undone')`),
+  // SQLite trim defaults to ASCII spaces; include Unicode whitespace too.
+  check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
 export const plumbing = { migrations, operationResults, outsideEffects, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
 

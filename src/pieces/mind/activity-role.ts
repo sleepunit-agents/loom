@@ -12,6 +12,8 @@ export interface ActivityRun {
  more:Array<{id:string;at:string;title:string}>;
 }
 export interface ActivityConversations {
+ /** Optional read-only metadata for future records entering the time window. */
+ nextDeadline?(now:number):number|undefined;
  /** Agents with visible shared conversations, including through a project. */
  agents?(viewer:Viewer):string[];
  /** [from,until), newest first, <=601 per agent. Digests replace moved conversations

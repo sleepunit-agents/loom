@@ -1,5 +1,17 @@
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
+export interface WorkerRunPolicy {
+  /** Stored tool patterns; the configured runner applies always/guest rules. */
+  deniedTools: { pattern: string; guestsOnly: boolean }[];
+  /** Only senders for this job, not the agent's whole people configuration. */
+  people: { kind: 'person' | 'outside' | 'unknown'; person: string | null; tier: 1 | 2 | 3 | null }[];
+}
+export interface WorkerRunOptions {
+  policy?: WorkerRunPolicy;
+  nestedContainers: boolean;
+  gpu: boolean;
+  ports: { address: string; port: number }[];
+}
 export interface WorkerAssignment {
   id: string;
   box: string;
@@ -9,6 +21,8 @@ export interface WorkerAssignment {
   account: string;
   harness: string;
   brief: string;
+  /** Current agent configuration at claim; absent means no extra capabilities. */
+  run?: WorkerRunOptions;
   house: { repository: string; file: string; branch: string };
 }
 export interface WorkerBody {
