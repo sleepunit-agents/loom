@@ -22,7 +22,11 @@ function fixture(tempo?: SharedTempoOptions){
  cleanup.push(()=>{client.close();},()=>root.close());
  const call=(name:string,input:unknown,id:string)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({input,id})});
  const trigger={id:'delivery',ownerKind:'household',sourceKind:'time',times:now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Check pump',note:'Delivery'};
- return {client,db,clock,now,root,call,trigger};
+ const notice=async(auth=credential)=>{
+  const response=await root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+auth},body:JSON.stringify({query:'{ settledInboxNotice { id count } }'})});
+  const result=await response.json();expect(result.errors).toBeUndefined();return result.data.settledInboxNotice;
+ };
+ return {client,db,clock,now,root,call,trigger,notice};
 }
 it('real shared root fires once, settles then queues a job and withdraws command authority before replay',async()=>{
  const f=fixture();
@@ -102,17 +106,30 @@ it('rolls a Tempo write back when the actual shared receipt insert fails',async(
 it('exposes an observable word-free notice only after the person batch settles',async()=>{
  const f=fixture(),reader='other-notice-token-'.repeat(3);
  f.db.insert(tokens).values({fingerprint:hash(reader),label:'Other',kind:'owner',member:'sam',createdAt:f.now()}).run();
- const read=async(credential=reader)=>{
-  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({query:'{ settledInboxNotice { id count } }'})});
-  const result=await response.json();expect(result.errors).toBeUndefined();return result.data.settledInboxNotice;
- };
+ const read=(auth=reader)=>f.notice(auth);
  expect(await read()).toBeNull();
  expect((await f.call('tempo.set',{...f.trigger,toKind:'person',to:'sam'},'other-person')).status).toBe(200);
  expect(await read()).toBeNull();f.clock.advance(4999);expect(await read()).toBeNull();f.clock.advance(1);
  expect(await read()).toMatchObject({id:expect.any(String),count:1});
  expect(await read(credential)).toBeNull();
  const notice=await read();expect(JSON.stringify(notice)).not.toContain('Check pump');
+ f.root.services.tempo.committed();f.root.writes.run(()=>{});f.clock.advance(5000);expect(await read()).toEqual(notice);
  const item=f.db.select().from(inbox).get()!;
  f.root.writes.run(()=>f.db.update(inbox).set({state:'done'}).where(eq(inbox.id,item.id)).run());
  expect(await read()).toBeNull();
+});
+
+it('labels a person sweep for its ordinary recipient and preserves a trusted notifier',async()=>{
+ const f=fixture(),sam='sam-sweep-token-'.repeat(3);
+ f.db.insert(tokens).values({fingerprint:hash(sam),label:'Sam',kind:'owner',member:'sam',createdAt:f.now()}).run();
+ const remove=f.root.services.tempo.sweep.register({name:'Fixture',open:who=>who.id==='sam'?[{id:'work',words:'Sweep work',openedAt:f.now()}]:[]});
+ f.root.writes.run(()=>f.root.services.tempo.sweep.run({kind:'person',id:'sam'},'sweep-one'));remove();
+ expect(f.db.select().from(inbox).get()).toMatchObject({member:'sam',to:'sam',toKind:'person'});
+ f.clock.advance(5000);expect(await f.notice(sam)).toMatchObject({count:1});
+ const notify=vi.fn(()=>true),g=fixture({notify});
+ expect((await g.call('tempo.set',{...g.trigger,toKind:'person',to:'owner'},'custom-person')).status).toBe(200);
+ g.clock.advance(4999);expect(notify).not.toHaveBeenCalled();g.clock.advance(1);
+ const item=g.db.select().from(inbox).get()!;
+ expect(notify).toHaveBeenCalledExactlyOnceWith('owner',[item.id]);
+ g.root.services.tempo.capacityChanged();expect(notify).toHaveBeenCalledOnce();
 });

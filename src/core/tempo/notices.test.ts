@@ -35,9 +35,17 @@ it('filters mute, finished, other-recipient and hidden items before publishing, 
  expect(f.notices.publish('sam',['public','hidden','mute','done','other'])).toBe(true);expect(await f.read()).toMatchObject({count:1});
  f.db.delete(projectMembers).run();f.live.changed();expect(await f.read()).toBeNull();
  f.item('own');f.notices.publish('sam',['own']);expect(await f.read()).toMatchObject({count:1});
+ f.db.update(inbox).set({volume:'mute',quietUntil:'2026-11-15T00:00:00Z'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toBeNull();
+ f.db.update(inbox).set({volume:'full',quietUntil:null}).where(eq(inbox.id,'own')).run();expect(await f.read()).toMatchObject({count:1});
  f.db.update(inbox).set({state:'done'}).where(eq(inbox.id,'own')).run();expect(await f.read()).toBeNull();
 });
 it('stops retained reads and late admission before touching a closed database',async()=>{
  const f=fixture();f.item('a');f.notices.publish('sam',['a']);f.notices.close();f.client.close();
  expect(f.notices.publish('sam',['a'])).toBe(false);expect(await f.read()).toBeNull();
+});
+
+it('refuses to publish provisional state from a transaction that can roll back',async()=>{
+ const f=fixture();f.item('a');
+ expect(()=>f.db.transaction(()=>{f.notices.publish('sam',['a']);})).toThrow('after commit');
+ expect(await f.read()).toBeNull();
 });

@@ -24,6 +24,8 @@ export function settledNotices(db: DataDatabase, changed: () => void) {
   };
   return {
     publish(member: string, ids: readonly string[]) {
+      if (closed) return false;
+      if (db.$client.inTransaction) throw new Error('Publish settled notices after commit');
       const items = visible(member, ids);
       if (!items.length) return false;
       notices.set(member, { id: randomUUID(), items }); changed(); return true;
