@@ -20,7 +20,7 @@ import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions,selectExampleConversation} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
-import {inboxActions} from './rebuild-inbox-actions.mjs';
+import {inboxActionSteps} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
@@ -203,8 +203,9 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'prepared-changes',actions:safeReport(report.actions)};
   {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out}));}
   save();yield {phase:'change-references',actions:safeReport(report.actions)};
-  Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
-  save();yield {phase:'inbox-details',actions:safeReport(report.actions)};
+  for await(const step of inboxActionSteps({page,tile:await openApp('Inbox'),app,example:report.example,out})){
+   Object.assign(report.actions,step.actions);save();yield {phase:step.phase,answer:step.answer,actions:safeReport(report.actions)};
+  }
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};

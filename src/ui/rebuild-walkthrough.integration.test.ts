@@ -58,8 +58,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('change-references');
   expect(step.value.actions.changeInline,JSON.stringify(step.value.actions.changeInline)).toMatchObject({ok:true});
  });
- it('measures Inbox answer variants and retained history',{retry:0,timeout:20_000},async()=>{
-  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-details');
+ for(const answer of ['yes','no','words'])it(`records the Inbox ${answer} decision`,{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-decision');expect(step.value.answer).toBe(answer);
+  const result=step.value.actions['inboxDecision'+answer[0].toUpperCase()+answer.slice(1)];expect(result,JSON.stringify(result)).toMatchObject({ok:true,answer});
+ });
+ it('retains all answered Inbox questions and read marks',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('inbox-history');
   for(const name of ['inboxDecisions','inboxHistory'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
  });
  it('answers in Inbox and shows the answer in Comms',{retry:0,timeout:20_000},async()=>{
