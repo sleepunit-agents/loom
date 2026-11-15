@@ -150,23 +150,34 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await c.getByRole('button',{name:'Deny',exact:true}).click();
     await expect.poll(()=>app.data.services.approvals.get('private').state).toBe('denied');
     expect(app.data.services.approvals.get('private').decidedBy).toBe('pat');
+    const mergeId='github:acme/app#9', mergeHead='a'.repeat(40), mergeAt='2026-11-14T20:00:00.000Z';
+    app.data.writes.run(()=>app.db.insert(s.changes).values({id:mergeId,repository:'acme/app',number:9,title:'Approval Always fixture',body:'',url:'https://github.com/acme/app/pull/9',state:'open',draft:false,authorLogin:'art',project:'pond',agent:'art',branch:'work',headCommit:mergeHead,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:mergeAt,updatedAt:mergeAt}).run());
+    const merge=app.data.writes.run(()=>app.data.services.approvals.request({kind:'merge',target:`${mergeId}@${mergeHead}`,agent:'art',project:'pond',actingFor:'pat',askedFrom:'fixture',what:'Merge exact fixture',why:'Ready',ask:'Merge this exact fixture?',ifYes:'Agent merges',ifNo:'Wait'})).value;
+    await Promise.all([c.goto(`${app.url}/p/approvals-preview/approval/${merge.id}`),d.goto(`${app.url}/p/approvals-preview/approval/${merge.id}`)]);
+    for(const page of [c,d])await expect.poll(()=>page.getByRole('button',{name:'Always for pond',exact:true}).count()).toBe(1);
+    await c.getByRole('button',{name:'Always for pond',exact:true}).click();
+    for(const page of [c,d])await expect.poll(()=>page.getByText('merge · allowed',{exact:true}).count()).toBe(1);
+    expect(app.db.select().from(s.approvalRules).all()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'project:pond',person:'',tier:'do',setBy:'pat'})]));
+    expect(app.data.services.approvals.get(merge.id).decidedBy).toBe('pat');
+    expect(app.db.select().from(s.changes).where(eq(s.changes.id,mergeId)).get()!.state).toBe('open');
     await c.setViewportSize({width:390,height:900});
     await Promise.all([c.goto(`${app.url}/p/approvals-preview/rules`),d.goto(`${app.url}/p/approvals-preview/rules`)]);
     const form=c.getByRole('form',{name:'Standing rule',exact:true});
-    await form.getByLabel('Scope',{exact:true}).fill('project:pond');
+    await form.getByLabel('Scope',{exact:true}).fill('github:acme/*');
     await form.getByLabel('Answer',{exact:true}).selectOption('tell');
     expect(await form.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
     await form.getByRole('button',{name:'Save rule',exact:true}).click();
-    const ruleRow=(page:typeof c)=>page.locator('[data-split-row]').filter({hasText:'project:pond'});
+    const ruleRow=(page:typeof c)=>page.locator('[data-split-row]').filter({hasText:'github:acme/*'});
     for(const page of [c,d])await expect.poll(()=>ruleRow(page).textContent()).toContain('Tell me after');
-    expect(app.db.select().from(s.approvalRules).all()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'project:pond',person:'',tier:'tell',setBy:'pat'})]));
-    await d.getByRole('form',{name:'Standing rule',exact:true}).getByLabel('Rule',{exact:true}).selectOption(JSON.stringify(['merge','project:pond','']));
+    expect(app.db.select().from(s.approvalRules).all()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'github:acme/*',person:'',tier:'tell',setBy:'pat'})]));
+    await d.getByRole('form',{name:'Standing rule',exact:true}).getByLabel('Rule',{exact:true}).selectOption(JSON.stringify(['merge','github:acme/*','']));
     const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-approvals-piece'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       await d.setViewportSize({ width, height: 900 });
       await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
       await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
       expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await d.getByRole('form',{name:'Standing rule',exact:true}).getByRole('button',{name:'Save rule',exact:true}).scrollIntoViewIfNeeded();
       await d.screenshot({ path: join(shots, `approvals-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
     await form.getByLabel('Answer',{exact:true}).selectOption('do');
