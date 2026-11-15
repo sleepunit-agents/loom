@@ -86,9 +86,9 @@ it('does not retry process failures after starting and returns unconfirmed mail 
   const job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
   f.comms.take(f.conversation.id, job.id);
-  const result = f.runtime.finish(job.id, 'worker', 2, 'x'.repeat(20_000));
+  const result = f.runtime.finish(job.id, 'worker', 2, 'ignored-prefix:' + 'x'.repeat(20_000) + ':TAIL');
   expect(result.retry).toBeUndefined();
-  expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_384) });
+  expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_379) + ':TAIL' });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: null, takenAt: null });
   expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
 });
@@ -172,4 +172,22 @@ for (const exitCode of [0, 2]) it(`does not retain private body output after exi
   expect(result.job).toMatchObject({ state: exitCode === 0 ? 'done' : 'failed', exitCode, logTail: null, build: 'image' });
   expect(f.runtime.get(job.id).logTail).toBeNull(); expect(result.retry).toBeUndefined();
   expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
+});
+
+it('withholds output if a non-null conversation reference cannot be resolved', () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  // Corrupt only this in-memory fixture, never a home or installed database.
+  f.db.$client.pragma('foreign_keys = OFF');
+  f.db.delete(conversations).where(eq(conversations.id, f.conversation.id)).run();
+  expect(f.runtime.finish(job.id, 'worker', 0, 'PRIVATE_MISSING_CONTEXT').job.logTail).toBeNull();
+  expect(f.runtime.get(job.id).logTail).toBeNull();
+});
+it('keeps an unbound job brief and the final log lines', () => {
+  const f = fixture(); f.send(); const snapshot = f.runtime.admit(f.conversation.id)!;
+  f.db.insert(jobs).values({ ...snapshot, id: 'unbound', conversation: null, box: 'worker', state: 'running', brief: 'unbound instructions', build: 'image' }).run();
+  const tail = 'n'.repeat(16_374) + 'last-16384';
+  const result = f.runtime.finish('unbound', 'worker', 0, 'OLD '.repeat(5000) + tail);
+  expect(result.job).toMatchObject({ state: 'done', brief: 'unbound instructions', logTail: tail });
+  expect(f.runtime.get('unbound').logTail).toBe(tail); expect(result.retry).toBeUndefined();
 });
