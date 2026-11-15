@@ -19,9 +19,12 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
+import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
-import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
+import { createRuntime } from './runtime/runtime.js';
+import type { ModelRole } from './runtime/placement.js';
+import { registerSharedRuntime } from './shared-runtime.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -37,6 +40,8 @@ export function sharedRoot(options: {
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  modelRoles?(): readonly ModelRole[];
+  runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
@@ -51,6 +56,18 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
+  const roles = () => options.modelRoles?.() ?? [];
+  let tempo!: ReturnType<typeof installSharedTempo>;
+  const jobEnded = (id: string) => {
+    try {
+      tempo?.sources.job(id);
+      tempo?.capacityChanged();
+      options.runtimeJobEnded?.(id);
+    } catch (error) { options.reportError(error); }
+  };
+  const runtime = createRuntime(db, clock, { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
+
   const requests = new SecretRequests(db, now);
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
     options.secretWrites.fingerprintKey, write => {
@@ -76,11 +93,11 @@ export function sharedRoot(options: {
     tasks: taskService(db, now),
     approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: new Conversations(db, now),
+    runtime,
     secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
-  let tempo: ReturnType<typeof installSharedTempo>;
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
@@ -133,6 +150,7 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  runtime.start();
   return {
     http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
@@ -144,6 +162,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
       cancelSecretRecovery?.(); values?.close();
