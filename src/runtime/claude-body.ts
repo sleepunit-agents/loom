@@ -20,7 +20,7 @@ export function claudeBody(input: {
   if (!input.command || !input.cwd || [input.command, input.cwd, ...Object.keys(env), ...Object.values(env).filter((v): v is string => v !== undefined)].some(v => v.includes('\0'))) throw unavailable();
   const control=input.mcpConfig?Buffer.from(input.mcpConfig):undefined;let used=false;
   if(control&&(control.byteLength<1||control.byteLength>65536)){control.fill(0);throw unavailable();}
-  if(control){env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS??='0';env.MAX_MCP_OUTPUT_TOKENS??='100000';}
+  if(control){env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS??='0';env.MAX_MCP_OUTPUT_TOKENS??='100000';env.MCP_TOOL_TIMEOUT??='86400000';env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT??='86400000';}
   return async (job: WorkerAssignment, words: string, signal: AbortSignal): Promise<ClaudeReply> => {
     if(control&&used)throw unavailable();used=true;
     if (signal.aborted || job.harness !== 'claude' || !modelPattern.test(job.model)

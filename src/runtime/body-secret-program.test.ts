@@ -23,7 +23,7 @@ function fixture(){
   return Response.json({ok:true,value:values[path as keyof typeof values]});
  });
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
-  expect((options as {env:NodeJS.ProcessEnv}).env).toEqual({...env,GITHUB_TOKEN:privateValue,CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS:'0',MAX_MCP_OUTPUT_TOKENS:'100000'});
+  expect((options as {env:NodeJS.ProcessEnv}).env).toEqual({...env,GITHUB_TOKEN:privateValue,CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS:'0',MAX_MCP_OUTPUT_TOKENS:'100000',MCP_TOOL_TIMEOUT:'86400000',CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:'86400000'});
   expect(JSON.stringify(args)).not.toContain(privateValue);expect(JSON.stringify(options)).not.toContain(raw);
   expect(calls.indexOf('read')).toBeGreaterThan(calls.indexOf('startup'));
   expect(calls.filter(p=>p==='confirm')).toHaveLength(2);
