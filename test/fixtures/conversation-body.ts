@@ -23,5 +23,5 @@ export async function bodyFixture(clean:(()=>void|Promise<void>)[],options:{mode
  db.insert(s.sessions).values({id:credentialHash(bodyCredentials.memberCookie),token:credentialHash(bodyCredentials.member),device:'Browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}).run();
  const send=(words:string,clientId:string)=>root.http.request('/api/comms/send',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+bodyCredentials.memberCookie},body:JSON.stringify({input:{thread:thread.id,words,clientId},id:'send-'+clientId})});
  const call=(name:string,input:unknown,id:string,token=bodyCredentials.body)=>root.http.request('/api/conversation/'+name,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input,id})});
- return {db,clock,root,thread,call,send,gate:(fn:()=>Promise<void>)=>{gate=fn;},openGate:(fn:()=>Promise<void>)=>{openGate=fn;}};
+ return {db,clock,root,thread,call,send,key,gate:(fn:()=>Promise<void>)=>{gate=fn;},openGate:(fn:()=>Promise<void>)=>{openGate=fn;}};
 }

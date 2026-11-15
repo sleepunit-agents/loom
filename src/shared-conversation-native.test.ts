@@ -20,7 +20,7 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
   f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
   f.db.insert(s.modelAccounts).values({id:'account',owner:'alice',provider:'provider',label:'Fixture account',hasRoom:true}).run();
   f.db.insert(s.modelAccountBoxes).values({account:'account',box:'box'}).run();f.db.insert(s.modelAccountWindows).values({account:'account',window:'week',usage:0.1,usageReadAt:new Date(f.clock.now()).toISOString(),resetsAt:new Date(f.clock.now()+7*86400000).toISOString(),durationMs:7*86400000}).run();
-  f.db.insert(s.tempoSettings).values({whoKind:'agent',who:'art',settleSeconds:0}).run();
+  f.db.insert(s.tempoSettings).values({whoKind:'agent',who:'art',settleSeconds:1}).run();
  });
  expect(f.db.select().from(s.tokens).all().filter(row=>row.job)).toEqual([]);
  const server=createServer(getRequestListener(f.root.http.fetch));await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));clean.push(async()=>{server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));});
@@ -29,6 +29,7 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
  const member=(name:string,input:unknown)=>fetch(url+'/api/'+name.replace('.','/'),{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({input,id:randomUUID()})});
  const input='PRIVATE NATIVE INPUT',reply='PRIVATE NATIVE REPLY t-4242',card='PRIVATE NATIVE CARD',question='PRIVATE NATIVE QUESTION';
  expect((await member('comms.send',{thread:f.thread.id,words:input,clientId:'native-input'})).status).toBe(200);
+ expect((await (await bearer('runtime.next',{})).json()).value).toBeNull();f.clock.advance(1000);
  const claim=await bearer('runtime.next',{});expect(claim.status).toBe(200);const job=(await claim.json()).value as {id:string;conversation:string;brief:string;model:string};expect(job).toMatchObject({conversation:f.thread.conversation,brief:'',model:'requested-model'});
  const token='body_'+randomBytes(32).toString('hex');expect((await bearer('conversation.status',{state:'working',work:''},token)).status).toBe(401);
  const enrolled=await bearer('runtime.enrollBody',{job:job.id,fingerprint:hash(token)});expect(await enrolled.json()).toEqual({ok:true,value:{registered:true}});
@@ -37,12 +38,14 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
  const child=spawn(process.execPath,childArgs,{cwd:resolve(import.meta.dirname,'..'),env:{PATH:process.env.PATH??'',NODE_NO_WARNINGS:'1'},stdio:['pipe','pipe','pipe','ipc']});
  const {stdin,stdout,stderr}=child;if(!stdin||!stdout||!stderr){child.kill('SIGKILL');throw Error('No private child pipes');}
  const output:string[]=[],errors:string[]=[];stderr.on('data',chunk=>errors.push(String(chunk)));
+ let accepting!:()=>void;const acceptedInput=new Promise<void>(yes=>{accepting=yes;});
  let asking!:(id:string)=>void,rejectAsk!:(error:Error)=>void;const asked=new Promise<string>((yes,no)=>{asking=yes;rejectAsk=no;});stdin.on('error',()=>rejectAsk(Error('Private child input closed')));const lines=createInterface({input:stdout});
- lines.on('line',line=>{output.push(line);try{const value=JSON.parse(line);if(Object.hasOwn(value,'ask')){if(typeof value.ask!=='string')throw Error('Missing ask');asking(value.ask);}}catch{rejectAsk(Error('Bad child metadata'));}});
+ lines.on('line',line=>{output.push(line);try{const value=JSON.parse(line);if(value.accepting===true)accepting();if(Object.hasOwn(value,'ask')){if(typeof value.ask!=='string')throw Error('Missing ask');asking(value.ask);}}catch{rejectAsk(Error('Bad child metadata'));}});
  const exited=new Promise<number|null>((yes,no)=>{child.once('error',error=>{rejectAsk(error);no(error);});child.once('close',code=>{rejectAsk(Error('Child ended before asking'));yes(code);});});void exited.catch(()=>{});void asked.catch(()=>{});
  clean.push(async()=>{if(child.exitCode===null&&!child.signalCode)child.kill('SIGKILL');await exited.catch(()=>{});lines.close();});
  expect((await bearer('runtime.started',{job:job.id,build:'fictitious-image'})).status).toBe(200);
  stdin.end(JSON.stringify({url,token,job:job.id,conversation:job.conversation,inputHash:createHash('sha256').update(input).digest('hex'),reply,card,question}));
+ await acceptedInput;expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');expect(f.db.select().from(s.messages).get()?.delivery).toBe('sending');child.send({accepted:true});
  const ask=await asked;
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).all().some(row=>row.toKind==='agent'&&row.state==='done')).toBe(true);
  expect((await member('inbox.read',{item:ask})).status).toBe(200);expect((await member('comms.change',{thread:f.thread.id,change:'stop'})).status).toBe(200);
@@ -50,6 +53,11 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
  expect(await exited,errors.join('')).toBe(0);expect(JSON.parse(output.at(-1)!)).toEqual({accepted:2,reply:3,revision:2});
  expect(f.db.select().from(s.inbox).all().map(row=>[row.toKind,row.source,row.state])).toEqual([['agent','thread','done'],['person','thread','answered'],['agent','answer','done']]);expect(f.db.select().from(s.inboxReads).all()).toHaveLength(1);
  expect(f.db.select().from(s.turns).all()).toHaveLength(6);expect(f.db.select().from(s.turns).all().filter(row=>row.fromKind==='agent').every(row=>row.run===job.id)).toBe(true);expect(f.db.select().from(s.turns).all().some(row=>row.model==='requested-model')).toBe(false);
+ expect(f.db.select().from(s.conversations).get()?.turnCount).toBe(6);
+ expect(f.db.select().from(s.turns).all().filter(row=>row.fromKind==='agent').map(({kind,model,outcome,latencyMs})=>({kind,model,outcome,latencyMs}))).toEqual([
+ {kind:'action',model:'fictitious-actual-model',outcome:null,latencyMs:null},{kind:'reply',model:'fictitious-actual-model',outcome:'answered',latencyMs:17},{kind:'note',model:'fictitious-actual-model',outcome:'progressed',latencyMs:null},{kind:'note',model:null,outcome:null,latencyMs:null}]);
+ const messages=f.db.select().from(s.messages).all();expect(messages.find(row=>row.kind==='card')).toMatchObject({tool:'Read',cardState:'done'});
+ const recovered=[];for(const message of messages){expect(message.words).not.toBeNull();recovered.push(await f.key.open(message.words!));}expect(recovered).toEqual([input,card,reply,JSON.stringify({words:question,answers:'yes-no'}),'yes']);
  expect(f.db.select().from(s.conversationPeople).all().map(row=>row.who).sort()).toEqual(['alice','art']);expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:2,summary:'Fictitious work complete',inboxItem:null});
  expect(f.db.select().from(s.threadRefs).get()?.ref).toBe('t-4242');expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,stopRequested:false});
  expect((await bearer('runtime.finish',{job:job.id,exitCode:0,logTail:reply})).status).toBe(200);expect(f.db.select().from(s.jobs).get()).toMatchObject({state:'done',brief:'',logTail:null});expect((await bearer('conversation.status',{state:'working',work:''},token)).status).toBe(401);

@@ -10,6 +10,7 @@ try {
  await client.status({state:'working',work:'Checking fictitious input'});
  const first=await client.takeAndAccept(async(item,signal)=>{
   if(signal.aborted||item.source!=='thread'||createHash('sha256').update(item.words??'').digest('hex')!==startup.inputHash)throw Error('Wrong input');
+  const accepted=new Promise(resolve=>process.once('message',resolve));process.stdout.write(JSON.stringify({accepting:true})+'\n');await accepted;
  });
  if(first.accepted!==1)throw Error('Wrong initial batch');
  await client.card({clientId:'read-step',words:startup.card,tool:'Read',cardState:'done',model:'fictitious-actual-model'});
