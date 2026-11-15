@@ -45,9 +45,10 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   const context=await browser.newContext({serviceWorkers:'block',timezoneId:'Asia/Tokyo',locale:'en-US'});context.setDefaultTimeout(10000);
   await context.addCookies([{name:'loom_ui',value:cookie,url}]);
   const a=await context.newPage(),b=await context.newPage();
+  for(const page of [a,b])page.on('pageerror',error=>console.error('[Tempo page error]',error.message));
   mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
   for(const page of [a,b]){
-   mark('open trigger');await page.getByRole('button',{name:/Check pump delivery/}).click();
+   mark('open trigger');try{await page.getByRole('button',{name:/Check pump delivery/}).click();}catch(error){console.error('[Tempo visible body]',await page.locator('body').innerText());throw error;}
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(1);
    expect(await page.getByText(/America\/Chicago/).count()).toBeGreaterThan(0);
    const due=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'medium',timeStyle:'short'}).format(new Date(trigger.nextDueAt!));
