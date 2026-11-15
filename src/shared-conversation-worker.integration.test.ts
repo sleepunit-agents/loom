@@ -40,6 +40,7 @@ it('builds and runs a real private Comms recipient through production worker enr
  // The callback pause before confirmation is independently asserted by the real native recipient proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
  expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:'answered',latencyMs:23}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2});
+ expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:2,day:new Date(f.clock.now()).toISOString().slice(0,10),measure:'useful',score:4,text:'Fictitious comparison was useful'});
  expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:'Fictitious work complete'});
  const messages=f.db.select().from(s.messages).all();expect(await Promise.all(messages.map(row=>f.key.open(row.words!)))).toEqual(['PRIVATE WORKER INPUT','PRIVATE WORKER REPLY']);
  expect(tokenCopy).toBeDefined();const token=tokenCopy!.toString();expect(f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,hash(token))).get()).toMatchObject({job:job.id,madeFrom:hash(raw.runner)});
