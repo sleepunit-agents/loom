@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
+import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
@@ -100,6 +101,7 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
     if(title==='Tempo'){
