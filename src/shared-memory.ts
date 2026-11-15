@@ -3,9 +3,10 @@
 import {existsSync,mkdirSync} from 'node:fs';
 import {dirname} from 'node:path';
 import type {DataDatabase} from './core/data/database.js';
+import {eq} from 'drizzle-orm';
 import type {Clock} from './core/clock.js';
 import type {Operations} from './core/operations/index.js';
-import {household} from './core/data/schema.js';
+import {household,agents as agentRows} from './core/data/schema.js';
 import {installTouched} from './core/touched/index.js';
 import {mindTouchSources,mindTouchResolver} from './pieces/mind/binding.js';
 import type {MindSources} from './pieces/mind/sources.js';
@@ -22,9 +23,12 @@ import {verifyKnowledgePages,deriveSlaClass} from './backends/knowledge-verifica
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 import {createPersonHalf} from './backends/people-creation.js';
+import type {TaskService} from './apps/tasks.js';
+import {sharedProjectSections} from './shared-memory-projects.js';
 import {sharedSharing} from './shared-sharing.js';
 export interface SharedMemoryOptions {
  sources:MindSources;
+ checkingAgent:string;
  sections?:{tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole};
 }
 /** Fresh declared files only. Existing precious files, including their schema,
@@ -43,7 +47,8 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
   new ProjectsStore({dbPath:agent.memories}).close();
  }
 }
-export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined){
+export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,tasks:Pick<TaskService,'ready'>){
+ if(options&&(!options.checkingAgent.trim()||!db.select().from(agentRows).where(eq(agentRows.id,options.checkingAgent)).get()))throw new Error('Memory needs an explicit configured checking agent');
  const closers:Array<()=>void>=[];let closed=false;
  const close=()=>{if(closed)return;closed=true;const errors:unknown[]=[];for(const stop of closers.splice(0).reverse())try{stop();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory teardown failed');};
  const sharing=()=>sharedSharing(db),sources=options?.sources,agents=sources?.agents??[];
@@ -52,11 +57,11 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  const projectHref=(agent:string,slug:string)=>'/p/projects-preview/project/'+encodeURIComponent(agent+':'+slug);
  try{
   const people=peopleReader({directory:sources?.commons.people,agents,sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
-  const projects=createProjectsReader(clock,{agents,sharing,people,...options?.sections});closers.push(projects.close);
-  const activity=createActivityReader(clock,{agents,sharing,timezone:settings?.timezone??'UTC',github:settings?.githubOwner,conversations:sharedActivityConversations(db,{sharing,conversationHref})});closers.push(activity.close);
+  const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
+  const activity=createActivityReader(clock,{agents,sharing,timezone:()=>db.select().from(household).get()?.timezone??'UTC',github:settings?.githubOwner,conversations:sharedActivityConversations(db,{sharing,conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),mind:projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const touches=mindTouchSources(sources);
-  return {fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
+  return {checkingAgent:options?.checkingAgent,fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
    register(operations:Operations){
     installTouched(operations,mindTouchResolver(touches));
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,classify:domain=>deriveSlaClass(null,domain)});closers.push(knowledge.close);
