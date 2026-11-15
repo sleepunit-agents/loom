@@ -222,7 +222,7 @@ export class Operations {
   registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
     for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
   }
-  async callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+  callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
     if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid);
     return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid));
   }
