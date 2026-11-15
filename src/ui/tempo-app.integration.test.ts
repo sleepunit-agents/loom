@@ -11,7 +11,8 @@ import {chromium} from 'playwright-core';
 import {createDataSchema} from '../core/data/database.js';
 import {dataAuthentication} from '../core/data/authentication.js';
 import {FakeClock} from '../core/clock.js';
-import {members,agents,household,tokens,sessions} from '../core/data/schema.js';
+import {eq} from 'drizzle-orm';
+import {members,agents,household,tokens,sessions,boxes,jobs,conversations} from '../core/data/schema.js';
 import {sharedRoot} from '../shared-root.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -25,6 +26,12 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
  db.insert(tokens).values({fingerprint:hash(token),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
  db.insert(sessions).values({id:hash(cookie),token:hash(token),device:'Browser',via:'token',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}).run();
  const app=sharedRoot({db,clock,originAllowed:()=>true,reportError(error){throw error;}});
+ const bodyToken='tempo-browser-body-'.repeat(4);
+ db.insert(boxes).values({id:'browser-box',name:'Fixture box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
+ const chat=app.services.conversations.open({agent:'art',venue:'loom',place:'browser-settings',member:'owner',label:'Tempo settings'});
+ db.insert(jobs).values({id:'browser-body',box:'browser-box',agent:'art',conversation:chat.id,member:'owner',title:'Settings body',state:'running',brief:'',model:'fixture',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+ db.update(conversations).set({job:'browser-body'}).where(eq(conversations.id,chat.id)).run();
+ db.insert(tokens).values({fingerprint:hash(bodyToken),label:'Fixture body',kind:'agent',agent:'art',job:'browser-body',createdAt:now()}).run();
  const trigger=app.services.tempo.triggers.set({id:'delivery',ownerKind:'household',sourceKind:'time',times:new Date(clock.now()+3600000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Check the pump shipment',note:'Check pump delivery'});
  const authenticate=dataAuthentication(db,()=>clock.now());
  const server=createServer(getRequestListener(request=>{
@@ -73,11 +80,45 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
   expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
-  mark('pause');const paused=await context.request.post(url+'/api/tempo/pause',{data:{id:'pause',input:{agent:'art'}}});expect(paused.status()).toBe(200);
+  mark('pause');await a.getByRole('button',{name:'Pause agent',exact:true}).click();
   for(const page of [a,b])await expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0);
+  await b.getByRole('button',{name:'Resume agent',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('button',{name:'Pause agent',exact:true}).count()).toBe(1);
+  await a.getByRole('button',{name:'Cancel',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByText(/once · stopped/).count()).toBe(1);
+  mark('create');await a.getByRole('button',{name:'Create trigger',exact:true}).click();
+  const form=a.getByRole('form',{name:'Create trigger'});
+  await form.getByLabel('Label',{exact:true}).fill('Browser-created trigger');
+  await form.getByLabel('Time (America/Chicago)',{exact:true}).fill(new Date(clock.now()+7200000).toISOString());
+  await form.getByLabel('Set by',{exact:true}).selectOption('household');
+  await form.getByLabel('Recipient',{exact:true}).fill('art');
+  await form.getByLabel('Words',{exact:true}).fill('Created through Tempo');
+  await form.getByRole('button',{name:'Create trigger',exact:true}).click();
+  await expect.poll(()=>a.getByRole('form',{name:'Create trigger'}).count()).toBe(0);
+  for(const page of [a,b]){
+   await page.getByRole('button',{name:/Browser-created trigger/}).click();
+   await expect.poll(()=>page.getByText('Created through Tempo',{exact:true}).count()).toBe(1);
+  }
+  mark('run now');await a.getByRole('button',{name:'Run now',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByText(/once · fired/).count()).toBe(1);
+  expect(client.prepare("SELECT words FROM inbox WHERE source='trigger' AND words='Created through Tempo'").all()).toHaveLength(1);
+  mark('settings card');
+  await a.getByRole('button',{name:'Open Approvals',exact:true}).click();
+  for(const [allow,seconds] of [[true,60],[false,120]] as const){
+   const proposal=await context.request.post(url+'/api/tempo/proposeSettings',{headers:{authorization:'Bearer '+bodyToken},data:{id:'timing-'+seconds,input:{who:{kind:'person',id:'owner'},patch:{settleSeconds:seconds}}}});expect(proposal.status()).toBe(200);
+   await a.getByRole('button',{name:/Tempo for person owner: settle/}).click();
+   expect(await a.getByRole('heading',{name:'Before',exact:true}).count()).toBe(1);expect(await a.getByRole('heading',{name:'After',exact:true}).count()).toBe(1);
+   expect(await a.getByText(seconds+' seconds',{exact:true}).count()).toBe(1);
+   await a.getByRole('button',{name:allow?'Allow':'Deny',exact:true}).click();
+   await expect.poll(()=>a.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
+   expect(app.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(60);
+  }
+  await a.getByRole('button',{name:'Open Tempo',exact:true}).click();
+  await a.getByRole('button',{name:/Recent history/}).click();
+  await a.getByRole('button',{name:/Browser-created trigger/}).click();
   mark('revoke');app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
   for(const page of [a,b]){
-   await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(0);
+   await expect.poll(()=>page.getByRole('heading',{name:'Browser-created trigger',exact:true}).count()).toBe(0);
    await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   }
  } finally {
