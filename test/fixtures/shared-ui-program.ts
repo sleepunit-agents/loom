@@ -1,6 +1,6 @@
 /** Fictional prepared home using the same startup constructor as normal serve. */
 import Database from 'better-sqlite3';
-import {generateX25519Identity} from 'age-encryption';
+import {loadKey} from '../../src/pieces/comms/crypto.js';
 import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -22,7 +22,7 @@ export async function sharedUiProgram(options:{clock:Clock;webRoot?:string;seed(
   let owner=seeded.select().from(members).all().find(member=>member.role==='owner')?.id;
   if(!owner)throw Error('Fixture must explicitly seed its sign-in owner');
   seedConnection.close();
-  const identity=await generateX25519Identity(),commsKey=join(home,'comms.key');writeFileSync(commsKey,identity,{mode:0o600});
+  await loadKey(home);const commsKey=join(home,'comms.key');
   const webRoot=options.webRoot??join(home,'public');if(!options.webRoot){mkdirSync(webRoot);for(const file of ['index.html','next.html'])writeFileSync(join(webRoot,file),'<main>FICTIONAL SHARED PROGRAM</main>');}
   const commonsDirectory=join(home,'commons'),agentDirectory=join(home,'agents','art'),program={database,commsKey,signinMember:owner,webRoot,memory:{checkingAgent:'art',sources:{commons:{directory:commonsDirectory,knowledge:join(commonsDirectory,'knowledge.db'),people:join(commonsDirectory,'people.db')},agents:[{agent:'art',directory:agentDirectory,memories:join(agentDirectory,'memories.db')}]}}};
   writeFileSync(join(home,'program.json'),JSON.stringify(program),{mode:0o600});

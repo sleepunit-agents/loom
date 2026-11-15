@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add own-body Memory editing, retained-revision reads, and revision restoration through the canonical command and query doors.
+
 - Add current-owner household membership and agent appearance commands on the shared data connection.
 
 - Browser sign-in confirmation forms retain their origin check while keeping the link code out of referrers.
