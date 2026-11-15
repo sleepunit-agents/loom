@@ -8,19 +8,40 @@ export async function installDataProbe(page){
   const Native=globalThis.WebSocket,state={sockets:[],entries:new WeakMap()};globalThis.__loomDataProbe=state;
   globalThis.WebSocket=class extends Native{
    constructor(...args){super(...args);const entry={socket:this,requests:[],active:new Map(),frames:[]};state.sockets.push(this);state.entries.set(this,entry);
-    this.addEventListener('message',event=>{try{const m=JSON.parse(event.data),d=m.payload?.data?.observe;if(m.type==='complete'||m.type==='error')entry.active.delete(m.id);if(d)entry.frames.push({id:m.id,revision:d.revision,paths:d.patches.map(p=>p.path)});}catch{}});
+    this.addEventListener('message',event=>{try{const m=JSON.parse(event.data),d=m.payload?.data?.observe;if(m.type==='complete'||m.type==='error'||m.payload?.errors)entry.active.delete(m.id);if(d&&!m.payload?.errors)entry.frames.push({id:m.id,revision:d.revision,paths:d.patches.map(p=>p.path),patches:d.patches});}catch{}});
    }
    send(data){try{const m=JSON.parse(data),entry=state.entries.get(this);if(m.type==='subscribe'){const request={id:m.id,query:m.payload?.variables?.query??m.payload?.query,variables:m.payload?.variables?.variables??{}};entry.requests.push(request);entry.active.set(m.id,request);}if(m.type==='complete')entry.active.delete(m.id);}catch{}return super.send(data);}
   };
  });
 }
+export function connectionEvidence({title,pattern}){
+ const state=globalThis.__loomDataProbe,open=state.sockets.filter(s=>s.readyState===WebSocket.OPEN),graphql=open.filter(s=>new URL(s.url).pathname==='/graphql');
+ return{known:true,title,graphql:graphql.length,other:open.filter(s=>new URL(s.url).pathname!=='/graphql').map(s=>new URL(s.url).pathname),selectionSeen:graphql.some(s=>{const e=state.entries.get(s);return [...e.active.values()].some(r=>new RegExp(pattern).test(r.query)&&e.frames.some(f=>f.id===r.id));})};
+}
 export async function auditDataDoor(page,title){
  if(!signatures[title])return{known:false,title};
- return page.evaluate(({title,pattern})=>{const state=globalThis.__loomDataProbe,open=state.sockets.filter(s=>s.readyState===WebSocket.OPEN),graphql=open.filter(s=>new URL(s.url).pathname==='/graphql');return{known:true,title,graphql:graphql.length,other:open.filter(s=>new URL(s.url).pathname!=='/graphql').map(s=>new URL(s.url).pathname),selectionSeen:graphql.some(s=>state.entries.get(s).requests.some(r=>new RegExp(pattern).test(r.query)))};},{title,pattern:signatures[title]});
+ return page.evaluate(connectionEvidence,{title,pattern:signatures[title]});
+}
+/** Reconstruct prior selected data; reject unchanged fields and collection snapshots. */
+export function changedFields(history,after,root,minDepth){
+ let value;let changes=0;
+ for(let i=0;i<history.length;i++)for(const patch of history[i].patches){
+  const path=patch.path;
+  if(i>=after){
+   if(path[0]!==root||path.length<minDepth)return false;
+   const previous=path.reduce((row,key)=>row?.[key],value);
+   if(patch.removed?previous===undefined:JSON.stringify(previous)===JSON.stringify(patch.value))return false;
+   changes++;
+  }
+  if(!path.length){value=structuredClone(patch.value);continue;}
+  const parent=path.slice(0,-1).reduce((row,key)=>row?.[key],value);if(!parent)return false;
+  if(patch.removed)delete parent[path.at(-1)];else parent[path.at(-1)]=structuredClone(patch.value);
+ }
+ return changes>0;
 }
 const check=(yes,message)=>{if(!yes)throw Error(message);};
 /** Attribute queries to the tagged browser request, retaining no bind values. */
-async function sqlRead({page,app,query,match,task,caller}){
+export async function sqlRead({page,app,query,match,task,caller}){
  const scope=new AsyncLocalStorage(),db=app.services.comms.db.$client,prepare=db.prepare,fetch=app.http.fetch,statements=[];
  app.http.fetch=(request,...rest)=>scope.run(request.headers.get('x-loom-walkthrough-sql')==='measure',()=>Reflect.apply(fetch,app.http,[request,...rest]));
  db.prepare=function(sql){const statement=Reflect.apply(prepare,this,[sql]);if(match.test(sql))for(const method of ['get','all','iterate']){const original=statement[method];statement[method]=function(...args){if(scope.getStore()&&(!task||args.flat(Infinity).includes(task))&&(!caller||caller.test(new Error().stack??'')))statements.push(String(sql));return Reflect.apply(original,this,args);};}return statement;};
@@ -70,21 +91,24 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
   app.writes.run(()=>app.services.tasks.comment(example.tasks[0],'A fictitious live-delta comment.',{kind:'member',id:'alex'}));
   await page.waitForFunction(()=>globalThis.__loomDataProbe.probe.events.length>1||globalThis.__loomDataProbe.probe.error,undefined,{timeout:4000});
   await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return e.frames.slice(s.beforeTasks.frames).some(f=>s.beforeTasks.ids.includes(f.id)&&f.revision>1);},undefined,{timeout:4000});
-  const proof=await page.evaluate(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return{error:p.error,events:p.events,requests:e.requests.filter(r=>r.id===p.id).length,taskRequests:e.requests.filter(r=>/query\s+Tasks\b/.test(r.query)).length,before:s.beforeTasks,taskFrames:e.frames.slice(s.beforeTasks.frames).filter(f=>s.beforeTasks.ids.includes(f.id))};});
+  const proof=await page.evaluate(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return{error:p.error,events:p.events,requests:e.requests.filter(r=>r.id===p.id).length,taskRequests:e.requests.filter(r=>/query\s+Tasks\b/.test(r.query)).length,before:s.beforeTasks,history:e.frames.filter(f=>s.beforeTasks.ids.includes(f.id)),after:e.frames.slice(0,s.beforeTasks.frames).filter(f=>s.beforeTasks.ids.includes(f.id)).length,taskFrames:e.frames.slice(s.beforeTasks.frames).filter(f=>s.beforeTasks.ids.includes(f.id)).map(({patches,...frame})=>frame)};});
   check(!proof.error&&proof.requests===1&&proof.taskRequests===proof.before.requests,'A selection was resubscribed for a normal change');
   const delta=proof.events[1];check(delta.revision>1&&delta.patches.length===1&&JSON.stringify(delta.patches[0].path)===JSON.stringify(['tasks',0,'commentCount'])&&delta.patches[0].value===before+1,'Changed fields were not delivered as one narrow patch');
-  check(proof.taskFrames.some(f=>f.revision>1)&&proof.taskFrames.every(f=>f.paths.every(path=>path.length>0)),'The actual Tasks tile did not receive changes without another root snapshot');
+  check(proof.taskFrames.some(f=>f.revision>1)&&changedFields(proof.history,proof.after,'tasks',3),'The actual Tasks tile did not receive changes without another root snapshot');
   return{reason:'The same socket delivered one initial result then only the changed comment count; the real Tasks selection received patches without resubscribing.',initialRevision:initial.revision,changedRevision:delta.revision,patches:delta.patches,taskFrames:proof.taskFrames,requests:proof.requests};
  });
  await attempt('dataInboxChange',async()=>{
   const tile=await open(page,'Inbox'),back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();await tile.getByLabel('Search asks',{exact:true}).fill('');
+  await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,e=s.entries.get(s.sockets.find(x=>x.readyState===WebSocket.OPEN&&new URL(x.url).pathname==='/graphql'));return [...e.active.values()].some(r=>/query\s+Inbox\b/.test(r.query)&&e.frames.some(f=>f.id===r.id));},undefined,{timeout:4000});
+  await page.evaluate(()=>{const s=globalThis.__loomDataProbe,e=s.entries.get(s.sockets.find(x=>x.readyState===WebSocket.OPEN&&new URL(x.url).pathname==='/graphql'));s.beforeInbox={ids:[...e.active.values()].filter(r=>/query\s+Inbox\b/.test(r.query)).map(r=>r.id),requests:e.requests.filter(r=>/query\s+Inbox\b/.test(r.query)).length,frames:e.frames.length};});
   const question='Fictitious live data-layer question?';
   const initial=await watch(page,'{ inboxItems(folder:"needs", search:'+JSON.stringify(question)+', limit:51, offset:0) { id body { words } } }');check(initial.patches[0].value.inboxItems.length===0,'Unique question already existed');
   const commit=await app.services.comms.prepareAsk(example.thread,'fern','walkthrough-live-inbox',{words:question,answers:'yes-no',ifYes:'Fern proceeds.',ifNo:'Fern waits.'});const message=app.writes.run(commit).value;
   await page.waitForFunction(()=>globalThis.__loomDataProbe.probe.events.length>1||globalThis.__loomDataProbe.probe.error,undefined,{timeout:4000});
   await tile.locator('[data-split-row]:visible').filter({hasText:question}).waitFor({timeout:4000});
-  const proof=await page.evaluate(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return{error:p.error,events:p.events,requests:e.requests.filter(r=>r.id===p.id).length};});
-  check(!proof.error&&proof.requests===1&&proof.events.slice(1).every(d=>d.patches.every(p=>p.path.length>0)),'Inbox needed a second selection/root snapshot');
+  await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return e.frames.slice(s.beforeInbox.frames).some(f=>s.beforeInbox.ids.includes(f.id));},undefined,{timeout:4000});
+  const proof=await page.evaluate(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return{error:p.error,events:p.events,requests:e.requests.filter(r=>r.id===p.id).length,inboxRequests:e.requests.filter(r=>/query\s+Inbox\b/.test(r.query)).length,before:s.beforeInbox,history:e.frames.filter(f=>s.beforeInbox.ids.includes(f.id)),after:e.frames.slice(0,s.beforeInbox.frames).filter(f=>s.beforeInbox.ids.includes(f.id)).length};});
+  check(!proof.error&&proof.requests===1&&proof.inboxRequests===proof.before.requests&&changedFields(proof.history,proof.after,'inboxItems',2)&&proof.events.slice(1).every(d=>d.patches.every(p=>p.path.length>0)),'Inbox needed a second selection/root snapshot');
   return{reason:'A new private question arrived as a change over the existing socket and appeared in the already open Inbox without another selection.',item:message.inboxItem,initialRevision:initial.revision,changedRevisions:proof.events.slice(1).map(d=>d.revision),requests:proof.requests};
  });
  return evidence;
