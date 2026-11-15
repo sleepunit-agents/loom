@@ -6,10 +6,31 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { join, relative, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const casesIn = (src: string) => new Set([...src.matchAll(/^\s*case '([a-z]+)':/gm)].map((m) => m[1]));
+
+// A registration may load a shared screen module and select one export (as
+// Approvals and Changes do). Check that actual chunk, rather than a retired
+// pieces/<name>/index.tsx filename which the registration no longer imports.
+function screenModules() {
+  const pieces = join(root, 'web/src/pieces');
+  const screens = readdirSync(pieces).flatMap(piece => {
+    const directory = join(pieces, piece), registration = join(directory, 'registration.ts');
+    if (!existsSync(registration)) return [];
+    const imports = [...readFileSync(registration, 'utf-8').matchAll(/\bimport\(\s*['"]([^'"]+)['"]\s*\)/g)];
+    expect(imports.length, `${piece} declares its lazy screen`).toBeGreaterThan(0);
+    return imports.map(([, spec]) => {
+      const base = resolve(directory, spec);
+      const file = [`${base}.tsx`, `${base}.ts`, join(base, 'index.tsx'), join(base, 'index.ts')].find(existsSync);
+      expect(file, `${piece} screen ${spec} exists`).toBeDefined();
+      return relative(join(root, 'web'), file!).replaceAll('\\', '/');
+    });
+  });
+  return [...new Set(screens)];
+}
 
 describe('the app (web/)', () => {
   it('draws every block type vocab.ts accepts', () => {
@@ -37,8 +58,7 @@ describe('the app (web/)', () => {
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
     const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { imports?: string[]; isDynamicEntry?: boolean }>;
-    const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
-      .map(piece => `src/pieces/${piece}/index.tsx`);
+    const screens = screenModules();
     expect(screens.length).toBeGreaterThan(10);
     for (const page of ['index.html', 'next.html']) {
       expect(manifest[page], page).toBeDefined();

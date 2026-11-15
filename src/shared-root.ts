@@ -15,6 +15,9 @@ import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
+import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
+import { pollChanges } from './apps/changes-polling.js';
+import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
@@ -32,6 +35,8 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  changes?: { read: PullRequestReader; rule: MergeRuleReader };
+  workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
@@ -51,6 +56,11 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
+  const commit = <T>(run: () => T): T => {
+    const result = data.writes.run(run);
+    for (const error of result.notificationErrors) { try { options.reportError(new Error('Changes source notification failed')); } catch { /* reporting cannot undo a source commit */ } }
+    return result.value;
+  };
   const requests = new SecretRequests(db, now);
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
     options.secretWrites.fingerprintKey, write => {
@@ -74,11 +84,13 @@ export function sharedRoot(options: {
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   const services = {
     tasks: taskService(db, now),
+    changes: changeService(db, options.changes?.rule ?? (() => undefined), now, commit),
     approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: new Conversations(db, now),
     secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  if (options.workAnswerAuthority) registerSharedWorkCommands(operations, db, services.approvals, options.workAnswerAuthority);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   let tempo: ReturnType<typeof installSharedTempo>;
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
@@ -86,6 +98,7 @@ export function sharedRoot(options: {
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
   catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  const changePolling = options.changes ? pollChanges(services.changes, options.changes.read, clock) : undefined;
   const authenticate = credentials.authenticate;
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -134,7 +147,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, credentials, refreshChanges: changePolling?.refresh, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -145,12 +158,13 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
+      const sourceStopped = changePolling?.stop();
       tempo.close();
       cancelSecretRecovery?.(); values?.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, sourceStopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
