@@ -1,0 +1,78 @@
+import Database from 'better-sqlite3';
+import {createHash} from 'node:crypto';
+import {afterEach,expect,it} from 'vitest';
+import {eq} from 'drizzle-orm';
+import {createDataSchema} from './core/data/database.js';
+import {FakeClock} from './core/clock.js';
+import * as s from './core/data/schema.js';
+import {sharedRoot} from './shared-root.js';
+const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
+function fixture(){
+ const client=new Database(':memory:'),clock=new FakeClock(),at=new Date(clock.now()).toISOString();
+ const db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
+ db.insert(s.members).values(['pat','sam','lee'].map(id=>({id,role:id==='pat'?'owner' as const:'member' as const,joinedAt:at}))).run();
+ db.insert(s.projects).values({id:'pond',name:'Pond'}).run();
+ db.insert(s.agents).values({id:'art',about:'',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();
+ const cookie='c'.repeat(64),fingerprint='t'.repeat(64),session=createHash('sha256').update(cookie).digest('hex');
+ db.insert(s.tokens).values({fingerprint,label:'Fixture',kind:'owner',member:'pat',createdAt:at}).run();
+ db.insert(s.sessions).values({id:session,token:fingerprint,device:'Fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:error=>{throw error;}});
+ cleanup.push(async()=>{await root.close();client.close();});
+ const post=(input:unknown,id='rule-1')=>root.http.request('http://loom/api/approvals/setRule',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({input,id})});
+ return {db,root,clock,post};
+}
+it('edits all four standing kinds through the real current-owner door, with actor-free receipts and demotion replay denial',async()=>{
+ const f=fixture();
+ for(const kind of ['merge','command','setting','dangerous'] as const){
+  const input={kind,scope:kind==='merge'?'github:ACME/*':'*',tier:'tell'};
+  for(let n=0;n<2;n++)expect((await f.post(input,kind)).status).toBe(200);
+ }
+ expect(f.root.services.approvalRules.list()).toHaveLength(4);
+ expect(f.root.services.approvalRules.list()).toEqual(expect.arrayContaining([expect.objectContaining({kind:'merge',scope:'github:acme/*',setBy:'pat',person:'',tier:'tell'})]));
+ expect(f.db.select().from(s.operationResults).all()).toHaveLength(4);
+ expect((await f.post({kind:'merge',scope:'*',tier:'do'},'merge')).status).toBe(409);
+ expect((await f.post({kind:'merge',scope:'*',tier:'do',actor:'pat'},'actor')).status).toBe(400);
+ expect((await f.post({kind:'merge',scope:'project:missing',tier:'do'},'missing')).status).toBe(400);
+ f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run();
+ expect((await f.post({kind:'merge',scope:'github:ACME/*',tier:'tell'},'merge')).status).toBe(403);
+ expect((await f.post({kind:'merge',scope:'*',tier:'do'},'new')).status).toBe(403);
+ expect(f.root.operations.call('direct',{kind:'agent',id:'art'},'approvals.setRule',{kind:'merge',scope:'*',tier:'do'},'agent')).toMatchObject({ok:false,code:'denied'});
+ expect(f.db.select().from(s.operationResults).all()).toHaveLength(4);
+});
+it('resolves exact > project > repository wildcard > global, keeps named grants separate, and unknown or stale authority asks',()=>{
+ const f=fixture(),rules=f.root.services.approvalRules,target='github:acme/app#1@'+'a'.repeat(40);
+ const resolve=(actingFor='owner')=>rules.resolve({kind:'merge',target,project:'pond',actingFor});
+ rules.set({kind:'merge',scope:'*',tier:'do'},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'*',person:''});
+ expect(resolve('unknown')).toBeUndefined();expect(resolve('?')).toBeUndefined();expect(resolve('missing')).toBeUndefined();expect(resolve('sam')).toBeUndefined();
+ rules.set({kind:'merge',scope:'github:acme/*',tier:'tell'},'pat');expect(resolve()).toMatchObject({tier:'tell'});
+ rules.set({kind:'merge',scope:'project:pond',tier:'do'},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'project:pond'});
+ rules.set({kind:'merge',scope:'github:acme/app',tier:'ask'},'pat');expect(resolve()).toMatchObject({tier:'ask',scope:'github:acme/app'});
+ rules.set({kind:'merge',scope:'github:acme/app',person:'sam',tier:'tell'},'pat');expect(resolve('sam')).toMatchObject({tier:'tell',person:'sam'});expect(resolve('lee')).toBeUndefined();expect(resolve('pat')).toMatchObject({tier:'ask',person:''});
+ rules.set({kind:'merge',scope:'github:acme/app',tier:null},'pat');expect(resolve()).toMatchObject({scope:'project:pond'});
+ f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run();expect(resolve()).toBeUndefined();expect(resolve('sam')).toBeUndefined();
+ expect(()=>rules.set({kind:'merge',scope:'*',tier:'do'},'sam')).toThrow('household owner');
+});
+it('treats pattern punctuation literally and lets current owners delete orphaned project scopes',()=>{
+ const f=fixture(),rules=f.root.services.approvalRules;
+ rules.set({kind:'command',scope:'run [a].*',person:'sam',tier:'do'},'pat');
+ expect(rules.resolve({kind:'command',target:'run [a].txt',actingFor:'sam'})).toMatchObject({tier:'do'});
+ expect(rules.resolve({kind:'command',target:'run a.txt',actingFor:'sam'})).toBeUndefined();
+ rules.set({kind:'setting',scope:'project:pond',person:'lee',tier:'ask'},'pat');f.db.delete(s.projects).run();
+ expect(()=>f.db.delete(s.members).where(eq(s.members.id,'lee')).run()).toThrow('polymorphic foreign key');
+ expect(rules.resolve({kind:'setting',target:'timings',project:'pond',actingFor:'lee'})).toBeUndefined();
+ rules.set({kind:'setting',scope:'project:pond',person:'lee',tier:null},'pat');expect(rules.list()).toHaveLength(1);
+});
+
+it('publishes owner rule edits/deletions through the generated query and hides global rules immediately on demotion',async()=>{
+ const f=fixture();
+ const query=()=>f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+'c'.repeat(64)},body:JSON.stringify({query:'{ approvalRules { kind scope person tier setBy } }'})}).then(response=>response.json());
+ const input={kind:'setting',scope:'tempo:*',person:'sam',tier:'ask'};
+ expect((await f.post(input,'create')).status).toBe(200);
+ expect(await query()).toEqual({data:{approvalRules:[{...input,setBy:'pat'}]}});
+ f.root.writes.run(()=>f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run());
+ expect(await query()).toEqual({data:{approvalRules:[]}});
+ f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'pat')).run());
+ expect((await f.post({...input,tier:null},'remove')).status).toBe(200);
+ expect(await query()).toEqual({data:{approvalRules:[]}});
+ expect(f.db.select().from(s.operationResults).all()).toHaveLength(2);
+});

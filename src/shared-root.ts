@@ -35,6 +35,8 @@ import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
+import { approvalRulesService } from './apps/approval-rules.js';
+import { registerSharedApprovalRules } from './shared-approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
@@ -166,6 +168,7 @@ export function sharedRoot(options: {
       return result.value;
     }),
     household: householdService(db, now),
+    approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
@@ -244,6 +247,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
+  registerSharedApprovalRules(operations,db,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
