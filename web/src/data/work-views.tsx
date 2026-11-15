@@ -11,14 +11,17 @@ import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type Ap
 /** The owner answers the same durable card through the authenticated API.
  * Visibility of a button never confers permission; root rechecks current owner.
  */
+function settingsPath(card: Parameters<typeof readTempoChange>[0]) {
+  return readTempoChange(card) ? '/api/tempo/answerSettings' : readMeasuringChange(card) ? '/api/measuring/answer' : undefined;
+}
 function settingsActions(snapshot: ReturnType<typeof useApprovalSnapshot>): ApprovalActions {
-  return { supports: approval => !!readTempoChange(approval) || !!readMeasuringChange(approval),
+  return { supports: approval => !!settingsPath(approval),
     allow: id => answerSettings(snapshot.approvals.find(card => card.id === id), true),
     deny: id => answerSettings(snapshot.approvals.find(card => card.id === id), false) };
 }
 async function answerSettings(card: ReturnType<typeof useApprovalSnapshot>['approvals'][number] | undefined, allow: boolean): Promise<void> {
   if (!card) throw new Error('Approval unavailable');
-  const path = readTempoChange(card) ? '/api/tempo/answerSettings' : readMeasuringChange(card) ? '/api/measuring/answer' : undefined;
+  const path = settingsPath(card);
   if (!path) throw new Error('Approval unavailable');
   const id = card.id;
   const response = await fetch(path, {

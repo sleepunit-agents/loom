@@ -228,17 +228,20 @@ const tempoAnswerCases=['app','inline'].flatMap(surface=>[true,false].flatMap(al
 it.each(tempoAnswerCases)('awaits the actual $surface Tempo answer (allow=$allow, success=$success)',async({surface,allow,success})=>{
  fixture();const card=feed.approvals.approvals[0];
  Object.assign(card,{target:'tempo:person:sam',details:JSON.stringify({who:{kind:'person',id:'sam'},before:{settleSeconds:5,dimDays:1,muteDays:7},after:{settleSeconds:60,dimDays:1,muteDays:7}}),changeSummary:'Tempo for person sam: settle 5 → 60 seconds; dim 1 → 1 days; mute 7 → 7 days'});
+ const selected={...card,id:'a-two',what:'Second Tempo timing',ask:'Second timing change?'};feed.approvals.approvals=[card,selected];
  let accept!:()=>void,refuse!:()=>void;
  const request=vi.fn((_url:string,_options:RequestInit)=>new Promise((resolve,reject)=>{accept=()=>resolve({ok:true,json:async()=>({ok:true,value:{saved:true}})});refuse=()=>reject(new Error('refused'));}));vi.stubGlobal('fetch',request);
  try{
   await draw(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id}));expect(words()).toContain('Tempo settings change');
+  await act(async()=>tree.update(surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+selected.id}):h(LiveApprovalCard,{id:selected.id})));
+  expect(words()).toContain('Second timing change?');
   const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children===(allow?'Allow':'Deny'))!;
   await act(async()=>button.props.onClick());expect(words()).toContain('Saving answer…');
-  expect(tree.root.findAllByType('Button').every((node:{props:{disabled:boolean}})=>node.props.disabled)).toBe(true);expect(card.state).toBe('pending');
+  expect(tree.root.findAllByType('Button').every((node:{props:{disabled:boolean}})=>node.props.disabled)).toBe(true);expect(card.state).toBe('pending');expect(selected.state).toBe('pending');
   expect(request).toHaveBeenCalledWith('/api/tempo/answerSettings',expect.objectContaining({method:'POST',credentials:'same-origin'}));
-  expect(JSON.parse(String(request.mock.calls[0][1].body))).toMatchObject({input:{id:card.id,allow}});
+  expect(JSON.parse(String(request.mock.calls[0][1].body))).toMatchObject({input:{id:selected.id,allow}});
   await act(async()=>{if(success)accept();else refuse();});
-  expect(words()).not.toContain('Saving answer…');expect(card.state).toBe('pending');
+  expect(words()).not.toContain('Saving answer…');expect(card.state).toBe('pending');expect(selected.state).toBe('pending');
   if(success)expect(words()).not.toContain('Could not save your answer');else expect(words()).toContain('Could not save your answer');
  }finally{vi.unstubAllGlobals();}
 });
