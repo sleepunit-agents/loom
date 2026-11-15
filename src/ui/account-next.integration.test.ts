@@ -1,5 +1,6 @@
 import webpush from 'web-push';
 /** One Account browser proof through the actual shared program; CI owns Chrome. */
+import {runInNewContext} from 'node:vm';
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
 import {createServer} from 'node:http';
@@ -21,8 +22,12 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
  db.insert(tokens).values({fingerprint:hash('a'.repeat(64)),kind:'owner',member:'sam',label:'Sam',createdAt:now()}).run();
  db.insert(sessions).values([{id:hash(cookie),token:hash('a'.repeat(64)),device:'Current browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()},{id:hash('d'.repeat(64)),token:hash('a'.repeat(64)),device:'Kitchen tablet',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}]).run();
  db.insert(passkeys).values({id:'fixture-key',token:hash('a'.repeat(64)),label:'Fixture laptop',publicKey:'unused-public-half',counter:0,createdAt:now()}).run();
- const app=await serveShared({db,clock,webRoot,notifications:{vapid:webpush.generateVAPIDKeys(),send:async()=>{}},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+ const delivered:Array<{title:string;body:string;url:string}>=[];let receive:((payload:string)=>Promise<void>)|undefined;
+ const app=await serveShared({db,clock,webRoot,notifications:{vapid:webpush.generateVAPIDKeys(),send:async(sub,payload)=>{expect(String(payload)).not.toContain('PRIVATE');expect(sub.endpoint).toBe('https://fcm.googleapis.com/browser-proof');if(!receive)throw Error('Notification receiver not ready');await receive(String(payload));}},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
+  const handlers:Record<string,(event:unknown)=>void>={};const worker=await (await fetch(app.url+'/sw.js')).text();
+  runInNewContext(worker,{URL,location:{origin:app.url},self:{addEventListener:(name:string,handler:(event:unknown)=>void)=>{handlers[name]=handler;},registration:{showNotification:async(title:string,options:{body:string;data:{url:string}})=>{delivered.push({title,body:options.body,url:options.data.url});}}}});
+  receive=async payload=>{let work:Promise<void>|undefined;handlers.push({data:{json:()=>JSON.parse(payload)},waitUntil:(pending:Promise<void>)=>{work=pending;}});if(!work)throw Error('Served worker did not handle push');await work;};
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Fixture notification browser'});
   await context.addInitScript(()=>{Object.defineProperty(Notification,'requestPermission',{value:async()=> 'granted'});Object.defineProperty(navigator.serviceWorker,'ready',{value:Promise.resolve({pushManager:{getSubscription:async()=>null,subscribe:async()=>({endpoint:'https://fcm.googleapis.com/browser-proof',toJSON:()=>({keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}})})}})});});
   await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);
@@ -39,8 +44,11 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   await a.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor({state:'hidden'});
   await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(1);
+  app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE NOTIFICATION PROOF WORDS'}));clock.advance(5000);
+  await expect.poll(()=>delivered.length).toBe(1);expect(delivered).toEqual([{title:'loom',body:'',url:app.url+'/p/inbox-preview'}]);
   await b.getByRole('button',{name:'Remove notification device',exact:true}).click();
   await expect.poll(()=>a.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(0);
+  app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE AFTER DISABLE'}));clock.advance(5000);await app.services.notifications!.publish('sam',[]);expect(delivered).toHaveLength(1);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
   const self=a.getByRole('heading',{name:'Current browser',exact:true}).locator('..');await self.getByRole('button',{name:'Sign out browser',exact:true}).click();
@@ -48,7 +56,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   expect(legacy).toBe(0);expect(errors).toEqual([]);
  }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
  finally{await browser.close();await app.close();client.close();}
- writeFileSync(resolve('artifacts/household-account/account-session.json'),JSON.stringify({completed:true,anotherBrowserRevoked:true,notificationEnabled:true,notificationRemoved:true,currentBrowserRevoked:true,signInScreenRestored:true,identityConfirmedSignedOut:true,oneTimeLinkMadeAndHidden:true},null,2));
+ writeFileSync(resolve('artifacts/household-account/account-session.json'),JSON.stringify({completed:true,anotherBrowserRevoked:true,notificationEnabled:true,notificationDispatched:true,servedWorkerDisplayed:true,privateWordsExcluded:true,notificationRemoved:true,noDispatchAfterRemoval:true,currentBrowserRevoked:true,signInScreenRestored:true,identityConfirmedSignedOut:true,oneTimeLinkMadeAndHidden:true},null,2));
 });
 
 it.runIf(enabled)('registers and uses a real browser passkey against the shared sign-in door',async()=>{
@@ -81,7 +89,7 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   await page.evaluate(url=>new Promise<void>(resolve=>{const socket=new WebSocket(url);socket.onclose=()=>resolve();socket.onerror=()=>resolve();}),trapOrigin.replace(/^http/,'ws'));
   expect(blockedSocket).toBe(1);expect(trapped).toBe(0);
   const cdp=await context.newCDPSession(page);await cdp.send('WebAuthn.enable');
-  await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+  const {authenticatorId}=await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
   // Genuine one-time link redemption; no browser cookie is seeded.
   const link=app.writes.run(()=>sharedSigninLinks(db,clock).makeLink(hash(raw))).value;
   await page.goto(origin+link.path);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.next-shell').waitFor();
@@ -97,11 +105,18 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.locator('.next-shell').waitFor();
   await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
   expect(db.select().from(sessions).all()).toMatchObject([{token:hash(raw),via:'passkey',isAgent:false}]);expect(db.select().from(passkeys).get()!.counter).toBeGreaterThan(registeredCounter);
+  const rememberedCounter=db.select().from(passkeys).get()!.counter;
+  const {credentials}=await cdp.send('WebAuthn.getCredentials',{authenticatorId});expect(credentials.length).toBe(1);const credential=credentials[0];
+  const setCounter=async(signCount:number)=>{await cdp.send('WebAuthn.removeCredential',{authenticatorId,credentialId:credential.credentialId});await cdp.send('WebAuthn.addCredential',{authenticatorId,credential:{...credential,signCount}});};
+  await page.getByRole('button',{name:'Sign out this device',exact:true}).click();await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
+  await setCounter(0);const rejected=page.waitForResponse(response=>new URL(response.url()).pathname==='/login/passkey');void rejected.catch(()=>{});await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();expect((await rejected).status()).toBe(401);
+  expect(db.select().from(sessions).all()).toEqual([]);expect(db.select().from(passkeys).get()!.counter).toBe(rememberedCounter);await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
+  await setCounter(rememberedCounter);await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.locator('.next-shell').waitFor();await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
   const body=await page.locator('body').innerText();expect(body.includes(raw)).toBe(false);expect(body.includes(link.path)).toBe(false);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});await page.screenshot({path:join(shots,'passkey-shared.png'),animations:'disabled',mask:[page.locator('[data-signin-link]')]});
   await page.getByRole('button',{name:'Remove passkey',exact:true}).click();await expect.poll(()=>db.select().from(passkeys).all().length).toBe(0);await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor({state:'hidden'});
   expect(errors).toEqual([]);
  }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
  finally{await browser?.close();await app.close();if(trap)await new Promise<void>(resolve=>trap!.close(()=>resolve()));client.close();}
- writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
+ writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,copiedCounterRejected:true,noSessionAfterCopiedCounter:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
 });
