@@ -486,7 +486,13 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         };
         void measureResponse(measuring.get(app), req, res, dispatch)?.catch(() => { if (!res.headersSent) res.writeHead(503); res.end(); });
       });
-      http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
+      http.on('connection',socket=>{
+        sockets.add(socket);
+        // HTTP stops owning raw socket errors after an upgrade. A denied
+        // handshake can still receive a peer reset before its close finishes.
+        socket.on('error',()=>socket.destroy());
+        socket.once('close',()=>sockets.delete(socket));
+      });
       servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), data.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
