@@ -125,6 +125,11 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
       await expect.poll(() => labels(p)).toEqual(['Comms']);
       await expect.poll(() => toast(p, 'Accessibility went to the dock to make room for Comms: one window at a time is on')).toBeGreaterThan(0);
       expect(query(p, 'm')).toBe('inbox,accessibility');
+      const notice=await p.locator('[data-slot="toast"]').filter({hasText:'Accessibility went to the dock to make room for Comms: one window at a time is on'}).boundingBox();
+      const launcher=await p.locator(KEY('All apps')).boundingBox();
+      expect(notice).not.toBeNull();expect(launcher).not.toBeNull();
+      expect(notice!.y+notice!.height).toBeLessThanOrEqual(launcher!.y);
+
       // Back from the dock (the launcher's: it has no key): on the page it was on.
       await launch(p, 'Accessibility');
       await expect.poll(() => labels(p)).toEqual(['Accessibility']);
