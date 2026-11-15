@@ -195,7 +195,7 @@ it('withdraws a selected private episode when its deadline passes during a sibli
   expect(body).not.toContain('PRIVATE expiring episode');expect(response.status).toBe(503);
  }finally{release();}
 });
-it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during serialization without timer delivery via $door',async({kind,door})=>{
+it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket','live'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during serialization without timer delivery via $door',async({kind,door})=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
  let current=f.clock.now();vi.spyOn(f.clock,'now').mockImplementation(()=>current);
  if(kind==='person'||kind==='people-list'){const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'Fictional friend'});}finally{people.close();}}
@@ -213,7 +213,8 @@ it.each((['activity','activity-window','project','project-preview','person','peo
   const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw,origin:app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');
   await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})));
   const frames:string[]=[];ws.on('message',frame=>frames.push(String(frame)));
-  const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'expiry',payload:{query}}));
+  const payload=door==='socket'?{query}:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}};
+  const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'expiry',payload}));
   expect((await closed)[0]).toBe(1012);expect(frames.join(' ')).not.toContain('PRIVATE expiring words');
  }
 });
