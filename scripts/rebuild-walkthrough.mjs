@@ -3,6 +3,7 @@ import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
+import {accessAction} from './rebuild-access-actions.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -47,7 +48,7 @@ export async function* walkthroughSteps(output) {
   report.example=await exampleHome(home);
   let link='';app=await startSharedHome({home,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
-  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block'});
+  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
@@ -62,10 +63,10 @@ export async function* walkthroughSteps(output) {
   try{report.isolation=await verifyIsolation(probe);}finally{await probe.close();}
   report.isolation.consoleErrors=consoleErrors.splice(isolationErrors);
   await page.goto(app.url);await page.getByRole('heading',{name:'Sign in to loom',exact:true}).waitFor();
-  await page.screenshot({path:join(out,'00-signin.png'),fullPage:true});
+  await page.screenshot({path:join(out,'00-signin.png'),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]});
   await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.locator('.next-shell').waitFor();report.signin.ok=true;
-  await page.screenshot({path:join(out,'01-desk.png'),fullPage:true});
+  await page.screenshot({path:join(out,'01-desk.png'),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]});
   const openLauncher=async()=>{await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await page.getByRole('dialog',{name:'Apps',exact:true}).waitFor();};
   await openLauncher();
   const launcher=page.getByRole('dialog',{name:'Apps',exact:true});
@@ -99,9 +100,10 @@ export async function* walkthroughSteps(output) {
      row.detailText=await tile.innerText();
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
+    if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
-    await page.screenshot({path:join(out,row.screenshot),fullPage:true});
-   }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
+    await page.screenshot({path:join(out,row.screenshot),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]});
+   }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]}).catch(()=>{});}
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);

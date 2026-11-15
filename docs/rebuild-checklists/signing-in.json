@@ -91,6 +91,15 @@
     },
     {
       "id": "signing-in-017",
+      "promise": "Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.",
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "action",
+        "app": "Your account"
+      }
+    },
+    {
+      "id": "signing-in-018",
       "promise": "A first-run one-time link signs the browser in.",
       "source": "docs/how-it-works/site/signing-in.html",
       "probe": {
