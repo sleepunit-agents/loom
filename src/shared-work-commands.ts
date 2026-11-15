@@ -1,5 +1,6 @@
 /** Work command installation. Current household owners answer permission cards;
- * optional trusted callbacks may narrow this rule, never broaden it. */
+ * optional trusted callbacks may narrow this rule, never broaden it. A configured
+ * callback must return literal true; every other value denies. */
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { workAnswersAllowed } from './shared-work-access.js';
