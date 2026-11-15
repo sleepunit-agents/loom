@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useDataQuery } from '../../data/graphql';
+import { Dialog, DialogContent, DialogTitle } from '../../components/ui/dialog';
 import { SharedTasks, type TaskAction } from './shared-view';
 import { SharedTaskForm, type TaskFormProps } from './shared-form';
 import { taskId, taskSegment } from './route';
@@ -45,8 +46,13 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
       links={tasks.flatMap(task => task.taskLinksByTask)} comments={tasks.flatMap(task => task.taskCommentsByTask)}
       ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
       act={submit ? (action, task) => { navigate(task?.id); setAction({action, id: task?.id}); } : undefined}/>
-    {submit && action && <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks}
-      people={people} projects={projects} conversation={conversation} submit={submit}
-      done={() => setAction(undefined)} cancel={() => setAction(undefined)}/>}
+    {submit && <Dialog open={!!action && status === 'live' && (action.action === 'create' || !!target)} onOpenChange={open => { if (!open) setAction(undefined); }}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto p-0" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">Task form</DialogTitle>
+        {action && <SharedTaskForm status={status} action={action.action} task={target} tasks={tasks}
+          people={people} projects={projects} conversation={conversation} submit={submit}
+          done={() => setAction(undefined)} cancel={() => setAction(undefined)}/>}
+      </DialogContent>
+    </Dialog>}
   </>;
 }
