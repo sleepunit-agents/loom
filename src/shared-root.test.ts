@@ -9,7 +9,7 @@ import { once } from 'node:events';
 import { getRequestListener } from '@hono/node-server';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
-import { GraphQLString } from 'graphql/index.js';
+import { GraphQLNonNull, GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
@@ -249,7 +249,7 @@ it('bounds streamed command bodies even without a Content-Length header', async 
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
 });
 
-it('drains an already executing socket read before the caller may close shared SQLite', async () => {
+it.each([false, true])('drains an executing socket read before shared SQLite closes, with failing sibling=%s', async broken => {
   let release!: () => void, began!: () => void, finished!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -258,7 +258,7 @@ it('drains an already executing socket read before the caller may close shared S
   const f = fixture(undefined, { slow: { type: GraphQLString, async resolve() {
     began(); await held;
     f.db.select().from(tasks).all(); events.push('read'); finished(); return 'done';
-  } } });
+  } }, broken: { type: new GraphQLNonNull(GraphQLString), async resolve() { throw new Error('fixture sibling failure'); } } });
   const server = createServer(), detach = f.root.attach(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanup.push(async () => { release(); detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
@@ -266,28 +266,28 @@ it('drains an already executing socket read before the caller may close shared S
   const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
   cleanup.push(() => ws.terminate()); await once(ws, 'open');
   const ack = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await ack;
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'slow', payload: { query: '{ slow }' } })); await started;
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'slow', payload: { query: broken ? '{ slow broken }' : '{ slow }' } })); await started;
   const ended = once(ws, 'close');
   const closing = f.root.close().then(() => { events.push('closed'); });
   await ended; release(); await readDone; await closing;
   expect(events).toEqual(['read', 'closed']);
 });
 
-it('drains an executing HTTP resolver and fences its late authentication before shared SQLite closes', async () => {
+it.each([false, true])('drains HTTP execution and fences late authentication, with failing sibling=%s', async broken => {
   let release!: () => void, began!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
   const held = new Promise<void>(resolve => { release = resolve; });
   const events: string[] = [];
   const f = fixture(undefined, { slowHttp: { type: GraphQLString, async resolve() {
     began(); await held; f.db.select().from(tasks).all(); events.push('read'); return 'done';
-  } } });
+  } }, broken: { type: new GraphQLNonNull(GraphQLString), async resolve() { throw new Error('fixture sibling failure'); } } });
   const server = createServer(), detach = f.root.attach(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanup.push(async () => { release(); detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
   const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
   cleanup.push(() => ws.terminate()); await once(ws, 'open');
-  const pending = f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query: '{ slowHttp }' }) });
+  const pending = f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query: broken ? '{ slowHttp broken }' : '{ slowHttp }' }) });
   await started;
   const lateAuthentication: string[] = [];
   const prepare = f.client.prepare.bind(f.client);
@@ -295,7 +295,7 @@ it('drains an executing HTTP resolver and fences its late authentication before 
   const ended = once(ws, 'close');
   const closing = f.root.close().then(() => { events.push('closed'); });
   await ended; release();
-  const response = await pending; expect([401, 503]).toContain(response.status);
+  const response = await pending; if (!broken) expect([401, 503]).toContain(response.status);
   expect(await response.text()).not.toContain('"done"'); await closing;
   expect(events).toEqual(['read', 'closed']); expect(lateAuthentication).toEqual([]);
   expect(f.client.open).toBe(true);
