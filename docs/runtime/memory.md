@@ -33,3 +33,24 @@ consumer is built on t-2241. Exposing the remaining semantic changes
 (drafts, ratification, archive, restore and history) through that path is
 still on t-2243; their existing core/stdio helpers remain. No installed
 service or real source is changed by this implementation.
+
+## Native private cards
+
+memory.personWrite and memory.projectWrite author cards in the current body's
+own declared source. They accept the existing card fields and merge behavior;
+they return scoped logical IDs for memoryPerson(id:) or memoryProject(id:).
+A project alias resolves to its canonical card ID. Card statements and links
+never grant access or change household membership or project sharing.
+
+memory.personRestoreRevision restores a retained revision belonging to the
+named own person card; memoryPerson(id:){history{id}} supplies its revision ID.
+It snapshots the displaced card first. Shared receipts retain only IDs and
+keyed input fingerprints. The source card, revisions, aliases and private
+receipt commit together, and completed retries do not repeat the mutation.
+
+Card stores borrow the source writer's prepared connection and transaction.
+They neither migrate nor close it, and publish no touch before its outer
+commit. A borrowed writer refuses calls outside a source transaction. Existing
+standalone card stores retain their own transaction and notification behavior.
+No caller-selected agent, path, directory or grant is accepted by these native
+commands. Existing unprepared sources remain unavailable for writes.
