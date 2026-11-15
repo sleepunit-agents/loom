@@ -103,3 +103,19 @@ it('installs owner-approved measuring on the actual operation dispatcher and fen
 
  } finally {await meter.close();stops.forEach(stop=>stop());operations.close();client.close();clock.advance(86400000);}
 });
+
+it('publishes idle retention deletions to agents watching local daily rows',async()=>{
+ const client=new Database(':memory:'),clock=new FakeClock(Date.UTC(2026,10,14));
+ const db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
+ db.insert(measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:1}).run();
+ const operations=new Operations(client,clock,()=>{}, {receipts:new OperationResults(db)});
+ const changed=vi.fn();
+ const meter=await installMeasuring({operations,live:{changed},onClose(){}},db);
+ try{
+  meter.run('job','changes.read',()=>{});
+  expect(db.select().from(timingDays).all()).toHaveLength(1);
+  changed.mockClear();clock.advance(86400000);
+  expect(db.select().from(timingDays).all()).toEqual([]);
+  expect(changed).toHaveBeenCalledWith([{type:'measuring',id:'timing'}]);
+ }finally{await meter.close();operations.close();client.close();}
+});
