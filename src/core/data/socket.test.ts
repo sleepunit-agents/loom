@@ -8,7 +8,7 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { DataLive } from './live.js';
 import { dataSocket } from './socket.js';
-import { GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
+import { GraphQLNonNull, GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
 import type { Authentication } from '../live/index.js';
 import { FakeClock } from '../clock.js';
 
@@ -212,7 +212,7 @@ it('uses the upgrade viewer for context-based reads and observe reruns despite c
   expect(changed.payload.data.observe).toEqual({ revision: 2, patches: [{ path: ['title'], removed: false, value: 'sam:Second' }] });
 });
 
-it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLite may close', async mode => {
+it.each(['query', 'observe'].flatMap(mode => [false, true].map(parallel => ({ mode, parallel }))))('drains an admitted $mode resolver before shared SQLite may close (parallel=$parallel)', async ({ mode, parallel }) => {
   const f = await setup(), ws = await f.open();
   let began!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
@@ -220,19 +220,24 @@ it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLi
   const events: string[] = [];
   clean.push(() => release());
   f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    broken: { type: new GraphQLNonNull(GraphQLString), async resolve() { throw Error('parallel failure'); } },
     slow: { type: GraphQLString, async resolve() {
       began(); await held;
       f.client.prepare('SELECT title FROM tasks').all(); events.push('read'); return 'done';
     } },
   } }) }));
-  ws.send(JSON.stringify(mode === 'query' ? { type: 'subscribe', id: 'slow', payload: { query: '{ slow }' } } : { ...selection, payload: { ...selection.payload, variables: { query: '{ slow }' } } }));
+  const query = parallel ? '{ slow broken }' : '{ slow }';
+  const failed = parallel ? once(ws, 'message') : undefined;
+  ws.send(JSON.stringify(mode === 'query' ? { type: 'subscribe', id: 'slow', payload: { query } } : { ...selection, payload: { ...selection.payload, variables: { query } } }));
   await started;
+  if (failed) await failed;
   const ended = once(ws, 'close');
   const draining = f.socket.close();
   expect(f.socket.close()).toBe(draining);
   const closing = draining.then(() => { events.push('closed'); });
   try {
     await ended;
+    expect(events).toEqual([]);
     release(); await closing;
     expect(events).toEqual(['read', 'closed']);
   } finally { release(); }
@@ -309,4 +314,56 @@ it('drains socket work without closing independent watchers on its shared live h
   const pending = stream.next();
   f.client.exec("UPDATE tasks SET title='Still live'"); f.live.changed();
   expect((await pending).value.patches).toEqual([{ path: ['tasks', 0, 'title'], value: 'Still live' }]);
+});
+
+it('fences validation callbacks synchronously when a literal callback closes the socket', async () => {
+  const f = await setup(), ws = await f.open();
+  let began!: () => void, closing!: Promise<void>, late = 0;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const input = new GraphQLScalarType({ name: 'ShutdownInput', serialize: v => v, parseValue: v => v, parseLiteral(node) {
+    if ('value' in node && node.value === 'stop') { closing = f.socket.close(); began(); }
+    else { late++; f.client.prepare('SELECT title FROM tasks').all(); }
+    return 'x';
+  } });
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    value: { type: GraphQLString, args: { input: { type: input } }, resolve: () => 'value' },
+  } }) }));
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'literal', payload: { query: '{ a:value(input:"stop") b:value(input:"late") }' } }));
+  await started; await closing;
+  expect(late).toBe(0);
+});
+
+it('does not build a schema after activity synchronously stops admission', async () => {
+  let activity: (() => void) | undefined, built = 0;
+  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true, activity: () => activity?.() }));
+  const ws = await f.open();
+  f.setSchema(() => { built++; return dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) }); });
+  let began!: () => void, closing!: Promise<void>;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  activity = () => { closing = f.socket.close(); began(); };
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'activity', payload: { query: '{ tasks { id } }' } }));
+  await started; await closing;
+  expect(built).toBe(0);
+});
+
+it('carries the socket admission fence into deferred live child callbacks', async () => {
+  const f = await setup(), ws = await f.open();
+  let began!: () => void, release!: () => void, children = 0;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  clean.push(release);
+  const child = new GraphQLObjectType({ name: 'DeferredChild', fields: {
+    value: { type: GraphQLString, resolve() { children++; f.client.prepare('SELECT title FROM tasks').all(); return 'late'; } },
+  } });
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: child, async resolve() { began(); await held; return {}; } },
+  } }) }));
+  ws.send(JSON.stringify({ ...selection, payload: { ...selection.payload, variables: { query: '{ slow { value } }' } } }));
+  await started;
+  const ended = once(ws, 'close'), closing = f.socket.close();
+  try { await ended; release(); await closing; expect(children).toBe(0); }
+  finally { release(); await closing; }
+  // Independent installed watchers still use the live hub after socket close.
+  const stream = f.live.watch({ schema: dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) }), query: '{ tasks { id } }', valid: () => true });
+  expect((await stream.next()).value?.revision).toBe(1); await stream.return!();
 });

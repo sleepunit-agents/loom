@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, deletedThreads, household, inbox, inboxRefs, members, messages, threadRefs, threads } from '../data/schema.js';
+import { agents, deletedThreads, household, inbox, inboxRefs, members, messages, threadRefs, threads, turns, conversationPeople, conversations } from '../data/schema.js';
 import type { WordsKey } from '../../pieces/comms/crypto.js';
 import { wordsKey } from '../../pieces/comms/crypto.js';
 import { generateX25519Identity } from 'age-encryption';
@@ -186,4 +186,80 @@ it('rechecks source state when a prepared commit is delayed or retried after del
   expect(retry).toThrow('Thread not found');
   expect(askRetry).toThrow('Thread not found');
   expect(answer).toThrow('Not a private question');
+});
+
+it('records each committed Comms message as one wordless turn and records its speakers', async () => {
+  const { db, service, thread } = await fixture();
+  const sent = { thread: thread.id, sender: 'jonathan', kind: 'message' as const, clientId: 'one', words: 'Private request' };
+  await Promise.all([service.send(sent), service.send(sent)]);
+  await service.send({ thread: thread.id, sender: 'art', kind: 'card', clientId: 'card', run: 'run-1', tool: 'lookup', words: 'Private lookup', turn: { model: 'model-1', outcome: 'progressed' } });
+  await service.send({ thread: thread.id, sender: 'art', kind: 'reply', run: 'run-1', words: 'Private reply', turn: { model: 'model-1', outcome: 'answered', latencyMs: 250 } });
+  const ask = await service.ask(thread.id, 'art', 'ask-1', { words: 'Private question?', answers: 'words' });
+  await service.answer(ask.inboxItem!, 'jonathan', 'words', 'Private answer');
+  await service.answer(ask.inboxItem!, 'jonathan', 'words', 'Retry');
+  await service.send({ thread: thread.id, sender: 'art', kind: 'notice', words: 'Private notice' });
+  const recorded = db.select().from(turns).all();
+  expect(recorded.map(r => [r.seq, r.kind, r.fromKind, r.fromId])).toEqual([
+    [1, 'message', 'person', 'jonathan'], [2, 'action', 'agent', 'art'], [3, 'reply', 'agent', 'art'],
+    [4, 'note', 'agent', 'art'], [5, 'message', 'person', 'jonathan'], [6, 'note', 'agent', 'art'],
+  ]);
+  expect(recorded[2]).toMatchObject({ run: 'run-1', model: 'model-1', outcome: 'answered', latencyMs: 250 });
+  expect(JSON.stringify(recorded)).not.toContain('Private');
+  expect(db.select().from(conversationPeople).all()).toEqual([
+    { conversation: thread.conversation, whoKind: 'person', who: 'jonathan' },
+    { conversation: thread.conversation, whoKind: 'agent', who: 'art' },
+  ]);
+  expect(db.select().from(conversations).where(eq(conversations.id, thread.conversation)).get()?.turnCount).toBe(6);
+});
+it('rolls wordless turns and speaker/count updates back with failed message delivery', async () => {
+  const { db, client, service, thread } = await fixture();
+  client.exec("CREATE TRIGGER refuse_mail BEFORE INSERT ON inbox BEGIN SELECT RAISE(ABORT, 'mail unavailable'); END");
+  await expect(service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Private' })).rejects.toThrow();
+  expect(db.select().from(turns).all()).toEqual([]);
+  expect(db.select().from(conversationPeople).all()).toEqual([]);
+  expect(db.select().from(conversations).where(eq(conversations.id, thread.conversation)).get()?.turnCount).toBe(0);
+});
+
+it('uses actual stored expiry instants for private word reads and ciphertext sweeps', async () => {
+  const { db, service, thread, key } = await fixture();
+  const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Expired by stored deadline' });
+  db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  const neverDecrypt = new CommsMessages(db, { ...key, open: async () => { throw new Error('Must not decrypt expired words'); } }, service.now);
+  expect(await neverDecrypt.words(thread.id, message.seq)).toBeNull();
+  expect(service.expire()).toBe(1);
+  expect(db.select().from(messages).get()?.words).toBeNull();
+});
+
+it('applies a shortened household deadline to existing word reads and ciphertext sweeps independently of stored expiry', async () => {
+  const { db, service, thread, key, at } = await fixture();
+  const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Shortened retention' });
+  at('2026-11-16T18:00:00.000Z');
+  db.insert(household).values({ commsDays: 1 }).run();
+  expect(message.keepUntil).toBe('2026-11-28T18:00:00.000Z');
+  const neverDecrypt = new CommsMessages(db, { ...key, open: async () => { throw new Error('Must not decrypt household-expired words'); } }, service.now);
+  expect(await neverDecrypt.words(thread.id, message.seq)).toBeNull();
+  expect(service.expire()).toBe(1);
+  expect(db.select().from(messages).get()?.words).toBeNull();
+});
+it.each(['household', 'stored'] as const)('withholds words when the %s retention deadline expires during decryption', async deadline => {
+  const { db, service, thread, key, at } = await fixture();
+  const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Expires during open' });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const gated = new CommsMessages(db, { ...key, open: async blob => { await gate; return key.open(blob); } }, service.now);
+  if (deadline === 'household') db.insert(household).values({ commsDays: 1 }).run();
+  const reading = gated.words(thread.id, message.seq);
+  if (deadline === 'household') at('2026-11-15T18:00:00.000Z');
+  else at(message.keepUntil!);
+  expect(db.select().from(messages).get()?.words).not.toBeNull();
+  release(); expect(await reading).toBeNull();
+});
+
+it('sweeps at the exact household deadline when message age uses whole seconds', async () => {
+  const { db, service, thread, at } = await fixture();
+  await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Age deadline' });
+  db.update(messages).set({ at: '2026-11-14T18:00:00Z' }).run();
+  db.insert(household).values({ commsDays: 1 }).run();
+  at('2026-11-15T18:00:00.000Z');
+  expect(service.expire()).toBe(1); expect(db.select().from(messages).get()?.words).toBeNull();
 });

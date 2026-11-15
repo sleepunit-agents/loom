@@ -3,7 +3,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections } from '../core/data/schema.js';
+import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -34,8 +35,8 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
-    model: 'primary', account: 'account', harness: 'codex', brief: 'Private brief', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
+  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+    model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.jobs.get(f.job.id).state).toBe('starting');
@@ -97,7 +98,7 @@ it('keeps machine health when a report rejects, without changing the foreign or 
   f.runtime.started('first', f.job.id, 'image'); f.runtime.finish('first', f.job.id, 0, 'done'); f.tick(10_000);
   expect(() => f.runtime.finish('first', f.job.id, 0, 'duplicate')).toThrow();
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
-  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: 'done' });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: null });
 });
 it('refreshes health on every successful phase report', () => {
   const f = fixture(); f.runtime.next('first');
@@ -164,4 +165,64 @@ it('persists the selected account and harness on each attempt and clears them fo
   expect(f.runtime.next('first')?.harness).toBe('configured-next-runner');
   expect(f.runtime.jobs.get(result.retry!.id)).toMatchObject({ account: 'account', harness: 'configured-next-runner' });
   expect(f.runtime.jobs.get(f.job.id).harness).toBe('codex');
+});
+
+it('projects current agent capabilities and only its configured ports at claim', () => {
+  const f = fixture();
+  f.db.update(agentRunSettings).set({ nestedContainers: true, gpu: true }).run();
+  f.db.insert(agentHousePorts).values([
+    { agent: 'art', address: '127.0.0.1', port: 9000 },
+    { agent: 'art', address: '127.0.0.1', port: 8000 },
+  ]).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.run).toEqual({ nestedContainers: true, gpu: true,
+    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } });
+  f.db.update(agentRunSettings).set({ nestedContainers: false }).run();
+  expect(assignment.run.nestedContainers).toBe(true);
+});
+
+it('hands the configured outside tier and tool rules to the runner on actual claim', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'c', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-art', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
+  const incoming = new BridgeIncoming(f.db, f.now).receive({ id: 'm', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Work', postedAt: f.now(), mentions: [] });
+  const job = f.runtime.jobs.admit(incoming.conversation!)!;
+  const person = JSON.stringify(['discord', 'w', 'outside']);
+  f.db.insert(agentPeople).values({ agent: 'art', person, tier: 2 }).run();
+  f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.id).toBe(job.id);
+  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }] });
+});
+
+it('reads tool and person policy within the same placement and claim transaction', () => {
+  const f = fixture(), prepare = f.client.prepare.bind(f.client);
+  let policyReads = 0;
+  vi.spyOn(f.client, 'prepare').mockImplementation((sql: string) => {
+    if (sql.includes('"agent_denied_tools"') || sql.includes('"agent_people"')) {
+      policyReads++; expect(f.client.inTransaction).toBe(true);
+    }
+    return prepare(sql);
+  });
+  expect(f.runtime.next('first')?.id).toBe(f.job.id);
+  expect(policyReads).toBeGreaterThanOrEqual(2);
+});
+
+it('never hands a legacy private brief to the worker while preserving the old record', () => {
+  const f = fixture(); f.db.update(jobs).set({ brief: 'LEGACY_PRIVATE_WORDS' }).where(eq(jobs.id, f.job.id)).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.id).toBe(f.job.id); expect(assignment.brief).toBe('');
+  expect(f.runtime.jobs.get(f.job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
+});
+
+it('passes ordinary handoff instructions through the worker assignment', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  const conversation = f.comms.open({ agent: 'art', venue: 'handoff', place: f.job.id, label: 'Handoff' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'handoff', fromKind: 'agent', fromId: 'art', words: 'Public handoff instructions' });
+  const job = f.runtime.jobs.admit(conversation.id)!;
+  expect(f.runtime.next('first')).toMatchObject({ id: job.id, brief: 'Public handoff instructions' });
+});
+it('passes unbound instructions through the worker assignment', () => {
+  const f = fixture(); f.db.update(jobs).set({ conversation: null, brief: 'Unbound instructions' }).where(eq(jobs.id, f.job.id)).run();
+  expect(f.runtime.next('first')).toMatchObject({ id: f.job.id, conversation: null, brief: 'Unbound instructions' });
 });

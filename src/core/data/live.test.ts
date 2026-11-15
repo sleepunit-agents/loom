@@ -139,3 +139,18 @@ it.each(['resolve', 'reject'])('drains an underlying %s execution after its cons
   await closing;
   expect(drained).toBe(true);
 });
+
+it('fences validation callbacks after a literal callback stops live access', async () => {
+  const { GraphQLScalarType } = await import('graphql/index.js');
+  const live = new DataLive(); let late = 0;
+  const input = new GraphQLScalarType({ name: 'ShutdownInput', serialize: v => v, parseValue: v => v, parseLiteral(node) {
+    if ('value' in node && node.value === 'stop') live.close();
+    else late++;
+    return 'x';
+  } });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    value: { type: GraphQLString, args: { input: { type: input } }, resolve: () => 'value' },
+  } }) });
+  expect(() => live.watch({ schema, query: '{ a:value(input:"stop") b:value(input:"late") }', valid: () => true })).toThrow();
+  await live.drain(); expect(late).toBe(0);
+});
