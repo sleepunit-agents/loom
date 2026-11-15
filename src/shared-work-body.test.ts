@@ -138,3 +138,7 @@ it('normalizes rule targets exactly like stored requests before reading an exact
  const target='box:box:echo ';expect((await (await f.call('rule',{kind:'command',target})).json()).value).toEqual({tier:'ask',scope:'box:box:echo',person:'alice'});
  const response=await f.call('request',{...request,kind:'command',target});expect(response.status).toBe(200);const id=(await response.json()).value.id;expect(f.root.services.approvals.get(id)).toMatchObject({target:'box:box:echo',state:'pending'});
 });
+
+it('returns Ask after an exact owner No even when a standing rule says Do',async()=>{
+ const f=await fixture(),id=await f.ask();expect((await f.call('answer',{id,answer:'deny'},randomUUID(),f.owner)).status).toBe(200);f.root.services.approvalRules.set({kind:'merge',scope:'project:pond',person:'alice',tier:'do'},'pat');expect((await (await f.call('rule',target)).json()).value).toEqual({tier:'ask',scope:null,person:null});
+});

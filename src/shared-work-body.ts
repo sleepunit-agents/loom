@@ -8,6 +8,7 @@ import {bodyOperationDefaults,requireBodyScope,type conversationBodyScope} from 
 import {operation,OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService} from './apps/approvals.js';
 import {approvalRuleKind,type approvalRulesService} from './apps/approval-rules.js';
+import {lastApprovalAnswer} from './apps/approval-answer.js';
 import type {Viewer} from './policy.js';
 
 export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string){
@@ -34,7 +35,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  }));
  operations.register(operation({...common,write:false,name:'approvals.rule',input:target,
   output:z.object({tier:z.enum(['ask','tell','do']),scope:z.string().nullable(),person:z.string().nullable()}).strict(),
-  run(ctx,input){merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),rule=rules.resolve({...input,project:context.project,actingFor:context.actingFor});return {tier:rule?.tier??'ask',scope:rule?.scope??null,person:rule?.person??null};},
+  run(ctx,input){merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),rule=lastApprovalAnswer(db,context.agent,input.kind,input.target)?.event==='deny'?undefined:rules.resolve({...input,project:context.project,actingFor:context.actingFor});return {tier:rule?.tier??'ask',scope:rule?.scope??null,person:rule?.person??null};},
  }));
  operations.register(operation({...common,name:'approvals.withdraw',input:z.object({id:z.string().min(1)}).strict(),output:z.object({id:z.string(),state:z.literal('withdrawn')}).strict(),
   may:(viewer,input)=>belongs(viewer,input.id),
