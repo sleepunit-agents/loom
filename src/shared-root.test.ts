@@ -324,3 +324,42 @@ it('drains an admitted command preparation even when transport cleanup fails', a
   await ended; release(); expect((await pending).status).toBe(403); await closing;
   expect(events).toEqual(['prepared', 'closed']); expect(f.client.open).toBe(true);
 });
+
+const taskCommand = (root: ReturnType<typeof sharedRoot>, input: unknown, id = 'task-command') => root.http.request('http://loom/api/tasks/command', {
+  method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ input, id }),
+});
+const createTask = { action: 'create', input: { title: 'Pump', goal: 'Water', why: 'Pond', owner: { kind: 'household' } } };
+
+it('mounts actual Tasks commands with service schemas, shared receipts and current authority', async () => {
+  const f = fixture();
+  expect(await (await taskCommand(f.root, createTask)).json()).toEqual({ ok: true, value: { id: 't-1' } });
+  expect(await (await taskCommand(f.root, createTask)).json()).toEqual({ ok: true, value: { id: 't-1' } });
+  expect(f.db.select().from(tasks).all()).toMatchObject([{ id: 't-1', createdBy: 'sam', createdByKind: 'member' }]);
+  expect(f.client.prepare("SELECT count(*) AS n FROM operation_results WHERE operation = 'tasks.command'").get()).toEqual({ n: 1 });
+  expect((await taskCommand(f.root, { ...createTask, input: { ...createTask.input, title: 'Different' } })).status).toBe(409);
+  expect((await taskCommand(f.root, { action: 'claim', id: 't-1', actor: { kind: 'member', id: 'other' } }, 'spoof')).status).toBe(400);
+  expect((await taskCommand(f.root, { ...createTask, input: { ...createTask.input, source: { kind: 'conversation', id: 'private' } } }, 'source')).status).toBe(403);
+  f.root.writes.run(() => f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run());
+  expect((await taskCommand(f.root, createTask)).status).toBe(403);
+  expect(f.db.select().from(tasks).all()).toHaveLength(1);
+});
+
+it('publishes an actual Tasks command to the existing shared GraphQL socket', async () => {
+  const f = fixture();
+  const http = createServer(getRequestListener(request => f.root.http.fetch(request)));
+  const detach = f.root.attach(http);
+  await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
+  cleanup.push(async () => { detach(); await f.root.close(); await new Promise<void>(ok => http.close(() => ok())); });
+  const address = http.address(); if (!address || typeof address === 'string') throw new Error('No address');
+  const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { cookie: 'loom_ui=' + cookie, origin: 'http://loom' } });
+  cleanup.push(() => ws.terminate());
+  await once(ws, 'open');
+  let next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await next;
+  next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'subscribe', id: 'tasks', payload: { query: 'subscription { observe(query:"{ tasks { id title } }") { revision patches { path value removed } } }' } }));
+  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches[0].value).toEqual({ tasks: [] });
+  next = once(ws, 'message');
+  expect((await taskCommand(f.root, createTask)).status).toBe(200);
+  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([{ path: ['tasks', 0], removed: false, value: { id: 't-1', title: 'Pump' } }]);
+  f.root.writes.run(() => f.db.delete(sessions).run());
+  expect((await taskCommand(f.root, { action: 'claim', id: 't-1' }, 'claim')).status).toBe(401);
+});

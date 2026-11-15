@@ -9,6 +9,8 @@ import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
+import { installTaskCommands } from './apps/task-operations.js';
+import type { Viewer } from './policy.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { nextData } from './next-data.js';
@@ -22,6 +24,7 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  taskConversationVisible?(viewer: Viewer, id: string): boolean;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
@@ -37,6 +40,7 @@ export function sharedRoot(options: {
     approvals: approvalService(db, options.approvedOperations, now),
     conversations: new Conversations(db, now),
   };
+  installTaskCommands(operations, db, services.tasks, options.taskConversationVisible ?? (() => false));
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
