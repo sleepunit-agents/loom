@@ -43,7 +43,7 @@ it('uses the linked member key and ignores unrelated people and conversations', 
   f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'linked', member: 'owner' }).run();
   const linked = f.receive('linked', 'linked', 'linked-dm');
   f.db.insert(agentPeople).values([{ agent: 'art', person: 'owner', tier: 3 }, { agent: 'art', person: f.key, tier: 1 }]).run();
-  expect(workerPolicy(f.db, { ...f.job, conversation: linked.conversation }).people).toEqual([{ kind: 'person', person: 'owner', tier: 3 }]);
+  expect(workerPolicy(f.db, { id: 'other-job', agent: 'art', conversation: linked.conversation }).people).toEqual([{ kind: 'person', person: 'owner', tier: 3 }]);
 });
 it('does not borrow a higher tier from a receipt in another conversation', () => {
   const f = fixture(), other = f.receive('high', 'other', 'other-room');
@@ -69,7 +69,8 @@ it('does not select either configured tier when receipt keys conflict', () => {
   const f = fixture(), other = f.receive('second', 'second');
   const originalItem = f.db.select().from(inbox).where(eq(inbox.job, f.job.id)).get()!.id;
   const otherItem = f.db.select().from(inboxRefs).where(eq(inboxRefs.ref, other.id)).get()!.item;
-  f.db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, otherItem)).run();
+  f.db.update(bridgeIncoming).set({ conversation: f.job.conversation }).where(eq(bridgeIncoming.id, other.id)).run();
+  f.db.update(inbox).set({ conversation: f.job.conversation, volume: 'mute' }).where(eq(inbox.id, otherItem)).run();
   f.db.insert(inboxRefs).values({ item: originalItem, ref: other.id }).run();
   f.db.insert(agentPeople).values([{ agent: 'art', person: f.key, tier: 3 }, { agent: 'art', person: JSON.stringify(['discord', 'w', 'second']), tier: 3 }]).run();
   expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
@@ -96,7 +97,7 @@ it('excludes audible waiting mail still assigned to another job', () => {
   const f = fixture(), second = f.receive('other-job', 'other-job');
   f.db.insert(jobs).values({ id: 'old-job', agent: 'art', conversation: f.job.conversation, title: 'Old work', state: 'done', queuedAt: '2026-11-14T12:00:00.000Z', brief: 'Old', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
   const item = f.db.select().from(inboxRefs).where(eq(inboxRefs.ref, second.id)).get()!.item;
-  f.db.update(inbox).set({ job: 'old-job' }).where(eq(inbox.id, item)).run();
+  f.db.update(inbox).set({ conversation: f.job.conversation, job: 'old-job' }).where(eq(inbox.id, item)).run();
   expect(f.read().people).toEqual([{ kind: 'outside', person: f.key, tier: null }]);
 });
 it('does not take sender policy from mail addressed to another agent or person', () => {
@@ -105,4 +106,19 @@ it('does not take sender policy from mail addressed to another agent or person',
     f.db.update(inbox).set(target).run();
     expect(f.read().people).toEqual([]);
   }
+});
+
+it('keeps explicitly assigned mail even when the job has no conversation', () => {
+  const f = fixture(); f.db.update(jobs).set({ conversation: null }).run();
+  f.db.insert(agentPeople).values({ agent: 'art', person: f.key, tier: 2 }).run();
+  expect(workerPolicy(f.db, { ...f.job, conversation: null }).people).toEqual([{ kind: 'outside', person: f.key, tier: 2 }]);
+});
+it('uses the assigned inbox item conversation when resolving its stored receipt', () => {
+  const f = fixture(), other = f.receive('second', 'other', 'other-room');
+  const item = f.db.select().from(inboxRefs).where(eq(inboxRefs.ref, other.id)).get()!.item;
+  f.db.update(inbox).set({ job: f.job.id }).where(eq(inbox.id, item)).run();
+  const person = JSON.stringify(['discord', 'w', 'second']);
+  f.db.insert(agentPeople).values({ agent: 'art', person, tier: 2 }).run();
+  expect(f.read().people).toHaveLength(2);
+  expect(f.read().people).toContainEqual({ kind: 'outside', person, tier: 2 });
 });
