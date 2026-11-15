@@ -35,7 +35,7 @@ export async function conversationVisibilityActions({page,browser,app,home,out,v
  try{
   write(()=>s.projects.save({id:'visibility-only',name:'Fictitious Alex project',members:['alex'],agents:['fern','moss'],repositories:[]}));
   const own=write(()=>s.comms.threads.open({member:'robin',agent:'moss',title:'Fictitious Robin private visibility'}));
-  const other=write(()=>s.comms.threads.open({member:'alex',agent:'moss',title:'Fictitious Alex private visibility'}));
+  const other=write(()=>s.comms.threads.open({member:'alex',agent:'moss',project:'garden',title:'Fictitious Alex private visibility'}));
   const shared=write(()=>s.conversations.open({agent:'fern',venue:'discord',place:'fictitious-visibility-garden',label:'Fictitious shared conversation',project:'garden'}));
   const owned=write(()=>s.conversations.open({agent:'moss',venue:'wake',place:'fictitious-visibility-owned',label:'Fictitious owned-agent conversation',project:'visibility-only'}));
   const hidden=write(()=>s.conversations.open({agent:'fern',venue:'wake',place:'fictitious-visibility-hidden',label:'Fictitious other conversation',project:'visibility-only'}));
