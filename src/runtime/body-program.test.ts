@@ -95,3 +95,20 @@ it('ends native work when a current body status beat fails, without publishing a
  }});
  await started;tick();expect(await pending).toBe(1);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
+it('refuses mail arriving after Stop was observed during an outstanding take',async()=>{
+ const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,release!:()=>void,cancelled!:()=>void;
+ const taking=new Promise<void>(resolve=>{entered=resolve;}),held=new Promise<void>(resolve=>{release=resolve;}),stopped=new Promise<void>(resolve=>{cancelled=resolve;});
+ const running=bodyProgram({...f.options,startup:async(_job,_bootstrap,signal)=>{signal.addEventListener('abort',cancelled,{once:true});},schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
+  const response=await fetcher(url,init);if(String(url).endsWith('/take')){entered();await held;}return response;
+ }});
+ await taking;f.stop();tick();await stopped;release();expect(await running).toBe(0);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:'',seenStop:true});
+});
+it('waits for an outstanding serialized status beat before publishing or releasing its client',async()=>{
+ const f=fixture(),fetcher=f.options.fetch,cancel=vi.fn();let tick!:()=>void,entered!:()=>void,finish!:()=>void,beatEntered!:()=>void,release!:()=>void,statuses=0,settled=false;
+ const nativeStarted=new Promise<void>(resolve=>{entered=resolve;}),nativeHeld=new Promise<void>(resolve=>{finish=resolve;}),beatStarted=new Promise<void>(resolve=>{beatEntered=resolve;}),beatHeld=new Promise<void>(resolve=>{release=resolve;});
+ f.native.mockImplementation(async()=>{entered();await nativeHeld;return{text:'Answer',model:'observed',actions:[]};});
+ const running=bodyProgram({...f.options,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},fetch:async(url,init)=>{
+  if(String(url).endsWith('/status')&&++statuses===3){beatEntered();await beatHeld;}return fetcher(url,init);
+ }});void running.then(()=>{settled=true;});
+ await nativeStarted;tick();tick();await beatStarted;finish();for(let i=0;i<32;i++)await Promise.resolve();expect(settled).toBe(false);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(cancel).toHaveBeenCalledOnce();release();expect(await running).toBe(0);expect(f.calls.filter(row=>row.path==='message')).toHaveLength(1);expect(cancel).toHaveBeenCalledOnce();
+});

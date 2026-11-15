@@ -56,8 +56,8 @@ export async function bodyProgram(input: {
     await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
-    const batch = await client.takeAndAccept(async (item, signal) => {
-      if (signal.aborted || input.signal.aborted) throw new Error();
+    const batch = await client.takeAndAccept(async (item, sinkSignal) => {
+      if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
       if (item.words !== null) context.push(item.words);
     });
