@@ -37,7 +37,7 @@ it('uses current member rows and partial updates without importing legacy tables
   expect((await f.call({ look: 'daylight' })).status).toBe(200);
   expect((await f.call({ look: 'lowlight', sound: false }, 'lee')).status).toBe(200);
   const before = f.db.select().from(memberPreferences).where(eq(memberPreferences.member, 'sam')).get()!;
-  expect(before).toMatchObject({ look: 'daylight', ground: 'depth', pixel: true, sound: false, oneWindow: false });
+  expect(before).toEqual({ member: 'sam', look: 'daylight', ground: 'depth', sound: false, pixel: true, icons: false, haptics: true, oneWindow: false, zoom: false, motion: 'follow', contrast: 'follow', changedAt: new Date(f.clock.now()).toISOString() });
   f.clock.advance(1000);
   const answer = await (await f.call({ ground: 'wash', motion: 'on' }, 'sam', 'ground')).json();
   expect(answer).toEqual({ ok: true, value: { changedAt: new Date(f.clock.now()).toISOString() } });
