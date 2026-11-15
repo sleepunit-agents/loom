@@ -471,3 +471,11 @@ ones. Allow rechecks the requesting member's agent ownership and current
 machine availability or lending. A stale card needs a fresh request. Direct
 owner edits and approved changes share validation/application. This path never
 changes repository-secret references or executes a house.
+
+runtime.proposeBoxSettings files a private chat request for the machine owner or
+a household owner. Its card includes the current and proposed name, hosting
+flags, agent lending and owner facts. Allow rechecks the current member's
+authority, machine ownership/revocation, the full previous owner settings,
+lending and name uniqueness. Worker-reported facts are independent of that
+comparison. The direct owner command and approved operation share validation and
+application; no worker credentials or enrollment are issued by either.
