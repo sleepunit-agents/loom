@@ -23,7 +23,7 @@ export async function taskStructure({page,tile,app,example,out}){
   write(()=>s.close(later.id,'Inspected.'));
   await tile.getByText(blocked.title,{exact:true}).waitFor();
   check(s.ready().some(t=>t.id===blocked.id),'Closing both blockers did not release work');
-  await tile.getByText(blocked.title,{exact:true}).click();
+  await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(blocked.title,{exact:true})}).click();
   await reader.getByText(epic.title,{exact:true}).waitFor();
  });
  await attempt('taskComments',async()=>{
