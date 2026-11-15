@@ -15,7 +15,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
  const notice=async()=> (await query('{settledInboxNotice{id count}}')).settledInboxNotice;
  const observe=async(name,work)=>{
   try{const facts=await work(),screenshot=await capture(name);checks[name]={ok:true,facts,screenshot};}
-  catch(error){checks[name]={ok:false,error:String(error)};throw error;}
+  catch(error){const failed={ok:false,error:String(error)};try{failed.screenshot=await capture(name+'-failed');}catch{}checks[name]=failed;throw error;}
  };
  await observe('held',async()=>{
   await tile.getByRole('button',{name:'Pause agent',exact:true}).click();
@@ -35,7 +35,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   const back=tile.getByRole('region',{name:'Tempo: the open item',exact:true}).getByRole('button',{name:'Tempo',exact:true});if(await back.isVisible())await back.click();
   await tile.getByRole('button',{name:'Create trigger',exact:true}).click();const form=tile.getByRole('form',{name:'Create trigger'});
   await form.getByLabel('Label',{exact:true}).fill(label);await form.getByLabel(/^Time \(/).fill(new Date(clock.now()+60_000).toISOString());
-  await form.getByLabel('Set by',{exact:true}).selectOption('household');await form.getByLabel('Recipient kind',{exact:true}).selectOption('person');
+  await form.getByLabel('Set by',{exact:true}).selectOption('member');await form.getByLabel('Person',{exact:true}).fill(example.members[0]);await form.getByLabel('Recipient kind',{exact:true}).selectOption('person');
   await form.getByLabel('Recipient',{exact:true}).fill(example.members[0]);await form.getByLabel('Words',{exact:true}).fill(words);
   await form.getByRole('button',{name:'Create trigger',exact:true}).click();await form.waitFor({state:'hidden'});
   await tile.getByRole('button',{name:new RegExp(label)}).click();
@@ -44,6 +44,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
  await observe('settled',async()=>{
   const words='Walkthrough one-off notice',id=await create('Walkthrough Run now',words);
   assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);assert.equal(await notice(),null);
+  clock.advance(2000);
   await tile.getByRole('button',{name:'Run now',exact:true}).click();await tile.getByText(/time · once · fired/).waitFor();
   const items=await inbox(),delivered=items.filter(item=>item.refs.includes(id));
   assert.equal(delivered.length,1);assert.equal(delivered[0].source,'trigger');assert.ok(delivered[0].sourceId.startsWith(id+':'));assert.equal(delivered[0].toKind,'person');assert.equal(delivered[0].to,example.members[0]);assert.equal(delivered[0].body.words,words);
@@ -56,7 +57,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
  await observe('cancelled',async()=>{
   const id=await create('Walkthrough cancel future work','This cancelled notice must not arrive');
   await tile.getByRole('button',{name:'Cancel',exact:true}).click();await tile.getByText(/time · once · stopped/).waitFor();
-  clock.advance(60_000);const current=await trigger(id);assert.equal(current.row.state,'stopped');assert.equal(current.row.enabled,false);assert.equal(current.row.lastFiredAt,null);
+  clock.advance(60_001);const current=await trigger(id);assert.equal(current.row.state,'stopped');assert.equal(current.row.enabled,false);assert.equal(current.row.lastFiredAt,null);
   assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);
   return {state:current.row.state,afterDeadline:true,delivered:0};
  });
