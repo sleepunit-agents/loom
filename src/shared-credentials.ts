@@ -31,6 +31,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
     return found?.valid() ? found : undefined;
   };
   return {
+    current(viewer: Viewer): boolean { return !!proof(viewer); },
     authenticate(request: Request): Authentication | undefined {
       if (!admitted()) return;
       const auth = resolve(request);
