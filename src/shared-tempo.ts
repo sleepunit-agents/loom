@@ -13,8 +13,11 @@ import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
 import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { Jobs } from './runtime/jobs.js';
+import { repositoryInstructions } from './core/tempo/repository.js';
 
 export interface SharedTempoOptions {
+  /** Trusted checkout path, never supplied by a command caller. */
+  repository?: string;
   /** Accept one settled person batch. IDs only; delivery reads current policy. */
   notify?(member: string, items: readonly string[]): boolean;
   admit?: TempoOptions['admit'];
@@ -32,7 +35,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
   const jobs = new Jobs(db, () => new Date(clock.now()).toISOString());
   return installTempoComposition({ db, clock, writes, operations,
     contributors: options.contributors,beforeStart:options.beforeStart,
-    delivery: { conversations, changed, instructions: options.instructions, changeRevision: options.changeRevision,
+    delivery: { conversations, changed, instructions: options.instructions ?? (options.repository ? repositoryInstructions(options.repository) : undefined), changeRevision: options.changeRevision,
       admit: options.admit ?? ((who, items) => {
         if (who.kind === 'person') return options.notify?.(who.id, items.map(item => item.id)) ?? false;
         const ids = [...new Set(items.flatMap(item => item.conversation ? [item.conversation] : []))];
