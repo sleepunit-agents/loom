@@ -85,6 +85,7 @@ export function SharedTasks(props: SharedTasksProps) {
         const status = change.state === 'open' ? `${change.checks} · ${change.review.replaceAll('_',' ')}` : change.state;
         return <p key={change.id}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{label}</a> : label}{` · ${status}`}</p>;
       })}</section>}
+      {selected.sourceKind === 'conversation' && selected.sourceId && <section><h3>Source conversation</h3><p>{selected.sourceId}</p></section>}
       {selected.sourceKind === 'conversation' && selected.sourceId && props.conversation && <Button variant="outline" onClick={() => props.conversation!(selected.sourceId!)}>From conversation</Button>}
       {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
       {relations('Children',links.filter(l => l.dependsOn === selected.id && l.type === 'parent-child').map(l => l.task))}
