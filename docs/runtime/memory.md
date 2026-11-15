@@ -46,13 +46,13 @@ service or real source is changed by this implementation.
 
 memory.personWrite and memory.projectWrite author cards in the current body's
 own declared source. They accept the existing card fields and merge behavior;
-they return scoped logical IDs for memoryPerson(id:) or memoryProject(id:).
+they return scoped opaque IDs for memoryPerson(id:) or memoryProject(id:).
 A project alias resolves to its canonical card ID. Card statements and links
 never grant access or change household membership or project sharing.
 
 memory.personRestoreRevision restores a retained revision belonging to the
 named own person card; memoryPerson(id:){history{id}} supplies its revision ID.
-It snapshots the displaced card first. Shared receipts retain only IDs and
+It snapshots the displaced card first. The private source owns a typed UUID-to-slug reference map. Shared receipts retain only opaque IDs and
 keyed input fingerprints. The source card, revisions, aliases and private
 receipt commit together, and completed retries do not repeat the mutation.
 
@@ -62,3 +62,11 @@ commit. A borrowed writer refuses calls outside a source transaction. Existing
 standalone card stores retain their own transaction and notification behavior.
 No caller-selected agent, path, directory or grant is accepted by these native
 commands. Existing unprepared sources remain unavailable for writes.
+
+Private card-reference metadata has Drizzle definitions and offline generated
+DDL. Fresh source preparation creates it alongside the existing semantic
+preparation. Existing semantic-only sources keep their original preparation
+fingerprint and remain usable for remember/recall/lifecycle commands; card
+commands return unavailable without changing those files. Only the separate
+data move explicitly prepares existing sources. Ordinary startup, reads,
+recovery and command admission never create the missing reference tables.
