@@ -18,7 +18,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
   const item=db.select().from(inbox).where(eq(inbox.id,row.inboxItem)).get();
   return item&&item.conversation===conversation&&item.thread===row.thread&&item.messageSeq===row.seq&&item.source==='thread'
    &&item.toKind==='agent'&&item.to===cv.agent&&item.fromKind==='person'&&item.fromId===row.sender
-   &&item.state==='done'&&item.volume==='full'?JSON.stringify(item):null;
+   &&item.state==='done'&&item.volume==='full'&&item.takenVolume==='full'?JSON.stringify(item):null;
  };
  const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(100).all();
  const prepared:{snapshot:typeof messages.$inferSelect;delivery:string;words:string}[]=[];let bytes=2;

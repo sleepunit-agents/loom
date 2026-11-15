@@ -13,7 +13,7 @@ type Item = typeof inbox.$inferSelect;
 export type Delivery = { item: Item; words: string | null; answerContext?:AnswerContext; history?:HistoryLine[] };
 // Taking a prepared batch changes only its lease bookkeeping. Changes to any
 // content, reference, recipient or label require a fresh preparation.
-const content = (item: Item) => JSON.stringify({ ...item, state: null, job: null, takenAt: null, changedAt: null });
+const content = (item: Item) => JSON.stringify({ ...item, state: null, job: null, takenAt: null, takenVolume:null, changedAt: null });
 
 export class ConversationMail {
   constructor(readonly comms: CommsMessages) {}

@@ -164,3 +164,29 @@ it('never repeats an earlier answered question through ordinary history',async()
  await client.takeAndAccept(async item=>expect(item.question?.words).toBe('OLD QUESTION'));
  await f.send('Later ordinary message','later');await client.takeAndAccept(async item=>expect(item.history).toEqual([]));
 });
+it.each(['expire','content','set','confirm-retry'] as const)('never promotes previously Dim words into history after %s restores volume',async mode=>{
+ const f=await bodyFixture(clean),client=sdk(f);
+ await f.send('FIRST LINE\nNEVER DELIVERED SECOND LINE','dim-first');
+ const original=f.db.select().from(s.inbox).get()!;
+ f.root.writes.run(()=>f.root.services.tempo.volume.set({kind:'agent',id:'art'},original.id,'dim',new Date(f.clock.now()+1000).toISOString()));
+ await client.takeAndAccept(async item=>expect(item.words).toBe('FIRST LINE'));
+ if(mode==='expire'){f.clock.advance(1000);f.root.writes.run(()=>f.root.services.tempo.volume.expire());}
+ else if(mode==='content')f.root.writes.run(()=>f.root.services.tempo.volume.changed({kind:'agent',id:'art'},original.id));
+ else f.root.writes.run(()=>f.root.services.tempo.volume.set({kind:'agent',id:'art'},original.id,'full'));
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,original.id)).get()?.volume).toBe('full');
+ if(mode==='confirm-retry')expect((await f.call('confirm',{items:[original.id]},'confirm-again')).status).toBe(200);
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,original.id)).get()?.takenVolume).toBe('dim');
+ await f.send('Later Full input','full-later');await client.takeAndAccept(async item=>{expect(item.words).toBe('Later Full input');expect(item.history).toEqual([]);});
+});
+it.each(['multiple','source','count'] as const)('rejects malformed history at the receiving SDK: %s',async mode=>{
+ const f=await fixture(),accept=vi.fn();await f.send('Second input','second');
+ const client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>{
+  const response=await f.root.http.request(new Request(url,init));if(!String(url).endsWith('/take'))return response;
+  const value=await response.json(),first=value.value.items[0];
+  if(mode==='multiple')value.value.items[1].history=structuredClone(first.history);
+  if(mode==='source')first.source='answer';
+  if(mode==='count')first.history=Array.from({length:101},(_,index)=>({...first.history[0],seq:index+1}));
+  return Response.json(value);
+ }});clean.push(()=>client.close());
+ await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();
+});
