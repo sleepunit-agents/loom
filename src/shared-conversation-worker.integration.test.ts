@@ -81,9 +81,14 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
     const tools=(await protocol.listTools()).tools;
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
-    // The default native currently exposes only Secrets. Canonical commands
-    // must join that same listener before a model can control Tempo.
-    expect(tools.length).toBeGreaterThan(2);
+    expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['loom_commands','loom_command','loom_query']));
+    const decoded=(value:unknown)=>JSON.parse((value as {content:{text:string}[]}).content[0].text);
+    const catalogue=decoded(await protocol.callTool({name:'loom_commands',arguments:{}}));
+    expect(catalogue.ok).toBe(true);
+    expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','tempo.proposeSettings','inbox.volume']));
+    await exerciseTempo(async(operation,input,id)=>decoded(await protocol.callTool({name:'loom_command',arguments:{operation,input:input as Record<string,unknown>,id}})));
+    const visible=decoded(await protocol.callTool({name:'loom_query',arguments:{query:'{ agents { id } }'}}));
+    expect(visible).toMatchObject({data:{agents:expect.arrayContaining([{id:'art'}])}});
    }finally{await protocol.close();}
   })().then(()=>{
    const list=args as string[],session=list[list.indexOf('--session-id')+1];
