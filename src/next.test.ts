@@ -238,10 +238,11 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     return () => { if (time === expiry) credentialTimer = false; cancel(); };
   };
   const loom = await startLoom({ home, next: true, clock, stdout: () => {},
+    sharing: () => ({members:{sam:{owner:true,agents:[]}},projects:{},services:{}}),
     install(app) {
       app.db.function('loom_now', () => new Date(app.operations.clock.now()).toISOString());
       app.db.exec(readFileSync(new URL('../assets/data/schema.sql', import.meta.url), 'utf8'));
-      app.db.prepare('INSERT INTO members (id,role,joined_at) VALUES (?,?,?)').run('sam','member',at);
+      app.db.prepare('INSERT INTO members (id,role,joined_at) VALUES (?,?,?)').run('sam','owner',at);
       app.db.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'Sam','owner','sam',at,new Date(expiry).toISOString());
       app.db.prepare('INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at) VALUES (?,?,?,?,?,?,?,?)').run('pump','Pump','member','sam','member','sam',at,at);
     },
@@ -250,15 +251,15 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
   });
   let ws: WebSocket | undefined;
   try {
-    const request = (authorization: string) => fetch(loom.url+'/graphql',{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title } }'})});
+    const request = (authorization: string) => fetch(loom.url+'/graphql',{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title } approvals { id } memoryKnowledge { total } }'})});
     expect((await request('legacy')).status).toBe(401);
-    expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}]}});
+    expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[],memoryKnowledge:{total:0}}});
     ws = new WebSocket(loom.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+token}});
     await once(ws,'open');
     const ack = once(ws,'message'); ws.send(JSON.stringify({type:'connection_init'})); await ack;
     const first = once(ws,'message');
-    ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } }") { revision patches { path value } } }'}}));
-    expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}]});
+    ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } approvals { id } memoryKnowledge { total } }") { revision patches { path value } } }'}}));
+    expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[],memoryKnowledge:{total:0}});
     expect(credentialTimer).toBe(true);
     const databaseClose = loom.db.close.bind(loom.db);
     loom.db.close = () => { expect(credentialTimer).toBe(false); databaseClosed = true; return databaseClose(); };

@@ -3,6 +3,11 @@ import Database from 'better-sqlite3';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SqliteKnowledgeBackend } from './backends/sqlite-knowledge.js';
+import { knowledgeQueryFields } from './pieces/mind/knowledge-query.js';
 import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
@@ -17,7 +22,7 @@ const query = '{ tasks { id title } }';
 const selection = { type: 'subscribe', id: 'tasks', payload: {
   query: 'subscription($query: String!) { observe(query: $query) { revision patches { path removed value } } }', variables: { query },
 } };
-async function setup() {
+async function setup(fields?: ReturnType<typeof knowledgeQueryFields>['fields']) {
   const client = new Database(':memory:'); clean.push(() => { if (client.open) client.close(); });
   const pending = new Set<symbol>();
   const clock = new FakeClock();
@@ -36,7 +41,7 @@ async function setup() {
     VALUES ('pump','Pump','pond','member','owner','member','owner','${at}','${at}');`);
   client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(hash(token),'Sam','owner','sam',at,new Date(clock.now()+3600000).toISOString());
   client.prepare('INSERT INTO sessions (id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES (?,?,?,?,?,?,?,?)').run(hash(cookie),hash(token),'Browser','token',0,at,at,at);
-  const data = nextData(db, clock, req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`);
+  const data = nextData(db, clock, req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`, undefined, fields);
   clean.push(() => data.close());
   async function bind() {
     const http = createServer(); const detach = data.attach(http);
@@ -232,4 +237,39 @@ it('keeps project and agent-owner Work grants independent on retained root reads
   expect(owned.changeTasks).toEqual([]);
   const withdrawn = await read(ws,()=>{f.data.writes.run(()=>f.client.exec("DELETE FROM member_agents WHERE member='sam'"));});
   expect(withdrawn.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:['changes',0],removed:true}));
+});
+
+it('serves real Memory and Work through the same HTTP and socket caller, including demotion', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'root-memory-work-'));
+  clean.push(() => rmSync(home, { recursive: true, force: true }));
+  const knowledge = new SqliteKnowledgeBackend({ dbPath: join(home, 'knowledge.db') });
+  clean.push(() => knowledge.close());
+  await knowledge.writePage({ slug: 'pump', title: 'Fictional pump', domain: 'pond', body: 'Fictional hose instructions.' });
+  const sharing = { members: { sam: { owner: true, agents: [] } }, projects: {}, services: {} };
+  const reader = knowledgeQueryFields({ path: join(home, 'knowledge.db'), sharing: () => sharing, now: () => 0 });
+  clean.push(reader.close);
+  const f = await setup(reader.fields);
+  f.client.exec("UPDATE members SET role='owner' WHERE id='sam'");
+  const mixed = '{ tasks { id } approvals { id } memoryKnowledgePage(slug:"pump") { title body } }';
+  const post = async () => (await f.data.http.request('/graphql', { method: 'POST', headers: {
+    authorization: `Bearer ${token}`, 'content-type': 'application/json',
+  }, body: JSON.stringify({ query: mixed }) })).json();
+  const expected = { tasks: [{ id: 'pump' }], approvals: [], memoryKnowledgePage: {
+    title: 'Fictional pump', body: 'Fictional hose instructions.',
+  } };
+  expect(await post()).toEqual({ data: expected });
+  const ws = await f.open();
+  const first = await read(ws, () => ws.send(JSON.stringify({ ...selection, payload: {
+    ...selection.payload, variables: { query: mixed },
+  } })));
+  expect(first.payload.data.observe.patches[0].value).toEqual(expected);
+  const changed = await read(ws, () => f.data.writes.run(() => {
+    sharing.members.sam.owner = false;
+    f.client.exec("UPDATE members SET role='member' WHERE id='sam'");
+  }));
+  expect(changed.payload.data.observe.patches).toContainEqual({ path: ['memoryKnowledgePage'], value: null, removed: false });
+  expect(await post()).toEqual({ data: { ...expected, memoryKnowledgePage: null } });
+  const closed = once(ws, 'close');
+  f.data.writes.run(() => f.client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(new Date(f.clock.now()).toISOString(), hash(token)));
+  expect((await closed)[0]).toBe(4403);
 });

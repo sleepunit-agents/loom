@@ -60,6 +60,36 @@ export class BridgeReceiver {
     this.events.reset(connection);
   }
 
+  /** Discover API lookup targets after reconnect/restart, including frames that
+   * arrived before this process. Examines at most limit receipts in arrival
+   * order and returns distinct missing channel ids, never message fields as
+   * channel-kind evidence. No receipt is consumed or delivered here. Root owns
+   * authenticated fetches, cache lifetime and bounded retry scheduling; call
+   * drain after filling the cache. Malformed frames throw as in drain(). */
+  missingChannels(connection: string, limit = 64): string[] {
+    const source = this.connection(connection);
+    const missing = new Set<string>();
+    this.events.drain(connection, (_id, raw) => {
+      const payload = this.parse(raw);
+      if (source.platform === 'discord') {
+        const frame = discordFrame.parse(payload);
+        if (frame.t === 'MESSAGE_CREATE') {
+          const channel = channelField.parse(frame.d).channel_id;
+          if (!this.channels.discord(connection, channel)) missing.add(channel);
+        }
+      } else {
+        const frame = slackFrame.parse(payload);
+        const event = frame.payload.event;
+        if (event.type === 'message' || event.type === 'app_mention') {
+          const channel = slackChannelField.parse(event).channel;
+          if (!event.channel_type && !this.channels.slack(connection, channel)) missing.add(channel);
+        }
+      }
+      return false;
+    }, limit);
+    return [...missing];
+  }
+
   /** Bounded synchronous pass; receipt removal and conversation delivery share
    * one transaction. Held rows are retried against current household rules. A
    * malformed message throws, leaving its receipt/writes intact for inspection;
