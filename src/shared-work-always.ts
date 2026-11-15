@@ -30,7 +30,7 @@ export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,s
   may(viewer,input){
    if(!workAnswersAllowed(db,viewer))return false;
    const card=request(input.approval),row=change(input.change);
-   return !!card&&!!row&&(authority?.approval(viewer,card)??true)&&(authority?.change(viewer,row,card)??true);
+   return !!card&&!!row&&(!authority||authority.approval(viewer,card)===true)&&(!authority||authority.change(viewer,row,card)===true);
   },
   validateReplay(_viewer,input){binding(input);},
   run(ctx,input){
