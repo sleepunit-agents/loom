@@ -62,7 +62,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
    if(!inputs.startup(job.id).some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
    secret=row.secret;attempt='startup:'+input.alias;
-   current=()=>selected.current()&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
+   current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
   }else{
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
    if(!row?.repositorySecret)return new Response(null,{status:204});
@@ -71,6 +71,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
     return !!now&&now.houseRepository===job.houseRepository&&now.houseFile===job.houseFile&&now.houseBranch===job.houseBranch&&now.repositorySecret===row.repositorySecret;
    };
    if(!repositoryCurrent())throw new PrivateInputError('denied');
+   if(!job.houseRepository.trim())return new Response(null,{status:204});
    inputs.startGrants(job.id);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret));
    if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,startupRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
   }

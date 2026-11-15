@@ -133,3 +133,7 @@ for (const cancel of [false, true]) it(`bounds quota reporting by ${cancel ? 'wo
     await pending; expect(fetcher).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });
+it.each([30000,60000])('bounds stalled private input to fifteen seconds under worker timeout %s',async timeoutMs=>{
+ vi.useFakeTimers();const fetch=vi.fn<typeof globalThis.fetch>(()=>new Promise<Response>(()=>{}));const control=httpWorkerControl({url:'https://loom.example',token:'synthetic',signal:new AbortController().signal,timeoutMs,fetch});
+ try{let settled=false;const pending=control.repositoryInput!('job',new AbortController().signal);void pending.then(()=>{settled=true;},()=>{settled=true;});const refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);await vi.advanceTimersByTimeAsync(14999);expect(settled).toBe(false);await vi.advanceTimersByTimeAsync(1);await refused;expect(fetch).toHaveBeenCalledOnce();}finally{vi.useRealTimers();}
+});

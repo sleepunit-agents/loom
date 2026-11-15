@@ -137,3 +137,16 @@ it.each([true,false])('the repository recipient waits on one real Inbox answer b
  const result=await outcome;expect(result.error).toBe(!allow);if(allow){expect(result.value?.toString()).toBe('PRIVATE_SOURCE_VALUE');result.value?.fill(0);expect(f.source.read).toHaveBeenCalledOnce();}else expect(f.source.read).not.toHaveBeenCalled();expect(fetch.mock.calls.filter(([url])=>String(url).endsWith('/read'))).toHaveLength(2);
  }finally{recipient.close();}
 });
+
+it('an unrelated grant cannot substitute for revoked alias startup permission across holder IO',async()=>{
+ const f=fixture();f.grant();f.rule();const [grant]=f.root.services.secrets.inputs.startGrants('body');let entered!:()=>void,release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'startup',alias:'API_TOKEN'});await started;f.root.writes.run(()=>f.root.services.secrets.requests.revoke(grant.request!));const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);expect((await pending).status).toBe(503);expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.root.services.secrets.requests.grantFor('TOKEN','art','body')).toBeDefined();
+});
+it('an empty repository never reads a configured secret or issues startup consent',async()=>{
+ const f=fixture();f.db.update(jobs).set({houseRepository:''}).where(eq(jobs.id,'build')).run();f.db.update(agentRunSettings).set({houseRepository:''}).run();f.rule('REPO');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(204);expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretGrants).all()).toEqual([]);
+});
+it('bounds unconfirmed handoffs and frees capacity only after confirmation or expiry',async()=>{
+ const f=fixture();f.grant();f.source.read.mockImplementation(async()=>Buffer.from('X'));const engine=f.root.services.secrets.inputs;let first='';
+ for(let i=0;i<4096;i++){const id=await engine.dispatch({job:'body',secret:'TOKEN',attempt:'capacity-'+i},()=>true,id=>id);if(!i)first=id;}
+ await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'over-cap'},()=>true,id=>id)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledTimes(4096);
+ engine.confirm('body',first,()=>true);await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'freed'},()=>true,id=>id)).resolves.toMatch(/^use-input-/);
+},30000);

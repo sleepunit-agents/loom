@@ -45,3 +45,11 @@ it.each(['close','abort'] as const)('synchronously erases an already confirmed s
  });const client=privateSecretClient({...options(fetch),signal:abort.signal});
  try{const pending=client.startup(),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);await started;expect(values.some(bytes=>bytes.some(byte=>byte!==0))).toBe(true);if(kind==='close')client.close();else abort.abort();expect(values.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);await refused;}finally{client.close();spy.mockRestore();}
 });
+it('keeps a one second consent poll interval even with a short network timeout',async()=>{
+ const clock=new FakeClock(),fetch=vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(Response.json({pending:true},{status:423})).mockResolvedValueOnce(new Response(null,{status:204}));const client=privateSecretClient({...options(fetch),clock,timeoutMs:100});
+ try{const pending=client.repository('job');for(let i=0;i<32;i++)await Promise.resolve();clock.advance(999);for(let i=0;i<8;i++)await Promise.resolve();expect(fetch).toHaveBeenCalledOnce();clock.advance(1);expect(await pending).toBeUndefined();expect(fetch).toHaveBeenCalledTimes(2);}finally{client.close();}
+});
+it.each(['close','abort'] as const)('cancels consent polling on %s without another read',async kind=>{
+ const clock=new FakeClock(),abort=new AbortController(),fetch=vi.fn<typeof globalThis.fetch>(async()=>Response.json({pending:true},{status:423}));const client=privateSecretClient({...options(fetch),clock,signal:abort.signal});
+ try{const pending=client.repository('job'),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);for(let i=0;i<32;i++)await Promise.resolve();if(kind==='close')client.close();else abort.abort();await refused;clock.advance(10000);for(let i=0;i<8;i++)await Promise.resolve();expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
+});

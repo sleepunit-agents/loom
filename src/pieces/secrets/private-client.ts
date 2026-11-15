@@ -64,11 +64,15 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
     if(!(error instanceof PendingRepository))throw error;
     // Only an authenticated metadata-pending response is retryable. No value
     // attempt has started; a lost read or confirmation is never retried.
-    await attempt(async(current,signal)=>{
-     let cancel!:()=>void;const stop=()=>cancel();
-     try{await new Promise<void>(resolve=>{cancel=clock.at(clock.now()+Math.min(1000,Math.max(1,Math.floor(timeout/2))),resolve);signal.addEventListener('abort',stop,{once:true});});if(!current())throw unavailable();}
-     finally{cancel();signal.removeEventListener('abort',stop);}
-    });
+    if(closed||options.signal.aborted)throw unavailable();
+    const waiting=new AbortController();controllers.add(waiting);
+    let cancel!:()=>void,stop!:()=>void;
+    try{await new Promise<void>((resolve,reject)=>{
+     stop=()=>reject(unavailable());waiting.signal.addEventListener('abort',stop,{once:true});
+     cancel=clock.at(clock.now()+1000,resolve);
+    });if(closed||options.signal.aborted||waiting.signal.aborted)throw unavailable();}
+    finally{cancel();waiting.signal.removeEventListener('abort',stop);controllers.delete(waiting);}
+
    }}
   },
   async startup():Promise<Map<string,Buffer>>{
