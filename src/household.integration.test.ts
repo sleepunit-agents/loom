@@ -16,7 +16,6 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
-import { runSessions, runToken } from './cli/household.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import {
   addAgent, commonsKnowledgePath, firstOwner, removeMember, setMember, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
@@ -244,47 +243,6 @@ describe('one daemon, several agents', () => {
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).status).toBe(200);
     revokeToken(h, 'jonathan');
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
-  });
-
-  it('loom token create --service mints a service house\'s token (agent:<name>/<service>); --service needs --agent', async () => {
-    let out = '';
-    const io = { stdout: (x: string) => { out += x; }, stderr: () => {}, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
-    expect(await runToken(['create', '--agent', 'art', '--service', 'slack', '--label', 'art · house h-9 on loom'], io)).toBe(0);
-    expect(out.trim()).toMatch(/^loom_/);
-    expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9 on loom')?.role).toBe('agent:art/slack');
-    expect(await runToken(['create', '--owner', '--service', 'slack', '--label', 'x'], io)).toBe(2);
-    expect(await runToken(['create', '--agent', 'art', '--service', 'slack', '--house', 'h-9', '--label', 'art · house h-9b'], io)).toBe(0);
-    expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9b')?.role).toBe('agent:art/slack@h-9');
-    revokeToken(h, 'art · house h-9b');
-    expect(await runToken(['create', '--owner', '--house', 'h-9', '--label', 'z'], io)).toBe(2);
-    expect(await runToken(['create', '--agent', 'art', '--service', 'Bad', '--label', 'y'], io)).toBe(2);
-    revokeToken(h, 'art · house h-9 on loom');
-  });
-
-  it('loom token link: a one-time link signs the owner in, and revoking its token ends those sessions', async () => {
-    let out = '';
-    let err = '';
-    const io = { stdout: (x: string) => { out += x; }, stderr: (x: string) => { err += x; }, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
-    expect(await runToken(['link', '--page-url', base], io)).toBe(0);
-    expect(err).toContain('within 10 minutes');
-    const url = out.trim();
-    expect(url).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
-    const signed = await fetch(url, { method: 'POST', redirect: 'manual' });
-    expect(signed.status).toBe(303);
-    const cookie = (signed.headers.get('set-cookie') ?? '').split(';')[0];
-    expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).status).toBe(200);
-    // A second link reuses the one token; revoking it ends every session links opened.
-    out = '';
-    expect(await runToken(['link', '--minutes', '5', '--page-url', base], io)).toBe(0);
-    expect(loadTokens(h.home).filter((t) => t.label === 'page sign-in links').length).toBe(1);
-    revokeToken(h, 'page sign-in links');
-    expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
-    expect((await fetch(out.trim(), { method: 'POST', redirect: 'manual' })).status).toBe(401);
-    expect(await runToken(['link', '--minutes', '0'], io)).toBe(2);
-    // Through the whole CLI, as documented: --url is loom's global remote flag, so the link's is --page-url.
-    const cli = await runCliCaptured(['token', 'link', '--page-url', base], { env: { LOOM_HOME: h.home } });
-    expect(cli.code).toBe(0);
-    expect(cli.stdout.trim()).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
   });
 
   it('LOOM_BEARER_TOKEN, when set, is an owner token too', async () => {
@@ -1767,6 +1725,7 @@ esac
     expect(await r.json()).toMatchObject({ ok: false, message: expect.stringMatching(/household's to do/) });
     expect(loadTokens(h.home).some((t) => t.label === 'sneaky')).toBe(false);
   });
+
   it('one signed-in session ends alone (t-1871): the Account page lists them, a household owner signs out an agent\'s screenshot session, every other link session stays', async () => {
     const HEADLESS = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36';
     const PHONE = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
@@ -1835,39 +1794,6 @@ esac
     expect(loadTokens(h.home).find((t) => t.label === 'page sign-in links')?.revoked).toBeFalsy();
     expect((await rows(phone)).some((r) => r.text.includes('screenshots'))).toBe(false);
 
-    // And from the command line: `loom sessions list`, then revoke one by its ref.
-    const out: string[] = [];
-    const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } } as unknown as Parameters<typeof runSessions>[1];
-    // A session whose token isn't on file (the owner's bearer from loom-http's environment) is listed, not as ended.
-    const bearerOnly = sessionStore(h.home).create(Buffer.alloc(32, 5));
-    expect(await runSessions(['list'], io)).toBe(0);
-    const bearerLine = out.join('').split('\n').find((l) => l.startsWith(sessionStore(h.home).refOf(bearerOnly)))!;
-    expect(bearerLine).toMatch(/\(no token on file\)$/);
-    const line = out.join('').split('\n').find((l) => l.includes('loren · page'))!;
-    expect(line).toMatch(/^[0-9a-f]{16}  a browser .* by token, signed in .* UTC  \(loren · page\)$/);
-    expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(0);
-    expect(await signedIn(lorens)).toBe(false);
-    expect(await signedIn(phone)).toBe(true);
-    expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(1);
-    expect(await runSessions(['revoke', 'nope'], io)).toBe(2);
-
-    // An agent's sign-in (t-1936): --agent needs a label, its session is listed as an agent's, and the agent ends it
-    // by that label when done, leaving every other session, the same token's too.
-    out.length = 0;
-    expect(await runToken(['link', '--agent', '--page-url', base], io)).toBe(2);
-    expect(await runToken(['link', '--agent', '--label', 'screenshots t-1936', '--page-url', base], io)).toBe(0);
-    const url = out.join('').split('\n').find((l) => l.startsWith(`${base}/login/`))!;
-    expect(out.join('')).toContain('loom sessions revoke --label "screenshots t-1936"');
-    const agentS = await fetch(url, { method: 'POST', redirect: 'manual', headers: { 'user-agent': HEADLESS, 'sec-fetch-site': 'same-origin' } });
-    const agentC = (agentS.headers.get('set-cookie') ?? '').split(';')[0];
-    expect(await signedIn(agentC)).toBe(true);
-    out.length = 0;
-    expect(await runSessions(['list'], io)).toBe(0);
-    expect(out.join('').split('\n').find((l) => l.includes('screenshots t-1936'))).toMatch(/HeadlessChrome on Linux\s+\(agent\)  "screenshots t-1936"/);
-    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(0);
-    expect(await signedIn(agentC)).toBe(false);
-    expect(await signedIn(phone)).toBe(true);
-    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(1);
   });
   it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
     const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },

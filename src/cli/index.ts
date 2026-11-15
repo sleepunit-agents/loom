@@ -40,9 +40,10 @@ Commands:
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
   pieces            Installed pieces; install, update, roll back, remove them
-  household         The household: agents and the default (docs/specs/household.md)
-  token             Mint, list and revoke the household's tokens
-  sessions          The page's browser sessions: list them, sign one out alone
+  household         Read roster and edit members, agents and projects through the API
+  token             Mint, list, revoke tokens or make a one-time sign-in link
+  sessions          List browsers or end one through the API
+  account           Read personal Account or end a browser/remove a passkey
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
   backup            The nightly backup: set it, run one, see how it's going
@@ -57,9 +58,9 @@ Global flags:
   --client <name>        Harness adapter hint (default: $LOOM_CLIENT)
   --model <name>         Model manifest hint (default: $LOOM_MODEL)
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
-                         http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
+                         http://host:8787. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person, project; other commands stay local.
+                         memory, knowledge, person, project, household, token, sessions, account.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -99,6 +100,14 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   if (sub === 'changes') {
     const { runChangesClient } = await import('./changes-client.js');
     return runChangesClient(rest, io);
+  }
+
+  if (sub === 'household' || sub === 'token' || sub === 'sessions' || sub === 'account') {
+    const parsed=extractGlobalFlags(rest);
+    if(parsed.flags.contextDir!==undefined||parsed.flags.client!==undefined||parsed.flags.model!==undefined){io.stderr(`Context, client and model flags do not apply to loom ${sub}.\n`);return 2;}
+    if(rest.includes('--url')&&!parsed.flags.url){io.stderr('--url needs a value\n');return 2;}
+    const {runAccessClient}=await import('./access-client.js');
+    return runAccessClient(sub,parsed.rest,{...io,env:{...io.env,...(parsed.flags.url?{LOOM_URL:parsed.flags.url}:{})}},undefined,`loom ${sub}`);
   }
 
   // Remote mode: the store verbs go to loom-http when a URL is set.
@@ -249,21 +258,12 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
       const { runPiecesCommand } = await import('./pieces.js');
       return runPiecesCommand(rest, io);
     }
-    case 'household': {
-      const { runHousehold } = await import('./household.js');
-      return runHousehold(rest, io);
-    }
-    case 'token': {
-      if (rest[0] === 'link' && rest.includes('--next')) {
-        const { runSigninLink } = await import('../core/signin/client.js');
-        return runSigninLink(rest.slice(1), io);
-      }
-      const { runToken } = await import('./household.js');
-      return runToken(rest, io);
-    }
-    case 'sessions': {
-      const { runSessions } = await import('./household.js');
-      return runSessions(rest, io);
+    case 'household':
+    case 'token':
+    case 'sessions':
+    case 'account': {
+      io.stderr(`loom ${sub} uses the shared API caller; it cannot run through the legacy /cli door.\n`);
+      return 2;
     }
     case 'export': {
       const { runExport } = await import('./bundle.js');
