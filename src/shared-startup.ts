@@ -1,4 +1,5 @@
 import {startSharedHolder} from './shared-holder-process.js';
+import {githubBindingNames} from './pieces/changes/secrets.js';
 import { notificationKey } from './core/signin/notification-key.js';
 /** Default web startup from an explicit, already prepared shared household.
  * No importer, discovery, schema upgrade, or legacy database fallback. */
@@ -22,7 +23,9 @@ import {readKey,wordsKey,type WordsKey} from './pieces/comms/crypto.js';
 import {serveShared} from './shared-serve.js';
 import type {sharedRoot} from './shared-root.js';
 const path=z.string().refine(isAbsolute,'Use an absolute path');
+const githubBindings=z.record(z.string(),z.string()).refine(value=>{try{githubBindingNames(value);return true;}catch{return false;}},'Invalid GitHub credential bindings');
 const programSchema=z.object({
+ githubBindings:githubBindings.optional(),
  secretHolder:z.literal(true).optional(),database:path,commsKey:path,signinMember:z.string().min(1),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
  memory:z.object({checkingAgent:z.string().min(1),sources:z.object({
   commons:z.object({directory:path,knowledge:path,people:path}).strict(),
@@ -82,10 +85,16 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    request:configuredBridges.request,discord:configuredBridges.discord,slack:configuredBridges.slack,
    inboxCommitted:ids=>configuredBridges.inboxCommitted?.(ids),
   }:holder?{source:holder.source,effectsAllowed:()=>!closing}:undefined;
+  const source=adapters.secretInputs?.source??holder?.source;
+  if(program.githubBindings&&!adapters.changes&&!source)throw Error('GitHub credential source unavailable');
+  const changes:RootOptions['changes']=adapters.changes??(program.githubBindings?{github:{
+   source:source!,bindings:program.githubBindings,
+   request:async(...args)=>{if(closing)throw Error('GitHub read unavailable');return fetch(...args);},
+  }}:undefined);
   const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:sameOrigin,publicOrigin,
-   changes:adapters.changes,workAnswerAuthority:adapters.workAnswerAuthority,
+   changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
    secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,

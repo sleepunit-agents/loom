@@ -7,7 +7,7 @@ import type { Secrets } from './roles.js';
  * the installed service and current owner-written service grants on every use.
  * No token discovery, agent grant fallback or automatic service grant occurs here.
  */
-export function githubSecrets(use: SecretUse, bindings: Readonly<Record<string, string>>): Secrets {
+export function githubBindingNames(bindings: Readonly<Record<string, string>>): Map<string, string> {
   const names = new Map<string, string>();
   for (const [owner, name] of Object.entries(bindings)) {
     const key = owner.toLowerCase();
@@ -17,6 +17,10 @@ export function githubSecrets(use: SecretUse, bindings: Readonly<Record<string, 
     }
     names.set(key, name);
   }
+  return names;
+}
+export function githubSecrets(use: SecretUse, bindings: Readonly<Record<string, string>>): Secrets {
+  const names = githubBindingNames(bindings);
   const references = new Set(names.values());
   return {
     async resolveGitHub(owner) {
