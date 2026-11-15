@@ -1,3 +1,5 @@
+import { repoId } from './pieces/changes/model.js';
+import { reprojectChanges } from './apps/changes.js';
 /** Project sharing is plain household metadata, checked only at the outside door. */
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -8,12 +10,12 @@ import { projects, projectMembers, projectAgents, projectRepositories, members, 
 import { OperationError, type Operations } from './core/operations/index.js';
 import { sharedTokenOwner } from './core/signin/shared-tokens.js';
 const id=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),list=z.array(id).max(1000).transform(values=>[...new Set(values)].sort());
-const input=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)).max(1000).transform(values=>[...new Set(values)].sort())}).strict();
+const input=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
 export function sharedProjects(db:DataDatabase){
  const validate=(value:z.infer<typeof input>)=>{
   for(const member of value.members)if(!db.select().from(members).where(eq(members.id,member)).get())throw new OperationError('invalid','Choose existing members');
   for(const agent of value.agents)if(!db.select().from(agents).where(eq(agents.id,agent)).get())throw new OperationError('invalid','Choose existing agents');
-  for(const repository of value.repositories){const bound=db.select().from(projectRepositories).where(eq(projectRepositories.repository,repository)).get();if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
+  for(const repository of value.repositories){const bound=db.select().from(projectRepositories).all().find(row=>repoId(row.repository)===repository);if(bound&&bound.project!==value.id)throw new OperationError('conflict','Repository already belongs to another project');}
  };
  return {
   save(raw:z.input<typeof input>){const value=input.parse(raw);return db.transaction(()=>{
@@ -22,6 +24,7 @@ export function sharedProjects(db:DataDatabase){
    if(value.members.length)db.insert(projectMembers).values(value.members.map(member=>({project:value.id,member}))).run();
    if(value.agents.length)db.insert(projectAgents).values(value.agents.map(agent=>({project:value.id,agent}))).run();
    if(value.repositories.length)db.insert(projectRepositories).values(value.repositories.map(repository=>({project:value.id,repository}))).run();
+   reprojectChanges(db);
    return{id:value.id};
   });},
   read(){return{members:db.select({id:members.id}).from(members).all().map(row=>row.id),agents:db.select({id:agents.id}).from(agents).all().map(row=>row.id),projects:db.select().from(projects).all().map(row=>({...row,members:db.select({id:projectMembers.member}).from(projectMembers).where(eq(projectMembers.project,row.id)).all().map(row=>row.id),agents:db.select({id:projectAgents.agent}).from(projectAgents).where(eq(projectAgents.project,row.id)).all().map(row=>row.id),repositories:db.select({id:projectRepositories.repository}).from(projectRepositories).where(eq(projectRepositories.project,row.id)).all().map(row=>row.id)}))};},

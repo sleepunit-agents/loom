@@ -4,7 +4,7 @@ import {eq} from 'drizzle-orm';
 import {afterEach,expect,it} from 'vitest';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {members,agents,tokens,projects,projectMembers,projectAgents,projectRepositories} from './core/data/schema.js';
+import {members,agents,tokens,projects,projectMembers,projectAgents,projectRepositories,changes} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 function fixture(){
@@ -26,11 +26,13 @@ it('commits plain project lists and exposes sharing setup only to owners',async(
 it('validates references and repository uniqueness atomically with its retry receipt',async()=>{
  const f=fixture();expect((await f.call(project)).status).toBe(200);
  expect((await f.call({...project,id:'other'},'owner','other')).status).toBe(409);
+ expect((await f.call({...project,id:'other',repositories:['github:FIXTURE/POND']},'owner','mixed-case')).status).toBe(409);
  for(const patch of [{members:['missing']},{agents:['missing']},{repositories:['https://github.com/fixture/pond']}])expect((await f.call({...project,...patch},'owner',JSON.stringify(patch))).status).toBe(400);
  expect(f.db.select().from(projectMembers).all()).toEqual([{project:'pond',member:'sam'}]);expect(f.db.select().from(projectAgents).all()).toEqual([{project:'pond',agent:'art'}]);
  f.client.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
  expect((await f.call({...project,name:'Rolled back',members:[]},'owner','rollback')).status).toBe(503);expect(f.db.select().from(projects).get()?.name).toBe('Pond');
  expect(f.db.select().from(projectRepositories).all()).toEqual([{project:'pond',repository:'github:fixture/pond'}]);
+ expect(f.db.select().from(projectMembers).all()).toEqual([{project:'pond',member:'sam'}]);
 });
 it('withdraws current project task visibility and owner administration before replay',async()=>{
  const f=fixture();await f.call(project);
@@ -40,4 +42,22 @@ it('withdraws current project task visibility and owner administration before re
  expect((await f.read('{ tasks { title } }','sam')).data.tasks).toEqual([]);
  f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
  expect((await f.call(project)).status).toBe(403);
+});
+
+it('uses normalized repository identities and reprojects cached pull requests in the project edit transaction',async()=>{
+ const f=fixture();await f.call({...project,repositories:['github:FIXTURE/POND']});
+ f.db.insert(changes).values({id:'github:fixture/pond#1',repository:'fixture/pond',number:1,title:'Cached PR',body:'',url:'https://github.com/fixture/pond/pull/1',state:'open',draft:false,authorLogin:'author',project:'pond',branch:'feature',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:'2026-11-14T19:00:00.000Z',updatedAt:'2026-11-14T19:00:00.000Z'}).run();
+ expect((await f.read('{ changes { id } }','sam')).data.changes).toHaveLength(1);
+ expect((await f.call({...project,repositories:[]},'owner','remove-repo')).status).toBe(200);
+ expect(f.db.select().from(changes).get()?.project).toBeNull();expect((await f.read('{ changes { id } }','sam')).data.changes).toEqual([]);
+ f.root.writes.run(()=>f.root.services.projects.save({...project,id:'other',name:'Other'}));
+ expect(f.db.select().from(changes).get()?.project).toBe('other');
+});
+it('lets trusted modules manage project lists without outside owner permission',()=>{
+ const f=fixture();
+ f.root.writes.run(()=>f.root.services.projects.save(project));
+ expect(f.db.select().from(projectMembers).all()).toEqual([{project:'pond',member:'sam'}]);
+ const installed=f.root.operations.internal('project-maintenance');
+ expect(installed.call('household.setProject',{...project,members:[]},'trusted')).toMatchObject({ok:true});
+ expect(f.db.select().from(projectMembers).all()).toEqual([]);
 });
