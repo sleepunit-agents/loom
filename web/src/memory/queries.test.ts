@@ -65,6 +65,7 @@ async function fixture() {
 }
 it('executes every browser selection against the real generated HTTP schema and existing file readers', async () => {
   const f = await fixture(), c = f.client;
+  expect(await c.read(memoryQueries.knowledgeAccess())).toEqual({allowed:true,canAdd:true,canVerify:true,canRecheck:true});
   expect(await c.read(memoryQueries.knowledge())).toMatchObject({total:1,checkDays:30,recentDays:7,pages:[{slug:'pump',title:'Fictional pump'}]});
   const page = await c.read(memoryQueries.page('pump'));
   expect(page).toMatchObject({slug:'pump',body:'The fictional pump takes a hose.',sources:[],citedBy:[]});

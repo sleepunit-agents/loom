@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -34,7 +34,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [] }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', harness: 'codex', brief: 'Private brief', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
@@ -164,4 +164,18 @@ it('persists the selected account and harness on each attempt and clears them fo
   expect(f.runtime.next('first')?.harness).toBe('configured-next-runner');
   expect(f.runtime.jobs.get(result.retry!.id)).toMatchObject({ account: 'account', harness: 'configured-next-runner' });
   expect(f.runtime.jobs.get(f.job.id).harness).toBe('codex');
+});
+
+it('projects current agent capabilities and only its configured ports at claim', () => {
+  const f = fixture();
+  f.db.update(agentRunSettings).set({ nestedContainers: true, gpu: true }).run();
+  f.db.insert(agentHousePorts).values([
+    { agent: 'art', address: '127.0.0.1', port: 9000 },
+    { agent: 'art', address: '127.0.0.1', port: 8000 },
+  ]).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.run).toEqual({ nestedContainers: true, gpu: true,
+    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }] });
+  f.db.update(agentRunSettings).set({ nestedContainers: false }).run();
+  expect(assignment.run.nestedContainers).toBe(true);
 });
