@@ -1,3 +1,4 @@
+import { commsQuery } from '../web/src/pieces/comms/shared-query.js';
 import { inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
@@ -6,7 +7,7 @@ import { and, eq } from 'drizzle-orm';
 import { generateX25519Identity } from 'age-encryption';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, household, inbox, inboxRefs, inboxReads, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
+import { agents, conversations, household, inbox, inboxRefs, inboxReads, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
 import { DataLive } from './core/data/live.js';
 import { DataWrites } from './core/data/writes.js';
 import { sharedRoot } from './shared-root.js';
@@ -17,7 +18,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields'],initialTime=Date.parse('2026-11-14T18:00:00Z')) {
   const statements:string[]=[];
-  const client = new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s)&&/InboxQueries|readInboxSet|readInboxVolume/.test(new Error().stack??''))statements.push(s);}}); cleanup.push(() => { if (client.open) client.close(); });
+  const client = new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s)&&/InboxQueries|readInboxSet|readInboxVolume|CommsQueries|readCommsPage|readCommsSet/.test(new Error().stack??''))statements.push(s);}}); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(initialTime), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   for (const [id, role] of [['alice','member'],['bob','member'],['owner','owner']] as const) db.insert(members).values({ id, role, joinedAt: now() }).run();
@@ -292,4 +293,29 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(inbox).set({member:'bob'}).where(eq(inbox.thread,thread.id)).run());}});
   const revoked=await f.query(inboxQuery,'alice',variables);
   expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE QUESTION');
+});
+
+
+it('bounds SQL for the full actual Comms selection with two and ten retained messages',async()=>{
+  const f=await fixture(),comms=f.root.services.comms!;
+  const thread=comms.threads.open({id:'th:message-growth',member:'alice',agent:'art',title:'Private message growth'});
+  const variables={archived:false,search:'',offset:0,id:thread.id,selected:true,before:null};
+  const read=async()=>{
+    f.statements.length=0;
+    const result=await f.query(commsQuery,'alice',variables);
+    expect(result.body.errors).toBeUndefined();expect(result.response.status).toBe(200);
+    return {rows:result.body.data!.commsMessages as {words:string}[],count:f.statements.length};
+  };
+  let small=0;
+  for(let n=0;n<10;n++){
+    await comms.send({thread:thread.id,sender:'art',kind:'reply',words:'PRIVATE MESSAGE '+n});
+    if(n===1){const result=await read();expect(result.rows).toHaveLength(2);small=result.count;}
+  }
+  const large=await read();expect(large.rows).toHaveLength(10);
+  expect(large.count).toBe(small);expect(large.count).toBe(14);
+  expect(large.rows.map(row=>row.words)).toEqual(Array.from({length:10},(_,n)=>'PRIVATE MESSAGE '+n));
+  let changed=false;
+  f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,thread.conversation)).run());}});
+  const revoked=await f.query(commsQuery,'alice',variables);
+  expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE MESSAGE');
 });
