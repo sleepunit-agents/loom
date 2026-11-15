@@ -14,13 +14,15 @@ export async function installDataProbe(page){
   };
  });
 }
-export function connectionEvidence({title,pattern}){
+export function connectionEvidence({title,pattern,wait=false}){
  const state=globalThis.__loomDataProbe,open=state.sockets.filter(s=>s.readyState===WebSocket.OPEN),graphql=open.filter(s=>new URL(s.url).pathname==='/graphql');
- return{known:true,title,graphql:graphql.length,other:open.filter(s=>new URL(s.url).pathname!=='/graphql').map(s=>new URL(s.url).pathname),selectionSeen:graphql.some(s=>{const e=state.entries.get(s);return [...e.active.values()].some(r=>new RegExp(pattern).test(r.query)&&e.frames.some(f=>f.id===r.id));})};
+ const evidence={known:true,title,graphql:graphql.length,other:open.filter(s=>new URL(s.url).pathname!=='/graphql').map(s=>new URL(s.url).pathname),selectionSeen:graphql.some(s=>{const e=state.entries.get(s);return [...e.active.values()].some(r=>new RegExp(pattern).test(r.query)&&e.frames.some(f=>f.id===r.id));})};return wait?evidence.selectionSeen:evidence;
 }
 export async function auditDataDoor(page,title){
  if(!signatures[title])return{known:false,title};
- return page.evaluate(connectionEvidence,{title,pattern:signatures[title]});
+ const args={title,pattern:signatures[title]};
+ await page.waitForFunction(connectionEvidence,{...args,wait:true},{timeout:4000}).catch(()=>{});
+ return page.evaluate(connectionEvidence,args);
 }
 /** Reconstruct prior selected data; reject unchanged fields and collection snapshots. */
 export function changedFields(history,after,root,minDepth){
