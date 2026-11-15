@@ -96,6 +96,7 @@ it('chooses literal specificity ahead of star count, then the stricter tier for 
  rules.set({kind:'merge',scope:'github:acme/*pp',tier:'ask'},'pat');expect(resolve()).toMatchObject({tier:'ask',scope:'github:acme/*pp'});
  rules.set({kind:'merge',scope:'github:acme/*pp',tier:null},'pat');expect(resolve()).toMatchObject({tier:'tell'});
  rules.set({kind:'merge',scope:'github:acme/ap*',tier:null},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'github:acme/a*p'});
+ rules.set({kind:'merge',scope:'github:acme/a**p',tier:'ask'},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'github:acme/a*p'});
 });
 it('rolls back receipt failure without a live publication, then publishes successful creation and deletion',async()=>{
  const f=fixture();await f.root.ready;
@@ -116,4 +117,11 @@ it('rolls back receipt failure without a live publication, then publishes succes
  next=once(ws,'message');expect((await f.post({...input,tier:null},'remove')).status).toBe(200);
  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toContainEqual({path:['approvalRules',0],removed:true,value:null});
  expect(f.db.select().from(s.operationResults).all()).toHaveLength(2);
+});
+
+it('refuses non-repository merge scope text and malformed repository patterns without effects or receipts',async()=>{
+ const f=fixture();
+ for(const [i,scope] of ['acme/app','please allow','github:acme','github:acme/app#1','github:acme/app/extra','github:acme/','github:/app','github:acme/a?'].entries())
+  expect((await f.post({kind:'merge',scope,tier:'do'},'invalid-'+i)).status).toBe(400);
+ expect(f.root.services.approvalRules.list()).toEqual([]);expect(f.db.select().from(s.operationResults).all()).toEqual([]);
 });
