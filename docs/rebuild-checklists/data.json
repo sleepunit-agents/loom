@@ -86,6 +86,46 @@
     },
     {
       "id": "data-017",
+      "promise": "migrations The list of changes already made to the database's shape, so each is applied once.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-018",
+      "promise": "operation_results The result of each recent write, kept 30 days, so a retry after a dropped connection returns the same answer and nothing happens twice.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-019",
+      "promise": "outside_effects Things that reach outside loom (a push notification, a send to Discord, starting a body). On a staging copy these wait here to be let through by hand.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-020",
+      "promise": "notification_queue Notifications waiting to be sent to each device, and whether each arrived.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-021",
+      "promise": "signin_challenges Passkey challenges in flight. Each lives a few minutes.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-022",
+      "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept up to an hour until they are turned into incoming messages. The one place loom stores something it does not look inside.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-023",
+      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-024",
+      "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
+      "source": "docs/how-it-works/site/data.html"
+    },
+    {
+      "id": "data-025",
       "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {

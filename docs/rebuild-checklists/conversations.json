@@ -11,71 +11,136 @@
     },
     {
       "id": "conversations-002",
-      "promise": "Each thing said or done is a turn: a message, a reply, an action, a wake, a note or a refusal. Loom records who it came from, when, and how it went. A turn holds no words.",
+      "promise": "One table Every conversation is one row.",
       "source": "docs/how-it-works/site/conversations.html"
     },
     {
       "id": "conversations-003",
-      "promise": "When an agent finishes a stretch of work it writes a digest: a summary, what was decided, the tasks and projects it touched, and anything it needs from its owner.",
+      "promise": "One per place An agent has one conversation per thread, channel or lane.",
       "source": "docs/how-it-works/site/conversations.html"
     },
     {
       "id": "conversations-004",
-      "promise": "That need becomes a question in the inbox, addressed to a person, with what happens on each answer. The answer, who gave it and when are recorded on the same item, and loom adds a new item for the agent, with answer as its source, so the agent learns of it.",
+      "promise": "One job at a time At most one job works in a conversation.",
       "source": "docs/how-it-works/site/conversations.html"
     },
     {
       "id": "conversations-005",
-      "promise": "Every inbox item names its conversation, and a digest points at the question it raised.inbox.conversation · digests.inbox_item",
-      "source": "docs/how-it-works/site/conversations.html"
+      "promise": "A private chat in Comms between one person and one agent.",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
     },
     {
       "id": "conversations-006",
-      "promise": "A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.inbox.source = trigger",
-      "source": "docs/how-it-works/site/conversations.html"
+      "promise": "A channel or a direct message. A bot signed in to the server speaks for the agent.",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
     },
     {
       "id": "conversations-007",
-      "promise": "A job works in one conversation, and a conversation points at the job working in it now.jobs.conversation · conversations.job",
-      "source": "docs/how-it-works/site/conversations.html"
+      "promise": "The same, in a Slack workspace.",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
     },
     {
       "id": "conversations-008",
-      "promise": "A session leaves a short note for the next one, and Activity builds each day from them.in the agent's own files",
-      "source": "docs/how-it-works/site/conversations.html"
+      "promise": "A trigger from Tempo drops an item in the agent's inbox, such as a lane that runs every night.",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
     },
     {
       "id": "conversations-009",
-      "promise": "A conversation belongs to one agent, and optionally to a project or privately to one member.conversations.agent, project, member",
-      "source": "docs/how-it-works/site/conversations.html"
+      "promise": "A piece of work one agent hands to another. Its place is the parent job.",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
     },
     {
       "id": "conversations-010",
+      "promise": "Each thing said or done is a turn: a message, a reply, an action, a wake, a note or a refusal. Loom records who it came from, when, and how it went. A turn holds no words.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-011",
+      "promise": "When an agent finishes a stretch of work it writes a digest: a summary, what was decided, the tasks and projects it touched, and anything it needs from its owner.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-012",
+      "promise": "That need becomes a question in the inbox, addressed to a person, with what happens on each answer. The answer, who gave it and when are recorded on the same item, and loom adds a new item for the agent, with answer as its source, so the agent learns of it.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-013",
+      "promise": "A task names the conversation it came from.tasks.source_kind, source_id",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-014",
+      "promise": "Every inbox item names its conversation, and a digest points at the question it raised.inbox.conversation · digests.inbox_item",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-015",
+      "promise": "An approval records the conversation it was asked in.approvals.conversation",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-016",
+      "promise": "A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.inbox.source = trigger",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-017",
+      "promise": "A thread keeps the pull requests it mentions and shows them as cards.thread_refs.ref",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-018",
+      "promise": "A job works in one conversation, and a conversation points at the job working in it now.jobs.conversation · conversations.job",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-019",
+      "promise": "Each incoming message goes into one conversation.bridge_incoming.conversation",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-020",
+      "promise": "A request for a secret records the conversation it was asked in.secret_requests.conversation",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-021",
+      "promise": "A session leaves a short note for the next one, and Activity builds each day from them.in the agent's own files",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-022",
+      "promise": "A conversation belongs to one agent, and optionally to a project or privately to one member.conversations.agent, project, member",
+      "source": "docs/how-it-works/site/conversations.html#con-h"
+    },
+    {
+      "id": "conversations-023",
       "promise": "a Three labels. Each conversation carries its agent, its project if it has one, and a member when it is private to one person.",
       "source": "docs/how-it-works/site/conversations.html#see-h"
     },
     {
-      "id": "conversations-011",
+      "id": "conversations-024",
       "promise": "b Who sees it. A household owner sees everything, including another member's private thread. Anyone else sees conversations in their projects and conversations of agents they own.",
       "source": "docs/how-it-works/site/conversations.html#see-h"
     },
     {
-      "id": "conversations-012",
+      "id": "conversations-025",
       "promise": "c Private. A thread in loom is private to its member. Private to a member means that member plus household owners.",
       "source": "docs/how-it-works/site/conversations.html#see-h"
     },
     {
-      "id": "conversations-013",
+      "id": "conversations-026",
       "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
       "source": "docs/how-it-works/site/conversations.html#see-h"
     },
     {
-      "id": "conversations-014",
+      "id": "conversations-027",
       "promise": "e Words. Message words are kept for the household's keep time, 14 days at most, then removed. They are encrypted where they are stored.",
       "source": "docs/how-it-works/site/conversations.html#see-h"
     },
     {
-      "id": "conversations-015",
+      "id": "conversations-028",
       "promise": "The private thread displays the person message and agent reply.",
       "source": "docs/how-it-works/site/conversations.html",
       "probe": {
@@ -88,7 +153,7 @@
       }
     },
     {
-      "id": "conversations-016",
+      "id": "conversations-029",
       "promise": "A question appears inline with Allow and Deny.",
       "source": "docs/how-it-works/site/conversations.html",
       "probe": {
@@ -102,7 +167,7 @@
       }
     },
     {
-      "id": "conversations-017",
+      "id": "conversations-030",
       "promise": "Work made in the conversation is listed.",
       "source": "docs/how-it-works/site/conversations.html",
       "probe": {

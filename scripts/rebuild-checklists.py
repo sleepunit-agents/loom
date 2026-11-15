@@ -45,8 +45,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   if not text or text in seen:return
   seen.add(text);rows.append({'id':f.stem+'-'+str(len(rows)+1).zfill(3),'promise':text,'source':f'docs/how-it-works/site/{f.name}'+('#'+section if section else ''),**({'probe':probe} if probe else {})})
  for n in nodes:
-  if n.tag=='li' and n.parent and (n.parent.cls('does') or n.parent.cls('see') or n.parent.cls('rules')):
+  if n.tag=='li' and n.parent and (n.parent.cls('does') or n.parent.cls('see') or n.parent.cls('rules') or n.parent.cls('facts') or n.parent.cls('plumb')):
    add(n.text(),'see-h' if n.parent.cls('see') else '')
+  elif n.tag=='p' and (n.within('ledger') or n.within('venue')): add(n.text(),'con-h')
   elif n.tag=='p' and n.parent and n.parent.cls('how__p'): add(n.text(),'how-h')
   elif n.tag=='p' and n.within('dec'): add(n.text(),'')
   elif n.tag=='span' and n.parent and n.parent.cls('node__body') and n.within('anat'): add(n.text(),'con-h')

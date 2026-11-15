@@ -86,6 +86,16 @@
     },
     {
       "id": "memory-017",
+      "promise": "each agent's folder Its memories and their history, drafts awaiting ratification, people cards, project cards, and its identity files.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-018",
+      "promise": "shared by the household Knowledge pages and the people directory.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-019",
       "promise": "Knowledge offers search and freshness folders.",
       "source": "docs/how-it-works/site/memory.html",
       "probe": {
@@ -99,7 +109,7 @@
       }
     },
     {
-      "id": "memory-018",
+      "id": "memory-020",
       "promise": "Activity shows a day and the conversation turns.",
       "source": "docs/how-it-works/site/memory.html",
       "probe": {
