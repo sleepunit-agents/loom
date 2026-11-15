@@ -13,6 +13,8 @@ import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { Jobs } from './runtime/jobs.js';
 
 export interface SharedTempoOptions {
+  /** Accept one settled person batch. IDs only; delivery reads current policy. */
+  notify?(member: string, items: readonly string[]): boolean;
   admit?: TempoOptions['admit'];
   operation?: TempoOptions['operation'];
   instructions?: TempoOptions['instructions'];
@@ -27,7 +29,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     contributors: options.contributors,
     delivery: { conversations, changed, instructions: options.instructions, changeRevision: options.changeRevision,
       admit: options.admit ?? ((who, items) => {
-        if (who.kind === 'person') { changed(); return true; }
+        if (who.kind === 'person') return options.notify?.(who.id, items.map(item => item.id)) ?? false;
         const ids = [...new Set(items.flatMap(item => item.conversation ? [item.conversation] : []))];
         let admitted = 0;
         for (const id of ids) if (jobs.admit(id)) admitted++;

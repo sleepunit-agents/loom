@@ -99,3 +99,20 @@ it('rolls a Tempo write back when the actual shared receipt insert fails',async(
  expect((await f.call('tempo.set',{...f.trigger,times:f.now()},'set')).status).toBe(200);
  expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
+it('exposes an observable word-free notice only after the person batch settles',async()=>{
+ const f=fixture(),reader='other-notice-token-'.repeat(3);
+ f.db.insert(tokens).values({fingerprint:hash(reader),label:'Other',kind:'owner',member:'sam',createdAt:f.now()}).run();
+ const read=async(credential=reader)=>{
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({query:'{ settledInboxNotice { id count } }'})});
+  const result=await response.json();expect(result.errors).toBeUndefined();return result.data.settledInboxNotice;
+ };
+ expect(await read()).toBeNull();
+ expect((await f.call('tempo.set',{...f.trigger,toKind:'person',to:'sam'},'other-person')).status).toBe(200);
+ expect(await read()).toBeNull();f.clock.advance(4999);expect(await read()).toBeNull();f.clock.advance(1);
+ expect(await read()).toMatchObject({id:expect.any(String),count:1});
+ expect(await read(credential)).toBeNull();
+ const notice=await read();expect(JSON.stringify(notice)).not.toContain('Check pump');
+ const item=f.db.select().from(inbox).get()!;
+ f.root.writes.run(()=>f.db.update(inbox).set({state:'done'}).where(eq(inbox.id,item.id)).run());
+ expect(await read()).toBeNull();
+});

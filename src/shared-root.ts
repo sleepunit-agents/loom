@@ -16,6 +16,7 @@ import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
+import { settledNotices } from './core/tempo/notices.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -33,7 +34,8 @@ export function sharedRoot(options: {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
+  const notices = settledNotices(db, () => data.changed());
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...notices.fields, ...options.fields }, () => !closing);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
@@ -45,8 +47,9 @@ export function sharedRoot(options: {
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   let tempo: ReturnType<typeof installSharedTempo>;
-  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
-  catch (error) { operations.close(); void data.close(); throw error; }
+  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed,
+    { ...options.tempo, notify: options.tempo?.notify ?? notices.publish }); }
+  catch (error) { notices.close(); operations.close(); void data.close(); throw error; }
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -106,6 +109,7 @@ export function sharedRoot(options: {
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
+      notices.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
