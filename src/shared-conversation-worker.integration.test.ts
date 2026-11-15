@@ -85,10 +85,10 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
   const id='native-'+randomUUID();
   expect(await command('tempo.set',{id,ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3600000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Ordinary native Tempo work',note:'Native read variant'},randomUUID())).toMatchObject({ok:true,value:{id}});
-  const selection={query:'query NativeTrigger($id:String!){tempoTimezone triggers(where:{id:{eq:$id}},limit:1){id state enabled}}',variables:{id}};
-  expect(await query(selection)).toMatchObject({data:{tempoTimezone:expect.any(String),triggers:[{id,state:'standing',enabled:true}]}});
+  const selection={query:'query NativeTrigger($id:String!){tempoTimezone triggers(where:{id:{eq:$id}},limit:1){id ownerKind owner state enabled}}',variables:{id}};
+  expect(await query(selection)).toMatchObject({data:{tempoTimezone:expect.any(String),triggers:[{id,ownerKind:'agent',owner:'art',state:'standing',enabled:true}]}});
   expect(await command('tempo.stop',{id},randomUUID())).toMatchObject({ok:true});
-  expect(await query(selection)).toMatchObject({data:{triggers:[{id,state:'stopped',enabled:false}]}});
+  expect(await query(selection)).toMatchObject({data:{triggers:[{id,ownerKind:'agent',owner:'art',state:'stopped',enabled:false}]}});
  };
  // The Tempo variant retains bodyProgram's default factory and Claude adapter.
  // Only its provider process is mocked; MCP and Root remain real loopback HTTP.
@@ -155,7 +155,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  }
  const job=f.db.select().from(s.jobs).get()!;
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
- // The callback pause before confirmation is independently asserted by the receiving-program variant.
+ // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
 expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2+nativeActions});
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
