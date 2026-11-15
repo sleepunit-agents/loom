@@ -1,5 +1,6 @@
 /** Named task decisions must be answerable through their real Inbox cards. */
 import {join} from 'node:path';
+const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
 export async function taskQuestions({page,tile,app,example,out}){
  const screenshot='action-taskQuestions.png';
  try{
@@ -10,14 +11,14 @@ export async function taskQuestions({page,tile,app,example,out}){
     const task=s.create({title:`Decide the ${answer} example`,goal:'Record the person’s choice.',why:'Prove the task question path.',owner:{kind:'agent',id:'fern'},source:{kind:'conversation',id:example.conversation}},actor);
     s.ask(task.id,{to:{kind:'member',id:'alex'},ask,ifYes:'Fern proceeds.',ifNo:'Fern waits.',answers:answer==='words'?'words':'yes-no'},actor);return task;
    }).value;
-   const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();
-   await tile.getByText(ask,{exact:true}).first().click();
+   const back=tile.locator('.loom-split__back:visible');if(await back.count())await activate(back);
+   await activate(tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(ask,{exact:true})}));
    const card=tile.getByRole('article',{name:'Inbox item',exact:true});
    await card.getByText('Fern proceeds.',{exact:true}).waitFor();await card.getByText('Fern waits.',{exact:true}).waitFor();
    const controls=card.getByRole('region',{name:'Answer task question',exact:true});
    if(answer==='words')await controls.getByRole('textbox',{name:'Answer task in your own words',exact:true}).fill('Choose the smaller fictitious pump.');
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks/command'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-   await controls.getByRole('button',{name:answer==='yes'?'Yes':answer==='no'?'No':'Record task answer',exact:true}).click();
+   await activate(controls.getByRole('button',{name:answer==='yes'?'Yes':answer==='no'?'No':'Record task answer',exact:true}));
    const response=await pending,body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Task answer was refused');
    const persisted=s.get(task.id),questions=db.prepare("SELECT id,state FROM inbox WHERE source='task' AND waits_on_id=?").all(task.id);
    const comment=answer==='words'?'Choose the smaller fictitious pump.':`${answer==='yes'?'Yes':'No'}, to: ${ask}\n${answer==='yes'?'Fern proceeds.':'Fern waits.'}`;
@@ -40,12 +41,13 @@ export async function taskInlineQuestion({page,tile,app,example,out}){
   }).value;
   const card=tile.getByRole('article',{name:'Inbox item',exact:true}).filter({has:page.getByRole('heading',{name:ask,exact:true})});
   await card.getByRole('heading',{name:ask,exact:true}).waitFor({timeout:4000});
+  const yes=card.getByRole('button',{name:'Yes',exact:true});await yes.waitFor({state:'visible'});await card.screenshot({path:join(out,screenshot)});
   const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks/command'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-  await card.getByRole('button',{name:'Yes',exact:true}).click();
+  await yes.focus();await yes.press('Enter');
   const response=await pending,body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Inline task answer refused');
   const saved=s.get(task.id);
   if(saved.ask!==null||saved.comments.length!==1||saved.comments[0].actor!=='alex'||!saved.comments[0].at)throw Error('Inline task answer not recorded');
   app.writes.run(()=>s.close(task.id,'Inline choice recorded.'));
-  await page.screenshot({path:join(out,screenshot),fullPage:true});return {taskInlineQuestion:{ok:true,screenshot}};
+  return {taskInlineQuestion:{ok:true,screenshot}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {taskInlineQuestion:{ok:false,error:String(error),screenshot}};}
 }

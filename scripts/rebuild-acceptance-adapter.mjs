@@ -23,7 +23,7 @@ function ports(value){
  return value;
 }
 // The ports consumed by SharedStartupAdapters in src/shared-startup.ts.
-const startupPorts=['changes','workAnswerAuthority','tempo','secretWrites','secretInputs','bridges','modelRoles','runtimeJobEnded'];
+const startupPorts=['changes','workAnswerAuthority','tempo','secretWrites','secretInputs','bridges','modelRoles','runtimeJobEnded','approvedOperations'];
 export function acceptanceAdapter(previousPath,additional){
  return async context=>{
   const acquired=[];

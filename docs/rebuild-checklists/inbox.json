@@ -26,7 +26,11 @@
     {
       "id": "inbox-004",
       "promise": "Sends you to Approvals or the task when the answer belongs there.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "action",
+        "action": "inboxSourceTargets"
+      }
     },
     {
       "id": "inbox-005",
@@ -54,7 +58,11 @@
     {
       "id": "inbox-008",
       "promise": "A task's question arrives as an item, with a link to the task.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxTaskArrival"
+      }
     },
     {
       "id": "inbox-009",
@@ -102,7 +110,11 @@
     {
       "id": "inbox-016",
       "promise": "A question can name an approval or a task whose outcome settles it. When that finishes, the item resolves and records why.",
-      "source": "docs/how-it-works/site/inbox.html#how-h"
+      "source": "docs/how-it-works/site/inbox.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxSourceOutcome"
+      }
     },
     {
       "id": "inbox-017",
