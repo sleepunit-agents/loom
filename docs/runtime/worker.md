@@ -270,6 +270,41 @@ The in-child bodyProgram.startup extension point precedes mail/model input;
 startup Secret alias retrieval is a separate integration. Codex, additional
 Comms tools and multi-turn question/wait handling remain unfinished.
 
+## Agent house settings
+
+`POST /api/runtime/agentRunSettingsSet` uses the ordinary `{id,input}` envelope:
+
+```json
+{"agent":"art","houseRepository":"https://example.com/house.git","houseFile":"Housefile","houseBranch":"next","nestedContainers":false,"gpu":false,"boxes":["workshop","attic"],"ports":[{"address":"127.0.0.1","port":9000}]}
+```
+
+Current agent owners configure their house, ordered preferred machines and allowed
+listening ports. The existing agent setup policy applies, including current
+ownership on receipt replay. Runner, agent and service principals cannot edit it;
+a household owner role alone does not replace agent ownership. Preferred machines
+must be enrolled, unrevoked and visible to the configuring member, or explicitly lent to the
+agent. Listing a machine does not grant permission to run there. An empty preference
+list holds work until a machine is configured.
+
+Repository references cannot contain URL passwords, HTTP user information, queries
+or fragments. The
+house file is a relative path inside the repository. Machine and port lists are
+distinct and bounded at 128 entries. Ports use literal IPv4/IPv6 addresses and
+integer ports 1–65535. This command preserves the existing Secrets-owned repository
+credential reference; secret aliases and grants stay with Secrets.
+
+All settings and the receipt commit together, followed by an existing Tempo
+capacity notification. Rollback preserves previous settings and cached replay
+does not apply the change again. First house setup wakes settled mail. Each job
+keeps the house repository/file/branch recorded at admission. Worker claims use
+current preferred machines, ports and capabilities; enabling GPU after admission
+also requires a GPU-capable machine. Already claimed assignment snapshots stay
+unchanged. Configuration does not execute a builder or model provider.
+
+Listening IP addresses are normalized before uniqueness checks and storage, so
+equivalent IPv6 spellings cannot configure duplicate endpoints. House reference
+text rejects control characters, including tabs that a URL parser would remove.
+
 ## Owner machine settings
 
 An authenticated current machine owner (or current household owner) sends

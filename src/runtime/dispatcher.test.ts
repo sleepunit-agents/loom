@@ -170,6 +170,7 @@ it('persists the selected account and harness on each attempt and clears them fo
 it('projects current agent capabilities and only its configured ports at claim', () => {
   const f = fixture();
   f.db.update(agentRunSettings).set({ nestedContainers: true, gpu: true }).run();
+  f.db.insert(boxFacts).values({box:'first',fact:'gpu:5090',fromOwner:false}).run();
   f.db.insert(agentHousePorts).values([
     { agent: 'art', address: '127.0.0.1', port: 9000 },
     { agent: 'art', address: '127.0.0.1', port: 8000 },

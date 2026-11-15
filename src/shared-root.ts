@@ -1,3 +1,5 @@
+import { registerAgentRunSettings } from './shared-agent-run-settings.js';
+
 import { registerBoxSettings } from './shared-box-settings.js';
 import { registerAgentModels } from './shared-agent-models.js';
 
@@ -125,6 +127,8 @@ export function sharedRoot(options: {
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
+  registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
+
   registerBoxSettings(operations, db, () => tempo?.capacityChanged());
   registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
