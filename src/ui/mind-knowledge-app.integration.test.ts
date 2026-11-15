@@ -75,11 +75,24 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       const link=document.querySelector('article a[href="https://loom.invalid/knowledge/clock-tempo"]');
       const trace:string[]=[];
       (window as unknown as {knowledgeClickTrace:string[]}).knowledgeClickTrace=trace;
-      for(const type of ['pointerdown','pointerup','click']){
+      const snapshot=(type:string,event:Event)=>{
+        if(trace.length>=32)return;
+        const target=event.target instanceof Element ? event.target : null;
+        const rect=link?.getBoundingClientRect();
+        const reader=link?.closest('.loom-split__reader');
+        const point=event instanceof MouseEvent ? [event.clientX,event.clientY] : undefined;
+        // Geometry and fixed role flags only: never retain text, URLs or HTML.
+        trace.push(JSON.stringify({type,citation:target?.closest('a')===link,
+          connected:!!link?.isConnected,prevented:event.defaultPrevented,
+          target:target===reader?'reader':target?.closest('.loom-prose')?'prose':target?.closest('article')?'article':'other',
+          point,rect:rect?[rect.x,rect.y,rect.width,rect.height]:null,
+          readerScroll:reader?.scrollTop,pageScroll:scrollY,
+          focused:document.activeElement===link}));
+      };
+      for(const type of ['pointerdown','mousedown','focusin','pointerup','mouseup','click','scroll']){
         document.addEventListener(type,event=>{
-          const target=event.target as Element;
-          trace.push(`${type}: citation=${target.closest('a')===link}, connected=${!!link?.isConnected}, prevented=${event.defaultPrevented}`);
-          if(type==='click')queueMicrotask(()=>trace.push(`after click: connected=${!!link?.isConnected}, prevented=${event.defaultPrevented}`));
+          snapshot(type,event);
+          if(type==='click'||type==='pointerdown')queueMicrotask(()=>snapshot(`after ${type}`,event));
         },{capture:true});
       }
     });
