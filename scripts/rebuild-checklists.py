@@ -38,11 +38,14 @@ ui={
  'bridges':[('Bridges','The Bridges tile has connections, channel rules, person links and pending sends.',['Connections','Channel rules','Person links','Pending sends'])],
  'secrets':[('Settings','Secrets live in Settings with requests and grants.',['Secrets','Requests','Grants'])],
 }
+# These source promises already have behavior probes; regeneration must keep them.
+action_promises={('tasks','Lets a person or an agent claim work, comment on it and close it.'):'taskLifecycle'}
 out=ROOT/'docs/rebuild-checklists';out.mkdir(exist_ok=True)
 for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  p=Parser();p.feed(f.read_text());nodes=list(p.root.all());rows=[];seen=set()
  def add(text,section,probe=None):
   if not text or text in seen:return
+  if probe is None and (f.stem,text) in action_promises: probe={'kind':'action','action':action_promises[(f.stem,text)]}
   seen.add(text);rows.append({'id':f.stem+'-'+str(len(rows)+1).zfill(3),'promise':text,'source':f'docs/how-it-works/site/{f.name}'+('#'+section if section else ''),**({'probe':probe} if probe else {})})
  for n in nodes:
   if n.tag=='li' and n.parent and (n.parent.cls('does') or n.parent.cls('see') or n.parent.cls('rules') or n.parent.cls('facts') or n.parent.cls('plumb')):
@@ -66,6 +69,18 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
+ if f.stem=='data':
+  for row in rows:
+   if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem=='desk':
+  for row in rows:
+   if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem=='index':
+  for row in rows:
+   if row['promise'].startswith('5 One query endpoint'):row['probe']={'kind':'legacy-data-socket'}
+ if f.stem=='tasks':
+  for row in rows:
+   if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':hashlib.sha256(f.read_bytes()).hexdigest(),'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  (out/(f.stem+'.json')).write_text(json.dumps(obj,indent=2,ensure_ascii=False)+'\n')

@@ -1,6 +1,7 @@
 /** Actions in the same real browser/program as the launcher walkthrough.
  * Reads inspect only its disposable example store; writes use visible controls. */
 import {join} from 'node:path';
+import {commsDeliveryEvidence} from '../dist/rebuild/comms-delivery-evidence.js';
 export async function conversationActions({page,app,example,out,open}){
  const select=async tile=>{const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true}),row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'});await heading.or(row).first().waitFor({state:'visible'});if(!await heading.isVisible())await row.click();};
  let phase='';
@@ -15,11 +16,9 @@ export async function conversationActions({page,app,example,out,open}){
   phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
   phase='send-message';const pending=response('/api/comms/send');await tile.getByRole('button',{name:'Send',exact:true}).click();const sent=await result(pending);
   phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
-  const rows=app.services.comms.db.$client.prepare('SELECT id,conversation,to_kind,"to",source,thread,message_seq FROM inbox WHERE thread=? AND message_seq=?').all(example.thread,sent.body.seq);
-  const ok=rows.length===1&&rows[0].id===sent.body.item&&rows[0].conversation===example.conversation&&rows[0].to_kind==='agent'&&rows[0].to==='fern'&&rows[0].source==='thread'&&rows[0].thread===example.thread&&rows[0].message_seq===sent.body.seq;
+  const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.body);
   const screenshot='action-comms-send.png';await page.screenshot({path:join(out,screenshot),fullPage:true});
-  sentWords=words;validSend=ok;
-  return{ok:false,persistedAfterReload:false,inboxCopies:rows.length,screenshot,error:'Reload persistence has not been observed yet.'};
+  sentWords=words;validSend=ok;return{ok:false,persistedAfterReload:false,inboxCopies,screenshot,error:'Reload persistence has not been observed yet.'};
  });
  await attempt('inboxAnswer',async()=>{
   const tile=await open('Inbox');await tile.getByRole('button',{name:'Go to Inbox',exact:true}).click();await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}).click();
