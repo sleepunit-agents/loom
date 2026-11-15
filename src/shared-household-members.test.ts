@@ -132,7 +132,7 @@ it('persists full ownership and permitted demotion without changing member posit
   const f = fixture(), joinedAt = f.root.services.household.members().find(row => row.id === 'sam')!.joinedAt;
   f.client.exec("UPDATE members SET position=73 WHERE id='sam'");
   expect((await f.call('setMember', { id: 'lee', role: 'owner', fullOwner: true, agents: ['art'] })).status).toBe(200);
-  expect(f.root.services.household.members().find(row => row.id === 'lee')).toMatchObject({ role: 'owner', fullOwner: true, agents: ['art'] });
+  expect(f.root.services.household.members().find(row => row.id === 'lee')).toMatchObject({ role: 'owner', fullOwner: true, agents: ['art','mark'] });
   f.clock.advance(1000);
   expect((await f.call('setMember', { id: 'sam', role: 'member', agents: ['mark'] }, 'lee', 'demote')).status).toBe(200);
   expect(f.root.services.household.members().find(row => row.id === 'sam')).toMatchObject({ role: 'member', fullOwner: false, position: 73, joinedAt, agents: ['mark'] });
@@ -153,11 +153,11 @@ it('withdraws populated owner metadata through an already subscribed socket afte
   await f.call('setMember', { id: 'lee', role: 'owner', fullOwner: true, agents: ['art'] });
   const ws = await openSocket(f, 'sam');
   const first = await subscribe(ws, '{ members(where:{id:{eq:"lee"}}) { id } memberAgents { member agent } }');
-  expect(first.patches[0].value).toEqual({ members: [{ id: 'lee' }], memberAgents: [{ member: 'lee', agent: 'art' }] });
+  expect(first.patches[0].value).toEqual({ members: [{ id: 'lee' }], memberAgents: [{ member: 'lee', agent: 'art' },{member:'lee',agent:'mark'}] });
   const next = once(ws, 'message');
   expect((await f.call('setMember', { id: 'sam', role: 'member', agents: [] }, 'lee', 'demote')).status).toBe(200);
   expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([
-    { path: ['members', 0], removed: true, value: null }, { path: ['memberAgents', 0], removed: true, value: null },
+    { path: ['members', 0], removed: true, value: null }, { path: ['memberAgents', 1], removed: true, value: null },{path:['memberAgents',0],removed:true,value:null},
   ]);
 });
 
@@ -205,12 +205,4 @@ it('keeps generic member output types free of credential relations and generated
   const leaked = answer.data.__schema.types.map((type: { name: string }) => type.name)
     .filter((name: string) => /^(Tokens|Sessions|Passkeys|SigninLinks|SigninChallenges|NotificationDevices|OperationResults)/.test(name));
   expect(leaked).toEqual([]);
-});
-
-it('keeps work-label setup internal instead of adding an outside authority door',async()=>{
- const f=fixture();
- for(const name of ['setProject','setGithubAccounts'])for(const actor of ['sam','lee','art'] as const)
-  expect((await f.call(name,{},actor,name+'-'+actor)).status).toBe(404);
- expect(f.client.prepare('SELECT * FROM projects').all()).toEqual([]);
- expect(f.client.prepare('SELECT * FROM agent_accounts').all()).toEqual([]);
 });

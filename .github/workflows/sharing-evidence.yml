@@ -4,6 +4,8 @@ on:
     paths:
       - 'web/src/pieces/sharing/**'
       - 'src/pieces/sharing/**'
+      - 'src/shared-projects*'
+      - 'src/shared-root.ts'
       - 'src/fixture.ts'
       - 'src/ui/sharing-app.integration.test.ts'
       - '.github/workflows/sharing-evidence.yml'
@@ -27,14 +29,14 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
-      - name: Verify sharing and capture both looks at three sizes
+      - name: Verify the shared Sharing tile
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          export LOOM_TEST_SHOTS="$PWD/artifacts/sharing-app"
+          export LOOM_DESK_EVIDENCE=1
           nice -n 19 npx vitest run src/ui/sharing-app.integration.test.ts --maxWorkers=1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: sharing-app-${{ github.event.pull_request.head.sha }}
-          path: artifacts/sharing-app/
+          path: artifacts/household-sharing/
           if-no-files-found: error
