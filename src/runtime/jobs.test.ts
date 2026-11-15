@@ -8,7 +8,7 @@ import { Jobs } from './jobs.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
-function fixture() {
+function fixture(venue: 'loom' | 'handoff' = 'handoff') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
   const now = () => at, db = createDataSchema(client, now);
@@ -19,8 +19,8 @@ function fixture() {
   db.insert(agentModels).values({ agent: 'art', model: 'primary', position: 0 }).run();
   db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'https://example.org/house', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: true }).run();
   const comms = new Conversations(db, now), runtime = new Jobs(db, now);
-  const conversation = comms.open({ agent: 'art', venue: 'loom', place: 'thread', label: 'Reply', project: 'pond', member: 'owner' });
-  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Hello' });
+  const conversation = comms.open({ agent: 'art', venue, place: 'thread', label: 'Reply', project: 'pond', member: 'owner' });
+  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'loom' ? 'thread' : 'handoff', fromKind: venue === 'loom' ? 'person' : 'agent', fromId: venue === 'loom' ? 'owner' : 'art', words: 'Hello' });
   const tick = (ms: number) => { at = new Date(Date.parse(at) + ms).toISOString(); };
   return { db, comms, runtime, conversation, send, tick, now };
 }
@@ -152,4 +152,24 @@ it('excludes muted mail from admission, snapshots and retry attribution', () => 
   expect(f.db.select().from(inbox).where(eq(inbox.id, muted.id)).get()).toMatchObject({ state: 'waiting', job: null });
   f.runtime.stop(retry.id, 'owner', 'reset');
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+});
+
+it('keeps private Comms words out of the durable job brief and retry snapshots', () => {
+  const f = fixture('loom'); const mail = f.send();
+  f.db.update(inbox).set({ words: 'PRIVATE_PROMPT_MARKER' }).where(eq(inbox.id, mail.id)).run();
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.brief).toBe('');
+  f.runtime.claim(job.id, 'worker');
+  const result = f.runtime.finish(job.id, 'worker', 1, 'PRIVATE_LAUNCH_DIAGNOSTIC');
+  expect(result.job.logTail).toBeNull(); expect(result.retry?.brief).toBe('');
+  expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
+  expect(result.retry?.retryOf).toBe(job.id);
+});
+for (const exitCode of [0, 2]) it(`does not retain private body output after exit ${exitCode}`, () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  const result = f.runtime.finish(job.id, 'worker', exitCode, 'PRIVATE_REPLY_MARKER');
+  expect(result.job).toMatchObject({ state: exitCode === 0 ? 'done' : 'failed', exitCode, logTail: null, build: 'image' });
+  expect(f.runtime.get(job.id).logTail).toBeNull(); expect(result.retry).toBeUndefined();
+  expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
 });

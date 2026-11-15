@@ -36,7 +36,7 @@ it('claims only on the selected worker and delivers an execution-ready snapshot 
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
-    model: 'primary', account: 'account', harness: 'codex', brief: 'Private brief', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
+    model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.jobs.get(f.job.id).state).toBe('starting');
@@ -98,7 +98,7 @@ it('keeps machine health when a report rejects, without changing the foreign or 
   f.runtime.started('first', f.job.id, 'image'); f.runtime.finish('first', f.job.id, 0, 'done'); f.tick(10_000);
   expect(() => f.runtime.finish('first', f.job.id, 0, 'duplicate')).toThrow();
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
-  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: 'done' });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: null });
 });
 it('refreshes health on every successful phase report', () => {
   const f = fixture(); f.runtime.next('first');

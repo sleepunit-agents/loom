@@ -36,7 +36,9 @@ export class Jobs {
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
-        state: 'queued', brief: mail.map(item => item.words ?? '').join('\n\n'), model: model.model,
+        // Comms words are delivered ephemerally by ConversationMail, never copied
+        // into the durable worker job. Other venues keep their ordinary brief.
+        state: 'queued', brief: conversation.venue === 'loom' ? '' : mail.map(item => item.words ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
@@ -86,7 +88,13 @@ export class Jobs {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
       const at = this.now();
-      const job = this.end(before, before.state === 'starting' || exitCode !== 0 ? 'failed' : 'done', { exitCode, logTail: logTail.slice(-16_384), endedAt: at });
+      const conversation = before.conversation ? this.db.select({ venue: conversations.venue }).from(conversations)
+        .where(eq(conversations.id, before.conversation)).get() : undefined;
+      // A runner's stdout/stderr can contain the private prompt or reply. Keep
+      // no copy in jobs; private words belong only to their encrypted store.
+      const keepLog = !before.conversation || Boolean(conversation && conversation.venue !== 'loom');
+      const job = this.end(before, before.state === 'starting' || exitCode !== 0 ? 'failed' : 'done',
+        { exitCode, logTail: keepLog ? logTail.slice(-16_384) : null, endedAt: at });
       if (before.state !== 'starting') return { job };
       let depth = 0, ancestor = before;
       const seen = new Set([id]);
