@@ -25,8 +25,8 @@ it('renders the actual detailed account selection and immediately replaces it wi
 it('hides retained details whenever the live selection becomes unavailable and distinguishes empty from unread',async()=>{
  f.snapshot={status:'live',data:{modelAccounts:[detail]}};await act(async()=>{tree=create(h(RuntimeAccounts));});
  for(const status of ['loading','offline','denied'] as const){
-  f.snapshot={status,data:{modelAccounts:[detail]}};await act(async()=>tree.update(h(RuntimeAccounts)));
-  const text=JSON.stringify(tree.toJSON());expect(text).not.toContain('private-provider');expect(text).not.toContain('Workshop');expect(text).not.toContain('No model accounts yet.');
+  f.snapshot={status,data:{modelAccounts:[detail],agentModels:[{agent:'hidden-agent',model:'hidden-preference',position:0}]}};await act(async()=>tree.update(h(RuntimeAccounts)));
+  const text=JSON.stringify(tree.toJSON());expect(text).not.toContain('private-provider');expect(text).not.toContain('Workshop');expect(text).not.toContain('hidden-preference');expect(text).not.toContain('No model accounts yet.');
  }
  f.snapshot={status:'live',data:{modelAccounts:[]}};await act(async()=>tree.update(h(RuntimeAccounts)));expect(JSON.stringify(tree.toJSON())).toContain('No model accounts yet.');
  f.snapshot={status:'live',data:{modelAccounts:[{...detail,usage:null,usageReadAt:null,resetsAt:null,hasRoom:false,signedInOn:[]}]}};await act(async()=>tree.update(h(RuntimeAccounts)));
@@ -34,12 +34,19 @@ it('hides retained details whenever the live selection becomes unavailable and d
 });
 
 it('orders each visible agents models and uses household time for account timestamps',async()=>{
- f.snapshot={status:'live',data:{modelAccounts:[detail],deskTime:{timezone:'America/Chicago'},agentModels:[{agent:'mark',model:'mark-only',position:0},{agent:'art',model:'fallback',position:1},{agent:'art',model:'preferred',position:0}]}};
+ f.snapshot={status:'live',data:{modelAccounts:[detail],deskTime:{timezone:'America/Chicago'},agentModels:[{agent:'art',model:'preferred',position:0},{agent:'art',model:'fallback',position:1},{agent:'mark',model:'mark-only',position:0}]}};
  await act(async()=>{tree=create(h(RuntimeAccounts));});
- expect(tree.root.findAllByType('li').map((node:any)=>node.children.join(''))).toEqual(['preferred','fallback','mark-only']);
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['preferred','fallback','mark-only']);
  const text=JSON.stringify(tree.toJSON());expect(text).toContain('America/Chicago');expect(text).toContain('6:00:00 AM');
  f.snapshot={status:'live',data:{modelAccounts:[{__typename:'RuntimeAccountSummary',label:'Main subscription',level:'almost full'}],agentModels:[{agent:'mark',model:'mark-only',position:0}]}};
  await act(async()=>tree.update(h(RuntimeAccounts)));
- expect(tree.root.findAllByType('li').map((node:any)=>node.children.join(''))).toEqual(['mark-only']);
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['mark-only']);
  expect(JSON.stringify(tree.toJSON())).not.toContain('preferred');expect(JSON.stringify(tree.toJSON())).not.toContain('private-provider');
+});
+
+it('keeps server tie order and reports a missing household zone honestly',async()=>{
+ f.snapshot={status:'live',data:{modelAccounts:[detail],agentModels:[{agent:'art',model:'Z-order',position:0},{agent:'art',model:'a-order',position:0}]}};
+ await act(async()=>{tree=create(h(RuntimeAccounts));});
+ expect(tree.root.findAllByType('li').map((node:{children:unknown[]})=>node.children.join(''))).toEqual(['Z-order','a-order']);
+ const text=JSON.stringify(tree.toJSON());expect(text).toContain('Time zone unavailable');expect(text).not.toContain(' UTC');
 });
