@@ -20,6 +20,7 @@ import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
+import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
@@ -54,7 +55,11 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields, ...accounts.fields });
+  }), { ...fields, ...ownFields, ...accounts.fields,
+    // Jobs carry the same agent/project/private-member labels as Approvals.
+    // Reuse its canonical SQL rather than maintain another sharing policy.
+    ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
+  });
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
       const headers = new Headers();
