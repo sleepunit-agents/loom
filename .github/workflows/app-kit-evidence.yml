@@ -17,7 +17,10 @@ on:
       - 'web/src/pieces/comms-view/**'
       - 'src/ui/comms-shared.integration.test.ts'
       - 'src/ui/attention-inbox.integration.test.ts'
-      - 'web/src/changes*'
+      - 'web/src/pieces/changes/**'
+      - 'web/src/pieces/change-view/**'
+      - 'web/src/data/work-views*'
+      - 'src/ui/changes-piece.integration.test.ts'
       - '.github/workflows/app-kit-evidence.yml'
 permissions:
   contents: read
@@ -42,7 +45,7 @@ jobs:
       - name: Keep the same screenshot fixtures
         run: |
           mkdir -p "$RUNNER_TEMP/kit-fixtures"
-          cp src/ui/changes-app.integration.test.ts "$RUNNER_TEMP/kit-fixtures/"
+          cp src/ui/changes-piece.integration.test.ts "$RUNNER_TEMP/kit-fixtures/"
       - name: Check out the before version
         if: matrix.version == 'before'
         env:
@@ -64,7 +67,7 @@ jobs:
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_SHOTS="$PWD/artifacts/app-kit"
           export LOOM_TEST_SHOTS="$LOOM_SHOTS"
-          nice -n 19 npx vitest run src/ui/changes-app.integration.test.ts --testNamePattern='1440|390' --maxWorkers=1
+          nice -n 19 npx vitest run src/ui/changes-piece.integration.test.ts --maxWorkers=1
       - name: Capture shared Inbox on the after runner
         if: matrix.version == 'after'
         run: |
