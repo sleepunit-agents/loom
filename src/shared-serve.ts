@@ -1,3 +1,4 @@
+import { measureResponse } from './core/measuring/response.js';
 /** Production HTTP/socket owner for the fresh shared composition. The caller
  * supplies the initialized connection and closes it only after this listener. */
 import { createServer } from 'node:http';
@@ -8,7 +9,12 @@ import { sharedRoot } from './shared-root.js';
 export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number }) {
   const root = sharedRoot(options);
   const sockets = new Set<Socket>();
-  const server = createServer(getRequestListener(request => root.http.fetch(request)));
+  let meter: Awaited<typeof root.measuring> | undefined;
+  const listener = getRequestListener(request => root.http.fetch(request));
+  const server = createServer((request, response) => {
+    const pending = measureResponse(meter, request, response, () => { void listener(request, response); });
+    void pending?.catch(() => { if (!response.headersSent) response.writeHead(503); response.end(); });
+  });
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   let detach: (() => void) | undefined;
   let closing: Promise<void> | undefined;
@@ -27,6 +33,8 @@ export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { 
     return closing;
   };
   try {
+    await root.ready;
+    meter = await root.measuring;
     detach = root.attach(server);
     const host = options.host ?? '127.0.0.1';
     await new Promise<void>((resolve, reject) => {

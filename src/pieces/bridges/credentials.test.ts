@@ -69,3 +69,6 @@ it('does not schedule another poll when an observer closes during publication',a
   await settle();clock.advance(60_000);await settle();
   expect(generation).toHaveBeenCalledOnce();expect(monitor.current()).toBeUndefined();
 });
+it('ready waits for the initial generation attempt',async()=>{
+ const clock=new FakeClock(),held=deferred<string>(),monitor=bridgeCredentials({generation:()=>held.promise},clock);let ready=false;const pending=monitor.ready().then(()=>{ready=true;});expect(ready).toBe(false);held.resolve(first);await pending;expect(ready).toBe(true);expect(monitor.current()).toBe(first);monitor.close();
+});
