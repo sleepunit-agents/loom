@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { call, callOnce } from '../../data';
+import { conversationOperation as mutate } from './operations';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import { InboxQuestionCard } from '../inbox-view';
 import type { InboxActions, InboxItem } from '../inbox-view/model';
@@ -21,10 +21,7 @@ export function InlineQuestion({ id, go, writable }: { id: string; go(path: stri
     const timer = setTimeout(() => setNow(Date.now()), Math.min(2147483647, Math.max(1, Math.min(...deadlines) - Date.now())));
     return () => clearTimeout(timer);
   }, [item, now]);
-  const mutate = async (name: string, input: object, queued = false) => {
-    const result = await (queued ? call(name, input) : callOnce(name, input)).result;
-    if (!result.ok) throw new Error(result.message);
-  };
+
   const actions: InboxActions | undefined = item && writable ? {
     read: item => mutate('inbox.read', { item }, true),
     answer: (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { call, callOnce } from '../../data';
+import { conversationOperation as mutate } from './operations';
 import { useSelection } from '../../data/graphql/selection';
 import { InlineQuestion } from './inline-question';
 import { SharedWork } from './shared-work';
@@ -31,10 +31,7 @@ export default function CommsApp({ path: shellPath, go }: { path?: string; go?(p
     const timer = setTimeout(() => setNow(Date.now()), Math.min(2147483647, Math.max(1, Math.min(...deadlines) - Date.now())));
     return () => clearTimeout(timer);
   }, [data, live, now]);
-  const mutate = async (name: string, input: object, queued = false) => {
-    const result = await (queued ? call(name, input) : callOnce(name, input)).result;
-    if (!result.ok) throw new Error(result.message);
-  };
+
   const actions: CommsActions | undefined = live ? {
     open: (agent, thread) => mutate('comms.open', { agent, thread }, true),
     send: (thread, words, clientId) => mutate('comms.send', { thread, words, clientId }),

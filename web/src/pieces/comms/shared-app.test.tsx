@@ -5,7 +5,7 @@ import { act, create } from 'react-test-renderer';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
   f.requests.push({ query, variables });
-  return { status: f.status, data: f.status === 'live' ? query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : query.includes('Work(') ? { tasks: [] } : f.data : undefined };
+  return { status: f.status, data: f.status === 'live' ? query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
@@ -77,4 +77,27 @@ it('answers the exact shared Inbox question inline', async () => {
   await draw(); expect(text()).toContain('PRIVATE QUESTION'); expect(text()).not.toContain('PRIVATE REPLY');
   await act(async () => { named('Allow').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.answer', { item: 'in-ask', answer: 'yes' });
+});
+
+it('expires inline private question and answer wording independently without a feed update', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-14T18:00:00Z')); setup();
+  f.data.commsMessages = [message({ kind: 'ask', inboxItem: 'in-ask' })];
+  f.data.item = { id: 'in-ask', source: 'thread', thread: 'th:pump', state: 'answered', answers: 'yes-no', at: '2026-11-14T18:00:00Z', read: true, refs: [], body: { words: 'INLINE PRIVATE QUESTION' }, answer: 'words', answerText: 'INLINE PRIVATE ANSWER',
+    bodyKeepUntil: '2026-11-14T18:00:01Z', answerKeepUntil: '2026-11-14T18:00:02Z' };
+  await draw(); expect(text()).toContain('INLINE PRIVATE QUESTION'); expect(text()).toContain('INLINE PRIVATE ANSWER');
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(text()).not.toContain('INLINE PRIVATE QUESTION'); expect(text()).toContain('INLINE PRIVATE ANSWER');
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(text()).not.toContain('INLINE PRIVATE ANSWER');
+});
+it('renders actual source and mentioned task work and withdraws it on current visibility changes', async () => {
+  setup(); f.data.commsRefs = [{ ref: 't-12', messageSeq: 1 }];
+  f.data.sourceTasks = [{ id: 't-10', title: 'SOURCE TASK', status: 'open' }];
+  f.data.mentionedTasks = { 't-12': [{ id: 't-12', title: 'MENTIONED TASK', status: 'in_progress' }] };
+  const go = await draw(); expect(text()).toContain('SOURCE TASK'); expect(text()).toContain('MENTIONED TASK'); expect(text()).toContain('in_progress');
+  f.data.sourceTasks = [{ id: 't-10', title: 'UPDATED TASK', status: 'closed' }];
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go })); });
+  expect(text()).toContain('UPDATED TASK'); expect(text()).toContain('closed'); expect(text()).not.toContain('SOURCE TASK');
+  f.data.sourceTasks = []; f.data.mentionedTasks = { 't-12': [] };
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go })); });
+  expect(text()).not.toContain('UPDATED TASK'); expect(text()).not.toContain('MENTIONED TASK');
 });
