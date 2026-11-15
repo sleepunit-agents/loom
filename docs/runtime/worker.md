@@ -533,3 +533,7 @@ and the same conversation's receiving body gets the answer with the original
 question while its words remain available. Both word stores obey the original
 keep deadline and any shorter current household policy. Rewriting a digest
 retires its previous waiting question without removing answered history.
+Task and approval answers returning to an agent in a private conversation inherit
+that conversation's member and project labels. A different member's private
+source cannot be relabelled into it. The strict receiving mail-scope guard remains
+in place; ordinary work-source records keep their own scope.

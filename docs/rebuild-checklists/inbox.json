@@ -53,7 +53,11 @@
     {
       "id": "inbox-007",
       "promise": "The conversation it belongs to. An agent's messages, wakes and handoffs arrive the same way.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationInboxIngress"
+      }
     },
     {
       "id": "inbox-008",
@@ -91,12 +95,20 @@
     {
       "id": "inbox-013",
       "promise": "A subagent's brief arrives as an item; its conversation's place is the parent job.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "nativeHandoff"
+      }
     },
     {
       "id": "inbox-014",
       "promise": "Every item has a recipient. An agent's body takes the items addressed to it, in order. A person's Inbox app is the items addressed to them that are waiting.",
-      "source": "docs/how-it-works/site/inbox.html#how-h"
+      "source": "docs/how-it-works/site/inbox.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "privateConversationBatch"
+      }
     },
     {
       "id": "inbox-015",

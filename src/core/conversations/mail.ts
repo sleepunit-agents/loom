@@ -1,5 +1,5 @@
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
-import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxWords} from './private-inbox-words.js';
+import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from './private-inbox-words.js';
 /** Trusted in-process body delivery. Decrypted words are ephemeral output:
  * never save them in jobs.brief, generic operation receipts or Inbox columns.
  * External runner doors must recheck their current authentication after await
@@ -48,7 +48,7 @@ export class ConversationMail {
     const prepared = new Map<string, string | null>();
     for (const item of items) {
       if (!item.thread) {
-        if(hasPrivateInboxWords(item.words)){
+        if(hasPrivateInboxPayload(item)){
           const envelope=privateInboxEnvelope(item.words)!;
           prepared.set(item.id,privateInboxDeadline(item,keepDays())>Date.parse(now())?await key.open(Buffer.from(envelope.cipher,'base64')):null);continue;
         }
@@ -72,7 +72,7 @@ export class ConversationMail {
       for (const item of items) {
         const live = current.get(item.id);
         if (!live || content(live) !== content(item)) throw new Error('Mail changed; prepare again');
-        if (!item.thread) {if(item.source==='handoff'&&handoffDeadline(live,keepDays())<=Date.parse(now())||hasPrivateInboxWords(item.words)&&privateInboxDeadline(live,keepDays())<=Date.parse(now()))words.set(item.id,null);continue;}
+        if (!item.thread) {if(item.source==='handoff'&&handoffDeadline(live,keepDays())<=Date.parse(now())||hasPrivateInboxPayload(item)&&privateInboxDeadline(live,keepDays())<=Date.parse(now()))words.set(item.id,null);continue;}
         const before = privateRows.get(item.id)!, after = currentRows.get(item.id);
         if (!after || after.conversation !== conversation || after.message.thread !== item.thread || after.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');
         // Retention is checked at release, even if ciphertext was swept during

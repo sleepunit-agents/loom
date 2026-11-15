@@ -1,4 +1,5 @@
 import {conversationLinks} from './rebuild-conversation-links.mjs';
+import {conversationMail} from './rebuild-conversation-mail.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {approvalRulesAndExpiry,approvalPreparedChanges} from './rebuild-approval-settings.mjs';
@@ -222,6 +223,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await conversationMail({page,app,clock,example:report.example,out,open:openApp}));
+  save();yield {phase:'conversation-mail',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

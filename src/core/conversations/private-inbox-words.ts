@@ -1,6 +1,6 @@
 /** Retained private questions/answers without inventing a Comms thread. */
 import {z} from 'zod';
-import {and,eq,isNotNull,sql} from 'drizzle-orm';
+import {and,eq,isNotNull,isNull,inArray,sql} from 'drizzle-orm';
 import type {DataDatabase} from '../data/database.js';
 import {inbox} from '../data/schema.js';
 import type {WordsKey} from './words.js';
@@ -10,6 +10,7 @@ const envelope=z.object({cipher:z.string().min(1).max(2_000_000).regex(/^[A-Za-z
 const question=z.object({words:z.string(),why:z.string().nullish(),ifYes:z.string().nullish(),ifNo:z.string().nullish(),link:z.string().nullish()}).strict();
 export const privateInboxQuestion=(words:string)=>question.parse(JSON.parse(words));
 export const hasPrivateInboxWords=(words:string|null)=>!!words?.startsWith(prefix);
+export const hasPrivateInboxPayload=(item:Pick<typeof inbox.$inferSelect,'thread'|'conversation'|'member'|'source'|'words'>)=>!item.thread&&!!item.conversation&&!!item.member&&(item.source==='thread'||item.source==='answer')&&hasPrivateInboxWords(item.words);
 export const isPrivateInboxQuestion=(item:Pick<typeof inbox.$inferSelect,'thread'|'conversation'|'member'|'source'>)=>!item.thread&&!!item.conversation&&!!item.member&&item.source==='thread';
 export function privateInboxEnvelope(words:string|null){return hasPrivateInboxWords(words)?envelope.parse(JSON.parse(words!.slice(prefix.length))):undefined;}
 export function privateInboxDeadline(item:{words:string|null;at:string},days:number):number{
@@ -22,7 +23,7 @@ export async function sealPrivateInbox(key:WordsKey,words:string,at:string,days:
 export function privateInboxExpiries(db:DataDatabase,days:number){
  const json=sql`substr(${inbox.words},${prefix.length+1})`;
  const rows=db.select({id:inbox.id,at:inbox.at,until:sql<unknown>`case when json_valid(${json}) then json_extract(${json},'$.keepUntil') else null end`})
-  .from(inbox).where(and(isNotNull(inbox.words),sql`substr(${inbox.words},1,${prefix.length})=${prefix}`)).all();
+  .from(inbox).where(and(isNotNull(inbox.words),isNotNull(inbox.member),isNotNull(inbox.conversation),isNull(inbox.thread),inArray(inbox.source,['thread','answer']),sql`substr(${inbox.words},1,${prefix.length})=${prefix}`)).all();
  return rows.map(row=>{
   const valid=typeof row.until==='string'&&Number.isInteger(days)&&days>=1&&days<=14;
   const until=valid?wordsDeadline({at:row.at,keepUntil:row.until as string},days):-Infinity;

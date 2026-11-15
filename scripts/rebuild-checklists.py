@@ -77,6 +77,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
+   if row['promise'].startswith('A piece of work one agent hands to another.'):row['probe']={'kind':'action','action':'nativeHandoff'}
+   if row['promise'].startswith('That need becomes a question in the inbox'):row['probe']={'kind':'action','action':'privateConversationQuestion'}
  for app,text,contains in ui.get(f.stem,[]):
   probe={'kind':'ui','app':app,'contains':contains}
   if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
@@ -113,6 +115,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='inbox':
   for row in rows:
    if row['promise'].startswith("A task's question arrives as an item, with a link to the task."):row['probe']={'kind':'action','action':'inboxTaskArrival'}
+   if row['promise'].startswith("A subagent's brief arrives as an item;"):row['probe']={'kind':'action','action':'nativeHandoff'}
+   if row['promise'].startswith('The conversation it belongs to.'):row['probe']={'kind':'action','action':'conversationInboxIngress'}
+   if row['promise'].startswith('Every item has a recipient.'):row['probe']={'kind':'action','action':'privateConversationBatch'}
    if row['promise'].startswith('Sends you to Approvals or the task when the answer belongs there.'):row['probe']={'kind':'action','action':'inboxSourceTargets'}
    if row['promise'].startswith('A question can name an approval or a task whose outcome settles it.'):row['probe']={'kind':'action','action':'inboxSourceOutcome'}
    if row['promise'].startswith(('Takes a yes, a no', 'An item that is a question says')):row['probe']={'kind':'action','action':'inboxDecisions'}

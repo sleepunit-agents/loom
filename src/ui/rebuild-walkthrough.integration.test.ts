@@ -106,6 +106,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   for(const name of ['inboxTaskSettlement','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.inboxSourceTargets).toMatchObject(arrival.ok?{ok:true}:{inconclusive:true});
  });
+ it('delivers private source replies, a native handoff and its owner answer through the one Inbox',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
+  for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress','privateConversationQuestion'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;

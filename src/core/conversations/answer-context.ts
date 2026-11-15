@@ -4,13 +4,13 @@ import {and,eq} from 'drizzle-orm';
 import {household,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
-import {privateInboxAnswer,privateInboxDeadline,privateInboxEnvelope,privateInboxQuestion,hasPrivateInboxWords} from './private-inbox-words.js';
+import {privateInboxAnswer,privateInboxDeadline,privateInboxEnvelope,privateInboxQuestion,hasPrivateInboxPayload} from './private-inbox-words.js';
 type Item=typeof inbox.$inferSelect;
 export type AnswerQuestion={words:string;why:string|null;ifYes:string|null;ifNo:string|null;link:string|null};
 export type AnswerContext={question:AnswerQuestion;until:number};
 export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Promise<()=>AnswerContext|null>{
  const {db}=comms;
- if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxWords(answer.words)){
+ if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxPayload(answer)){
   const snapshot=()=>{const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();return q&&privateInboxAnswer(db,q)?.id===answer.id?q:undefined;};
   const before=snapshot(),days=()=>db.select({days:household.commsDays}).from(household).get()?.days??14;
   if(!before||privateInboxDeadline(before,days())<=Date.parse(comms.now()))return()=>null;

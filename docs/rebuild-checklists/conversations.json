@@ -76,7 +76,11 @@
     {
       "id": "conversations-009",
       "promise": "A piece of work one agent hands to another. Its place is the parent job.",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "nativeHandoff"
+      }
     },
     {
       "id": "conversations-010",
@@ -91,7 +95,11 @@
     {
       "id": "conversations-012",
       "promise": "That need becomes a question in the inbox, addressed to a person, with what happens on each answer. The answer, who gave it and when are recorded on the same item, and loom adds a new item for the agent, with answer as its source, so the agent learns of it.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "privateConversationQuestion"
+      }
     },
     {
       "id": "conversations-013",
