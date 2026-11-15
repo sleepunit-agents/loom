@@ -2,7 +2,7 @@
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
 import {z} from 'zod';
-import {operation,maySee,type Operations,type Live,type Viewer,type Sharing} from '../../core/index.js';
+import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
 import {MAX_BACK,MAX_ENTRIES,VENUES,whereLabel,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
 import type {Clock} from '../../core/clock.js';
@@ -17,9 +17,6 @@ export interface ActivityReader {
  window(scope:string,viewer:Viewer):ActivityWindow|undefined;
  read(id:string,viewer:Viewer):ActivityOpen|ActivityFailure|undefined;
 }
-const readers=new WeakMap<Operations,ActivityReader>();
-/** The composition can reuse a reader installed before the root ran. */
-export const installedMindActivity=(operations:Operations)=>readers.get(operations);
 interface Episode {ref:string;title:string;content:string;created:string;project:string|null;metadata:string|null;expires_at:string|null}
 const active="category='episode' AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))";
 const has=(db:Database)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").get();
@@ -151,19 +148,4 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  }
  const reader={allowed:(v:Viewer)=>agents(v).length>0,access,window,read,nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
-}
-
-/** Retiring operation/record binding over the same typed reader. */
-export function installMindActivity(operations:Operations,live:Live,options:ActivityOptions){
- const reader=createActivityReader(operations.clock,options),{window,read,access}=reader;
- const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone??'America/Chicago';
- const changed=(c:{type:string})=>['memory','core.access','household.sharing','conversation','digest','attention.conversation'].includes(c.type)||c.type.startsWith('comms.');
- const allowed=reader.allowed;
- operations.register(operation({name:'mind.activityList',input:z.object({to:z.string().max(10).default('recent')}).strict(),output:z.unknown(),may:allowed,run:(ctx,i)=>window(i.to,ctx.viewer)??{ok:false,code:'not-found',message:'Activity window not found'}}));
- operations.register(operation({name:'mind.activityRead',input:z.object({id:z.string().max(350)}).strict(),output:z.unknown(),may:allowed,run:(ctx,i)=>read(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Activity entry not found'}}));
- live.register({name:'activity.window',ids:s=>s?[s]:[],read:window,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>(r as ActivityWindow).expires});
- live.register({name:'activity.entry',ids:s=>s?[s]:[],read,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>Math.min((r as ActivityOpen).expires??Infinity,startOf(dayBefore(isoDay(operations.clock.now(),tz()),-1),tz()))});
- live.register({name:'activity.access',ids:()=>['activity'],read:(_id,v)=>access(v),inScope:()=>true,refreshOn:changed,expires:r=>r.expires as number});
- const installed={...reader,close(){if(readers.get(operations)===installed)readers.delete(operations);reader.close();}};
- readers.set(operations,installed);return installed;
 }
