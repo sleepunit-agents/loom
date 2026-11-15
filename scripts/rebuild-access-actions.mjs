@@ -29,10 +29,10 @@ export async function accessAction({page,tile,title,app,out}){
    check(db.prepare('SELECT name FROM projects WHERE id=?').get('walkthrough-sharing')?.name==='Walkthrough sharing','Project was not persisted');
    check(db.prepare('SELECT member FROM project_members WHERE project=?').all('walkthrough-sharing').some(row=>row.member==='alex'),'Project membership was not persisted');
   }else throw Error('Unknown access page');
-  await page.screenshot({path:join(out,screenshot),fullPage:true});return {ok:true,screenshot};
+  await page.screenshot({path:join(out,screenshot),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]});return {ok:true,screenshot};
  }catch(error){
   // The Account may still contain a delivered link after a failed hide.
-  if(title!=='Your account')await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});
+  if(title!=='Your account')await page.screenshot({path:join(out,screenshot),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]}).catch(()=>{});
   return {ok:false,error:String(error),...(title==='Your account'?{}:{screenshot})};
  }
 }
