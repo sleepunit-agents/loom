@@ -56,4 +56,3 @@ it('keeps status scope identical to current shared-project agent visibility, inc
  expect(await read()).toEqual({data:{agents:[{id:'mark',agentStatusByAgent:[{agent:'mark',work:'Other fixture status'}]}]}});
  f.app.writes.run(()=>f.db.delete(projectMembers).run());expect(await read()).toEqual({data:{agents:[]}});expect((await f.read('member')).data.agentStatus.map((row:{agent:string})=>row.agent)).toEqual(['art']);
 });
-

@@ -1,3 +1,4 @@
+import { inboxContentChanged } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 /** Trusted private-message service. External doors authenticate and authorize;
  * encrypted words never enter operation receipts or the plaintext Inbox. */
@@ -178,6 +179,7 @@ export class CommsMessages {
         fromKind: 'person', fromId: member, thread: row.thread, messageSeq: row.seq, refs: [item.id, ...refs] });
       this.attach(row, mail);
       const at = this.now();
+      inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
       return this.db.update(inbox).set({ state: 'answered', answer, answerText: null, answeredBy: member, answeredAt: at, changedAt: at })
         .where(eq(inbox.id, item.id)).returning().get()!;
     });

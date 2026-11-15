@@ -121,3 +121,26 @@ reader from making an always-on machine appear quiet. Health reports include
 configured machine facts when present, but never change quota. A failed health
 report cancels startup; an in-flight report is joined before claims or shutdown.
 After the initial scan the ordinary idle polls and job heartbeats maintain health.
+
+## Configured model roles
+
+The server entry can parse a JSON array with modelCatalogJson from
+src/runtime/model-catalog.ts, then supply the resulting snapshot through
+sharedRoot's modelRoles callback. Each record explicitly names model, provider,
+harness and series; none is derived from another field. A model appears once.
+For example:
+
+    [{"model":"chosen-model","provider":"actual-provider","harness":"claude","series":"model-family"}]
+
+Identifiers must be nonempty, trimmed, single-line strings of at most 200
+characters. Unknown fields, missing dimensions and duplicate model mappings
+are refused with a fixed diagnostic; an empty catalog leaves work queued.
+The returned catalog and records are immutable snapshots. The Root validates
+startup configuration before opening services and validates each later callback
+result before using it. Invalid current configuration rolls back a claim; fixing
+the callback permits the queued work to be claimed normally.
+
+File access and loading/reloading policy belong to the server entry. This
+parser does not add another credential source or infer a provider from a model
+name. Account ownership, sign-in locations and current quota still constrain
+placement in the ordinary runtime.

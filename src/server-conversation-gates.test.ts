@@ -86,6 +86,7 @@ it('every MCP conversation gate forwards explicit selection instead of trusting 
     await server.connect(a); await client.connect(b);
     try {
       const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+      const names=(await client.listTools()).tools.map(tool=>tool.name);expect(names).not.toContain('comms_title');expect(names).not.toContain('comms_thread');
       const identity = await call('identity', { client: 'claude-code', piece: 'last-24h', conversation, run: 'untrusted-run' });
       for (const result of [identity, await call('episodes'), await call('project_hub', { slug: 'loom' }), await call('conversations'), await call('conversation_findings')]) {
         expect(result.isError).not.toBe(true);
@@ -95,12 +96,9 @@ it('every MCP conversation gate forwards explicit selection instead of trusting 
       const list = await call('conversations'); expect(JSON.stringify(list.content)).not.toContain(conversation);
       for (const [name, args] of [
         ['conversation', { id: conversation }], ['conversation_digest', { summary: 'should never be written' }],
-        ['comms_title', { title: 'should never be written' }], ['comms_thread', {}],
       ] as const) {
         const result = await call(name, args);
         expect(result.isError, name).toBe(true);
-        if (name === 'comms_title') expect(JSON.stringify(result.content)).toContain('unavailable over offline stdio');
-        if (name === 'comms_thread') expect(JSON.stringify(result.content)).toContain('unavailable over offline stdio');
         expect(binding, name).not.toHaveBeenCalled();
       }
       expect(binding).not.toHaveBeenCalled();
@@ -129,7 +127,7 @@ it('offline app tools and local digest never discover or mutate legacy app state
       const call = (name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
       await call('identity', { client: 'claude-code', piece: 'last-24h', conversation, run: 'run-offline' });
       discovery.mockClear(); appHome.mockClear();
-      for (const [name, args] of [['describe_self', { text: 'Offline description.' }], ['comms_title', { title: 'Offline' }], ['comms_thread', {}], ['comms_thread', { thread: 'th:unknown' }]] as const) {
+      for (const [name, args] of [['describe_self', { text: 'Offline description.' }]] as const) {
         const result = await call(name, args);
         expect(result.isError, name).toBe(true);
         expect(JSON.stringify(result.content), name).toContain('unavailable over offline stdio');

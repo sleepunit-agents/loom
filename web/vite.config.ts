@@ -41,6 +41,19 @@ function looks(): Plugin {
   };
 }
 
+/** Build evidence records source membership even when a lazy screen is folded
+ * into another chunk and has no manifest key of its own. Paths stay relative. */
+function screenGraph(): Plugin {
+  return { name: 'loom-screen-graph', apply: 'build', generateBundle(_options, bundle) {
+    const root = path.resolve(import.meta.dirname), graph: Record<string, {imports:string[];modules:string[]}> = {};
+    for (const chunk of Object.values(bundle)) if (chunk.type === 'chunk') graph[chunk.fileName] = {
+      imports: chunk.imports,
+      modules: Object.keys(chunk.modules).filter(id => !id.startsWith('\0')).map(id => path.relative(root,id.split('?')[0])).filter(id => id.startsWith('src/')).sort(),
+    };
+    this.emitFile({type:'asset',fileName:'.vite/screen-graph.json',source:JSON.stringify(graph)});
+  }};
+}
+
 /** Co-locate the synchronous kit shared by both shells. App screens stay in their
  * own dynamic chunks; splitting this same kit across many tiny chunks repeats
  * gzip dictionaries and preload wrappers on the first page. */
@@ -68,7 +81,7 @@ function sharedInitialKit() {
 // loom serves the built app at /app/ (docs/specs/ui-app.md); the page itself is any of loom's paths.
 export default defineConfig({
   base: '/app/',
-  plugins: [react(), tailwindcss(), looks()],
+  plugins: [react(), tailwindcss(), looks(), screenGraph()],
   css: { postcss: { plugins: [accessMedia()] } },
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   build: { manifest: true, rolldownOptions: { output: { codeSplitting: { groups: [{ name: sharedInitialKit(), tags: ['$initial'] }] } }, input: { index: path.resolve(import.meta.dirname, 'index.html'), next: path.resolve(import.meta.dirname, 'next.html') } }, outDir: '../dist/web', emptyOutDir: true },

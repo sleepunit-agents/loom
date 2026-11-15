@@ -37,7 +37,7 @@ describe('the app (web/)', () => {
   });
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
-    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { imports?: string[]; isDynamicEntry?: boolean }>;
+    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { file: string }>;
     const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
       .map(piece => {
         const registration = resolve(root, 'web/src/pieces', piece, 'registration.ts');
@@ -50,18 +50,24 @@ describe('the app (web/)', () => {
         return relative(resolve(root, 'web'), screen!);
       });
     expect(screens.length).toBeGreaterThan(10);
+    const graph = JSON.parse(readFileSync(`${root}dist/web/.vite/screen-graph.json`, 'utf8')) as Record<string,{imports:string[];modules:string[]}>;
+    const built = new Set(Object.values(graph).flatMap(chunk => chunk.modules));
+    expect(screens.filter(key => !built.has(key)), 'registered screen missing from actual emitted chunks').toEqual([]);
     for (const page of ['index.html', 'next.html']) {
       expect(manifest[page], page).toBeDefined();
       const initial = new Set<string>();
       const visit = (key: string) => {
         if (initial.has(key)) return;
         initial.add(key);
-        for (const dependency of manifest[key]?.imports ?? []) visit(dependency);
+        expect(graph[key], key + ' emitted chunk').toBeDefined();
+        for (const dependency of graph[key].imports) visit(dependency);
       };
-      visit(page);
-      expect(screens.filter(key => initial.has(key)), page).toEqual([]);
+      visit(manifest[page].file);
+      const initialSources = new Set([...initial].flatMap(file => graph[file].modules));
+      expect(screens.filter(key => initialSources.has(key)), page).toEqual([]);
     }
-    expect(screens.filter(key => !manifest[key]?.isDynamicEntry)).toEqual([]);
+    // Source membership keeps this assertion meaningful for shared lazy chunks
+    // that have no standalone manifest entry (Comms embeds approval cards).
   });
 
   // And each place that named a Tailwind colour now names the token that holds that colour (web/src/tones.ts, one map).

@@ -29,7 +29,7 @@ function fixture(){
  closes.push(()=>{client.close();},()=>root.close());
  const call=async(input:unknown={who:{kind:'person',id:'owner'},patch:{settleSeconds:60}},id='settings',token=body)=>root.http.request('http://loom/api/tempo/proposeSettings',{
   method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input,id})});
- const answer=(id:string,allow=true,receipt='answer',token=ownerToken)=>root.http.request('http://loom/api/tempo/answerSettings',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{id,allow},id:receipt})});
+ const answer=(id:string,allow=true,receipt='answer',token=ownerToken)=>root.http.request('http://loom/api/approvals/answer',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{id,answer:allow?'allow':'deny'},id:receipt})});
  return {db,client,clock,root,conversation,call,answer,errors};
 }
 it('binds the actual chat body, files a before/after card, and applies only on the owner answer',async()=>{
@@ -41,7 +41,7 @@ it('binds the actual chat body, files a before/after card, and applies only on t
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
  expect(f.db.select().from(inbox).all()).toMatchObject([{toKind:'person',to:'owner',conversation:f.conversation.id,project:'pond',source:'approval',waitsOnId:card.id}]);
  expect(await (await f.call()).json()).toEqual(result);expect(f.db.select().from(approvals).all()).toHaveLength(1);
- expect(await (await f.answer(card.id)).json()).toEqual({ok:true,value:{saved:true}});
+ expect(await (await f.answer(card.id)).json()).toEqual({ok:true,value:{id:card.id}});
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(60);
  expect(f.db.select().from(approvals).get()?.state).toBe('used');expect(f.errors).toEqual([]);
 });
@@ -125,15 +125,10 @@ it('refuses revocation during async dispatch for both a fresh proposal and recei
  }
 });
 
-it('answers through the actual owner door and rechecks role, credentials and card operation on replay',async()=>{
+it('answers through the actual owner door and rechecks role, credentials on replay',async()=>{
  const f=fixture();expect((await f.call()).status).toBe(200);const card=f.db.select().from(approvals).get()!;
  for(const token of [body,unbound,otherToken])expect((await f.answer(card.id,true,'denied-'+token[0],token)).status).toBe(403);
- f.db.insert(approvals).values({...card,id:'different-operation',operation:'other.operation'}).run();
- expect((await f.answer('different-operation')).status).toBe(403);expect((await f.answer('missing')).status).toBe(403);
- f.db.insert(approvals).values({...card,id:'wrong-kind',kind:'command'}).run();
- const untouched={cards:f.db.select().from(approvals).all(),mail:f.db.select().from(inbox).all(),history:f.db.select().from(approvalRecord).all()};
- expect((await f.answer('wrong-kind',false,'deny-wrong-kind')).status).toBe(403);
- expect({cards:f.db.select().from(approvals).all(),mail:f.db.select().from(inbox).all(),history:f.db.select().from(approvalRecord).all()}).toEqual(untouched);
+ expect((await f.answer('missing')).status).toBe(403);
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
  expect((await f.answer(card.id)).status).toBe(200);const after=f.db.select().from(inbox).all();
  const question=after.find(item=>item.toKind==='person'&&item.source==='approval'&&item.sourceId===card.id)!;
@@ -151,7 +146,7 @@ it('answers through the actual owner door and rechecks role, credentials and car
 it('denies through HTTP without applying timings, and rolls back an Allow whose receipt cannot commit',async()=>{
  const f=fixture();expect((await f.call()).status).toBe(200);const card=f.db.select().from(approvals).get()!;
  const originalMail=f.db.select().from(inbox).all();
- f.client.exec("CREATE TRIGGER reject_answer_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='tempo.answerSettings' BEGIN SELECT RAISE(ABORT,'receipt failed'); END");
+ f.client.exec("CREATE TRIGGER reject_answer_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='approvals.answer' BEGIN SELECT RAISE(ABORT,'receipt failed'); END");
  expect((await f.answer(card.id)).status).toBe(503);
  expect(f.db.select().from(approvals).get()?.state).toBe('pending');expect(f.db.select().from(inbox).all()).toEqual(originalMail);
  expect(f.db.select().from(approvalRecord).where(eq(approvalRecord.approval,card.id)).all().map(row=>row.event)).toEqual(['request']);
@@ -162,5 +157,14 @@ it('denies through HTTP without applying timings, and rolls back an Allow whose 
  const question=f.db.select().from(inbox).all().find(item=>item.toKind==='person'&&item.sourceId===card.id)!;expect(question).toMatchObject({state:'resolved',resolution:'Denied'});
  expect(f.db.select().from(inbox).all().filter(item=>item.source==='answer'&&item.sourceId===question.id)).toMatchObject([{toKind:'agent',to:'art',fromKind:'person',fromId:'owner',words:expect.stringMatching(/^Deny/)}]);
  expect(f.db.select().from(approvalRecord).where(eq(approvalRecord.approval,card.id)).all().map(row=>row.event)).toEqual(['request','deny']);
+ expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
+});
+
+it('retires the duplicate Tempo answer door without answering or recording a receipt',async()=>{
+ const f=fixture();await f.call();const card=f.db.select().from(approvals).get()!;
+ const before={cards:f.db.select().from(approvals).all(),mail:f.db.select().from(inbox).all(),history:f.db.select().from(approvalRecord).all(),receipts:f.client.prepare('SELECT * FROM operation_results').all()};
+ const response=await f.root.http.request('http://loom/api/tempo/answerSettings',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+ownerToken},body:JSON.stringify({input:{id:card.id,allow:true},id:'old-door'})});
+ expect(response.status).toBe(404);
+ expect({cards:f.db.select().from(approvals).all(),mail:f.db.select().from(inbox).all(),history:f.db.select().from(approvalRecord).all(),receipts:f.client.prepare('SELECT * FROM operation_results').all()}).toEqual(before);
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
 });
