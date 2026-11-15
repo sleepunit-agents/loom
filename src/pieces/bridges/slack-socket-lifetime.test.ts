@@ -79,3 +79,14 @@ it('keeps token and ticket diagnostics off console and process output', async ()
   }
   for (const log of logs) expect(log).not.toHaveBeenCalled();
 });
+
+it('shares one total acquisition deadline across successive holder, header and body waits', async () => {
+  let now = 0, reads = 0;
+  const clock = { now: () => now, at: () => () => {} };
+  const f = fixture({clock,secrets:{withValue:async (_name,use)=>{now += 6000;return use('private');}},
+    request:vi.fn(async()=>{now += 6000;return {ok:true,redirected:false,body:{getReader:()=>({
+      read:async()=>{now += 3000;return ++reads === 1 ? {done:false,value:Buffer.from(JSON.stringify({ok:true,url:'wss://wss.slack.com/link?ticket=PRIVATE'}))} : {done:true,value:undefined};},
+      cancel:async()=>{},
+    })}} as unknown as Response;})});
+  await settled(); expect(f.socket).not.toHaveBeenCalled(); await f.transport.close();
+});
