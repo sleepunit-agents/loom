@@ -10,6 +10,7 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents, inbox } from '../../core/data/schema.js';
 import type { AsyncSecretMutations } from './async-values.js';
 import { secretName } from './input.js';
+import { secretHasValue } from './presence.js';
 
 const identity = z.object({ id: z.uuid(), member: z.string().min(1).max(256), name: secretName }).strict();
 const setInput = identity.extend({ mode: z.enum(['add', 'replace']), description: z.string().max(4000).optional(),
@@ -73,7 +74,9 @@ export class SecretValues {
       if (!this.db.select().from(members).where(eq(members.id, input.member)).get()) throw Error('Unknown secret writer');
       if (this.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.state, 'prepared')).get()) throw unavailable();
       const metadata = this.db.select().from(secrets).where(eq(secrets.name, input.name)).get();
-      if (operation !== 'add' && !metadata) throw Error('Unknown secret');
+      const active = secretHasValue(this.db, input.name);
+      if (operation === 'add' && active) throw Error('Secret value already exists');
+      if (operation !== 'add' && (!metadata || !active)) throw Error('Unknown secret value');
       row = this.db.insert(secretWriteJournal).values({ id: input.id, member: input.member, secret: input.name,
         operation, inputHash, description: description ?? metadata?.description ?? '', state: 'prepared', startedAt: this.now() }).returning().get();
     });

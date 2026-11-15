@@ -261,3 +261,31 @@ it('a second connection sees the exact durable prepared binding before every hol
   await f.service.remove(input);
   expect(observed).toEqual(['receipt', 'set', 'receipt', 'remove']);
 });
+it('rejects incorrect add/replace/remove modes before reservation so valid later writes can proceed', async () => {
+  const f = fixture();
+  await expect(f.service.set({ ...f.input, mode: 'replace' })).rejects.toThrow('Unknown secret value');
+  expect(f.db.select().from(secretWriteJournal).all()).toEqual([]);
+  await f.service.set(f.input);
+  await expect(f.service.set({ ...f.input, id: randomUUID() })).rejects.toThrow('already exists');
+  await f.service.set({ ...f.input, id: randomUUID(), mode: 'replace', value: 'NEXT' });
+  await f.service.remove({ id: randomUUID(), name: 'API', member: 'owner' });
+  await expect(f.service.set({ ...f.input, id: randomUUID(), mode: 'replace' })).rejects.toThrow('Unknown secret value');
+  await expect(f.service.remove({ id: randomUUID(), name: 'API', member: 'owner' })).rejects.toThrow('Unknown secret value');
+  await f.service.set({ ...f.input, id: randomUUID(), value: 'NEW' });
+  expect(f.values.get('API')).toBe('NEW');
+  expect(f.db.select().from(secretWriteJournal).all().every(row => row.state === 'committed')).toBe(true);
+});
+it('retained removed-name history cannot create requests, startup grants or handoff authority', async () => {
+  const f = fixture(); await f.service.set(f.input);
+  f.db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', title: '', brief: '', houseRepository: '', houseFile: '', houseBranch: '', state: 'running', model: 'test', startedByKind: 'agent', startedBy: 'art', queuedAt: f.now() }).run();
+  const requests = new SecretRequests(f.db, f.now);
+  await f.service.remove({ id: randomUUID(), member: 'owner', name: 'API' });
+  expect(() => requests.request({ id: 'after-remove', secret: 'API', agent: 'art', why: 'Use it', minutes: 5 })).toThrow('Unknown secret');
+  requests.setRule({ secret: 'API', answer: 'auto', minutes: 5, agents: [{ agent: 'art', when: 'at_start' }] });
+  expect(requests.grantAtStart('job')).toEqual([]);
+  expect(requests.grantFor('API', 'art', 'job')).toBeUndefined();
+  await f.service.set({ ...f.input, id: randomUUID() });
+  expect(requests.grantAtStart('job')).toHaveLength(1);
+  expect(requests.grantFor('API', 'art', 'job')).toBeDefined();
+});
