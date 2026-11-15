@@ -40,7 +40,7 @@ class ChecklistGeneration(unittest.TestCase):
     def test_check_rejects_drift_without_repairing_it(self):
         changed = json.loads(self.original)
         row = next(row for row in changed['promises'] if row.get('probe'))
-        row['probe'] = {'kind': 'action', 'action': 'manual-only-probe'}
+        row['promise'] = 'Text absent from the approved page'
         corrupted = (json.dumps(changed, indent=2, ensure_ascii=False) + '\n').encode('utf-8')
         self.assertNotEqual(corrupted, self.original)
         self.task.write_bytes(corrupted)
@@ -56,8 +56,10 @@ class ChecklistGeneration(unittest.TestCase):
             self.run_generator('--check')
         self.assertFalse(self.task.exists())
 
-    def test_normal_generation_restores_the_recorded_probes(self):
-        self.task.write_text('{}')
+    def test_normal_generation_repairs_metadata_and_keeps_bound_probes(self):
+        changed = json.loads(self.original)
+        changed['title'] = 'Incorrect generated title'
+        self.task.write_text(json.dumps(changed))
         self.run_generator()
         self.assertEqual(self.task.read_bytes(), self.original)
 
