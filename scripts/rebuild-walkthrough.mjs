@@ -13,6 +13,7 @@ import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
 import {accessAction} from './rebuild-access-actions.mjs';
+
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions,selectExampleConversation} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -20,6 +21,9 @@ import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {approvalInbox} from './rebuild-approval-inbox.mjs';
+
+
 import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
@@ -30,8 +34,10 @@ import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
+
 
 export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
 export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
@@ -138,6 +144,13 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Home'){
+     const runtimeRows=tile.locator('[aria-label$="current runtime jobs"] > li');
+     const expected=runtimeRows.filter({hasText:report.example.runtime.job.title}).first();
+     await expected.waitFor({state:'visible'});await expected.scrollIntoViewIfNeeded();
+     row.runtimeJobs=await runtimeRows.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('h4')?.textContent?.trim()??'',status:row.querySelector('p')?.textContent?.trim()??''})));
+     row.text=await tile.innerText();
+    }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
@@ -171,7 +184,6 @@ export async function* walkthroughSteps(output) {
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    if(title==='Tasks'&&row.opened){const tile=await openApp('Inbox');report.actions={...report.actions,...await taskQuestions({page,tile,app,example:report.example,out})};}
    if(title==='Changes'&&row.opened){const tile=await openApp('Comms');await selectExampleConversation(page,tile);report.actions={...report.actions,...await changeInline({page,tile,app,example:report.example,out})};}
-   if(title==='Inbox'&&row.opened){report.actions={...report.actions,...await inboxActions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};}
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
@@ -179,15 +191,22 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
+  save();yield {phase:'inbox-details',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
   Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
+
   save();yield {phase:'desk',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await appearanceActions({page,app,out}));
+  save();yield {phase:'appearance',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
+  report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
+  save();yield {phase:'approval-source',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

@@ -82,7 +82,7 @@
       "source": "docs/how-it-works/site/approvals.html#con-h",
       "probe": {
         "kind": "action",
-        "action": "approvalDecisions"
+        "action": "approvalInbox"
       }
     },
     {
