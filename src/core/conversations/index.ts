@@ -1,7 +1,7 @@
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, max, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, max, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, conversationPeople, turns, inbox, inboxRefs, inboxReads, digests, digestItems, jobs } from '../data/schema.js';
 
@@ -77,15 +77,27 @@ export class Conversations {
     return row;
   }
 
-  /** Only the current job can claim this conversation's waiting mail. */
-  take(conversationId: string, jobId: string): Item[] {
+  /** Read a delivery snapshot without claiming mail or holding a transaction
+   * across decryption. The current running job is checked again by take(). */
+  pending(conversationId: string, jobId: string): Item[] {
+    const conversation = this.conversation(conversationId);
+    const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
+    if (conversation.job !== jobId || job?.conversation !== conversationId || job.agent !== conversation.agent || job.state !== 'running') throw new Error('Job is not running in this conversation');
+    return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
+      or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
+  }
+
+  /** Only the current job can claim this conversation's waiting mail. An
+   * explicit batch leaves mail arriving during async preparation waiting. */
+  take(conversationId: string, jobId: string, batch?: readonly string[]): Item[] {
     return this.db.transaction(() => {
+      this.pending(conversationId, jobId);
+      if (batch?.length === 0) return [];
       const conversation = this.conversation(conversationId);
-      const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
-      if (conversation.job !== jobId || job?.conversation !== conversationId || job.agent !== conversation.agent || job.state !== 'running') throw new Error('Job is not running in this conversation');
       const at = this.now();
-      this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
-      return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
+      const selected = batch ? inArray(inbox.id, [...batch]) : undefined;
+      this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'), selected)).run();
+      return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'), ne(inbox.volume, 'mute'), selected)).orderBy(asc(inbox.seq)).all();
     });
   }
 
@@ -118,6 +130,7 @@ export class Conversations {
         const outcome = answer === 'yes' ? item.ifYes : answer === 'no' ? item.ifNo : null;
         this.send({ toKind: 'agent', to: conversation.agent, conversation: conversation.id, source: 'answer', sourceId: item.id, fromKind: 'person', fromId: member,
           words: [words?.trim() || answer, item.words, outcome].filter(Boolean).join('\n'), refs: [item.id] });
+        this.turn({ conversation: conversation.id, kind: 'message', fromKind: 'person', fromId: member });
       }
       return updated;
     });

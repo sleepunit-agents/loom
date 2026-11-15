@@ -1,6 +1,6 @@
 import { nextData } from './next-data.js';
-import type { GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from './core/index.js';
+import {installMemorySignals} from './transport/memory-signals.js';
 import { memoryQueryFields } from './transport/memory-queries.js';
 import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
 import { dataDatabase } from './core/data/database.js';
@@ -87,7 +87,7 @@ import { signin, installSignin, sameOrigin, relyingParty } from './core/signin/i
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
-import { installMindProjects } from './pieces/mind/projects.js';
+import { installMindProjects, installedMindProjects } from './pieces/mind/projects.js';
 import { projectTasks, projectChanges } from './pieces/mind/projects-roles.js';
 import { tasksRole } from './pieces/tasks/role.js';
 import { mindRole } from './pieces/mind/role.js';
@@ -106,7 +106,7 @@ import { approvalAnswers } from './pieces/approvals/role.js';
 import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
-const memoryQueries = new WeakMap<Foundation, GraphQLFieldConfigMap<unknown, { viewer: Viewer }>>();
+const memoryQueries = new WeakMap<Foundation, ReturnType<typeof memoryQueryFields>>();
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
@@ -268,10 +268,12 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!memoryQueries.has(app)) {
     const activity = installedMindActivity(app.operations);
     if (!activity) throw new Error('Memory queries require the installed Activity reader');
+    const projects=installedMindProjects(app.operations);
+    if(!projects)throw new Error('Memory queries require the installed Projects reader');
     const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
-      mind: mindRole(app.operations), activity, conversationHref,
+      mind: projects, activity, conversationHref,
       projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
-    memoryQueries.set(app, queries.fields);
+    memoryQueries.set(app, queries);
     app.onClose(() => { queries.close(); memoryQueries.delete(app); });
   }
   const sources = mindTouchSources(inventory);
@@ -371,8 +373,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const sockets = new Set<Socket>();
   let data: ReturnType<typeof nextData> | undefined;
   let stopDataChanges: (() => void) | undefined;
+  let memorySignals: ReturnType<typeof installMemorySignals> | undefined;
   const close = async () => {
     stopDataChanges?.();
+    memorySignals?.close();
     await data?.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
@@ -390,9 +394,12 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // The generated door uses the SAME connection and fresh shared credentials.
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memoryQueries.get(app));
-    // Legacy operation commits still publish here until shared command composition.
-    stopDataChanges = app.live.observe(() => data!.changed());
+    const memory=memoryQueries.get(app);
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields);
+    memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
+    // Legacy operation commits include private source touches until shared
+    // command composition takes over their committed-write signal.
+    stopDataChanges=app.live.observe(()=>memorySignals!.changed());
     routes.all('/graphql', c => data!.http.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
     routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
