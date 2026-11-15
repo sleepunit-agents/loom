@@ -36,7 +36,7 @@ ui={
  'tempo':[('Tempo','The trigger detail shows its source, lifespan, target and words.',['answer · once','An item in fern','Words','Continue after the example inspection']),('Tempo','The trigger offers Run now, Cancel and Pause agent.',['Run now','Cancel','Pause agent'])],
  'changes':[('Changes','The PR detail shows checks, review, head commit and linked task.',['Checks','Review','Commit:','Compare garden pumps'])],
  'inbox':[('Inbox','The waiting question displays reason and yes/no outcomes.',['Spend up to 180','If yes','If no','The example pump is available.']),('Inbox','The question offers Yes, No, a written answer, done and dismiss.',['Yes','No','Record answer','Mark done','Dismiss'])],
- 'memory':[('Knowledge','Knowledge offers search and freshness folders.',['Search knowledge','Recently verified','Due a check']),('Activity','Activity shows a day and the conversation turns.',['Shown day','Repair the garden pump','3 turns'])],
+ 'memory':[('Knowledge','Knowledge offers search and freshness folders.',['Search knowledge','Recently verified','Due a check']),('Activity','Activity shows a day and the conversation turns.',['Shown day','Repair the garden pump'])],
  'people':[('Project sharing','The owner can open project sharing without an unavailable screen.',[]),('Household setup','The owner can open household members and agents without an unavailable screen.',[])],
  'signing-in':[('Your account','The signed-in member can see their account without an unavailable screen.',[])],
  'bridges':[('Bridges','The Bridges tile has connections, channel rules, person links and pending sends.',['Connections','Channel rules','Person links','Pending sends'])],
@@ -71,7 +71,10 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='conversations':
   for n in nodes:
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
- for app,text,contains in ui.get(f.stem,[]): add(text,'',{'kind':'ui','app':app,'contains':contains})
+ for app,text,contains in ui.get(f.stem,[]):
+  probe={'kind':'ui','app':app,'contains':contains}
+  if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
+  add(text,'',probe)
  if f.stem=='tempo':
   for check,text in [('held','An answer arriving while the agent is paused does not fire its trigger.'),('resumed','Resuming fires the held once-only answer trigger exactly once.'),('settled','Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.'),('cancelled','Cancelling a future trigger prevents delivery beyond its deadline.')]:add(text,'',{'kind':'action','action':'tempo'+check.capitalize()})
  if f.stem=='conversations':
