@@ -6,6 +6,7 @@ import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { claudeBody } from './claude-body.js';
+import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import type { Clock } from '../core/clock.js';
@@ -24,6 +25,7 @@ export async function bodyProgram(input: {
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
+  let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
   const context: string[] = [], incoming:string[]=[];
   const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
@@ -77,14 +79,18 @@ export async function bodyProgram(input: {
     const started = await report();
     if (started.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(bridge&&!incoming.length)throw new Error();
-    if(!input.native)tools=await bodySecretTools({url:bootstrap.origin,token:parsed.bootstrap.token,job:job.id,conversation:job.conversation,signal,clock:input.clock,fetch:input.fetch,waiting:value=>{state=value?'waiting':'working';work=value?'Waiting for a Secret decision':'Working on accepted mail';}});
+    if(!input.native){
+      programTools=bodyProgramTools({url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch,
+        onStop:()=>observe({stopRequested:true}),onStatus:value=>{if(value.state!=='working'&&value.state!=='waiting')throw new Error();state=value.state;work=value.work;}});
+      tools=await bodySecretTools({url:bootstrap.origin,token:parsed.bootstrap.token,job:job.id,conversation:job.conversation,signal,clock:input.clock,fetch:input.fetch,extraTools:programTools.extensions,waiting:value=>{state=value?'waiting':'working';work=value?'Waiting for a Secret decision':'Working on accepted mail';}});
+    }
     if(signal.aborted)throw new Error();
     const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
-    finally { nativeAbort.abort(); await tools?.close(); await stopBeats(); }
+    finally { nativeAbort.abort(); programTools?.close(); await tools?.close(); await stopBeats(); }
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
@@ -101,5 +107,5 @@ export async function bodyProgram(input: {
     }
     input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
   }
-  finally { nativeAbort.abort(); secrets.close(); erase(); await stopBeats(); await tools?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { nativeAbort.abort(); programTools?.close(); secrets.close(); erase(); await stopBeats(); await tools?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }
