@@ -37,7 +37,11 @@
     {
       "id": "models-007",
       "promise": "An account is signed in on particular worker machines.",
-      "source": "docs/how-it-works/site/models.html#con-h"
+      "source": "docs/how-it-works/site/models.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "modelsMachines"
+      }
     },
     {
       "id": "models-008",
