@@ -3,14 +3,12 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
-import { once } from 'node:events';
-import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
 import { migrateMindReceipts } from './receipt-schema.js';
-import { installMindKnowledge } from './index.js';
+import {knowledgeView} from './knowledge.js';
 import { verifyKnowledgePages, deriveSlaClass } from '../../backends/knowledge-verification.js';
 import { installMindKnowledgeActions } from './actions.js';
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -25,14 +23,13 @@ async function fixture(missing = false, timers = true) {
   const backend = missing ? undefined : new SqliteKnowledgeBackend({ dbPath: path });
   if (backend) { cleanups.push(() => backend.close()); await backend.writePage({ slug: 'fact', title: 'Fact', domain: 'systems', body: 'Original' }); }
   const db = missing ? undefined : new BetterSqlite3(path);
-  if (db) cleanups.push(() => db.close());
+  if (db) { migrateMindReceipts(db); cleanups.push(() => db.close()); }
   const clock = new FakeClock(Date.UTC(2026, 10, 12));
   // Retry-window tests advance wall time, without exercising daemon schedules.
   if (!timers) clock.at = () => () => {};
   const access = structuredClone(sharing);
   async function start() {
     const app = await startLoom({ home: join(home, 'daemon'), clock, next: true, sharing: () => access, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
-      const reader = installMindKnowledge(app.operations, app.live, { path, sharing: () => access }); app.onClose(() => reader.close());
       const actions = installMindKnowledgeActions(app.operations, { path, sharing: () => access, verify: verifyKnowledgePages, classify: domain => deriveSlaClass(null, domain) }); app.onClose(() => actions.close());
     } });
     let stopped = false;
@@ -43,7 +40,7 @@ async function fixture(missing = false, timers = true) {
   return { app: await start(), start, db, backend, clock, path, access };
 }
 it('confirms and requests a recheck with original notes, attribution and clock; retry acts once', async () => {
-  const { app, backend, clock } = await fixture();
+  const { app, backend, clock, db } = await fixture();
   const call = (verb: string, id: string) => app.operations.call('direct', owner, `mind.${verb}`, { slug: 'fact' }, id);
   const confirmed = call('knowledgeVerify', 'confirm');
   expect(confirmed).toMatchObject({ ok: true, value: { stamped: true, noted: true, verified_at: new Date(clock.now()).toISOString() } });
@@ -54,7 +51,7 @@ it('confirms and requests a recheck with original notes, attribution and clock; 
   expect(await backend!.getPage('fact')).toMatchObject({ verified_at: '2026-11-12T00:00:00.000Z', updated: '2026-11-13T00:00:00.000Z', body: "Original\n\n## Verification — 2026-11-12\n\nconfirmed from loom's page\n\n## Verification — 2026-11-13\n\nasked to be checked again from loom's page" });
   expect(await backend!.getVerifications('fact')).toHaveLength(2);
   expect(await backend!.getVerifications('fact')).toEqual(expect.arrayContaining([expect.objectContaining({ verifier: 'owner', outcome: 'stale' }), expect.objectContaining({ verifier: 'owner', outcome: 'confirmed' })]));
-  expect(app.operations.call('direct', owner, 'mind.knowledgeRead', { slug: 'fact' })).toMatchObject({ value: { fresh: 'due' } });
+  expect(knowledgeView(db,clock.now(),'fact',true).open).toMatchObject({fresh:'due'});
 });
 it('denies partial members, agents, runners and read-only services without recording a receipt', async () => {
   const { app, db, backend } = await fixture();
@@ -106,28 +103,15 @@ it('rolls content back if source receipt insertion fails, then allows a safe ret
   expect(app.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'retry')).toMatchObject({ ok: true });
   expect(await backend!.getVerifications('fact')).toHaveLength(2);
 });
-it('publishes committed checks to two live windows and repairs publication after a failed core receipt', async () => {
-  const { app } = await fixture();
-  const windows = await Promise.all([1, 2].map(async () => {
-    const socket = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
-    // Erased socket frames are checked structurally by the assertions below.
-    const queued: any[] = [], waiting: Array<(v: any) => void> = [];
-    socket.on('message', raw => { const frame = JSON.parse(raw.toString()); const next = waiting.shift(); if (next) next(frame); else queued.push(frame); });
-    const next = () => queued.length ? Promise.resolve(queued.shift()) : new Promise<any>(resolve => waiting.push(resolve));
-    cleanups.push(() => socket.close()); await once(socket, 'open');
-    socket.send(JSON.stringify({ kind: 'subscribe', type: 'knowledge' })); await next();
-    return { socket, next };
-  }));
-  app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
-  expect(app.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'live')).toMatchObject({ code: 'unavailable' });
-  for (const w of windows) {
-    w.socket.send(JSON.stringify({ kind: 'call', request: 'barrier', name: 'mind.knowledgeList', input: {} }));
-    expect(await w.next()).toMatchObject({ kind: 'pending', request: 'barrier' });
-    expect(await w.next()).toMatchObject({ kind: 'result', request: 'barrier' });
-  }
-  app.db.exec('DROP TRIGGER fail_receipt');
-  expect(app.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'live')).toMatchObject({ ok: true });
-  for (const w of windows) expect(await w.next()).toMatchObject({ kind: 'put', record: { id: 'fact', fresh: 'due', checked: { outcome: 'stale' } } });
+it('publishes a recovered source check only after its core receipt commits',async()=>{
+ const {app}=await fixture();const changes:Array<Array<{type:string;id:string}>>=[];
+ const stop=app.live.observe(rows=>changes.push([...rows]));cleanups.push(stop);
+ app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
+ expect(app.operations.call('direct',owner,'mind.knowledgeRecheck',{slug:'fact'},'publish')).toMatchObject({code:'unavailable'});
+ expect(changes).toEqual([]);
+ app.db.exec('DROP TRIGGER fail_receipt');
+ expect(app.operations.call('direct',owner,'mind.knowledgeRecheck',{slug:'fact'},'publish')).toMatchObject({ok:true});
+ expect(changes.flat()).toContainEqual({type:'knowledge',id:'fact'});
 });
 it('refuses a locked source before effects and permits reuse only after the thirty-day retry window', async () => {
   const { app, db, backend, clock } = await fixture(false, false);

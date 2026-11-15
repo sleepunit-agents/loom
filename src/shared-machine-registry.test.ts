@@ -1,0 +1,50 @@
+import {afterEach,expect,it,vi} from 'vitest';
+import {eq} from 'drizzle-orm';
+import {registerBuiltinService} from './core/services.js';
+import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
+import * as s from './core/data/schema.js';
+const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
+async function fixture(){const f=await bodyFixture(clean);const call=(name:string,input:unknown,id:string,token=raw.member)=>f.root.http.request('/api/runtime/'+name,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});return{...f,call};}
+it('registers a members own closed machine, using metadata-only stable receipts',async()=>{
+ const f=await fixture();f.clock.advance(1234);const input={name:'Workshop',sameMachineAsLoom:true},first=await(await f.call('boxCreate',input,'new-machine')).json();expect(first).toEqual({ok:true,value:{id:expect.any(String)}});expect(await(await f.call('boxCreate',input,'new-machine')).json()).toEqual(first);
+ expect(f.db.select().from(s.boxes).where(eq(s.boxes.id,first.value.id)).get()).toMatchObject({owner:'alice',name:'Workshop',enrolledAt:new Date(f.clock.now()).toISOString(),sameMachineAsLoom:true,hostsAny:false,reportOnly:true,alwaysOn:false,lastSeenAt:null,revokedAt:null});expect(f.db.select().from(s.boxAgents).all()).toHaveLength(0);expect(f.db.select().from(s.boxFacts).where(eq(s.boxFacts.box,first.value.id)).all()).toEqual([]);expect(f.db.select().from(s.tokens).all()).toHaveLength(4);expect(f.db.select().from(s.operationResults).all()).toHaveLength(1);
+ expect((await f.call('boxCreate',input,'duplicate')).status).toBe(409);
+});
+it.each(['agent','runner','body']as const)('refuses %s creating or revoking registry entries',async who=>{const f=await fixture();expect((await f.call('boxCreate',{name:'New',sameMachineAsLoom:false},'create',raw[who])).status).toBe(403);expect((await f.call('boxRevoke',{box:'box'},'revoke',raw[who])).status).toBe(403);});
+it('checks current membership and rejects identity/enrollment overposting',async()=>{const f=await fixture();for(const extra of[{owner:'bob'},{id:'chosen'},{lastSeenAt:'2026-11-15T00:00:00Z'},{hostsAny:true},{reportOnly:false},{revokedAt:null}])expect((await f.call('boxCreate',{name:'New',sameMachineAsLoom:false,...extra},'extra')).status).toBe(400);expect(f.root.operations.call('http',{kind:'member',id:'gone'},'runtime.boxCreate',{name:'Gone',sameMachineAsLoom:false},'gone')).toMatchObject({ok:false,code:'denied'});expect((await f.call('boxCreate',{name:'New',sameMachineAsLoom:false},'member')).status).toBe(200);});
+it('revokes an owned machine and immediately withdraws existing runner/body authority without deleting history',async()=>{
+ const f=await fixture();expect((await f.root.http.request('/api/runtime/health',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({input:{},id:'health'})})).status).toBe(200);
+ expect(await(await f.call('boxRevoke',{box:'box'},'revoke')).json()).toEqual({ok:true,value:{saved:true}});expect(f.db.select().from(s.boxes).get()?.revokedAt).toBe(new Date(f.clock.now()).toISOString());expect(f.db.select().from(s.jobs).all()).toHaveLength(1);
+ expect((await f.call('heartbeat',{job:'job',state:'running'},'worker',raw.runner)).status).toBe(401);expect((await f.root.http.request('/api/conversation/status',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:'body',input:{state:'working',work:''}})})).status).toBe(401);
+ expect((await f.call('boxRevoke',{box:'box'},'revoke')).status).toBe(200);
+});
+it('refuses another member machine unless current household owner',async()=>{
+ const f=await fixture();f.db.update(s.boxes).set({owner:'bob'}).run();expect((await f.call('boxRevoke',{box:'box'},'foreign')).status).toBe(403);f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();expect((await f.call('boxRevoke',{box:'box'},'owner')).status).toBe(200);f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'alice')).run();expect((await f.call('boxRevoke',{box:'box'},'owner')).status).toBe(403);
+});
+it.each(['',' padded','padded ','bad\nname','bad\tname','x'.repeat(201)])('rejects invalid machine name %j',async name=>{const f=await fixture();expect((await f.call('boxCreate',{name,sameMachineAsLoom:false},'invalid')).status).toBe(400);expect(f.db.select().from(s.boxes).all()).toHaveLength(1);});
+it.each(['boxCreate','boxRevoke']as const)('commits %s with its receipt and notifies only after new committed effects',async name=>{
+ const f=await fixture(),before=f.db.select().from(s.boxes).all(),input=name==='boxCreate'?{name:'New',sameMachineAsLoom:false}:{box:'box'},observed:{inTransaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.capacityChanged.bind(f.root.services.tempo),changed=vi.spyOn(f.root.services.tempo,'capacityChanged').mockImplementation(()=>{observed.push({inTransaction:f.db.$client.inTransaction,receipt:f.db.select().from(s.operationResults).all().some(row=>row.id==='committed')});notify();});
+ f.db.$client.exec("CREATE TEMP TRIGGER fail_machine_receipt BEFORE INSERT ON operation_results WHEN NEW.id='rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
+ expect((await f.call(name,input,'rollback')).status).toBe(503);expect(f.db.select().from(s.boxes).all()).toEqual(before);expect(changed).not.toHaveBeenCalled();expect((await f.call(name,input,'committed')).status).toBe(200);expect(changed).toHaveBeenCalledOnce();expect(observed).toEqual([{inTransaction:false,receipt:true}]);expect((await f.call(name,input,'committed')).status).toBe(200);expect(changed).toHaveBeenCalledOnce();
+});
+it('reuses a name only after revocation and never restores an old worker credential',async()=>{
+ const f=await fixture();expect((await f.call('boxCreate',{name:'Box',sameMachineAsLoom:false},'duplicate')).status).toBe(409);expect((await f.call('boxRevoke',{box:'box'},'revoke')).status).toBe(200);const result=await(await f.call('boxCreate',{name:'Box',sameMachineAsLoom:false},'replacement')).json();expect(result.value.id).not.toBe('box');expect(f.db.select().from(s.boxes).all()).toHaveLength(2);expect((await f.call('health',{},'old-worker',raw.runner)).status).toBe(401);
+});
+it('accepts the exact name bound and rejects Unicode/control line breaks',async()=>{const f=await fixture();expect((await f.call('boxCreate',{name:'x'.repeat(200),sameMachineAsLoom:false},'bound')).status).toBe(200);for(const name of['bad\u0085name','bad\u2028name','bad\u2029name','bad\u0000name'])expect((await f.call('boxCreate',{name,sameMachineAsLoom:false},'bad')).status).toBe(400);});
+it('does not accept a service label or invented member as a registry caller',async()=>{const f=await fixture();for(const viewer of[{kind:'service' as const,id:'runtime'},{kind:'member' as const,id:'gone'}]){expect(f.root.operations.call('http',viewer,'runtime.boxCreate',{name:'Unauthorized',sameMachineAsLoom:false},'create')).toMatchObject({ok:false,code:'denied'});expect(f.root.operations.call('http',viewer,'runtime.boxRevoke',{box:'box'},'revoke')).toMatchObject({ok:false,code:'denied'});}expect(f.db.select().from(s.boxes).all()).toHaveLength(1);expect(f.db.select().from(s.boxes).get()?.revokedAt).toBeNull();});
+
+it('does not change the revocation timestamp or notify for a fresh repeated revoke',async()=>{
+ const f=await fixture(),changed=vi.spyOn(f.root.services.tempo,'capacityChanged');expect((await f.call('boxRevoke',{box:'box'},'first')).status).toBe(200);const at=f.db.select().from(s.boxes).get()!.revokedAt;f.clock.advance(1234);expect((await f.call('boxRevoke',{box:'box'},'new-id')).status).toBe(200);expect(f.db.select().from(s.boxes).get()!.revokedAt).toBe(at);expect(changed).toHaveBeenCalledOnce();
+});
+it('rechecks create policy on a retained receipt after membership disappears',async()=>{
+ const f=await fixture(),viewer={kind:'member' as const,id:'alice'},input={name:'Removedmember',sameMachineAsLoom:false};expect(f.root.operations.call('http',viewer,'runtime.boxCreate',input,'retained')).toMatchObject({ok:true});
+ // Simulate a stale admitted viewer after membership withdrawal, independently
+ // of HTTP credential authentication. Only this fictitious in-memory fixture.
+ f.db.$client.pragma('foreign_keys=OFF');f.db.delete(s.members).where(eq(s.members.id,'alice')).run();f.db.$client.pragma('foreign_keys=ON');expect(f.root.operations.call('http',viewer,'runtime.boxCreate',input,'retained')).toMatchObject({ok:false,code:'denied'});expect(f.db.select().from(s.boxes).all()).toHaveLength(2);
+});
+it('refuses a registered service on the outside HTTP registry operations',async()=>{
+ const f=await fixture(),service=registerBuiltinService(f.root.operations,'registry-fixture',['runtime.box'],'runtime');for(const[name,input]of[['runtime.boxCreate',{name:'Servicebox',sameMachineAsLoom:false}],['runtime.boxRevoke',{box:'box'}]]as const)expect(f.root.operations.call('http',service,name,input,'service')).toMatchObject({ok:false,code:'denied'});
+});
+
+it('rejects revoke ownership, timestamp and credential overposting without mutation',async()=>{const f=await fixture(),before=f.db.select().from(s.boxes).all();for(const extra of[{owner:'bob'},{revokedAt:'2026-11-15T00:00:00Z'},{token:'fake'},{name:'Changed'},{sameMachineAsLoom:true}])expect((await f.call('boxRevoke',{box:'box',...extra},'overpost')).status).toBe(400);expect(f.db.select().from(s.boxes).all()).toEqual(before);expect(f.db.select().from(s.operationResults).all()).toHaveLength(0);});
+it('generates a different machine ID for each new registry entry',async()=>{const f=await fixture(),one=await(await f.call('boxCreate',{name:'First',sameMachineAsLoom:false},'first')).json(),two=await(await f.call('boxCreate',{name:'Second',sameMachineAsLoom:false},'second')).json();expect(one.ok).toBe(true);expect(two.ok).toBe(true);expect(one.value.id).not.toBe(two.value.id);expect(f.db.select().from(s.boxes).all()).toHaveLength(3);});

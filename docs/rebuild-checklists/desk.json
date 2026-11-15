@@ -1,0 +1,140 @@
+{
+  "page": "desk",
+  "title": "The desk",
+  "ownerTask": "t-2240",
+  "sourceSha256": "bdca3b9e6fc9abdec64c230227bd6750cee36d43b2aa68377eca68269b46f5ac",
+  "promises": [
+    {
+      "id": "desk-001",
+      "promise": "The desk is loom on a desktop screen. App tiles side by side, the agents on a rail, a ticker along the top and a dock along the bottom.",
+      "source": "docs/how-it-works/site/desk.html"
+    },
+    {
+      "id": "desk-002",
+      "promise": "Places tiles by one rule, so the desk is full and nothing overlaps.",
+      "source": "docs/how-it-works/site/desk.html"
+    },
+    {
+      "id": "desk-003",
+      "promise": "Keeps every installed app within reach in the launcher and the dock.",
+      "source": "docs/how-it-works/site/desk.html"
+    },
+    {
+      "id": "desk-004",
+      "promise": "Shows each agent's face, its state and what it is doing.",
+      "source": "docs/how-it-works/site/desk.html"
+    },
+    {
+      "id": "desk-005",
+      "promise": "Wears one of three looks: Neon Noir, Low Light or Daylight.",
+      "source": "docs/how-it-works/site/desk.html"
+    },
+    {
+      "id": "desk-006",
+      "promise": "Each tile asks for its rows over the one live connection.",
+      "source": "docs/how-it-works/site/desk.html#con-h"
+    },
+    {
+      "id": "desk-007",
+      "promise": "A rail card lists the agent's current jobs.",
+      "source": "docs/how-it-works/site/desk.html#con-h"
+    },
+    {
+      "id": "desk-008",
+      "promise": "The count comes from the items waiting in your inbox.",
+      "source": "docs/how-it-works/site/desk.html#con-h"
+    },
+    {
+      "id": "desk-009",
+      "promise": "The ticker reads counts from each part, such as tasks in progress and ready.",
+      "source": "docs/how-it-works/site/desk.html#con-h"
+    },
+    {
+      "id": "desk-010",
+      "promise": "Home shows each agent's last answer and recent conversations, with a box to message it.",
+      "source": "docs/how-it-works/site/desk.html#con-h"
+    },
+    {
+      "id": "desk-011",
+      "promise": "Each member keeps their own look and switches.",
+      "source": "docs/how-it-works/site/desk.html#con-h"
+    },
+    {
+      "id": "desk-012",
+      "promise": "The first tile takes the big slot. The others share the space beside it on a wide screen, or below it on a tall one. When one more will not fit, the least recently used tile goes to the dock. A tile can be made the big one, minimized to the dock, or closed.",
+      "source": "docs/how-it-works/site/desk.html#how-h"
+    },
+    {
+      "id": "desk-013",
+      "promise": "The launcher lists every app in groups and finds one as you type. Enter opens the first match. Every installed app also stays within reach in the dock.",
+      "source": "docs/how-it-works/site/desk.html#how-h"
+    },
+    {
+      "id": "desk-014",
+      "promise": "Each agent has a drawn face: one of four shapes (pebble, trefoil, clover, drop) with dot or oval eyes. Its expression is its state: quiet, thinking, working, waiting on you, done, needs a look, talking.",
+      "source": "docs/how-it-works/site/desk.html#how-h"
+    },
+    {
+      "id": "desk-015",
+      "promise": "A look is a set of colours and type over one structure. A person also picks the desk background (depth, contours or wash), reduced motion, higher contrast, and one window at a time.",
+      "source": "docs/how-it-works/site/desk.html#how-h"
+    },
+    {
+      "id": "desk-016",
+      "promise": "a What you may see. The desk shows each person only what they may see. Every tile gets its rows through the same visibility check.",
+      "source": "docs/how-it-works/site/desk.html#see-h"
+    },
+    {
+      "id": "desk-017",
+      "promise": "b Your own look. The look, the desk background and the switches belong to each member.",
+      "source": "docs/how-it-works/site/desk.html#see-h"
+    },
+    {
+      "id": "desk-018",
+      "promise": "c The phone. The phone does what the desk does, built after the desk is right.",
+      "source": "docs/how-it-works/site/desk.html#see-h"
+    },
+    {
+      "id": "desk-019",
+      "promise": "Home shows owned agents and their last answer.",
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Home",
+        "contains": [
+          "Fern",
+          "Moss",
+          "LAST ANSWER",
+          "Three fit."
+        ]
+      }
+    },
+    {
+      "id": "desk-020",
+      "promise": "Home offers a message box for each owned agent.",
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Home",
+        "contains": [
+          "MESSAGE FERN",
+          "MESSAGE MOSS",
+          "Send"
+        ]
+      }
+    },
+    {
+      "id": "desk-021",
+      "promise": "Every app discovered in the launcher opens a tile.",
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "launcher"
+      }
+    }
+  ],
+  "modelTables": [
+    "member_preferences",
+    "agent_status",
+    "agent_sprites"
+  ]
+}

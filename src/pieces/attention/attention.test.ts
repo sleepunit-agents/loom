@@ -170,3 +170,9 @@ it('commits a declared managed words answer together with its callback and repla
   expect(call('answer',input,undefined,'managed-words-answer')).toEqual(first);
   expect(callback).toHaveBeenCalledTimes(1);
 });
+
+it('does not advertise removed per-piece CLI commands through the operation registry',async()=>{
+ const {app}=await setup(),offered=app.operations.offered('http').filter(op=>op.name.startsWith('attention.'));
+ expect(offered.length).toBeGreaterThan(0);
+ expect(offered.every(op=>op.cli===undefined)).toBe(true);
+});

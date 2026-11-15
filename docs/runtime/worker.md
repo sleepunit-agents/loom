@@ -362,6 +362,23 @@ agent. The command checks this against current ownership. An existing explicit
 non-lending row cannot authorize a foreign agent after ownership changes. Remove
 an agent from the explicit list to withdraw that permission.
 
+## Command discovery inside a receiving body
+
+The current body can call `POST /api/runtime/commandCatalog` with the ordinary
+`{input}` envelope. Empty input lists code-defined HTTP command names and write
+flags; `{name:"conversation.status"}` returns that command's structural JSON
+input schema from its registered Zod definition. Input transforms and refinements
+remain enforced by the actual command; the structural hint does not replace
+validation or imply permission to invoke it.
+
+Discovery returns no household records and invokes no discovered command. Direct-only
+operations are excluded. Bare agent, member, runner and service credentials cannot
+inspect this catalogue; the existing current conversation/body scope applies,
+including job lifetime, machine revocation, current conversation linkage and
+private ownership. A still-bound waiting body may inspect it. Calling a discovered
+command uses the normal HTTP operation door and current permission checks; the
+catalogue grants no worker control, private read access or household authority.
+
 ## Stop while preparing a body
 
 Claiming a private Comms job marks its thread as working while the worker prepares
@@ -377,3 +394,72 @@ receipt preserves the previous active job and Stop request, while cached heartbe
 replay cannot restore active authority. Running-body Stop remains with the receiving
 body's status protocol. Preparation changes the thread working indicator, without
 inventing a reported agent status or consuming another conversation's Stop.
+
+## Machine registry
+
+An authenticated member registers their own machine with
+`runtime.boxCreate({name,sameMachineAsLoom})` through the normal HTTP command
+and stable receipt. A new machine starts in report-only mode, with hosting and
+always-on alerts disabled; its owner configures those independently through
+`runtime.boxSettingsSet`. Registration issues no credential. Runner credentials
+are issued by canonical Sign-in for the recorded machine.
+
+The machine owner or a current household owner can call
+`runtime.boxRevoke({box})`. Revocation retains job history and immediately
+withdraws existing machine/body credentials through the normal current-credential
+checks. It cannot restore a revoked machine or transfer ownership. A replacement
+may reuse the visible name, but receives a different machine ID. Neither command
+accepts an owner, token, heartbeat or caller-chosen enrollment timestamp.
+
+## Body command/read consumer
+
+`bodyCommandClient` calls the existing Root HTTP operation and generated GraphQL
+doors using only the receiving body's existing credential. Callers supply a stable
+operation ID; uncertain writes are never retried automatically. Current Root policy,
+input validation and receipts remain authoritative. A command name cannot change
+the destination origin or select a different credential or caller.
+
+Requests are limited to one MiB of UTF8 JSON and responses to sixteen MiB, with
+a bounded request deadline (15 seconds by default, at most 30). Redirects, malformed
+JSON/UTF8, invalid response envelopes/statuses and accidental Root-bearer echoes
+are refused with a generic error. Command failures keep Root's structured result;
+GraphQL validation errors remain generated read errors.
+
+The client shares the private bootstrap's origin validation. Abort/close cancels
+pending work and erases owned partial response bytes at the cancellation point;
+completed requests erase received chunks and retained byte copies. A late response
+is cancelled, and a closed client starts no further requests. Native tool
+composition is a subsequent step using this consumer in the body-local MCP server.
+
+The constructor snapshots its credential and origin; later reuse of the options
+object cannot change request authority or the echo check. It requests identity
+content encoding, rejects unnegotiated coding, and requires a declared content
+length to match the received UTF8 bytes. Echo checks include every JSON string,
+even an escaped value discarded by a duplicate property. Final lifetime checks
+after response completion prevent cancellation from publishing decoded data.
+
+GraphQL responses validate standard error locations, paths and extensions. HTTP400
+is accepted only for errors without a data entry; partial execution data and its
+errors remain HTTP200 results. Loopback HTTP includes localhost,127.0.0.1 and::1.
+The client rejects whitespace or controls in its fixed bearer before Fetch can
+normalize a header. A GraphQL errors entry is nonempty whenever present.
+
+## Composing native tools
+
+`bodyProgramTools` projects three standard MCP tool descriptors and a call callback
+for the receiving body's one local MCP listener: `loom_commands`, `loom_command`
+and `loom_query`. It starts no listener and supplies no new credential. Discovery
+uses the registered Root catalogue, command calls keep stable caller IDs and
+current Root permissions, and reads use the generated GraphQL schema. This
+projection is a composition port; the native listener/CLI wiring is separate.
+
+Mail confirmation, observed model/latency telemetry and Stop acknowledgement stay
+with the receiving runtime. The model cannot supply those fields or invoke the
+private take route. Successful status reports notify the runtime so its heartbeat
+can preserve the reported waiting status; a returned Stop request invokes the runtime's
+Stop callback before publishing a tool result. Request cancellation closes only
+that call, while body close cancels every current and future call.
+
+Native model tools report only working/waiting while a turn is live. Idle/offline
+reports and Stop acknowledgement belong to the receiving runtime after execution
+ends, so a model cannot clear the working flag or remove the live Stop control.

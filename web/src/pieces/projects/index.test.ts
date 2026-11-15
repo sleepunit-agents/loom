@@ -4,7 +4,7 @@ import {act,create} from '../../../node_modules/react-test-renderer/index.js';
 import type {Snapshot} from '../../data/store';
 import type {ProjectRecord} from './model';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,access:{records:[{id:'projects',allowed:true,agents:['art']}],status:'live'} as Snapshot,memory:{records:[],status:'live'} as Snapshot,detail:{records:[],status:'live'} as Snapshot,call:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>type==='projects.access'?f.access:type==='project.hub'?f.detail:type==='project.memory'?f.memory:f.feed,call:f.call}));
+vi.mock('../../memory/query',()=>({useMemoryRecord:(s:any)=>s?.query.includes('MemoryProjectsAccess')?f.access:s?.query.includes('MemoryProjectMemory(')?f.memory:f.detail,useMemoryList:()=>f.feed}));
 vi.mock('../../kit',()=>({Split:(p:{list:unknown;reader:unknown;search:unknown})=>h('div',null,p.search,p.list,p.reader),List:(p:{children:unknown})=>h('ul',null,p.children),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input'}));
 vi.mock('../../face',()=>({default:(p:{label:string})=>h('svg',{'aria-label':p.label,'data-face':true})}));
 vi.mock('../../components/ui/avatar',()=>({Avatar:(p:{children:unknown})=>h('span',{'data-avatar':true},p.children),AvatarFallback:(p:{children:unknown})=>h('span',null,p.children)}));

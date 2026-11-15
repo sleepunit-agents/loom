@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
-import { migrateMindReceipts } from './receipt-schema.js';
+import { mindReceiptsReady } from './receipt-schema.js';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
 /** Composition supplies the synchronous shared store primitive, without a piece
  * importing the old backend or initializing any of its schema.
@@ -13,14 +13,13 @@ export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: stri
 
 /** Opt-in alongside the read installer. Never creates a missing content store.
  * The added tables hold migration/retry metadata, never page bodies or notes.
- * Numbered metadata migrations run at install; verification and its receipt
+ * Source preparation owns metadata; verification and its receipt
  * insertion share one immediate source transaction.
  */
 export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier; classify(domain: string): string }) {
   const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
-  try { if (db) migrateMindReceipts(db); } catch (error) { db?.close(); throw error; }
   const recover = (ctx: Context) => {
-    if (!db || !ctx.receipt) return;
+    if (!db || !ctx.receipt || !mindReceiptsReady(db)) return;
     const receipt = ctx.receipt;
     const prior = db.prepare('SELECT name, input_hash, result, expires FROM mind_operation_receipts WHERE viewer = ? AND id = ? AND expires > ?')
       .get(receipt.viewer, receipt.id, ctx.now) as { name: string; input_hash: string; result: string; expires: number } | undefined;
@@ -40,6 +39,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
       run(ctx, input) {
         if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
+        if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
         const receipt = ctx.receipt;
         if (!receipt) throw new Error('Knowledge writes require a retry identity');
         const result = db.transaction(() => {
@@ -67,6 +67,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeAdd'),
     run(ctx, input) {
       if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
+      if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
       if (input.source && !/^https?:\/\//.test(input.source)) throw new OperationError('invalid', 'The source must be an http or https link, or empty');
       const slug = input.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 128);
       if (!slug) throw new OperationError('invalid', 'That title has nothing to make an address from');

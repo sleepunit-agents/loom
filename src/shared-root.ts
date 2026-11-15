@@ -1,8 +1,11 @@
+import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
+import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
 
 import { registerBoxSettings } from './shared-box-settings.js';
+import {registerMachineRegistry} from './shared-machine-registry.js';
 import { registerAgentModels } from './shared-agent-models.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
@@ -12,6 +15,7 @@ import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
 import { recordActionResult } from './shared-action-results.js';
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
@@ -26,9 +30,8 @@ import { registerSharedSecretCommands } from './shared-secret-commands.js';
 
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { tempoSettingsProposals } from './core/tempo/proposal.js';
-import { sharedTempoSettings, type TempoChatAuthentication } from './shared-tempo-settings.js';
+import { sharedTempoSettings } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -36,13 +39,18 @@ import type { DataDatabase } from './core/data/database.js';
 import { sharedCredentials } from './shared-credentials.js';
 import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
+import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
+import {installMemoryTempo} from './transport/memory-tempo.js';
+import {installMemorySignals} from './transport/memory-signals.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
+import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
+import { workLifetime } from './shared-work-lifetime.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
@@ -81,9 +89,10 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
+  memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {read:PullRequestReader;rule:MergeRuleReader};
+  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
   workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
@@ -103,12 +112,10 @@ export function sharedRoot(options: {
   roles(); // Refuse invalid startup configuration before opening services.
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
-  const chat = new AsyncLocalStorage<TempoChatAuthentication>();
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
-  const notices = settledNotices(db, () => data.changed());
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
-  let measuringReady: ReturnType<typeof installMeasuring>;
+  let measuringReady: ReturnType<typeof installMeasuring> | undefined;
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
@@ -116,25 +123,39 @@ export function sharedRoot(options: {
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
-    queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady.then(value => value.refresh())).catch(report); });
+    queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes) }, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const tasks=taskService(db,now);
+  const memory=sharedMemory(db,clock,options.memory,tasks);
+  const startupCleanups:Array<()=>void>=[memory.close];
+  try{
+  const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
+  startupCleanups.push(notices.close);
+  let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
-  const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
+  startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
+  const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
     receipts: new OperationResults(db), writes: data.writes,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
+  startupCleanups.push(()=>operations.close());
+  memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
+  const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
+  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer));
   registerAgentBodyPolicy(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
+  startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
   registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
 
   registerBoxSettings(operations, db, () => tempo?.capacityChanged());
+  registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
   registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {
@@ -149,6 +170,7 @@ export function sharedRoot(options: {
     }),
   });
   const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  startupCleanups.push(()=>runtime.close());
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
@@ -161,6 +183,7 @@ export function sharedRoot(options: {
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
     options.secretWrites.fingerprintKey, secretCommit);
   const privateInputs=new SecretPrivateInputs(db,clock,options.secretInputs?.source,secretCommit);
+  startupCleanups.push(()=>{void Promise.resolve(privateInputs.close()).catch(report);});
   registerSharedSecretAgentCommands(operations, db, requests, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
@@ -177,6 +200,7 @@ export function sharedRoot(options: {
     return secretRecovery;
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
+  startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
     reportError:()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}}});
@@ -186,17 +210,19 @@ export function sharedRoot(options: {
     const latest=lastSecretChange(),credentialsChanged=latest!==secretChange;secretChange=latest;
     bridgeDaemon.changed(credentialsChanged);
   });
+  startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
   comms?.install(operations);
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion);
   const services = {
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
-    tasks: taskService(db, now),
+    tasks,
     changes: changeService(db,options.changes?.rule ?? (()=>undefined),now,run=>{
       const result=data.writes.run(run);
       for(const _error of result.notificationErrors){try{options.reportError(new Error('Changes source notification failed'));}catch{}}
       return result.value;
     }),
     household: householdService(db, now),
+    signin: sharedTokens(db, clock),
     approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
@@ -205,22 +231,31 @@ export function sharedRoot(options: {
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
+  registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
-  const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
+  startupCleanups.push(()=>commsLifetime?.close());
+  const settingsBinding = sharedTempoSettings(db, clock, bodyScope, services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
+    beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }
   catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); void privateInputs.close(); operations.close(); void data.close(); throw error; }
+  startupCleanups.push(()=>tempo.close());
   const stopDeskTime = startDeskTime(clock, data.changed, options.reportError);
+  startupCleanups.push(stopDeskTime);
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
-  const changePolling=options.changes ? pollChanges(services.changes,options.changes.read,clock) : undefined;
+  const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
+  startupCleanups.push(()=>{void changePolling?.stop();});
+  const workLife=workLifetime(db,clock,data.writes,options.reportError);
+  startupCleanups.push(()=>workLife.close());
   const authenticate = credentials.authenticate;
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -267,8 +302,8 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer = await chat.run(auth, () => operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid()));
+    const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
+      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
 
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
@@ -287,8 +322,8 @@ export function sharedRoot(options: {
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {
     measuring: measuringReady,
-    ready: measuringReady.then(() => undefined),
-    http, operations, services: { ...services, tempo }, credentials, refreshChanges:changePolling?.refresh, writes: data.writes, changed: data.changed,
+    ready: measuringReady!.then(() => undefined),
+    http, operations, services: { ...services, tempo }, memory, credentials, refreshChanges:changePolling?.refresh, writes: data.writes, changed: ()=>memorySignals!.changed(),
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -298,8 +333,9 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      stopMemoryWrites();memorySignals?.close();
       accountReports.close();
-      commsLifetime?.close();
+      commsLifetime?.close();workLife.close();
       runtime.close();
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
@@ -311,15 +347,16 @@ export function sharedRoot(options: {
       const inputsStopped = privateInputs.close();
       const stopped = data.close();
       for (const stop of stops.splice(0).reverse()) stop();
-      const measured = measuringReady.then(value => value.close());
+      const measured = measuringReady!.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
       void Promise.allSettled([stopped, sourceStopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
-        try { operations.close(); } catch (error) { reject(error); return; }
+        try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
       });
       return closing;
     },
   };
+  }catch(error){closing=Promise.resolve();for(const stop of stops.splice(0).reverse())try{stop();}catch{};void measuringReady?.then(value=>value.close()).catch(report);for(const stop of startupCleanups.reverse())try{stop();}catch{report(new Error('Shared startup cleanup failed'));}throw error;}
 }

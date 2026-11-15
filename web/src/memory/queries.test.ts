@@ -1,11 +1,10 @@
 import { afterEach, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { join } from 'node:path';
-import { memoryClient, memoryQueries, MemoryReadError, type MemoryFetch } from './queries';
+import { memoryQueries, type MemorySelection } from './queries';
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createFoundation } from '../../../src/core/app.js';
 import { createDataSchema } from '../../../src/core/data/database.js';
 import { dataHttp } from '../../../src/core/data/http.js';
 import { agents, members, tasks, conversationPeople } from '../../../src/core/data/schema.js';
@@ -14,14 +13,13 @@ import { Conversations } from '../../../src/core/conversations/index.js';
 import { SqliteKnowledgeBackend } from '../../../src/backends/sqlite-knowledge.js';
 import { PeopleStore } from '../../../src/backends/people.js';
 import { ProjectsStore } from '../../../src/backends/projects.js';
-import { installMindProjects } from '../../../src/pieces/mind/projects.js';
-import { mindRole } from '../../../src/pieces/mind/role.js';
-import { installMindActivity } from '../../../src/pieces/mind/activity.js';
+import { createProjectsReader } from '../../../src/pieces/mind/projects.js';
+import { createActivityReader } from '../../../src/pieces/mind/activity.js';
 import { sharedActivityConversations } from '../../../src/pieces/mind/activity-conversations.js';
 import { memoryQueryFields } from '../../../src/transport/memory-queries.js';
 async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   const home = mkdtempSync(join(tmpdir(), 'memory-door-')); cleanup.push(() => rmSync(home, {recursive: true, force: true}));
-  const now = Date.parse('2026-11-14T18:00:00Z'), clock = new FakeClock(now), app = createFoundation({home, clock}); cleanup.push(() => app.close());
+  const now = Date.parse('2026-11-14T18:00:00Z'), clock = new FakeClock(now);
   const client = new Database(':memory:'); cleanup.push(() => client.close()); const db = createDataSchema(client);
   db.insert(members).values(['owner','peer'].map(id => ({id, role: id === 'owner' ? 'owner' as const : 'member' as const, joinedAt: new Date(now).toISOString()}))).run();
   db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -34,19 +32,19 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   projects.write({slug:'pond',name:'Fictional pond'});
   const sharing: Sharing = {members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:['fiction']}},services:{}};
   const source = {agent:'fiction',directory:home,memories:join(home,'memories.db')};
-  const projectReader = installMindProjects(app.operations,app.live,{agents:[source],sharing:()=>sharing}); cleanup.push(projectReader.close);
+  const projectReader = createProjectsReader(clock,{agents:[source],sharing:()=>sharing}); cleanup.push(projectReader.close);
   const conversationHref = (id:string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
   const conversations = new Conversations(db, () => new Date(clock.now()).toISOString());
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
-  const activity = installMindActivity(app.operations,app.live,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
-  const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),mind:mindRole(app.operations),activity,projectAccess:projectReader.access,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
+  const activity = createActivityReader(clock,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
+  const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),projects:projectReader,activity,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
   let valid = true, admitted = false;
   const http = dataHttp(db, request => {
     admitted = true;
     const id = request.headers.get('authorization');
     return id === 'owner' || id === 'peer' ? {viewer:{kind:'member',id},valid:()=>valid} : undefined;
-  }, undefined, queries.fields);
+  }, undefined, queries.fields, {}, undefined, () => clock.now());
   const read = (query:string, token='owner', extra={}) => http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:token},body:JSON.stringify({query,...extra})});
   return {http,read,sharing,thread,knowledge,people,projects,clock,home,client,admitted:()=>admitted,end:()=>{valid=false;}};
 }
@@ -56,12 +54,16 @@ afterEach(() => { for (const close of cleanup.splice(0).reverse()) close(); });
 async function fixture() {
   const f = await memoryHttpFixture(cleanup);
   let caller = 'owner';
-  const requests: Array<{url:string;init:RequestInit}> = [];
-  const fetcher: MemoryFetch = async (url,init) => {
-    requests.push({url,init});
-    return f.http.request('http://loom'+url,{...init,headers:{...init.headers,authorization:caller}});
-  };
-  return {...f,requests,client:memoryClient(fetcher),caller(id:string) { caller=id; }};
+  const requests: Array<{query:string;variables:Record<string,string>}> = [];
+  // Exercise documents/decoders through the actual HTTP schema without keeping
+  // a second production transport alongside the canonical live browser client.
+  const client={async read<T>(selection:MemorySelection<T>):Promise<T>{
+    requests.push({query:selection.query,variables:selection.variables});
+    const response=await f.read(selection.query,caller,{variables:selection.variables});
+    expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();
+    return selection.decode(result.data);
+  }};
+  return {...f,requests,client,caller(id:string) { caller=id; }};
 }
 it('executes every browser selection against the real generated HTTP schema and existing file readers', async () => {
   const f = await fixture(), c = f.client;
@@ -82,11 +84,7 @@ it('executes every browser selection against the real generated HTTP schema and 
   expect(activity).toMatchObject({conversations:'available',entries:[{id:`c~fiction~${f.thread.id}`,title:'Fictional conversation'}]});
   expect(await c.read(memoryQueries.activity(activity!.to))).toEqual({...activity,id:activity!.to});
   expect(await c.read(memoryQueries.activityEntry(`c~fiction~${f.thread.id}`))).toMatchObject({title:'Fictional conversation',asked:[],decided:[],more:[],tasks:[],prs:[],links:[{label:'Conversation',href:`/p/comms-preview/conversation/${f.thread.id}`}]});
-  for (const {url,init} of f.requests) {
-    expect(url).toBe('/graphql');
-    expect(init).toMatchObject({method:'POST',cache:'no-store',credentials:'same-origin',headers:{'content-type':'application/json'}});
-    expect(JSON.parse(String(init.body))).not.toHaveProperty('viewer');
-  }
+  for(const request of f.requests)expect(request).not.toHaveProperty('viewer');
 });
 
 it('keeps typed card values, provenance, canonical ids and project counts usable by screens', async () => {
@@ -128,39 +126,13 @@ it('does not retain or reuse owner words after caller changes, demotion, missing
   expect(await f.client.read(memoryQueries.page('absent'))).toBeNull();
   expect(await f.client.read(memoryQueries.activityEntry('invalid'))).toBeNull();
   f.end();
-  await expect(f.client.read(memoryQueries.person('fiction:friend'))).rejects.toMatchObject({code:'denied'});
+  expect((await f.read(memoryQueries.person('fiction:friend').query,'owner',{variables:{id:'fiction:friend'}})).status).toBe(401);
 });
 
 it('uses variables for exact ids including quotes, unicode and GraphQL-looking text', async () => {
   const f = await fixture(), id = 'fiction:missing") { memoryPeople { name } } # 雨';
   expect(await f.client.read(memoryQueries.person(id))).toBeNull();
-  const wire = JSON.parse(String(f.requests.at(-1)!.init.body));
+  const wire = f.requests.at(-1)!;
   expect(wire.variables).toEqual({id}); expect(wire.query).not.toContain(id);
   expect(await f.client.read(memoryQueries.page('missing"} # 雨'))).toBeNull();
-});
-
-it('discards partial data and sanitizes HTTP, GraphQL, decode and network failures', async () => {
-  const responses = [
-    Response.json({data:{memoryPeople:[{name:'Private'}]},errors:[{message:'PRIVATE SQL'}]}),
-    Response.json({data:{}}), Response.json({data:{memoryPeople:[{}]}}),
-    new Response('PRIVATE PATH',{status:500}), new Response('not JSON'),
-    Response.json({errors:[{message:'PRIVATE'}]},{status:403}),
-  ];
-  for (const response of responses) {
-    const error = await memoryClient(async () => response).read(memoryQueries.people()).catch(e => e);
-    expect(error).toBeInstanceOf(MemoryReadError);
-    expect(error.message).not.toMatch(/PRIVATE|SQL|JSON|undefined/);
-  }
-  await expect(memoryClient(async () => { throw Error('PRIVATE URL'); }).read(memoryQueries.people())).rejects.toThrow('Memory could not load');
-});
-
-it('lets a caller abort an obsolete read, including while a response body is being consumed', async () => {
-  const controller = new AbortController(), reason = new Error('Selection changed');
-  let received: AbortSignal | null | undefined;
-  const client = memoryClient(async (_url,init) => {
-    received=init.signal;
-    return {ok:true,status:200,json:async () => {controller.abort(reason);return {data:{memoryPeople:[]}};}} as Response;
-  });
-  await expect(client.read(memoryQueries.people(),controller.signal)).rejects.toBe(reason);
-  expect(received).toBe(controller.signal);
 });

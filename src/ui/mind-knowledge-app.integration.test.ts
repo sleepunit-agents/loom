@@ -1,31 +1,28 @@
 /** One two-window proof; CI alone runs Chrome. LOOM_SHOTS retains six look/width images. */
+import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
 import { expect, it } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, type Route } from 'playwright-core';
-import { startLoom } from '../foundation.js';
-import { createFoundation } from '../core/app.js';
 import { FakeClock } from '../core/clock.js';
-import { migrateHouseholdTables } from '../core/household/schema.js';
-import { TokenDatabase } from '../core/household/tokens.js';
-import { HouseholdDatabase } from '../core/household/document.js';
 import { SqliteKnowledgeBackend } from '../backends/sqlite-knowledge.js';
+import Database from 'better-sqlite3';
+import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
 if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new Error('Knowledge browser evidence requires Chrome and the built next app in CI');
 it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
   const home=mkdtempSync(join(tmpdir(),'knowledge-app-'));
-  const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
-  metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
-  metadata.db.transaction(()=>new TokenDatabase(metadata.db).replace({v:1,tokens:[]},{}))();metadata.close();
+
   const source=new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
   await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
+  // This fixture owns new files; the server never upgrades existing sources.
+  const prepared=new Database(join(home,'commons/knowledge.db'));try{migrateMindReceipts(prepared);}finally{prepared.close();}
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  // Aging pages must not replay a month of denied maintenance sweeps.
-  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}})});
+  const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art']}),{app}=fixture;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
@@ -47,12 +44,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     // Exercise the real signed-in window resolver: a synthetic member cannot
     // subscribe to browser-only shell records.
     const signIn=async()=>{
-      const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
-      if(!link.ok)throw new Error('Fixture sign-in link failed');
-      await a.goto(app.url+(link.value as {path:string}).path);
-      const signedIn=a.waitForResponse(response=>response.request().method()==='POST');
-      await a.getByRole('button',{name:'Sign in',exact:true}).click();
-      expect((await signedIn).status()).toBe(303);
+      await signInMemory(a,fixture);
       await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`,{waitUntil:'domcontentloaded'})]);
     };
     await signIn();
@@ -141,8 +133,6 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>b.getByRole('heading',{name:'Clock tempo',exact:true}).count()).toBe(1);
     await b.locator('article').getByRole('button',{name:'Six voices',exact:true}).click();
     await expect.poll(()=>b.getByRole('heading',{name:'Six voices',exact:true}).count()).toBe(1);
-    // Full-suite runs prove behavior and geometry; capture PNG evidence only
-    // when requested, as in the other shared-app browser proofs.
     const shots=process.env.LOOM_SHOTS;if(shots)mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       const target=width<640?b:a;
@@ -160,12 +150,10 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(0);
-    clock.advance(31*86400_000);
-    // Aging the records also expires the real browser session. Sign in again
-    // before checking the aged projection; both windows share the new cookie.
-    await signIn();
-    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
-    await b.getByRole('button',{name:/Due a check/}).first().click();
+    // Age this fictional source record through the same backend notification
+    // path as the archive above. Advancing the whole program by a month would
+    // replay every Runtime sweep; exact clock boundaries have Node coverage.
+    await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-10-10T12:00:00Z',body:'Set the clock tempo with params.'});
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(1);
     await b.getByRole('button',{name:'Add a fact',exact:true}).click();
     await b.getByRole('textbox',{name:'Title',exact:true}).fill('A shared new fact');
@@ -210,5 +198,5 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       }
       console.error('Knowledge fixture diagnostics',diagnostics);throw error;
     }
-  }finally{await browser.close();await app.close();source.close();rmSync(home,{recursive:true,force:true});}
+  }finally{await browser.close();await fixture.close();source.close();rmSync(home,{recursive:true,force:true});}
 },60_000);

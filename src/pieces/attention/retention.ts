@@ -1,5 +1,5 @@
 import { statement } from '../../core/db/index.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 /** Metadata retention and checked findings. No legacy store or message text is read. */
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';

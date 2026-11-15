@@ -1,18 +1,25 @@
 /** Current-body client. The parent supplies its existing enrolled body bearer.
  * Words travel only through a bounded response and the body's acceptance sink;
  * outstanding confirmations retain IDs only and retry before any new input. */
+import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
+class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
+const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
 const item=z.object({
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),
  fromKind:z.enum(['person','agent','schedule','unknown']),fromId:z.string().nullable(),at:z.iso.datetime({offset:true}),
- words:z.string().nullable(),keepUntil:z.iso.datetime({offset:true}).nullable(),verdict:z.enum(['yes','no']).nullable(),refs:z.array(z.string()),
-}).strict();
+ question:question.nullable().optional().default(null),questionKeepUntil:z.iso.datetime({offset:true}).nullable().optional().default(null),words:z.string().nullable(),keepUntil:z.iso.datetime({offset:true}).nullable(),verdict:z.enum(['yes','no']).nullable(),refs:z.array(z.string()),
+}).strict().refine(row=>!!row.question===!!row.questionKeepUntil,'Question context needs its deadline');
 const batch=z.object({job:z.string(),conversation:z.string(),items:z.array(item).max(100),stopRequested:z.boolean()}).strict();
-export type BodyMail=Readonly<Omit<z.infer<typeof item>,'refs'>&{refs:readonly string[]}>;
+export type BodyMail=Readonly<Omit<z.infer<typeof item>,'refs'|'question'>&{refs:readonly string[];question:Readonly<z.infer<typeof question>>|null}>;
+export function bodyMailContext(item:BodyMail):string|null{
+ if(item.words===null)return null;
+ return item.question?JSON.stringify({question:item.question,answer:item.words,verdict:item.verdict}):item.words;
+}
 type Turn={model?:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none';latencyMs?:number};
 type Reply=Turn&{clientId:string;words:string};
 type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
@@ -26,7 +33,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  let closed=false,taking=false,pending:{id:string;items:string[]}|undefined;
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
- async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'='conversation'):Promise<T>{
+ async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation'):Promise<T>{
   if(!current())throw unavailable();
   const abort=new AbortController(),end=clock.now()+timeout;controllers.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
@@ -41,12 +48,12 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
     response=await flight;
     if(!valid()||response.redirected||!response.ok||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
-    const length=response.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)>16_777_216))throw unavailable();
+    const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
-    for(;;){const part=await reader.read();if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>16_777_216){part.value.fill(0);throw unavailable();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
+    for(;;){const part=await reader.read();if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
     joined=Buffer.concat(chunks);const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(JSON.parse(joined.toString('utf8')));if(!valid())throw unavailable();return parsed.value;
    })(),aborted]);
-  }catch{throw unavailable();}
+  }catch(error){if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
   finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectAbort);controllers.delete(abort);abort.abort();joined?.fill(0);for(const chunk of chunks)chunk.fill(0);
    try{if(reader)void reader.cancel().catch(()=>{});else void response?.body?.cancel().catch(()=>{});}catch{}
@@ -59,21 +66,23 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
    if(taking||!current()||!Number.isInteger(limit)||limit<1||limit>100)throw unavailable();taking=true;
    try{
     await confirmPending();
-    const input=await call('take',{limit},batch);
-    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>limit||new Set(input.items.map(row=>row.id)).size!==input.items.length||input.items.some((row,i)=>i>0&&row.seq<=input.items[i-1].seq))throw unavailable();
+    let requested=limit,input:z.infer<typeof batch>;
+    for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
+    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||new Set(input.items.map(row=>row.id)).size!==input.items.length||input.items.some((row,i)=>i>0&&row.seq<=input.items[i-1].seq))throw unavailable();
     let accepted=0;
     for(const row of input.items){
      if(!current())throw unavailable();
-     const deadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil);
-     if(!Number.isFinite(deadline)&&row.keepUntil!==null)throw unavailable();
-     const privateWords=row.words!==null&&clock.now()<deadline;
+     const answerDeadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil),questionDeadline=row.questionKeepUntil===null?Infinity:Date.parse(row.questionKeepUntil);
+     if(!Number.isFinite(answerDeadline)&&row.keepUntil!==null||!Number.isFinite(questionDeadline)&&row.questionKeepUntil!==null)throw unavailable();
+     const privateWords=row.words!==null&&clock.now()<answerDeadline,questionCurrent=privateWords&&row.question!==null&&clock.now()<questionDeadline;
+     const deadline=questionCurrent?Math.min(answerDeadline,questionDeadline):answerDeadline;
      const sinkAbort=new AbortController(),sinkSignal=AbortSignal.any([lifetime,sinkAbort.signal]);
      const cancelExpiry=privateWords&&Number.isFinite(deadline)?clock.at(deadline,()=>sinkAbort.abort()):undefined;
      let rejectStopped!:()=>void;
      const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=()=>reject(unavailable());sinkSignal.addEventListener('abort',rejectStopped,{once:true});});
      try {
       if(sinkSignal.aborted)throw unavailable();
-      await Promise.race([accept(Object.freeze({...row,refs:Object.freeze([...row.refs]),words:privateWords?row.words:null}),sinkSignal),stopped]);
+      await Promise.race([accept(Object.freeze({...row,refs:Object.freeze([...row.refs]),words:privateWords?row.words:null,question:questionCurrent&&row.question?Object.freeze({...row.question}):null,questionKeepUntil:questionCurrent?row.questionKeepUntil:null}),sinkSignal),stopped]);
       if(!current()||privateWords&&clock.now()>=deadline){sinkAbort.abort();throw unavailable();}
      }catch{sinkAbort.abort();throw unavailable();}
      finally { cancelExpiry?.();sinkSignal.removeEventListener('abort',rejectStopped); }
@@ -82,6 +91,8 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     await confirmPending();return {accepted,stopRequested:input.stopRequested};
    }catch{throw unavailable();}finally{taking=false;}
   },
+  requestSecret(input:{id:string;secret:string;why:string;minutes:number;scope:'agent'|'job'}){return call('request',input,z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),input.id,'secrets');},
+  secretRequestStatus(id:string){return call('requestStatus',{id},z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),undefined,'secrets');},
   bridgeReply(input:{incoming:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
   reply(input:Reply,id=randomUUID()){return call('message',{kind:'reply',...input},messageResult,id);},
   card(input:Card,id=randomUUID()){return call('message',{kind:'card',...input},messageResult,id);},
