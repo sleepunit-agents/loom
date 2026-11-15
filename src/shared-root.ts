@@ -5,6 +5,7 @@ import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
 
 import { registerBoxSettings } from './shared-box-settings.js';
+import {registerMachineRegistry} from './shared-machine-registry.js';
 import { registerAgentModels } from './shared-agent-models.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
@@ -154,6 +155,7 @@ export function sharedRoot(options: {
   registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
 
   registerBoxSettings(operations, db, () => tempo?.capacityChanged());
+  registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
   registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {

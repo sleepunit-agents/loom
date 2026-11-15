@@ -8,7 +8,6 @@ import { OperationResults } from '../data/operation-results.js';
 import { DataWrites } from '../data/writes.js';
 import { agents, approvals, inbox, members, operationResults, triggers } from '../data/schema.js';
 import { Operations } from '../operations/index.js';
-import { conversationWork } from '../../apps/conversation-work.js';
 import { approvalService } from '../../apps/approvals.js';
 import { createTempo } from './tempo.js';
 import { registerTempoOperations, type TempoAccess } from './operations.js';
@@ -96,7 +95,7 @@ it('files exact settings before/after without applying until the shared approval
   expect(f.tempo.volume.timings(who).settleSeconds).toBe(5);
   const card = f.db.select().from(approvals).get()!;
   expect(card.conversation).toBe(f.conversation.id);
-  const inline = conversationWork(f.db).read(f.conversation.id).approvals;
+  const inline = f.db.select().from(approvals).where(eq(approvals.conversation, f.conversation.id)).all();
   expect(inline).toMatchObject([{ id: card.id, changeSummary: card.changeSummary, details: card.details }]);
   expect(f.db.select().from(inbox).where(eq(inbox.sourceId, card.id)).get()).toMatchObject({ conversation: f.conversation.id, to: 'jonathan', words: card.ask });
   expect(JSON.parse(card.details)).toMatchObject({ who, before: { settleSeconds: 5 }, after: { settleSeconds: 60 } });

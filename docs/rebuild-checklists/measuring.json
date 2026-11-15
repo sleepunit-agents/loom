@@ -1,0 +1,82 @@
+{
+  "page": "measuring",
+  "title": "Measuring",
+  "ownerTask": "t-2234",
+  "sourceSha256": "5d2964ae549a6b21f294c2e08b8f4e34783f361f633bb8c63ac070c55d0e22bb",
+  "promises": [
+    {
+      "id": "measuring-001",
+      "promise": "Loom keeps count of how long things take, so slow spots are visible. It does this on your own machine, and only when a household owner turns it on.",
+      "source": "docs/how-it-works/site/measuring.html"
+    },
+    {
+      "id": "measuring-002",
+      "promise": "Off unless a household owner turns it on. Off costs nothing.",
+      "source": "docs/how-it-works/site/measuring.html"
+    },
+    {
+      "id": "measuring-003",
+      "promise": "Instrumented once, in the standard way monitoring tools understand.",
+      "source": "docs/how-it-works/site/measuring.html"
+    },
+    {
+      "id": "measuring-004",
+      "promise": "Sends measurements to a tool you already run, to loom's own store, or both.",
+      "source": "docs/how-it-works/site/measuring.html"
+    },
+    {
+      "id": "measuring-005",
+      "promise": "Lets agents read the local store, so work that judges loom has real numbers.",
+      "source": "docs/how-it-works/site/measuring.html"
+    },
+    {
+      "id": "measuring-006",
+      "promise": "An agent asks for it through the same data endpoint as everything else.",
+      "source": "docs/how-it-works/site/measuring.html#con-h"
+    },
+    {
+      "id": "measuring-007",
+      "promise": "Loom already records these about every turn.",
+      "source": "docs/how-it-works/site/measuring.html#con-h"
+    },
+    {
+      "id": "measuring-008",
+      "promise": "Household owners turn it on and see it. Agents read it.",
+      "source": "docs/how-it-works/site/measuring.html#con-h"
+    },
+    {
+      "id": "measuring-009",
+      "promise": "Measuring is off unless a household owner turns it on. Off costs nothing, and someone who never sets it up never sees it.",
+      "source": "docs/how-it-works/site/measuring.html#how-h"
+    },
+    {
+      "id": "measuring-010",
+      "promise": "Loom is instrumented once with OpenTelemetry, the standard monitoring tools understand. Turned on, the same measurements go to a tool the household already runs, to loom's own store, or both.",
+      "source": "docs/how-it-works/site/measuring.html#how-h"
+    },
+    {
+      "id": "measuring-011",
+      "promise": "A rolled-up record per day of how long each kind of request, operation and background job took, and how often it ran.",
+      "source": "docs/how-it-works/site/measuring.html#how-h"
+    },
+    {
+      "id": "measuring-012",
+      "promise": "Work that judges loom itself has real numbers to go on: comparing two harnesses, or checking whether an experimental change made things faster or slower over a few weeks.",
+      "source": "docs/how-it-works/site/measuring.html#how-h"
+    },
+    {
+      "id": "measuring-013",
+      "promise": "a Who sees it. Household owners and agents.",
+      "source": "docs/how-it-works/site/measuring.html#see-h"
+    },
+    {
+      "id": "measuring-014",
+      "promise": "b Who turns it on. A household owner. Until then nothing is counted and nothing is shown.",
+      "source": "docs/how-it-works/site/measuring.html#see-h"
+    }
+  ],
+  "modelTables": [
+    "timing_days",
+    "measuring_settings"
+  ]
+}

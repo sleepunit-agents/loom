@@ -137,10 +137,6 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
       });
     },
     record(id: string) { get(id); return db.select().from(approvalRecord).where(eq(approvalRecord.approval, id)).orderBy(asc(approvalRecord.seq)).all(); },
-    report(input: Pick<typeof approvalNotices.$inferInsert, 'agent' | 'kind' | 'target' | 'what'>) {
-      z.object({ agent: z.string().min(1), kind: request.shape.kind, target: z.string().min(1), what: z.string().trim().min(1) }).parse(input);
-      return db.insert(approvalNotices).values({ ...input, id: `an-${randomUUID()}`, at: now() }).returning().get();
-    },
     /** A body reports the step against the allowance it spent. Private words
      * stay on that approval's labelled permanent record; the unlabelled notices
      * table is used only for non-private steps. One report per allowance. */
