@@ -10,6 +10,9 @@ import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
+import { sharedConversations } from './shared-conversations.js';
+import { conversationLifetime } from './core/conversations/lifetime.js';
+import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
@@ -25,23 +28,29 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  /** Trusted startup loads the household key, never an outside request. */
+  commsKey?: WordsKey;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
+  const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...options.fields }, () => !closing);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
   registerSharedPreferences(operations, db);
+  comms?.install(operations);
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, options.approvedOperations, now),
-    conversations: new Conversations(db, now),
+    conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
+    comms: comms?.service,
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  const commsLifetime = comms ? conversationLifetime(db, clock, comms.service, data.writes, options.reportError) : undefined;
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -99,6 +108,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      commsLifetime?.close();
       // Install shared completion before synchronous detach/abort callbacks.
       const stopped = data.close();
       const pending = [...active];
