@@ -1,4 +1,4 @@
-import {installWalkthroughAdapters} from '../scripts/rebuild-walkthrough-adapters.mjs';
+import {prepareAcceptanceHome} from '../scripts/rebuild-acceptance-adapter.mjs';
 import {holderValueAbsent} from '../scripts/rebuild-secret-holder.mjs';
 import {FakeClock} from './core/clock.js';
 import Database from 'better-sqlite3';
@@ -85,7 +85,7 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
  const parent=mkdtempSync(join(tmpdir(),'loom-example-approvals-')),home=join(parent,'home');
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
  try{
-  const manifest=await exampleHome(home);installWalkthroughAdapters(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
+  const manifest=await exampleHome(home);prepareAcceptanceHome(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
   const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
   expect(holderValueAbsent(home,'no-such-fictitious-secret')).toBe(true);
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
