@@ -22,6 +22,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
 import {exampleHome} from '../dist/example-home.js';
+import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
@@ -118,6 +119,7 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
     await page.waitForFunction(ready,`${title} tile`);
     row.opened=true;row.text=await tile.innerText();row.path=new URL(page.url()).pathname;
     row.unavailable=/unavailable|couldn.t load/i.test(row.text);
+    if(title==='Comms'&&row.opened){report.actions={...report.actions,conversationRecords:await conversationRecords({page,app,example:report.example,out})};}
     if(selections[title]){
      row.selection=selections[title];
      try{
