@@ -115,3 +115,18 @@ export function reprojectChanges(db: DataDatabase): string[] {
     return updates.map(row => row.id);
   });
 }
+
+/** Trusted account metadata edits refresh attribution and its derived group together. */
+export function reattributeChanges(db:DataDatabase,rule:MergeRuleReader=()=>undefined){
+ return db.transaction(()=>{
+  const accounts=db.select().from(agentAccounts).all();
+  const updates=db.select().from(changes).all().map(row=>{
+   const found=[...new Set(accounts.filter(account=>account.service==='github'&&account.login.toLowerCase()===row.authorLogin.toLowerCase()).map(account=>account.agent))];
+   if(found.length>1)throw Error('GitHub login belongs to more than one agent');
+   const agent=found[0]??null,waitingOn=waitsOn({state:row.state,draft:row.draft,mergeable:row.mergeable,conflicts:row.mergeable==='no',checks:{state:row.checks},review:{state:row.review},...(agent?{agent}:{})},agent?rule(`${row.id}@${row.headCommit}`,agent):undefined).group;
+   return{row,agent,waitingOn};
+  });
+  for(const {row,agent,waitingOn}of updates)if(row.agent!==agent||row.waitingOn!==waitingOn)db.update(changes).set({agent,waitingOn}).where(eq(changes.id,row.id)).run();
+  return updates.filter(({row,agent,waitingOn})=>row.agent!==agent||row.waitingOn!==waitingOn).map(({row})=>row.id);
+ });
+}

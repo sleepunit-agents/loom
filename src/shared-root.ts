@@ -128,7 +128,8 @@ export function sharedRoot(options: {
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
-  const householdQueries=householdAccessQueries(db,now);
+  const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
+  const householdQueries=householdAccessQueries(db,now,householdAccess);
   const outside=(request:Request)=>{const auth=credentials.authenticate(request);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
@@ -229,7 +230,7 @@ export function sharedRoot(options: {
     household: householdService(db, now),
     signin: sharedTokens(db, clock),
     account: sharedAccount(db, clock),
-    householdAccess: sharedHouseholdAccess(db, now),
+    householdAccess,
     notifications: pushes,
     approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
