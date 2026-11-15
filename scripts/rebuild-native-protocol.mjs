@@ -1,5 +1,7 @@
 /** Real loopback Root/worker/body protocol. The native provider and build artifact
- * are fictional ports: this does not prove OCI builds, process isolation or a CLI. */
+ * are trusted in-process fictional ports: this does not prove OCI builds,
+ * process isolation or a CLI. Cancellation bounds pending asynchronous providers;
+ * it cannot preempt a callback that blocks the JavaScript event loop. */
 import {randomUUID} from 'node:crypto';
 import {writeFileSync,rmSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';

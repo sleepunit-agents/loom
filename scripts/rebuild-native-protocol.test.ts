@@ -50,10 +50,19 @@ it('provides only live scoped conversation commands to the scripted native provi
  for(const call of retired)await expect(call('digest',{summary:'Late write'})).rejects.toThrow('unavailable');
  restored(context.db,context.example.runtime.box);
 }));
-it('bounds an uncooperative scripted provider, closes its command capability and retires the active lease',{timeout:20_000},()=>household(async context=>{
+it('bounds a pending asynchronous scripted provider, closes its command capability and retires the active lease',{timeout:20_000},()=>household(async context=>{
  const controller=new AbortController();let reached=false,retired;
  await expect(nativeProtocolSmoke({...context,signal:controller.signal,native:async({call})=>{reached=true;retired=call;controller.abort();return new Promise(()=>{});}})).rejects.toThrow();
  expect(reached).toBe(true);await expect(retired('digest',{summary:'Late write'})).rejects.toThrow('unavailable');
+ expect(context.db.prepare("SELECT id FROM jobs WHERE state IN ('starting','running','waiting')").all()).toEqual([]);
+ restored(context.db,context.example.runtime.box);
+}));
+
+it('retires an enrolled job and its scoped capability when the trusted scripted provider rejects',{timeout:20_000},()=>household(async context=>{
+ let retired,assigned;
+ await expect(nativeProtocolSmoke({...context,native:async({job,call})=>{retired=call;assigned=job.id;throw Error('Fictional provider rejected');}})).rejects.toThrow();
+ expect(assigned).toBeTruthy();await expect(retired('digest',{summary:'Late write'})).rejects.toThrow('unavailable');
+ expect(context.db.prepare('SELECT state FROM jobs WHERE id=?').get(assigned).state).toBe('failed');
  expect(context.db.prepare("SELECT id FROM jobs WHERE state IN ('starting','running','waiting')").all()).toEqual([]);
  restored(context.db,context.example.runtime.box);
 }));
