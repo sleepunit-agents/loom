@@ -1,5 +1,6 @@
 /** Current credential claims at the outside door. Never derive authority from a
  * caller's Viewer label, job argument, or an installed-module name. */
+import {programSnapshot,sameProgramGrants,type ProgramGrantReader,type ProgramGrants} from './shared-program-access.js';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
@@ -11,11 +12,11 @@ import type { Authentication } from './core/live/index.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const active = new Set(['starting', 'running', 'waiting']);
-export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean = () => true) {
+export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void, programs: ProgramGrantReader = () => undefined) {
   const resolve = dataAuthentication(db, () => clock.now());
   const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
   type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;
-  type Proof = { token: Token; session?: string; bearer: boolean; valid(): boolean; box?: string };
+  type Proof = { token: Token; session?: string; bearer: boolean; grants?:Readonly<ProgramGrants>; valid(): boolean; box?: string };
   const proofs = new WeakMap<Viewer, Proof>();
   type BoundJob = Pick<typeof jobs.$inferSelect, 'agent' | 'box' | 'conversation' | 'member' | 'project'>;
   const bodyJob = (token: Token, bound?: BoundJob) => {
@@ -31,8 +32,14 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
     return found?.valid() ? found : undefined;
   };
   return {
+    /** Pure routing hint only; authority still requires authenticate(). */
+    isProgramRequest(request:Request):boolean {
+      if(!admitted())return false;
+      const raw=/^Bearer ([^\s]{32,4096})$/i.exec(request.headers.get('authorization')??'')?.[1];
+      return !!raw&&!!programSnapshot(programs,hash(raw));
+    },
     current(viewer: Viewer): boolean { return !!proof(viewer); },
-    authenticate(request: Request): Authentication | undefined {
+    authenticate(request: Request, options: { recordUse?: boolean; programs?: 'deny' } = {}): Authentication | undefined {
       if (!admitted()) return;
       const auth = resolve(request);
       if (!admitted() || !auth?.valid() || !admitted()) return;
@@ -46,11 +53,15 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       if (!tokenId) return;
       const token = db.select(identity).from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
       if (!token) return;
+      const grants=programSnapshot(programs,tokenId);
+      // Program tokens stay outside callers; they cannot mint browser/body authority.
+      if(grants&&(options.programs==='deny'||session||token.kind!=='owner'||!token.member))return;
       const bound = token.job ? bodyJob(token) : undefined;
       if (token.job && !bound) return;
       const valid = () => {
         // Stop before any SQL when the root has closed admission.
         if (!admitted() || !auth.valid() || !admitted()) return false;
+        if(!sameProgramGrants(grants,programSnapshot(programs,tokenId)))return false;
         const current = db.select(identity).from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
         if (!current || ['kind', 'member', 'agent', 'job', 'box'].some(key => current[key as keyof Token] !== token[key as keyof Token])) return false;
         if (token.kind === 'runner') {
@@ -61,9 +72,27 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
         return true;
       };
       if (!valid()) return;
-      proofs.set(auth.viewer, { token, session, bearer, valid, box: bound?.box ?? undefined });
-      return { ...auth, valid };
+      // Presentation updates metadata, never the fixed issue/proof/expiry times.
+      const presented = () => {
+        if (!valid()) return;
+        const at = new Date(clock.now()).toISOString();
+        const last = db.select({ at: tokens.lastUsedAt }).from(tokens).where(eq(tokens.fingerprint, tokenId)).get()?.at;
+        const seen = session ? db.select({ at: sessions.seenAt }).from(sessions).where(eq(sessions.id, session)).get()?.at : undefined;
+        if ((!last || last < at) || (session && (!seen || seen < at))) write(() => {
+          if (!valid()) return false;
+          if (!last || last < at) db.update(tokens).set({ lastUsedAt: at }).where(eq(tokens.fingerprint, tokenId)).run();
+          if (session && (!seen || seen < at)) db.update(sessions).set({ seenAt: at }).where(eq(sessions.id, session)).run();
+          return true;
+        });
+      };
+      if(options.recordUse!==false)presented();
+      if (!valid()) return;
+      proofs.set(auth.viewer, { token, session, bearer, valid, grants, box: bound?.box ?? undefined });
+      return { ...auth, valid, ...(request.headers.get('upgrade')?.toLowerCase() === 'websocket' ? { activity: presented } : {}) };
     },
+    program(viewer:Viewer):Readonly<ProgramGrants>|undefined{return proofs.get(viewer)?.grants;},
+    allows(viewer:Viewer,operation:string):boolean{const found=proof(viewer);return !!found&&(!found.grants||(!['signin','token','sessions','account'].includes(operation.split('.')[0])&&found.grants.operations.includes(operation)));},
+    receiptScope(viewer:Viewer):string|undefined{const found=proofs.get(viewer);return found?.grants?found.token.fingerprint:undefined;},
     browser(viewer: Viewer): Readonly<{ session: string }> | undefined {
       const found = proof(viewer);
       return found?.session && !found.bearer && viewer.kind === 'member'
