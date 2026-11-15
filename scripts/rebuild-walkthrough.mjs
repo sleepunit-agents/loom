@@ -175,7 +175,6 @@ export async function* walkthroughSteps(output) {
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
-   if(title==='Inbox'&&row.opened){report.actions={...report.actions,...await inboxActions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};}
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
@@ -183,6 +182,8 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
+  save();yield {phase:'inbox-details',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
