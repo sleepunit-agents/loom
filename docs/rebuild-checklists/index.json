@@ -42,7 +42,10 @@
     {
       "id": "index-008",
       "promise": "5 One query endpoint A GraphQL endpoint generated from the same schema. A tile names the fields it wants, and changes arrive as subscriptions over one websocket.",
-      "source": "docs/how-it-works/site/index.html"
+      "source": "docs/how-it-works/site/index.html",
+      "probe": {
+        "kind": "legacy-data-socket"
+      }
     },
     {
       "id": "index-009",
