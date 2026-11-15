@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createElement as h, type ReactNode } from 'react';
+import { Children, createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
 vi.mock('../../kit', () => Object.fromEntries(['Split', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input', 'Textarea'].map(name => [name, (props: { children?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; listTop?: ReactNode; onFolder?: (id: string) => void }) => name === 'Split' ? h(name, { label: 'Inbox', onFolder: props.onFolder }, props.listTop, props.list, props.reader, props.search) : h(name, props, props.children)])));
@@ -119,4 +119,12 @@ it('sets quiet volume on managed cards without answering them and waits for publ
  expect(named('Mute').props.disabled).toBe(true);
  await act(async()=>{tree.update(h(InboxQuestionCard,{...props,snapshot:{...snapshot,items:[{...quiet,canSetVolume:false}]}}));});
  expect(named('Full')).toBeUndefined();
+});
+
+it.each(['waiting','resolved'] as const)('keeps the task link beside inline source controls for %s items',async state=>{
+ const task:InboxItem={...item,source:'task',sourceId:'t-12',waitsOnKind:'task',waitsOnId:'t-12',state},openSource=vi.fn(),answer=vi.fn(async()=>{});
+ await act(async()=>{tree=create(h(InboxQuestionCard,{id:task.id,snapshot:{status:'live',items:[task]},actions:{openSource,answer},sourceCard:h('p',null,'Inline task answer controls')}));});
+ expect(JSON.stringify(tree.toJSON())).toContain('Inline task answer controls');
+ const open=buttons().find((button:{props:{children:ReactNode}})=>Children.toArray(button.props.children).join('')==='Open task');expect(open).toBeDefined();
+ await act(async()=>open.props.onClick());expect(openSource).toHaveBeenCalledExactlyOnceWith(task);expect(answer).not.toHaveBeenCalled();expect(named('Yes')).toBeUndefined();
 });
