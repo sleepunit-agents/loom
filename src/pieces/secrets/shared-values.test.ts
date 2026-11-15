@@ -376,3 +376,13 @@ it.each(['committed','undone'] as const)('recovery refuses metadata work when an
  expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
  expect(f.db.select().from(secrets).all()).toEqual([]);expect(f.db.select().from(secretChanges).all()).toEqual([]);
 });
+it('close while fenced-undo recovery awaits leaves the journal prepared without touching the database',async()=>{
+ const f=fixture();vi.mocked(f.holder.set).mockRejectedValueOnce(Error('Lost request'));
+ await expect(f.service.set(f.input)).rejects.toThrow('reconciliation');
+ let release!:(value:'undone')=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});
+ vi.mocked(f.holder.recover).mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});
+ const pending=f.service.reconcilePending();await started;f.service.close();
+ const prepare=vi.spyOn(f.client,'prepare'),transaction=vi.spyOn(f.client,'transaction');release('undone');
+ await expect(pending).resolves.toBeUndefined();expect(prepare).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();
+ prepare.mockRestore();transaction.mockRestore();expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
+});
