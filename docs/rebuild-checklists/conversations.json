@@ -7,17 +7,29 @@
     {
       "id": "conversations-001",
       "promise": "A conversation is one agent talking in one place. Loom keeps one record for each, whatever the place, so a chat in loom, a Discord channel, a scheduled run and a handoff all look the same to every other part.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationRecords"
+      }
     },
     {
       "id": "conversations-002",
       "promise": "One table Every conversation is one row.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationRecords"
+      }
     },
     {
       "id": "conversations-003",
       "promise": "One per place An agent has one conversation per thread, channel or lane.",
-      "source": "docs/how-it-works/site/conversations.html"
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "conversationRecords"
+      }
     },
     {
       "id": "conversations-004",
@@ -153,7 +165,11 @@
     {
       "id": "conversations-027",
       "promise": "e Words. Message words are kept for the household's keep time, 14 days at most, then removed. They are encrypted where they are stored.",
-      "source": "docs/how-it-works/site/conversations.html#see-h"
+      "source": "docs/how-it-works/site/conversations.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationRetention"
+      }
     },
     {
       "id": "conversations-028",
