@@ -37,6 +37,16 @@ class ChecklistGeneration(unittest.TestCase):
         self.run_generator('--check')
         self.assertEqual(before, {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()})
 
+    def test_authorized_batched_data_wording_retains_behavior_binding(self):
+        page = self.root / 'docs/how-it-works/site/data.html'
+        page.write_text('<h1>Data</h1><div class="wrap"><p>A page reads with one API call, backed by a fixed small number of SQL statements that does not grow with the number of rows, with visibility checked for whoever is asking.</p><p>Loom handles the request in one API call using a fixed small number of sane SQL statements, independent of the number of rows. Several batched statements are fine. Filtering and visibility checks happen in the database.</p></div>')
+        self.run_generator()
+        result = json.loads((self.root / 'docs/rebuild-checklists/data.json').read_text())
+        self.assertEqual(result['ownerTask'], 't-2254')
+        rows = [row for row in result['promises'] if row['promise'].startswith(('A page reads', 'Loom handles'))]
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(row['probe'] == {'kind': 'action', 'action': 'dataSharingSQL'} for row in rows))
+
     def test_check_rejects_drift_without_repairing_it(self):
         changed = json.loads(self.original)
         row = next(row for row in changed['promises'] if row.get('probe'))
