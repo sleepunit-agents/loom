@@ -12,8 +12,8 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
  const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(100).all();
  const prepared:{before:typeof messages.$inferSelect;words:string}[]=[];let bytes=0;
  for(const row of rows){
-  // Plain questions use the separately validated answer-context path.
-  if(row.kind==='ask'||row.inboxItem&&answerQuestions.has(row.inboxItem)||!row.words||!(deadline(row)>Date.parse(comms.now())))continue;
+  // Current answer questions use their separately validated context path.
+  if(row.inboxItem&&answerQuestions.has(row.inboxItem)||!row.words||!(deadline(row)>Date.parse(comms.now())))continue;
   let words:string|null;try{words=await comms.words(row.thread,row.seq);}catch{continue;}
   if(words===null||!(deadline(row)>Date.parse(comms.now())))continue;
   // Bound the complete serialized context, including Unicode and metadata.

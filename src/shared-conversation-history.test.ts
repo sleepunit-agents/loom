@@ -79,3 +79,9 @@ it('refuses malformed history ordering before accepting or confirming current ma
  }});clean.push(()=>client.close());
  await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();expect(f.db.select().from(s.inbox).all().find(row=>row.messageSeq===3)?.state).toBe('taken');
 });
+it('includes earlier retained question messages as dialogue without duplicating the current answer question',async()=>{
+ const f=await bodyFixture(clean),client=sdk(f);
+ await client.digest({summary:'Old question',question:{to:'alice',words:'EARLIER QUESTION',answers:'words'}});
+ await f.send('A new ordinary follow-up','followup');
+ await client.takeAndAccept(async item=>{expect(item.history).toHaveLength(1);expect(item.history[0].kind).toBe('ask');expect(JSON.parse(item.history[0].words).words).toBe('EARLIER QUESTION');});
+});
