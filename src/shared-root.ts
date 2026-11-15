@@ -28,6 +28,7 @@ import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
+import {sharedBridgeProposals} from './shared-bridge-proposals.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
@@ -122,6 +123,7 @@ export function sharedRoot(options: {
   householdService(db,now).synchronizeFullOwners();
   const settings = tempoSettingsProposals(db, clock);
   const secretProposals=sharedSecretProposals(db,now);
+  const bridgeProposals=sharedBridgeProposals(db,now);
   const boxProposals=sharedBoxProposals(db);
   let closing: Promise<void> | undefined;
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
@@ -129,7 +131,7 @@ export function sharedRoot(options: {
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation,boxProposals.operation,secretProposals.operation]);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation,boxProposals.operation,secretProposals.operation,bridgeProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
@@ -261,6 +263,7 @@ export function sharedRoot(options: {
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
   startupCleanups.push(()=>commsLifetime?.close());
+  if(options.commsKey)bridgeProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   if(options.commsKey)secretProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   if(options.commsKey)boxProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   const stopBoxProposals=data.writes.observe(()=>boxProposals.committed(()=>tempo?.capacityChanged()));
