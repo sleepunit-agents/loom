@@ -5,11 +5,10 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {GraphQLObjectType,GraphQLSchema,graphql} from 'graphql/index.js';
 import {sql} from 'drizzle-orm';
-import {createFoundation} from '../../core/app.js';
 import {createDataSchema} from '../../core/data/database.js';
 import {dataQueries} from '../../core/data/queries.js';
 import {FakeClock,type Sharing,type Viewer} from '../../core/index.js';
-import {installMindActivity} from './activity.js';
+import {createActivityReader} from './activity.js';
 import {activityQueryFields} from './activity-query.js';
 import type {ActivityConversations,ActivityRun} from './activity-role.js';
 
@@ -20,8 +19,8 @@ const owner:Viewer={kind:'member',id:'owner'},member:Viewer={kind:'member',id:'m
 const now=Date.parse('2026-11-14T18:00:00Z');
 function fixture(path:string,conversations?:ActivityConversations){
  let sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},guest:{owner:false,agents:[]}},projects:{pond:{members:['guest'],agents:[]}},services:{}};
- const clock=new FakeClock(now),app=createFoundation({home:dir(),clock});closes.push(()=>app.close());
- const reader=installMindActivity(app.operations,app.live,{agents:[{agent:'fiction',memories:path}],sharing:()=>sharing,conversations});closes.push(()=>reader.close());
+ const clock=new FakeClock(now);
+ const reader=createActivityReader(clock,{agents:[{agent:'fiction',memories:path}],sharing:()=>sharing,conversations});closes.push(()=>reader.close());
  const client=new Database(':memory:');closes.push(()=>client.close());createDataSchema(client);
  const generated=dataQueries(client,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...activityQueryFields(reader)}})});

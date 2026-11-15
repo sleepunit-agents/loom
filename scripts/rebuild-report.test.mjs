@@ -1,5 +1,8 @@
+import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {it,expect} from 'vitest';
-import {evaluate,summarizePages} from './rebuild-report.mjs';
+import {evaluate,summarizePages,rebuildReport} from './rebuild-report.mjs';
 const promise={probe:{kind:'ui',app:'Tasks',contains:['Claim','Close']}};
 it('never counts an open tile or a claim button as proof that its actions work',()=>{
  expect(evaluate({promise:'Claiming changes task state.'},{apps:[]} ).status).toBe('not checkable yet');
@@ -46,4 +49,18 @@ it('reports a measured app action without counting a visible control as an outco
  expect(evaluate(promise,{apps:[{title:'Knowledge',action:{ok:false,error:'Fresh words did not survive reload',screenshot:'failed.png'}}]})).toMatchObject({status:'not met',reason:'Fresh words did not survive reload',evidence:'failed.png'});
  expect(evaluate(promise,{apps:[{title:'Knowledge',action:{ok:true,screenshot:'verified.png'}}]})).toMatchObject({status:'met',evidence:'verified.png'});
  expect(evaluate(promise,{apps:[{title:'Other app',action:{ok:true}}]}).status).toBe('not checkable yet');
+});
+
+it('keeps the measured revision and every page count in both regenerated reports',()=>{
+ const out=mkdtempSync(join(tmpdir(),'rebuild-report-test-'));
+ const source={commit:'a'.repeat(40),ref:'refs/pull/123/merge',repository:'example/loom',run:'123',attempt:'2'};
+ try{
+  const report=rebuildReport({source,example:{gaps:[]},apps:[],signin:{ok:false},live:{dataFrames:0,errors:[]}},out);
+  const json=JSON.parse(readFileSync(join(out,'report.json'),'utf8')),md=readFileSync(join(out,'report.md'),'utf8');
+  expect(json.source).toEqual(source);expect(md).toContain('Tested commit: '+source.commit);expect(md).toContain('Attempt: 2');
+  expect(report.summary).toHaveLength(19);
+  expect(report.summary.map(p=>p.page).sort()).toEqual(report.pages.map(p=>p.page).sort());
+  for(const status of ['met','not met','not checkable yet'])expect(report.summary.reduce((sum,page)=>sum+page.counts[status],0)).toBe(report.counts[status]);
+  for(const page of report.summary)expect(md).toContain('](#page-'+page.page+')');
+ }finally{rmSync(out,{recursive:true,force:true});}
 });
