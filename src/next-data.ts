@@ -55,10 +55,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables, ...conversationTables,
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'],
     visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
+      members: fields => viewer.kind === 'member' ? sql`(exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner') or ${fields.id} = ${viewer.id})` : sql`false`,
+      memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
   }), { ...fields, ...ownFields, ...accounts.fields,
