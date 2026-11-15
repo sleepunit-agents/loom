@@ -1,4 +1,4 @@
-import { SPRITE_FACINGS, SPRITE_STATES, SPRITE_MAX_BYTES, SPRITE_SHEET_NAME as SHEET_NAME, checkSpriteLayout, spriteSheets, type SpriteManifest } from './desk-sprite-layout.js';
+import { SPRITE_FACINGS, SPRITE_STATES, SPRITE_MAX_BYTES, SPRITE_SHEET_NAME as SHEET_NAME, checkSpriteLayout, spriteSheets, type SpriteFacing, type SpriteVariant, type SpriteManifest } from './desk-sprite-layout.js';
 export { SPRITE_FACINGS, SPRITE_STATES, spriteSheets, type SpriteFacing, type SpriteVariant, type SpriteManifest } from './desk-sprite-layout.js';
 /**
  * The household (docs/specs/household.md): one loom, many agents.
