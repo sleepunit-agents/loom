@@ -22,6 +22,9 @@ import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
+import { sharedConversations } from './shared-conversations.js';
+import { conversationLifetime } from './core/conversations/lifetime.js';
+import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
@@ -47,7 +50,9 @@ export function sharedRoot(options: {
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
-  /** Authenticated private holder-to-worker sink; values never enter this root. */
+/** Trusted startup loads the household key, never an outside request. */
+  commsKey?: WordsKey;
+/** Authenticated private holder-to-worker sink; values never enter this root. */
   secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
@@ -72,7 +77,8 @@ export function sharedRoot(options: {
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady.then(value => value.refresh())).catch(report); });
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...options.fields }, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
@@ -89,7 +95,7 @@ export function sharedRoot(options: {
       options.runtimeJobEnded?.(id);
     } catch (error) { options.reportError(error); }
   };
-  const jobClock = (name: 'runtime.tick' | 'tempo.tick'): Clock => ({
+  const jobClock = (name: 'runtime.tick' | 'tempo.tick' | 'conversations.expire'): Clock => ({
     now: () => clock.now(), at: (time, work) => clock.at(time, () => {
       if (meter?.enabled()) meter.run('job', name, work); else work();
     }),
@@ -123,16 +129,20 @@ export function sharedRoot(options: {
     return secretRecovery;
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
+  comms?.install(operations);
   const services = {
     bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
     approvals: approvalService(db, approvedOperations, now),
-    conversations: new Conversations(db, now),
+    conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
+    comms: comms?.service,
     runtime,
     secrets: {requests,values,delivery,startup,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
+  const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
+
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
@@ -143,6 +153,7 @@ export function sharedRoot(options: {
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
   const authenticate = credentials.authenticate;
+
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -207,6 +218,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      commsLifetime?.close();
       runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();

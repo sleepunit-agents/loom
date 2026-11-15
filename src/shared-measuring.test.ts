@@ -108,3 +108,15 @@ it('records the shared runtime scheduled sweep with a fixed job name',async()=>{
   expect(db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'job',name:'runtime.tick',count:1}));
  }finally{await root.close();client.close();clock.advance(60000);}
 });
+
+it('records the owned Comms expiry sweep without inspecting private words',async()=>{
+ const {generateX25519Identity}=await import('age-encryption');
+ const {wordsKey}=await import('./pieces/comms/crypto.js');
+ const client=new Database(':memory:'),clock=new FakeClock(Date.UTC(2026,10,14,23,59,59,999));
+ const db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
+ db.insert(measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:90}).run();
+ const root=sharedRoot({db,clock,originAllowed:()=>true,commsKey:wordsKey(await generateX25519Identity()),reportError(){}});
+ try{await root.ready;clock.advance(1);
+  expect(db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'job',name:'conversations.expire',count:1}));
+ }finally{await root.close();client.close();clock.advance(30000);}
+});
