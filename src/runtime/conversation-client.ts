@@ -26,7 +26,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  let closed=false,taking=false,pending:{id:string;items:string[]}|undefined;
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
- async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string):Promise<T>{
+ async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'='conversation'):Promise<T>{
   if(!current())throw unavailable();
   const abort=new AbortController(),end=clock.now()+timeout;controllers.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
@@ -37,7 +37,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   try{
    return await Promise.race([(async()=>{
     const body=JSON.stringify({input,...(id?{id}:{})});if(Buffer.byteLength(body)>1_048_576||!valid())throw unavailable();
-    const flight=request(new URL('/api/conversation/'+name,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+options.token,'content-type':'application/json'},body});
+    const flight=request(new URL('/api/'+namespace+'/'+name,origin),{method:'POST',redirect:'error',signal:abort.signal,headers:{authorization:'Bearer '+options.token,'content-type':'application/json'},body});
     void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
     response=await flight;
     if(!valid()||response.redirected||!response.ok||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
@@ -82,12 +82,14 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     await confirmPending();return {accepted,stopRequested:input.stopRequested};
    }catch{throw unavailable();}finally{taking=false;}
   },
+  bridgeReply(input:{incoming:string;text:string;model:string;outcome?:'answered'|'progressed'|'deferred'|'failed'|'none'},id=randomUUID()){return call('reply',{...input,id},saved,id,'bridges');},
   reply(input:Reply,id=randomUUID()){return call('message',{kind:'reply',...input},messageResult,id);},
   card(input:Card,id=randomUUID()){return call('message',{kind:'card',...input},messageResult,id);},
   title(title:string,id=randomUUID()){return call('title',{title},z.object({saved:z.literal(true),renamed:z.boolean()}).strict(),id);},
   cardState(clientId:string,cardState:'running'|'done'|'failed',id=randomUUID()){return call('cardState',{clientId,cardState},messageResult,id);},
   status(input:{state:'working'|'waiting'|'idle'|'offline';work:string;seenStop?:true},id=randomUUID()){return call('status',input,z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),id);},
   turn(input:Turn&{kind:'reply'|'action'|'wake'|'note'|'refused'},id=randomUUID()){return call('turn',input,z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),id);},
+  finding(input:{turnSeq:number;measure:string;score:number;text:string},id:string=randomUUID()){return call('finding',input,z.object({saved:z.literal(true),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/)}).strict(),id);},
   digest(input:BodyDigest,id=randomUUID()){return call('digest',input,z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),id);},
   close(){closed=true;lifetimeAbort.abort();for(const controller of controllers)controller.abort();},
  };

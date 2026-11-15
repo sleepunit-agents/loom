@@ -166,6 +166,8 @@ export class SharedBridges {
    }
    if(!current())return;
    const pendingFiles=new Map<string,SlackFilesPermit['files']>();
+   const changes=()=> (this.options.db.$client.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
+   const beforeChanges=changes();
    const before=this.options.db.select({row:sql<number>`coalesce(max(rowid),0)`}).from(inbox).get()!.row;
    try{more=this.receiver.drain(row.id,64,(incoming,raw)=>{
     if(row.platform!=='slack')return;
@@ -180,7 +182,9 @@ export class SharedBridges {
    })===64;}finally{
     // Drain owns its per-event transactions; even a later malformed receipt may
     // follow earlier successful commits. Publish and signal only committed ids.
-    this.notify();
+    // An empty drain has no new publication. Publishing after every ordinary
+    // body write would revoke its still-streaming guarded mail response.
+    if(changes()!==beforeChanges)this.notify();
     if(!this.closed){
      const ids=this.options.db.selectDistinct({id:inbox.id}).from(inbox)
       .innerJoin(inboxRefs,eq(inboxRefs.item,inbox.id)).innerJoin(bridgeIncoming,eq(bridgeIncoming.id,inboxRefs.ref))
