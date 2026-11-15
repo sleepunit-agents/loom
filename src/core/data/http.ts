@@ -79,7 +79,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
     if (!auth.valid() || stopping) return c.json({ errors: [{ message: 'Authentication ended' }] }, 401);
     if (!current()) return c.json({ errors: [{ message: 'Data changed; retry the query' }] }, 503);
-    const guardedResponse = (): Response => {
+    const guardedStream = (): ReadableStream<Uint8Array> => {
     let buffered: string | undefined = body;
     const available = () => !stopping && auth!.valid() && !stopping && current();
     // Zero buffering keeps the release check after every outer fetch/middleware
@@ -96,16 +96,16 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
       },
       cancel() { buffered = undefined; },
     }, { highWaterMark: 0 });
-    const result = new Response(stream, { status: response.status, headers: response.headers });
-    // Native clone tees and eagerly pulls the stream. Keep ordinary server
-    // middleware clones lazy too; each copy checks before releasing any bytes.
-    result.clone = () => {
-      if (result.bodyUsed) throw new TypeError('Body has already been consumed');
-      return guardedResponse();
+    // Response.clone() uses body.tee(), including after middleware wraps the
+    // response. Preserve native Response/header semantics while keeping both
+    // tee branches lazy and independently guarded at their first byte pull.
+    stream.tee = () => {
+      stream.getReader(); // Match native tee's locked original-stream contract.
+      return [guardedStream(), guardedStream()];
     };
-    return result;
+    return stream;
     };
-    return guardedResponse();
+    return new Response(guardedStream(), { status: response.status, headers: response.headers });
   });
   return Object.assign(app, { stop() { stopping = true; }, drain: () => executions.drain() });
 }
