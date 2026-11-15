@@ -8,6 +8,12 @@ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 export function evaluate(promise,run){
  const p=promise.probe;
  if(!p)return {status:'not checkable yet',reason:'No behavioral probe for this promise in the walkthrough. Opening an app is not proof.'};
+ if(p.kind==='all'){
+  if(!Array.isArray(p.probes)||!p.probes.length)return {status:'not checkable yet',reason:'No component probes were provided.'};
+  const results=p.probes.map(probe=>evaluate({probe},run));
+  const status=results.some(row=>row.status==='not met')?'not met':results.some(row=>row.status==='not checkable yet')?'not checkable yet':'met';
+  return {status,reason:results.map((row,index)=>`${index+1}. ${row.reason}`).join(' '),evidence:'walkthrough.json#actions'};
+ }
  if(p.kind==='legacy-data-socket'){
   const sockets=run.transport?.sockets;
   if(!sockets)return{status:'not checkable yet',reason:'The walkthrough did not record websocket paths.'};

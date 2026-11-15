@@ -78,7 +78,7 @@
 .next-dock-edge{position:fixed;bottom:0;left:25%;width:50%;height:14px}
 .next-dock-edge[data-mode=auto]{height:8px}
 .next-rail-edge[data-mode=auto]>span,.next-dock-edge[data-mode=auto]>span{visibility:hidden}
-.next-rail-edge[data-attention]::after,.next-dock-edge[data-attention]::after{content:"";position:absolute;width:6px;height:6px;border-radius:50%;background:var(--v-yellow);box-shadow:0 0 8px var(--v-yellow)}
+.next-rail-edge[data-attention]::after,.next-dock-edge[data-attention]::after{content:"";position:absolute;width:6px;height:6px;border-radius:50%;background:var(--v-yellow)}
 .next-rail-edge:focus-visible,.next-dock-edge:focus-visible{outline:2px solid var(--v-blue);outline-offset:-2px}
 :root[data-look] [data-shell=desk]:not([data-dock-mode=always]) .next-dock-bar{position:fixed;z-index:30;bottom:0;left:0;right:0;transition:transform .26s,opacity .26s}
 [data-shell=desk]:not([data-dock-mode=always]) .next-dock-bar:not([data-peek]){transform:translateY(100%);opacity:0;visibility:hidden;pointer-events:none}
