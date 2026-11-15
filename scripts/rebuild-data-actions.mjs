@@ -84,8 +84,9 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
   const query=subscriptions.find(s=>/\bhouseholdSharing\b/.test(s.query))?.query;check(query,'The actual Sharing selection was not observed');
   const result=await sqlRead({page,app,query,caller:/at Object\.read \(.*shared-projects\.[jt]s:/,match:/\b(?:from|join)\s+"?project(?:s|_members|_agents|_repositories)"?\b/i});check(result.status===200&&!result.body.errors,'Sharing read failed');
   const distinct=[...new Set(result.statements)];
-  if(distinct.length>1)return{ok:false,error:'One Sharing root selection executed '+distinct.length+' distinct project/relationship SQL statements.',statements:distinct};
-  return{inconclusive:true,reason:'This Sharing selection did not disprove one-query reads; the complete property is not yet measured across every view.',statements:distinct};
+  // Jonathan's 2026-11-15 clarification permits sensible batched SQL behind
+  // one API call. Statement count alone cannot establish unnecessary or N+1 IO.
+  return{inconclusive:true,reason:'One browser API request was observed. Several batched SQL statements are permitted; query growth and necessity across larger results are not yet measured.',statements:distinct,sqlExecutions:result.statements.length};
  });
  await attempt('dataTaskPatches',async()=>{
   await open(page,'Tasks');

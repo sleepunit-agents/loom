@@ -59,7 +59,11 @@
     {
       "id": "inbox-009",
       "promise": "A pending approval arrives as an item, and is answered in Approvals.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalInbox"
+      }
     },
     {
       "id": "inbox-010",

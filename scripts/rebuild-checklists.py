@@ -85,6 +85,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
  if f.stem=='secrets':add('The owner can add, replace and remove a Secret value in Settings; reload preserves the result, the value is not displayed or stored in the main database, and each change is recorded.','',{'kind':'action','action':'secretValues'})
  if f.stem=='secrets':add('The owner can change the household default from Ask to Never in Settings and it persists after reload.','',{'kind':'action','action':'secretDefault'})
+ if f.stem in ['approvals','inbox']:
+  for row in rows:
+   if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
  if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
 
@@ -108,6 +111,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Marks what you have read', 'Opening an item marks it read')):row['probe']={'kind':'action','action':'inboxHistory'}
  if f.stem=='desk':
   for row in rows:
+   if row['promise'].startswith('Wears one of three looks'):row['probe']={'kind':'action','action':'deskLooks'}
+   if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
+
    if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
    if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
    if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
@@ -120,6 +126,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='index':
   for row in rows:
    if row['promise'].startswith('5 One query endpoint'):row['probe']={'kind':'legacy-data-socket'}
+
  if f.stem=='tasks':
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
