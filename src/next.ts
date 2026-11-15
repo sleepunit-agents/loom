@@ -376,10 +376,12 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   let liveData: DataLive | undefined;
   let socketData: ReturnType<typeof dataSocket> | undefined;
   let stopDataChanges: (() => void) | undefined;
+  let stopMemoryDeadlines: (() => void) | undefined;
   let stopDataDeadline: (() => void) | undefined;
   const close = async () => {
     stopDataChanges?.();
     stopDataDeadline?.();
+    stopMemoryDeadlines?.();
     liveData?.close();
     await socketData?.close();
     detaches.forEach(detach => detach());
@@ -422,6 +424,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     };
     // Private source touches commit through core.touched just like operations.
     stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); scheduleDeadline(); });
+    stopMemoryDeadlines=memory?.observeDeadlines(scheduleDeadline);
     scheduleDeadline();
     routes.all('/graphql', c => data.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));

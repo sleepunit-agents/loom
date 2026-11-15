@@ -340,3 +340,30 @@ it('refreshes People contact staleness and evidence expiry on the shared GraphQL
   expect(await response.json()).toMatchObject({data:{memoryPerson:{fields:[{key:'email',state:'stale'}],evidence:[],newer:0}}});
  }finally{writer.close();await f.close();}
 },2000);
+
+it('arms Projects deadlines from the initial query and refreshes age, expiry and spark without writes',async()=>{
+ const f=await setup(['127.0.0.1','127.0.0.2']),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
+ writer.exec('CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT)');
+ try{
+  const now=f.clock.now(),day=86400000,projects=new ProjectsStore({dbPath:path});
+  projects.write({slug:'pond',where:{hose:{value:'25mm',verified_at:new Date(now-14*day+1000).toISOString()}}});projects.close();
+  const put=writer.prepare("INSERT INTO memories(ref,category,title,content,created,updated,project,archived,expires_at) VALUES(?,'project',?,'Fictional content',?,NULL,'pond',0,?)");
+  put.run('expiry','Expires soon',new Date(now).toISOString(),new Date(now+2000).toISOString());
+  put.run('rolling','Rolling memory',new Date(now-day+3000).toISOString(),null);
+  const selection='{ memoryProject(id:"fiction:pond") { fields { state } spark sections { key total } } memoryProjectMemory(id:"fiction:expiry") { title } }';
+  const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'project-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})));
+  const a=await f.open(),b=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2')),scheduled=vi.spyOn(f.clock,'at');
+  const initial=await subscribe(a);await subscribe(b);expect(JSON.stringify(initial)).toContain('checked 13 days ago');expect(JSON.stringify(initial)).toContain('Expires soon');
+  await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1000,expect.any(Function)));scheduled.mockRestore();
+  const frames:Message[]=[];a.on('message',raw=>frames.push(JSON.parse(String(raw))));
+  f.clock.advance(999);await Promise.resolve();expect(frames).toEqual([]);
+  const step=async(ms:number,n:number)=>{const frame=await message(b,()=>f.clock.advance(ms));await vi.waitFor(()=>expect(frames).toHaveLength(n));expect(frames[n-1]).toEqual(frame);return frame;};
+  expect(JSON.stringify(await step(1,1))).toContain('checked 14 days ago');
+  expect(JSON.stringify(await step(1,2))).toContain('stale for 14 days');
+  expect(await step(999,3)).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryProjectMemory'],removed:false,value:null}])}}}});
+  const rolled=await step(1000,4);expect(JSON.stringify(rolled)).toContain('spark');
+  const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query:selection})});
+  expect(await response.json()).toMatchObject({data:{memoryProject:{fields:[{state:'stale for 14 days'}],spark:[0,0,0,0,0,1,0],sections:expect.arrayContaining([{key:'memories',total:1}])},memoryProjectMemory:null}});
+  const at=vi.spyOn(f.clock,'at');await f.loom.close();at.mockClear();f.clock.advance(day);await Promise.resolve();expect(at).not.toHaveBeenCalled();at.mockRestore();
+ }finally{writer.close();await f.close();}
+},2000);
