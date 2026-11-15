@@ -91,3 +91,26 @@ it('refuses cached and fresh Always intents after the admitted cookie session is
  const f=fixture(),card=f.ask();expect((await f.post(f.input(card.id))).status).toBe(200);
  f.db.delete(s.sessions).run();const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(401);expect((await f.post(f.input(card.id),'fresh')).status).toBe(401);expect(f.snapshot()).toEqual(before);
 });
+
+it('rechecks every stored target, project, agent and operation binding before replay',async()=>{
+ const mutations:((f:ReturnType<typeof fixture>,id:string)=>void)[]=[
+  f=>{f.db.update(s.changes).set({project:'other'}).where(eq(s.changes.id,change)).run();},
+  (f,id)=>{f.db.update(s.approvals).set({project:'other'}).where(eq(s.approvals.id,id)).run();},
+  f=>{f.db.update(s.changes).set({agent:'other-agent'}).where(eq(s.changes.id,change)).run();},
+  (f,id)=>{f.db.update(s.approvals).set({agent:'other-agent'}).where(eq(s.approvals.id,id)).run();},
+  (f,id)=>{f.db.update(s.approvals).set({target:`${change}@`+'b'.repeat(40)}).where(eq(s.approvals.id,id)).run();},
+  (f,id)=>{f.db.update(s.approvals).set({operation:'fixture.change'}).where(eq(s.approvals.id,id)).run();},
+  (f,id)=>{f.db.update(s.approvals).set({kind:'command'}).where(eq(s.approvals.id,id)).run();},
+ ];
+ for(const mutate of mutations){const f=fixture(),card=f.ask();f.db.insert(s.agents).values({id:'other-agent',about:'',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();expect((await f.post(f.input(card.id))).status).toBe(200);mutate(f,card.id);const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(409);expect(f.snapshot()).toEqual(before);expect(f.execute).not.toHaveBeenCalled();}
+});
+it('rejects malformed heads and every omitted binding field at the schema boundary without effects',async()=>{
+ const f=fixture(),card=f.ask(),base=f.input(card.id),before=f.snapshot();
+ const invalid:unknown[]=['a'.repeat(39),'a'.repeat(41),'g'.repeat(40),'A'.repeat(40),null,42].map(head=>({...base,head}));
+ for(const key of ['approval','change','head','project','person']){const input:Record<string,unknown>={...base};delete input[key];invalid.push(input);}
+ invalid.push({...base,approval:' '},{...base,change:''},{...base,project:''},{...base,person:null});
+ for(const [n,input] of invalid.entries()){expect((await f.post(input,'invalid-'+n)).status).toBe(400);expect(f.snapshot()).toEqual(before);}
+});
+it('refuses a fresh Always grant for closed and merged copies, rolling back the tentative standing rule',async()=>{
+ for(const state of ['closed','merged'] as const){const f=fixture(),card=f.ask();f.db.update(s.changes).set({state}).where(eq(s.changes.id,change)).run();const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(409);expect(f.snapshot()).toEqual(before);}
+});
