@@ -4,7 +4,7 @@ import {exampleRetentionWords} from '../dist/example-home.js';
 export async function prepareRetention({app,example}){
  const db=app.services.comms.db.$client,sample=example.retention;
  const row=()=>db.prepare('SELECT * FROM messages WHERE thread=? AND seq=?').get(sample.thread,sample.seq);
- const initial=row(),days=db.prepare('SELECT comms_days FROM household').get().comms_days;
+ const initial=row(),days=db.prepare('SELECT comms_days FROM household').get()?.comms_days??14;
  const before={encrypted:Buffer.isBuffer(initial.words)&&!initial.words.includes(Buffer.from(exampleRetentionWords)),readable:await app.services.comms.words(sample.thread,sample.seq)===exampleRetentionWords,days,until:initial.keep_until};
  return async({page,clock,out})=>{
   const screenshot='action-conversationRetention.png';
