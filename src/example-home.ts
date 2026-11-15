@@ -34,7 +34,8 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   const s=root.services,actor={kind:'member' as const,id:'alex'};
   // One old, still-retained reply lets the walkthrough cross a real deadline
   // on its fake clock without advancing every runtime timer for a fortnight.
-  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-14*86400000+1000).toISOString());
+  const keepDays=(client.prepare('SELECT comms_days FROM household').get() as {comms_days:number}|undefined)?.comms_days??14;
+  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*86400000+1000).toISOString());
   const olderThread=older.threads.open({member:'alex',agent:'moss',title:'Previous shed inspection'});
   const olderReply=await older.send({thread:olderThread.id,sender:'moss',kind:'reply',words:exampleRetentionWords});
   const thread=s.comms!.threads.open({member:'alex',agent:'fern',title:'Repair the garden pump'});
