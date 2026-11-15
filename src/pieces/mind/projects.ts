@@ -99,15 +99,26 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   if(db&&has(db,'memories')){const names=[r.slug,...(r.card.links.aliases??[])];try{const row=db.prepare(`SELECT expires_at AS at FROM memories WHERE ${activeMemory} AND expires_at IS NOT NULL AND project IN (${names.map(()=>'?').join(',')}) ORDER BY julianday(expires_at),expires_at LIMIT 1`).get(new Date(now).toISOString(),...names) as {at:string}|undefined;if(row)deadlines.push(Date.parse(row.at));}catch{/* Section already exposes a source error. */}}
   return deadlines.filter((at):at is number=>at!==undefined&&Number.isFinite(at)&&at>now).sort((a,b)=>a-b)[0];
  };
- const memoryRead=(id:string,v:Viewer):ProjectMemory|undefined=>{
+ const memorySource=(id:string,v:Viewer)=>{
   const colon=id.indexOf(':');if(colon<1)return;const agent=id.slice(0,colon),ref=id.slice(colon+1),db=sources.get(agent);
   if(!db||!maySee(v,{type:'memory',agent},options.sharing())||!has(db,'memories'))return;
   const opaque=(db.pragma('table_info(memories)') as {name:string}[]).some(column=>column.name==='uuid');
-  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ${opaque?'(ref=? OR uuid=?)':'ref=?'} AND ${activeMemory}`).get(...(opaque?[ref,ref]:[ref]),new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
+  return {agent,db,selector:opaque?'(ref=? OR uuid=?)':'ref=?',params:opaque?[ref,ref]:[ref]};
+ };
+ const memoryRead=(id:string,v:Viewer):ProjectMemory|undefined=>{
+  const source=memorySource(id,v);if(!source)return;const {agent,db,selector,params}=source;
+  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ${selector} AND ${activeMemory}`).get(...params,new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
+ };
+ const memoryHistory=(id:string,v:Viewer)=>{
+  const source=memorySource(id,v);if(!source||!has(source.db,'memory_revisions'))return [];const {db,selector,params}=source;
+  const row=db.prepare(`SELECT id FROM memories WHERE ${selector}`).get(...params) as {id:number}|undefined;
+  // History is an explicit retained-version read, including archived/expired
+  // rows, under the same current private Memory visibility as the source.
+  return row?db.prepare('SELECT id,op,replaced_at AS replacedAt,content FROM memory_revisions WHERE memory_id=? ORDER BY id DESC LIMIT 10').all(row.id) as {id:number;op:string;replacedAt:string;content:string}[]:[];
  };
  const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }
