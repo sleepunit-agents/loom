@@ -186,9 +186,9 @@ it('creates and lists narrow programmes and edits their grants through the actua
  let attempts=0;const bodies:string[]=[];const saved=await f.invoke('program',['setGrants',JSON.stringify({fingerprint:token.fingerprint,records:[],operations:[]})],'owner',async(url,init)=>{bodies.push(String(init?.body));const response=await f.transport(url,init);if(attempts++===0){await response.body?.cancel();throw Error('lost response');}return response;});expect(saved.code).toBe(0);expect(saved.paths).toEqual(['/api/program/setGrants','/api/program/setGrants']);expect(bodies[0]).toBe(bodies[1]);expect(JSON.parse(saved.out)).toEqual({saved:true});expect((await f.invoke('program',['list'])).out).not.toContain(raw);
  expect(auth?.valid()).toBe(false);expect((await(await f.root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } }'})})).json()).errors).toBeDefined();
 });
-it.each(['lost','5xx','invalid'] as const)('never retries programme issuance after %s or echoes private diagnostics',async reason=>{
+it.each(['lost','5xx','invalid','non-json'] as const)('never retries programme issuance after %s or echoes private diagnostics',async reason=>{
  const f=fixture(),result=await f.invoke('program',['create',JSON.stringify({member:'sam',label:'Uncertain programme',records:[],operations:[]})],'owner',async(url,init)=>{
- if(reason==='5xx')return new Response('PRIVATE DETAIL',{status:503});if(reason==='invalid')return Response.json({ok:true,value:{token:'PRIVATE DETAIL'}});const response=await f.transport(url,init);await response.body?.cancel();throw Error('PRIVATE DETAIL');
+ if(reason==='5xx')return new Response('PRIVATE DETAIL',{status:503});if(reason==='non-json')return new Response('PRIVATE DETAIL',{status:200});if(reason==='invalid')return Response.json({ok:true,value:{token:'PRIVATE DETAIL'}});const response=await f.transport(url,init);await response.body?.cancel();throw Error('PRIVATE DETAIL');
  });expect(result).toMatchObject({code:1,calls:1,out:''});expect(result.err).toContain('outcome unknown');expect(result.err).not.toContain('PRIVATE DETAIL');
 });
 it('routes programme commands through the primary CLI and refuses the legacy local door',async()=>{
