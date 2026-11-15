@@ -1,7 +1,7 @@
 import { CreateTrigger, type NewTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Input, Button } from '../../kit';
-import { folders, rows, title, source, target, history, status, terminal, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
+import { folders, rows, title, source, target, history, status, terminal, triggerAgent, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
 
 export interface TempoSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
@@ -24,7 +24,8 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
-  const paused = pauses.some(item => item.agent === trigger.to);
+  const agent = triggerAgent(trigger);
+  const paused = !!agent && pauses.some(item => item.agent === agent);
   async function run(action: () => Promise<void>) {
     if (busy.current) return;
     busy.current = true;
@@ -40,7 +41,7 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
         <Button disabled={pending || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => void run(() => actions.runNow(trigger.id))}>Run now</Button>
         <Button disabled={pending} onClick={() => void run(() => actions.stop(trigger.id))}>Cancel</Button>
       </>}
-      {trigger.toKind === 'agent' && trigger.to && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(trigger.to!) : actions.pause(trigger.to!))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
+      {agent && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(agent) : actions.pause(agent))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
     </div>
     {pending && <p role="status">Waiting for Tempo…</p>}
     {failed && <p role="alert">Tempo could not complete that action. Try again.</p>}
@@ -94,7 +95,7 @@ export default function Tempo({ snapshot, actions }: { snapshot: TempoSnapshot; 
   const triggers = live ? snapshot.triggers : [];
   const shown = rows(triggers, folder, query, agent);
   const trigger = triggers.find(item => item.id === selected);
-  const agents = [...new Set(triggers.filter(item => item.toKind === 'agent').map(item => item.to!))].sort();
+  const agents = [...new Set(triggers.map(triggerAgent).filter((agent): agent is string => !!agent))].sort();
   const reader = live && creating && actions?.create ? <CreateTrigger timezone={snapshot.timezone} submit={actions.create} done={() => setCreating(false)} /> : trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <Split label="Tempo" className="h-full" folders={folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', agent).length : undefined }))}
