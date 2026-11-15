@@ -63,7 +63,11 @@ it('revokes current credentials at the shared door and rechecks ownership on rep
 it('allows trusted machine enrollment in the same transaction without an internal permission gate', () => {
   const f = fixture();
   const value = f.root.writes.run(()=>f.root.services.signin.issue({kind:'runner',box:'box',label:'Enrolled'})).value;
-  expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+value.token}}))?.viewer).toEqual({kind:'runner',id:'box'});
+  const request=new Request('http://loom',{headers:{authorization:'Bearer '+value.token}}),auth=f.root.credentials.authenticate(request)!;
+  expect(auth.viewer).toEqual({kind:'runner',id:'box'});
+  f.root.writes.run(()=>f.root.services.signin.revoke(value.fingerprint));
+  expect(auth.valid()).toBe(false);
+  expect(f.root.credentials.authenticate(request)).toBeUndefined();
 });
 
 it('binds job credentials only to assigned current work for the named agent', async () => {
