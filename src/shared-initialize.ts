@@ -1,7 +1,7 @@
 /** First install only. Build privately beside the requested empty home, then
  * publish the complete directory atomically. Never roll back user pathnames. */
 import Database from 'better-sqlite3';
-import {generateX25519Identity} from 'age-encryption';
+import {loadKey} from './pieces/comms/crypto.js';
 import {constants,openSync,closeSync,writeFileSync,fsyncSync,lstatSync,readdirSync,mkdirSync,mkdtempSync,renameSync} from 'node:fs';
 import {join,dirname,basename} from 'node:path';
 import {userInfo} from 'node:os';
@@ -31,7 +31,7 @@ export async function initializeSharedHome(home:string,clock:Clock){
    db.insert(memberAgents).values({member,agent:'assistant'}).run();db.insert(household).values({defaultAgent:'assistant'}).run();
   });
   client.close();client=undefined;
-  const key=Buffer.from(await generateX25519Identity()+'\n');try{publish('comms.key',key);}finally{key.fill(0);}
+  await loadKey(stage);
   const commons=join(home,'commons'),agent=join(home,'agents/assistant');
   const program={database:join(home,'loom.db'),commsKey:join(home,'comms.key'),signinMember:member,memory:{checkingAgent:'assistant',sources:{
    commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},
