@@ -40,7 +40,7 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
   const activity = installMindActivity(app.operations,app.live,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
-  const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),mind:mindRole(app.operations),activity,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
+  const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),mind:mindRole(app.operations),activity,projectAccess:projectReader.access,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
   let valid = true, admitted = false;
   const http = dataHttp(db, request => {
     admitted = true;
@@ -65,6 +65,10 @@ async function fixture() {
 }
 it('executes every browser selection against the real generated HTTP schema and existing file readers', async () => {
   const f = await fixture(), c = f.client;
+  expect(await c.read(memoryQueries.knowledgeAccess())).toEqual({allowed:true,canAdd:true,canVerify:true,canRecheck:true});
+  expect(await c.read(memoryQueries.peopleAccess())).toEqual({allowed:true,directory:true,canAdd:true,agents:['fiction']});
+  expect(await c.read(memoryQueries.projectsAccess())).toEqual({allowed:true,agents:['fiction']});
+  expect(await c.read(memoryQueries.activityAccess())).toMatchObject({allowed:true,agents:['fiction'],today:'2026-11-14',windows:expect.any(Array),expires:expect.any(Number)});
   expect(await c.read(memoryQueries.knowledge())).toMatchObject({total:1,checkDays:30,recentDays:7,pages:[{slug:'pump',title:'Fictional pump'}]});
   const page = await c.read(memoryQueries.page('pump'));
   expect(page).toMatchObject({slug:'pump',body:'The fictional pump takes a hose.',sources:[],citedBy:[]});

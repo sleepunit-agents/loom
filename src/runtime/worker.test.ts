@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
 const deferred = <T>() => { let resolve!: (v: T) => void; let reject!: (e?: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'm', account: 'a', harness: 'h', brief: 'hello', house: { repository: 'r', file: 'Containerfile', branch: 'main' } };
+const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'm', account: 'a', harness: 'h', brief: 'hello', run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] }, house: { repository: 'r', file: 'Containerfile', branch: 'main' } };
 function fixture() {
   const exited = deferred<{ exitCode: number; logTail: string }>();
   const built = deferred<string>();

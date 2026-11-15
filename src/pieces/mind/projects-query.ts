@@ -2,7 +2,9 @@
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type { Mind } from './role.js';
-import type { ProjectCard, ProjectSection } from './projects-model.js';
+import {projectDeadline} from './project-deadlines.js';
+import type {QueryDeadlines} from './query-deadlines.js';
+import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
 
 const text = { type: GraphQLString }, requiredText = { type: new GraphQLNonNull(GraphQLString) };
 const strings = { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) };
@@ -45,18 +47,28 @@ const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
 } });
 
-export function projectsQueryFields(mind: Mind): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
+const access=new GraphQLObjectType({name:'MemoryProjectsAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
+export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:()=>number=Date.now,capabilities?: (viewer:Viewer)=>{allowed:boolean;agents:string[]}): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
  const read = (context: { viewer: Viewer }, verb: string, input: Record<string, unknown>, absent: unknown) => {
   if (!context?.viewer) return absent;
   try {
    const result = mind.call(context.viewer, verb, input);
-   if (result.ok) return result.value;
+   if (result.ok) {
+    if(deadlines){
+     const key=JSON.stringify([context.viewer.kind,context.viewer.id,verb,input]);
+     const rows=verb==='projectsList'?result.value as ProjectRecord[]:[result.value as ProjectRecord|ProjectMemory];
+     const times=rows.map(row=>verb==='projectMemoryRead'?(row as ProjectMemory).expires:projectDeadline(row as ProjectRecord,now())).filter((at):at is number=>at!==undefined);
+     deadlines.set(key,times.length?Math.min(...times):undefined);
+    }
+    return result.value;
+   }
    if (result.code === 'denied' || result.code === 'not-found' || result.code === 'invalid') return absent;
   } catch { /* Never expose source paths or SQL through GraphQL errors. */ }
   throw new GraphQLError('Projects are unavailable');
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
+  memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?capabilities?.(context.viewer)??null:null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
   memoryProject: { type: project, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
   memoryProjectMemory: { type: memory, args: { id }, resolve: (_source, args, context) => read(context, 'projectMemoryRead', { id: args.id }, null) },

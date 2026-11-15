@@ -130,3 +130,9 @@ it('orders and pages Comms threads by time rather than ISO timestamp precision',
   expect(f.service.list(alice, { limit: 1 }).map(row => row.id)).toEqual([newer.id]);
   expect(f.service.list(alice, { limit: 1, offset: 1 }).map(row => row.id)).toEqual([f.thread.id]);
 });
+it('never decrypts thread words at an equal whole-second stored deadline', async () => {
+  const f = await fixture();
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
+  expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
+});

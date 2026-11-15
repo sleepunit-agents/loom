@@ -58,6 +58,16 @@ export function sharedActivityConversations(db: DataDatabase, options: {
     };
   }
   return {
+    nextDeadline(now) {
+      let next=Infinity;
+      // The list has an exclusive skew boundary, the detail an inclusive one.
+      // Read only timestamp metadata; visibility remains in the content reads.
+      for(const [table,column] of [['conversations','last_at'],['digests','at']]){
+        const row=db.$client.prepare(`SELECT ${column} AS at FROM ${table} WHERE julianday(${column})>=julianday(?) ORDER BY julianday(${column}) LIMIT 1`).get(new Date(now+60000).toISOString()) as {at:string}|undefined;
+        if(row){const enters=Date.parse(row.at)-60000;for(const at of [enters,enters+1])if(Number.isFinite(at)&&at>now)next=Math.min(next,at);}
+      }
+      return next===Infinity?undefined:next;
+    },
     agents(viewer) {
       return [...new Set(db.select().from(conversations).all().filter(row => visible(viewer, row)).map(row => row.agent))];
     },

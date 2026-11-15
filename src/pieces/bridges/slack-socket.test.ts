@@ -3,8 +3,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startLoom } from '../../foundation.js';
-import { FakeClock } from '../../core/index.js';
+import { FakeClock } from '../../core/clock.js';
 import { slackSocket, type SlackSocketOptions } from './slack-socket.js';
 class FakeSocket extends EventEmitter {
   readyState = 1;
@@ -53,7 +52,9 @@ describe('Slack Socket Mode transport', () => {
       method:'POST',redirect:'error',headers:{Authorization:'Bearer APP-SECRET'},signal:expect.any(AbortSignal),
     }]);
     expect(f.socket).toHaveBeenCalledWith('wss://wss-primary.slack.com/link/?ticket=PRIVATE');
-    expect(f.beforeConnect).toHaveBeenCalledTimes(2);
+    expect(f.beforeConnect.mock.invocationCallOrder[0]).toBeLessThan(f.withValue.mock.invocationCallOrder[0]);
+    expect(f.beforeConnect.mock.invocationCallOrder.at(-1)).toBeLessThan(f.socket.mock.invocationCallOrder[0]);
+    expect(f.beforeConnect.mock.invocationCallOrder.at(-1)).toBeGreaterThan(f.request.mock.invocationCallOrder[0]);
   });
   it('does not ACK until the durable receiver resolves; preserves the raw payload', async () => {
     let commit!: () => void;
@@ -198,6 +199,7 @@ describe('Slack Socket Mode transport', () => {
     s.send.mockImplementationOnce((_text, callback)=>callback(Error('ticket'))); s.frame(envelope()); await settled(); expect(s.terminate).toHaveBeenCalledOnce();
   });
   it('proves durable commit before ACK and dedup after a daemon/socket restart', async () => {
+    const { startLoom } = await import('../../foundation.js');
     const home = mkdtempSync(join(tmpdir(),'slack-socket-'));
     let app = await startLoom({home});
     try {

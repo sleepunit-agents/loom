@@ -10,7 +10,6 @@ import {fixture} from '../../fixture.js';
 import {PeopleStore} from '../../backends/people.js';
 import {FakeClock} from '../../core/clock.js';
 import {installSecrets} from '../secrets/index.js';
-import {installSecretServices} from '../secrets/service.js';
 import {SharingDatabase} from '../../core/household/sharing.js';
 import {installBridges} from './index.js';
 import {venueSchema} from './model.js';
@@ -44,12 +43,19 @@ it.each(['own','commons','missing','other','no-runtime'] as const)('composes %s 
   const app=await startLoom({home,next:true,staging:true,clock,stdout:()=>{},bridges:{source,request,socket,
     runtime:visibility==='no-runtime'?undefined:{admit:async()=>{if(admitWait){admitStarted.resolve();await admitWait;}return 'allow';},deliver:async i=>{deliveries.push(i);return 'delivered';},stop:async()=>{}}},
     install(a){foundation=a;
-      const sharing=()=>new SharingDatabase(a.db,home).sharing();installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
-      for(const name of ['bot','app'])for(const [verb,input] of [['describe',{name,description:name}],['grantService',{service:'bridges',name}]] as const)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${verb}`,input,`${verb}-${name}`).ok).toBe(true);
+      const sharing=()=>new SharingDatabase(a.db,home).sharing();installSecrets(a.db,a.operations,a.live,sharing);installBridges(a,sharing);
+      for(const name of ['bot','app'])expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`describe-${name}`).ok).toBe(true);
       put(a.db,'venues',venue);put(a.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'jonathan'});
       void slackInbox(a.db,clock,{venue,app:'A123'}).receive({type:'event_callback',team_id:'T123',api_app_id:'A123',event_id:'Ev1',event:{type:'message',channel:'D123',user:'U200',ts:'1794503533.000000',text:'hello <@U200|Untrusted>'}});
     }});
   let closed=false;cleanups.push(async()=>{if(!closed)await app.close();people.close();rmSync(home,{recursive:true,force:true});});
+  expect(foundation.operations.has('secrets.grantService')).toBe(false);
+  expect(foundation.operations.has('secrets.revokeService')).toBe(false);
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  for(const door of ['direct','http','socket','mcp'] as const) {
+    expect(foundation.operations.call(door,{kind:'service',id:'bridges'},'secrets.list',{})).toMatchObject({ok:false,code:'denied'});
+    expect(foundation.operations.call(door,{kind:'service',id:'bridges'},'secrets.describe',{name:'bot',description:'outside write'},`outside-${door}`)).toMatchObject({ok:false,code:'denied'});
+  }
   await settle();expect(source.read).not.toHaveBeenCalled();expect(request).not.toHaveBeenCalled();
   const release=()=>{
     const due=app.db.prepare("SELECT id FROM core_effects WHERE state='due'").all() as {id:string}[];

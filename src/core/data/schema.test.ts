@@ -229,7 +229,7 @@ describe('the approved data model', () => {
   it('checks UTC timestamps in internal bookkeeping as well', () => {
     const { db, at } = household();
     expect(() => db.insert(migrations).values({ number: 2, appliedAt: 'yesterday' }).run()).toThrow();
-    expect(() => db.insert(operationResults).values({ caller: 'art', id: 'retry-1', operation: 'tasks.close', result: Buffer.from('done'), expiresAt: '2026-11-14T00:00:00+01:00' }).run()).toThrow();
+    expect(() => db.insert(operationResults).values({ caller: 'art', id: 'retry-1', operation: 'tasks.close', inputHash: 'fingerprint', result: Buffer.from('done'), expiresAt: '2026-11-14T00:00:00+01:00' }).run()).toThrow();
     db.insert(tokens).values({ fingerprint: 'fp', label: 'browser', kind: 'owner', member: 'jonathan', createdAt: at }).run();
     expect(() => db.insert(signinChallenges).values({ id: 'ch-1', token: 'fp', challenge: 'test', expiresAt: 'yesterday' }).run()).toThrow();
   });
