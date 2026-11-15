@@ -1,3 +1,5 @@
+import { BridgeSends } from './sends.js';
+import { bridgeReplyApi } from './reply-api.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
  * asynchronous metadata/drain work follows separately. Installed parts share the
  * database directly; all outside permissions live at their respective doors. */
@@ -51,6 +53,7 @@ export class SharedBridges {
  private readonly channels=new BridgeChannels();
  private readonly receiver:BridgeReceiver;
  readonly files:BridgeFiles;
+ readonly sends:BridgeSends;
  private readonly credentials;
  private readonly lives=new Map<string,Life>();
  private readonly active=new Set<Promise<unknown>>();
@@ -59,6 +62,12 @@ export class SharedBridges {
  private readonly unobserve:()=>void;
  private closing?:Promise<void>;
  constructor(private readonly options:SharedBridgeOptions){
+  this.sends=new BridgeSends(options.db,{post:async(row,address,text)=>{
+   const life=this.lives.get(row.id);if(!life||!this.current(life)||configuration(row)!==life.key)throw Error('Bridge reply attempt uncertain');
+   return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life),request:options.request}).post(address,text);
+  }},()=>new Date(options.clock.now()).toISOString(),()=>{},write=>{
+   const result=options.writes.run(write);for(const _error of result.notificationErrors)this.report();return result.value;
+  });
   this.receiver=new BridgeReceiver(options.db,options.clock,this.channels);
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
   this.credentials=bridgeCredentials(options.source,options.clock);
@@ -91,7 +100,7 @@ export class SharedBridges {
  changed(credentials=false){
   if(this.closed)return;
   for(const life of this.lives.values())if(credentials||!this.current(life))this.retire(life);
-  void this.reconcile();
+  void this.reconcile();this.track(this.sends.flush());
  }
  async ready(){await this.credentials.ready();await this.reconcile();}
  reconcile():Promise<void>{
@@ -113,7 +122,7 @@ export class SharedBridges {
     Object.assign(life,{connection:row,key:configuration(row),generation,active:true,
      secrets:sharedBridgeSecretUse({source:this.options.source,clock:this.options.clock,generation,
       names:[row.tokenSecret,...(row.appSecret?[row.appSecret]:[])],current:()=>this.current(life),
-      invalidate:()=>{this.retire(life);try{this.state(row.id,'backoff');}catch{this.report();}}})});
+      invalidate:()=>{const valid=this.current(life);this.retire(life);if(valid){try{this.state(row.id,'backoff');}catch{this.report();}}}})});
     this.lives.set(row.id,life);this.state(row.id,'connecting');
     this.track(this.connect(life));
    }
@@ -130,7 +139,7 @@ export class SharedBridges {
     secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).authenticate();
    if(!current()||!proof)throw Error();
    life.channels=this.channels.bind(row.id,{platform:row.platform,workspace:row.workspace});
-   const state=(value:Connection['state'])=>{if(current())this.state(row.id,value);};
+   const state=(value:Connection['state'])=>{if(current()){this.state(row.id,value);if(value==='connected')this.track(this.sends.flush());}};
    if(row.platform==='discord'){
     const receipts=this.options.resume(row,bridgeCredentialBinding(row,life.generation),this.receiver);
     if(!current())throw Error();
@@ -187,7 +196,7 @@ export class SharedBridges {
  close():Promise<void>{
   if(this.closing)return this.closing;
   let done!:()=>void;this.closing=new Promise<void>(resolve=>{done=resolve;});
-  this.closed=true;this.cancelRetry?.();this.unobserve();this.credentials.close();
+  this.closed=true;this.track(this.sends.close());this.cancelRetry?.();this.unobserve();this.credentials.close();
   for(const life of this.lives.values())this.retire(life);
   this.receiver.close();this.files.close();this.channels.close();
   void Promise.allSettled([...this.active]).then(done);return this.closing;

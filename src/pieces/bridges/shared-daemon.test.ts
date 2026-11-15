@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox } from '../../core/data/schema.js';
+import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends } from '../../core/data/schema.js';
 import { SharedBridges, bridgeCredentialBinding } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
 const clean:(()=>void|Promise<void>)[]=[];
@@ -75,4 +75,33 @@ it('binds private resume identity to every authentication/configuration field an
  const f=fixture(),row=f.db.select().from(bridgeConnections).get()!,baseline=bridgeCredentialBinding(row,generation);
  for(const change of [{id:'other'},{platform:'discord' as const},{workspace:'OTHER'},{botUser:'OTHER'},{agent:'other'},{tokenSecret:'OTHER'},{appSecret:'OTHER'}])expect(bridgeCredentialBinding({...row,...change},generation)).not.toBe(baseline);
  expect(bridgeCredentialBinding(row,'87654321-1234-4234-8234-123456789abc')).not.toBe(baseline);
+});
+
+it('flushes the shared send queue through the current bot credential and confirms the actual platform receipt',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();
+ const incoming=f.db.select().from(bridgeIncoming).get()!;f.request.mockImplementation(async(url)=>{expect(String(url)).toBe('https://slack.com/api/chat.postMessage');expect(f.client.inTransaction).toBe(false);expect(f.db.select().from(bridgeSends).get()?.state).toBe('sending');return Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'});});
+ f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'Hi <@everyone>'});f.daemon.changed();await f.daemon.idle();
+ expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',postedId:'1794432000.000009'});expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);
+});
+it('drains an in-flight post during close and records uncertainty without a second network attempt',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;
+ let release!:(response:Response)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.request.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});
+ f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'Hi'});f.daemon.changed();await started;let stopped=false;const closing=f.daemon.close().then(()=>{stopped=true;});expect(stopped).toBe(false);release(Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}));await closing;
+ expect(f.db.select().from(bridgeSends).get()?.state).toBe('uncertain');expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+});
+it('uses fresh credentials per part and publishes direct queue/claim/confirmation commits',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!,before=f.source.read.mock.calls.length,states:string[]=[];
+ const unobserve=f.writes.observe(()=>{expect(f.client.inTransaction).toBe(false);const state=f.db.select().from(bridgeSends).get()?.state;if(state)states.push(state);});
+ f.request.mockImplementation(async(url,options)=>{expect(String(url)).toBe('https://slack.com/api/chat.postMessage');expect(JSON.parse(String(options?.body))).toMatchObject({channel:'CROOM'});return Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'});});
+ try{f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.source.read.mock.calls.length-before).toBe(2);expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(2);expect(states).toEqual(expect.arrayContaining(['pending','sending','sent']));}finally{unobserve();}
+});
+it('refuses the next part when connection identity changes during its fresh credential acquisition',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;let reads=0;
+ f.source.read.mockImplementation(async()=>{const bytes=Buffer.from('synthetic:TOKEN');f.buffers.push(bytes);if(++reads===2)f.writes.run(()=>f.db.update(bridgeConnections).set({botUser:'UREPLACED'}).run());return bytes;});
+ f.request.mockImplementation(async()=>Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}));
+ f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);expect(f.db.select().from(bridgeSends).get()?.state).toBe('uncertain');expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+});
+it('flushes a preexisting pending send on the connected-state callback without a caller flush',async()=>{
+ const f=fixture();f.db.insert(bridgeIncoming).values({id:'in',connection:'connection',channel:'CROOM',isDm:false,user:'UUSER',text:'Hi',postedAt:new Date(f.clock.now()).toISOString(),receivedAt:new Date(f.clock.now()).toISOString(),state:'delivered'}).run();f.daemon.sends.queue({id:'reply',incoming:'in',text:'Reply'});
+ const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>String(url).endsWith('/chat.postMessage')?Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}):original(url,options));await f.daemon.ready();await f.daemon.idle();expect(f.db.select().from(bridgeSends).get()?.state).toBe('sent');
 });
