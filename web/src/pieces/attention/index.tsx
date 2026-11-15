@@ -138,7 +138,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
 
   const actions: InboxActions | undefined = live ? {
     read: readingVisible ? id => mutate('inbox.read', { item: id }) : undefined,
-    answer: (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }),
+    answer: current?.canAnswer ? (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }) : undefined,
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
   } : undefined;
   return <InboxView snapshot={{ status, folders: data?.folders, items: data?.items.slice(0, inboxPageSize).map(row => retainedInboxItem(row, Math.max(now, Date.now()))) ?? [] }}

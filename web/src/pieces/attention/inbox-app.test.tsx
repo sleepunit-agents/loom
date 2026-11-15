@@ -20,7 +20,7 @@ import InboxApp from './index';
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
 function row(extra: Partial<InboxItem> = {}): InboxItem {
-  return { id: 'in-1', source: 'thread', agent: 'art', at: '2026-11-14T18:00:00.000Z', state: 'waiting', volume: 'full', answers: 'yes-no', refs: [], read: false, body: { words: 'Buy the pump?', ifYes: 'Order it', ifNo: 'Skip it' }, ...extra };
+  return { id: 'in-1', canAnswer: true, source: 'thread', agent: 'art', at: '2026-11-14T18:00:00.000Z', state: 'waiting', volume: 'full', answers: 'yes-no', refs: [], read: false, body: { words: 'Buy the pump?', ifYes: 'Order it', ifNo: 'Skip it' }, ...extra };
 }
 function setup(item = row(), items = [item]) {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => { const result = await f.call(url.replace('/api/','').replace('/','.'),JSON.parse(String(init.body)).input).result; return {ok:result.ok,json:async()=>result}; }));
@@ -113,4 +113,7 @@ it('marks an unread item only when its mounted tile becomes visible', async () =
   expect(f.call).not.toHaveBeenCalled();
   await act(async()=>{tree.update(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go,visible:true}));});
   expect(f.call).toHaveBeenCalledWith('inbox.read',{item:'in-1'});
+});
+it('keeps another recipient’s visible item readable without offering an answer',async()=>{
+ setup(row({canAnswer:false}));await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go:vi.fn()}));});expect(JSON.stringify(tree.toJSON())).toContain('Buy the pump?');expect(button('Yes')).toBeUndefined();expect(button('Record answer')).toBeUndefined();expect(f.call).toHaveBeenCalledWith('inbox.read',{item:'in-1'});
 });

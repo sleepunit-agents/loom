@@ -4,7 +4,7 @@ import type { DataQuerySnapshot } from '../../data/graphql';
 import type { InboxFolders, InboxItem } from '../inbox-view/model';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
-const fields = `id source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
+const fields = `id canAnswer source sourceId fromId agent project thread at state volume answers waitsOnKind waitsOnId
  bodyKeepUntil answerKeepUntil body { words why ifYes ifNo link } read refs answer answerText answeredBy answeredAt resolution`;
 export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$id:String!,$hasItem:Boolean!,$onlyErrors:Boolean!){
  inboxItems(folder:$folder,search:$search,agent:$agent,limit:51,offset:$offset) @skip(if:$onlyErrors){${fields}}
