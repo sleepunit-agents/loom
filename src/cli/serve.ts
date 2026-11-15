@@ -139,7 +139,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
 
   if (values.next) {
     if (values.scope !== 'full') { io.stderr('--next cannot use --scope\n'); return 2; }
-    const { startLoom } = await import('../foundation.js');
+    const { startSharedLoom } = await import('../shared-start.js');
     const { resolve } = await import('node:path');
     const { homedir } = await import('node:os');
     const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom-next`);
@@ -170,7 +170,10 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
         secretWrites = configuredSecretWrites(values['secret-writes']);
       } catch {io.stderr('Invalid secret mutation configuration\n');return 2;}
     }
-    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, bridges:changes ? {source:changes.source} : undefined, secretAuthority, secretWrites });
+    if (changes || secretAuthority || secretWrites) {
+      io.stderr('Interim holder configuration requires the separate shared configuration move\n'); return 2;
+    }
+    const handle = await startSharedLoom({ home, staging: values.staging, host: hosts, port, stdout: io.stdout });
     io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
     await new Promise<void>(done => {
       const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };
