@@ -79,7 +79,11 @@
     {
       "id": "conversations-013",
       "promise": "A task names the conversation it came from.tasks.source_kind, source_id",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationTaskSource"
+      }
     },
     {
       "id": "conversations-014",
@@ -89,7 +93,11 @@
     {
       "id": "conversations-015",
       "promise": "An approval records the conversation it was asked in.approvals.conversation",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationApprovalSource"
+      }
     },
     {
       "id": "conversations-016",

@@ -15,9 +15,11 @@ export interface HolderChannel {
 const failed=()=>new Error('Shared secret holder unavailable');
 const bytes=z.instanceof(Uint8Array).refine(value=>value.byteLength>0&&value.byteLength<=65536);
 const who=z.object({member:z.string().min(1).max(256),writeId:z.uuid()}).strict();
+const generation=z.uuid().refine(value=>value[14]==='4','Invalid holder generation');
 const base={seq:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)};
 const request=z.discriminatedUnion('op',[
  z.object({...base,op:z.literal('read'),name:secretName}).strict(),
+ z.object({...base,op:z.literal('generation')}).strict(),
  z.object({...base,op:z.literal('set'),who,name:secretName,value:bytes,mode:z.enum(['add','replace'])}).strict(),
  z.object({...base,op:z.literal('remove'),who,name:secretName}).strict(),
  z.object({...base,op:z.literal('receipt'),who}).strict(),
@@ -29,7 +31,7 @@ type WithoutSequence<T>=T extends unknown?Omit<T,'seq'>:never;
 type Input=WithoutSequence<Command>;
 const response=z.discriminatedUnion('op',[
  z.object({op:z.literal('ready'),key:z.instanceof(Uint8Array).refine(value=>value.byteLength===32)}).strict(),
- z.object({...base,op:z.literal('result'),ok:z.boolean(),value:z.union([bytes,z.boolean(),z.enum(['committed','undone']),z.null()])}).strict(),
+ z.object({...base,op:z.literal('result'),ok:z.boolean(),value:z.union([bytes,z.boolean(),z.enum(['committed','undone']),generation,z.null()])}).strict(),
 ]);
 const erase=(value:unknown)=>{
  const pending=[value],seen=new Set<object>();
@@ -52,6 +54,7 @@ export function serveSharedHolderChannel(channel:HolderChannel,start:()=>Promise
  const execute=async(command:Command)=>{
   if(command.op==='close')return null;
   if(command.op==='read')return store!.read(command.name);
+  if(command.op==='generation')return generation.parse(store!.generation());
   if(command.op==='set'){await store!.set(command.who,command.name,command.value,command.mode);return null;}
   if(command.op==='remove'){store!.remove(command.who,command.name);return null;}
   if(command.op==='receipt')return store!.hasReceipt(command.who);
@@ -102,7 +105,7 @@ export function sharedHolderClient(channel:HolderChannel,clock:Clock){
   }
   const item=pending.get(value.seq);
   if(!welcomed||!item){erase(raw);stop();return;}
-  const valid=!value.ok?value.value===null:item.op==='read'?value.value instanceof Uint8Array:item.op==='receipt'?typeof value.value==='boolean':item.op==='recover'?value.value==='committed'||value.value==='undone':value.value===null;
+  const valid=!value.ok?value.value===null:item.op==='read'?value.value instanceof Uint8Array:item.op==='generation'?generation.safeParse(value.value).success:item.op==='receipt'?typeof value.value==='boolean':item.op==='recover'?value.value==='committed'||value.value==='undone':value.value===null;
   if(!valid){erase(raw);stop();return;}
   pending.delete(value.seq);item.cancel();
   if(!value.ok){item.no(failed());return;}
@@ -123,7 +126,7 @@ export function sharedHolderClient(channel:HolderChannel,clock:Clock){
   hasReceipt:who=>call({op:'receipt',who}),recover:who=>call({op:'recover',who}),
  };
  let closing:Promise<void>|undefined;
- return {ready,holder,source:{read:(name:string)=>call({op:'read',name})},stop,
+ return {ready,holder,source:{read:(name:string)=>call({op:'read',name}),generation:():Promise<string>=>call({op:'generation'})},stop,
   close(){retiring=true;return closing??=(async()=>{try{if(welcomed&&!stopped)await call({op:'close'});}finally{stop();}})();},
  };
 }

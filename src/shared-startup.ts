@@ -76,12 +76,18 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    if(adapters.secretWrites||adapters.secretInputs)throw Error('Shared Secret holder ports already configured');
    holder=await startSharedHolder(join(realpathSync(home),'secret-holder'),clock);
   }
+  const configuredBridges=adapters.bridges;
+  const bridges:RootOptions['bridges']=configuredBridges?{
+   source:configuredBridges.source,effectsAllowed:()=>!closing&&configuredBridges.effectsAllowed(),
+   request:configuredBridges.request,discord:configuredBridges.discord,slack:configuredBridges.slack,
+   inboxCommitted:ids=>configuredBridges.inboxCommitted?.(ids),
+  }:holder?{source:holder.source,effectsAllowed:()=>!closing}:undefined;
   const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:sameOrigin,publicOrigin,
    changes:adapters.changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
-   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges:adapters.bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,
+   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock);

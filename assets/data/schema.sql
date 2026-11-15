@@ -1210,6 +1210,27 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
+CREATE TABLE `program_tokens` (
+	`token` text PRIMARY KEY NOT NULL,
+	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE `program_record_grants` (
+	`token` text NOT NULL,
+	`record_type` text NOT NULL,
+	PRIMARY KEY(`token`, `record_type`),
+	FOREIGN KEY (`token`) REFERENCES `program_tokens`(`token`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "program_record_grants_name" CHECK(length("program_record_grants"."record_type") between 1 and 200)
+);
+
+CREATE TABLE `program_operation_grants` (
+	`token` text NOT NULL,
+	`operation` text NOT NULL,
+	PRIMARY KEY(`token`, `operation`),
+	FOREIGN KEY (`token`) REFERENCES `program_tokens`(`token`) ON UPDATE no action ON DELETE cascade,
+	CONSTRAINT "program_operation_grants_name" CHECK(length("program_operation_grants"."operation") between 1 and 200)
+);
+
 CREATE TABLE `migrations` (
 	`number` integer PRIMARY KEY NOT NULL,
 	`applied_at` text NOT NULL,
