@@ -19,6 +19,11 @@ export const sharedTokenInput = z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('runner'), box: id }).strict(),
 ]);
 export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner';
+export function activeMemberToken(db: DataDatabase, clock: Clock, id: string) {
+  const token=db.select().from(tokens).where(eq(tokens.fingerprint,id)).get();
+  if(!token||token.kind!=='owner'||!token.member||token.revokedAt||(token.expiresAt&&Date.parse(token.expiresAt)<=clock.now())||!db.select().from(members).where(eq(members.id,token.member)).get())throw Error('Sign-in refused');
+  return token;
+}
 export function sharedTokens(db: DataDatabase, clock: Clock) {
   return {
     issue(input: z.input<typeof sharedTokenInput>) {
