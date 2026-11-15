@@ -29,7 +29,15 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const setup=database.prepare("select created_at,expires_at from tokens where label='Example setup'").get() as {created_at:string;expires_at:string};expect(Date.parse(setup.expires_at)-Date.parse(setup.created_at)).toBe(60_000);
   expect(database.prepare("select revoked_at from tokens where label='Example worker setup'").get()).toEqual({revoked_at:expect.any(String)});
   expect(database.prepare('select id,owner from model_accounts').all()).toEqual([{id:manifest.account.id,owner:'alex'}]);
-  expect(database.prepare('select id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,last_seen_at from boxes').all()).toEqual([{id:manifest.runtime.box,name:'Example workshop',owner:'alex',same_machine_as_loom:1,hosts_any:0,report_only:0,always_on:0,last_seen_at:manifest.createdAt}]);
+  expect(database.prepare('select id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,last_seen_at from boxes').all()).toEqual([{id:manifest.runtime.box,name:'Example workshop',owner:'alex',same_machine_as_loom:1,hosts_any:0,report_only:0,always_on:0,last_seen_at:setup.created_at}]);
+  // Runtime settlement must not consume the retention sample or put job facts
+  // in the future of the clock used by the normal-startup walkthrough.
+  const retained=database.prepare('select words,keep_until from messages where thread=? and seq=?').get(manifest.retention.thread,manifest.retention.seq) as {words:Buffer;keep_until:string};
+  expect(Buffer.isBuffer(retained.words)).toBe(true);
+  expect(Date.parse(retained.keep_until)).toBeGreaterThan(Date.parse(manifest.createdAt));
+  const queued=database.prepare('select queued_at from jobs where id=?').get(manifest.runtime.job.id) as {queued_at:string};
+  expect(Date.parse(queued.queued_at)).toBeLessThanOrEqual(Date.parse(manifest.createdAt));
+  expect(Date.parse(manifest.createdAt)).toBeLessThanOrEqual(Date.now());
   expect(database.prepare('select box,agent,lent from box_agents order by agent').all()).toEqual([{box:manifest.runtime.box,agent:'fern',lent:0},{box:manifest.runtime.box,agent:'moss',lent:0}]);
   expect(database.prepare('select fact,from_owner from box_facts order by fact').all()).toEqual([{fact:'arch:example',from_owner:0},{fact:'cpu:example',from_owner:1}]);
   expect(database.prepare('select agent,model,position from agent_models order by agent,position').all()).toEqual([{agent:'fern',model:'example-model',position:0},{agent:'moss',model:'example-model',position:0}]);
