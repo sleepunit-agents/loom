@@ -4,6 +4,7 @@ import { createElement as h, type ReactNode } from 'react';
 import { act, create } from 'react-test-renderer';
 vi.mock('../../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode }) => h(name, props, props.children, ...(name === 'Split' ? [props.list, props.reader] : []))])));
 import Approvals, { ApprovalCard, type ApprovalActions } from './index';
+import { renderMeasuringChange } from '../measuring/settings';
 import { rows, type ApprovalSnapshot } from './model';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
@@ -54,6 +55,26 @@ it('keeps current pending/history folders and filters them without returning sta
   expect(rows(s, 'pending', 'inbox art').map(a => a.id)).toEqual(['a-pump']);
   expect(rows(s, 'history', '').map(a => a.id)).toEqual(['a-used']);
   expect(rows({ ...s, status: 'offline' }, 'pending', '')).toEqual([]);
+});
+
+it('mounts validated Measuring before/after in the shared inline card and removes it on access loss', async () => {
+  const before = { on: false, send_outside: false, outside_address: '', keep_days: 90 };
+  const after = { ...before, on: true, keep_days: 7 };
+  const measuring = { ...approval, target: 'measuring', details: JSON.stringify({ before, after }),
+    changeSummary: `Measuring: ${JSON.stringify(before)} → ${JSON.stringify(after)}` };
+  const live: ApprovalSnapshot = { ...snapshot, approvals: [measuring] };
+  const renderChange = vi.fn(renderMeasuringChange), allow = vi.fn(async () => {});
+  await act(async () => { tree = create(h(ApprovalCard, { id: measuring.id, snapshot: live, renderChange, actions: { allow, deny: vi.fn() } })); });
+  expect(JSON.stringify(tree.toJSON())).toContain('Measuring settings change');
+  expect(JSON.stringify(tree.toJSON())).toContain('Before');
+  expect(JSON.stringify(tree.toJSON())).toContain('After');
+  expect(renderChange).toHaveBeenCalledWith(measuring);
+  await act(async () => { buttons().find((b: { props: { children: string } }) => b.props.children === 'Allow').props.onClick(); });
+  expect(allow).toHaveBeenCalledExactlyOnceWith(measuring.id);
+  renderChange.mockClear();
+  await act(async () => { tree.update(h(ApprovalCard, { id: measuring.id, snapshot: { ...live, status: 'denied' }, renderChange })); });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Measuring settings change');
+  expect(renderChange).not.toHaveBeenCalled();
 });
 
 it('threads change presentation through the selected tile reader without parsing it in generic Approvals', async () => {

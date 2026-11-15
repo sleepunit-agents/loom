@@ -56,6 +56,7 @@ async function fixture() {
   db.insert(s.tokens).values({fingerprint:ownerFingerprint,label:'Disposable owner',kind:'owner',member:'pat',createdAt:at}).run();
   db.insert(s.sessions).values({id:createHash('sha256').update(ownerCookie).digest('hex'),token:ownerFingerprint,device:'Owner fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
   const data = sharedRoot({db,clock,originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
+  await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
     const url = new URL(request.url!, 'http://localhost');

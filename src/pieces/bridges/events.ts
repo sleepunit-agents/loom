@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, getTableColumns, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeRawEvents, bridgeResume } from '../../core/data/schema.js';
@@ -15,6 +15,7 @@ const HOUR = 3_600_000;
 export class BridgeEvents {
   private closed = false;
   private cancel?: () => void;
+  private readonly cursors = new Map<string, Map<string, { at: string; row: number }>>();
   constructor(private db: DataDatabase, private clock: Clock) { this.assertAvailable(); this.sweep(); }
 
   retain(connection: string, id: string, event: Buffer, checkpoint?: BridgeCheckpoint): void {
@@ -58,16 +59,23 @@ export class BridgeEvents {
    * receipt for retry, without blocking later rows in this pass. Throwing rolls
    * back that event's writes; earlier committed events stay consumed. The limit
    * bounds rows examined, and the return value counts receipts removed. */
-  drain(connection: string, consume: (id: string, event: Buffer, receivedAt: string) => void | boolean, limit = 64): number {
+  drain(connection: string, consume: (id: string, event: Buffer, receivedAt: string) => void | boolean, limit = 64, scan: 'consume' | 'inspect' | 'peek' = 'consume'): number {
     this.assertAvailable();
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw Error('Drain limit must be 1 through 64');
     this.sweep();
-    const rows = this.db.select().from(bridgeRawEvents).where(eq(bridgeRawEvents.connection, connection))
-      // Frames received in the same millisecond retain insertion order. Event
-      // ids (notably Discord sequence JSON) do not sort in arrival order.
+    let cursors = this.cursors.get(connection);
+    if (!cursors) { cursors = new Map(); this.cursors.set(connection, cursors); }
+    const cursor = scan === 'peek' ? undefined : cursors.get(scan);
+    const read = (after?: typeof cursor) => this.db.select({ ...getTableColumns(bridgeRawEvents), position: sql<number>`rowid` }).from(bridgeRawEvents)
+      .where(and(eq(bridgeRawEvents.connection, connection), after ? sql`(julianday(${bridgeRawEvents.receivedAt}) > julianday(${after.at}) or (julianday(${bridgeRawEvents.receivedAt}) = julianday(${after.at}) and rowid > ${after.row}))` : undefined))
       .orderBy(sql`julianday(${bridgeRawEvents.receivedAt})`, sql`rowid`).limit(limit).all();
+    // Independent disposable scan positions keep a full batch of held/malformed
+    // receipts from starving later arrivals. Inspection cannot advance delivery.
+    let rows = read(cursor);
+    if (!rows.length && cursor) { cursors.delete(scan); rows = read(); }
     let count = 0;
     for (const row of rows) {
+      if (scan !== 'peek') cursors.set(scan, { at: row.receivedAt, row: row.position });
       this.db.transaction(tx => {
         // Recheck after earlier callbacks; a callback may have consumed a row.
         const key = and(eq(bridgeRawEvents.connection, connection), eq(bridgeRawEvents.id, row.id));
@@ -107,5 +115,5 @@ export class BridgeEvents {
       .orderBy(sql`julianday(${bridgeRawEvents.expiresAt})`).get();
     if (first) this.cancel = this.clock.at(Date.parse(first.expiresAt), () => this.sweep());
   }
-  close(): void { this.closed = true; this.cancel?.(); this.cancel = undefined; }
+  close(): void { this.closed = true; this.cancel?.(); this.cancel = undefined; this.cursors.clear(); }
 }

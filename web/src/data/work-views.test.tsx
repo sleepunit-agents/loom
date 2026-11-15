@@ -15,7 +15,7 @@ afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'l
 function fixture() {
   const before = { on: true, send_outside: false, outside_address: '', keep_days: 7 };
   const after = { ...before, keep_days: 1 };
-  feed.approvals = { approvals: [{ id: 'a-one', kind: 'setting', target: 'measuring', what: 'Change measuring', why: 'Keep less', agent: 'art', project: null, member: null, conversation: null, state: 'pending', ask: 'Keep one day?', ifYes: 'Keep one', ifNo: 'Keep seven', details: JSON.stringify({ before, after }), changeSummary: `Measuring: ${JSON.stringify(before)} → ${JSON.stringify(after)}`, askedAt: '2026-11-14T00:00:00Z', decidedBy: null, expiresAt: null }], approvalRules: [], approvalNotices: [{ id: 'n-one', agent: 'art', kind: 'command', target: 'fixture', what: 'Current reported step', at: '2026-11-14T00:00:00Z' }], approvalRecord: [] };
+  feed.approvals = { approvals: [{ id: 'a-one', kind: 'setting', target: 'measuring', what: 'Change measuring', why: 'Keep less', agent: 'art', project: null, member: null, conversation: null, state: 'pending', ask: 'Keep one day?', ifYes: 'Keep one', ifNo: 'Keep seven', details: JSON.stringify({ before, after }), changeSummary: `Measuring settings change ${JSON.stringify(before)} → ${JSON.stringify(after)}`, askedAt: '2026-11-14T00:00:00Z', decidedBy: null, expiresAt: null }], approvalRules: [], approvalNotices: [{ id: 'n-one', agent: 'art', kind: 'command', target: 'fixture', what: 'Current reported step', at: '2026-11-14T00:00:00Z' }], approvalRecord: [] };
   feed.changes = { changes: [{ id: 'c-one', repository: 'acme/app', number: 1, title: 'Current change', body: '', url: 'https://example.test/1', state: 'open', draft: false, authorLogin: 'sam', project: null, agent: 'art', branch: 'work', headCommit: 'first-head', baseBranch: 'next', checks: 'passing', review: 'approved', mergeable: 'yes', waitingOn: 'you', openedAt: '2026-11-14T00:00:00Z', updatedAt: '2026-11-14T00:00:00Z', closedAt: null }], changeChecks: [], changePeople: [], changeTasks: [], changeSync: [] };
 }
 const words = () => JSON.stringify(tree.toJSON());
@@ -28,7 +28,7 @@ it('the registered lazy tiles actually render the generated shared rows', async 
   expect(words()).toContain('Change measuring');
   await selectRow();
   expect(words()).toContain('Keep one day?');
-  expect(words()).toContain('Measuring:');
+  expect(words()).toContain('Measuring settings change');
   expect(tree.root.findAllByType('Button')).toHaveLength(0);
   await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
   expect(words()).toContain('Current change');
@@ -45,7 +45,7 @@ it('tile and inline cards follow the same current answer/head and clear retained
   expect(allow).toHaveBeenCalledExactlyOnceWith('a-one');
   await act(async () => tree.update(h(LiveApprovalCard, { id: 'a-one', actions: { allow, deny } })));
   expect(words()).toContain('Keep one day?');
-  expect(words()).toContain('Measuring:');
+  expect(words()).toContain('Measuring settings change');
   feed.approvals = { ...feed.approvals, approvals: [{ ...feed.approvals.approvals[0], state: 'denied' }] };
   await act(async () => tree.update(h(LiveApprovalCard, { id: 'a-one', actions: { allow, deny } })));
   expect(words()).toContain('denied');
@@ -158,7 +158,7 @@ it('approval deep links show the current answer and withdraw the reader when una
     feed.status = status;
     await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() })));
     expect(words()).not.toContain('Current question');
-    expect(words()).not.toContain('Measuring:');
+    expect(words()).not.toContain('Measuring settings change');
     expect(tree.root.findAllByType('Button')).toHaveLength(0);
   }
 });

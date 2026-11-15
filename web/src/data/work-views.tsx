@@ -1,3 +1,5 @@
+import { renderTempoChange } from '../pieces/tempo/settings';
+import { renderMeasuringChange } from '../pieces/measuring/settings';
 import { useEffect, useState } from 'react';
 import Approvals, { ApprovalCard, type ApprovalActions } from '../pieces/approval-view';
 import Changes, { ChangeCard, type ChangeActions } from '../pieces/change-view';
@@ -51,7 +53,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       setLocalPath(next);
     }
   };
-  return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions}
+  return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)}
     navigation={{ selected,
       select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
       folder: folder,
@@ -109,7 +111,7 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 /** Cards read the same current entities as the tiles, never copied payloads. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
   const defaultActions = ownerApprovalActions(useWorkOwner());
-  return <ApprovalCard id={id} snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions} />;
+  return <ApprovalCard id={id} snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {
   return <ChangeCard id={id} snapshot={useChangeSnapshot(timezone)} open={open} />;

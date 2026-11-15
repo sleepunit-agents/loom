@@ -50,6 +50,7 @@ async function fixture() {
   db.insert(s.tokens).values({fingerprint:ownerFingerprint,label:'Disposable owner',kind:'owner',member:'pat',createdAt:at}).run();
   db.insert(s.sessions).values({id:createHash('sha256').update(ownerCookie).digest('hex'),token:ownerFingerprint,device:'Owner fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
   const data = sharedRoot({db,clock,originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
+  await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
     const url = new URL(request.url!, 'http://localhost');
@@ -107,7 +108,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       expect(await page.getByText(hidden, { exact: true }).count()).toBe(0);
       await row(page).click();
       await expect.poll(() => page.getByRole('heading', { name: ask, exact: true }).count()).toBe(1);
-      expect(await page.getByText(summary, { exact: true }).count()).toBe(1);
+      expect(await page.getByText('60 seconds', { exact: true }).count()).toBe(1);
       expect(await page.getByText('Apply this exact setting.', { exact: true }).count()).toBe(1);
       expect(await page.getByText('Keep the current setting.', { exact: true }).count()).toBe(1);
       expect(await page.getByText(record, { exact: false }).count()).toBe(1);
@@ -119,7 +120,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       app.db.insert(s.approvalRecord).values({ seq: 3, at: '2026-11-14T20:01:00.000Z', event: 'request', approval: 'shared', agent: 'art', note: 'Updated shared request' }).run();
     });
     for (const page of [a, b]) {
-      await expect.poll(() => page.getByText(updatedSummary, { exact: true }).count()).toBe(1);
+      await expect.poll(() => page.getByText('90 seconds', { exact: true }).count()).toBe(1);
       await expect.poll(() => page.getByText('Updated shared request', { exact: false }).count()).toBe(1);
     }
     app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());

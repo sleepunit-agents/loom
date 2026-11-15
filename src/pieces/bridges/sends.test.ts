@@ -147,3 +147,10 @@ describe('approved bridge reply queue', () => {
     expect(f.post).toHaveBeenCalledTimes(2);
   });
 });
+it('processes a second committed send queued while an earlier flush is awaiting HTTP',async()=>{
+ const f=fixture();let release!:(receipt:{id:string})=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.post.mockImplementationOnce(()=>{entered();return new Promise(resolve=>{release=resolve;});});
+ f.sends.queue({id:'first',incoming:'in',text:'First'});const first=f.sends.flush();await started;f.sends.queue({id:'second',incoming:'in',text:'Second'});const second=f.sends.flush();expect(second).toBe(first);release({id:'posted-first'});await second;expect(f.read('first').state).toBe('sent');expect(f.read('second').state).toBe('sent');expect(f.post).toHaveBeenCalledTimes(2);
+});
+it('notifies standalone consumers only after queue and send states commit',async()=>{
+ const f=fixture(),states:string[]=[];f.changed.mockImplementation(()=>{expect(f.client.inTransaction).toBe(false);states.push(f.read().state);});f.sends.queue({id:'reply',incoming:'in',text:'Hi'});await f.sends.flush();expect(states).toEqual(['pending','sending','sent']);
+});
