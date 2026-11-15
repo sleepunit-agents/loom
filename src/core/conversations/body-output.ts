@@ -7,6 +7,7 @@ import { operation, OperationError, type Operations } from '../operations/index.
 import { agentStatus, messages,threads } from '../data/schema.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
+const privateWork={working:'Working privately',waiting:'Waiting privately',idle:'',offline:''}as const;
 export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean):void {
  const db=service.db,current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);
@@ -52,7 +53,9 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   output:z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),
   run(ctx,input){
    const found=requireCurrent(ctx.viewer),at=service.now();
-   db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work:input.work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work:input.work,changedAt:at}}).run();
+   // This row is shared across the agent's owners; private conversation words stay private.
+   const work=found.cv.member!==null?privateWork[input.state]:input.work;
+   db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work,changedAt:at}}).run();
    const thread=found.cv.venue==='loom'?db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get():undefined;
    let stopRequested=false;
    // Waiting still owns a live body: the thread must keep its Stop control.
