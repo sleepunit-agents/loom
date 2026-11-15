@@ -10,7 +10,7 @@ import type {ActivityConversations,ActivityConversation,ActivityRun} from './act
 const link=z.object({label:z.string(),href:z.string().optional()}).strict();
 const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional(),project:z.string().optional()}).strict();
 const runSchema=z.object({kind:z.enum(['digest','conversation']),key:z.string().min(1).max(300),at:z.string().datetime({offset:true}),conversation:conversationSchema,summary:z.string().optional(),turns:z.number().int().nonnegative().optional(),replies:z.number().int().nonnegative().optional(),asked:z.array(z.string()),decided:z.array(z.string()),tasks:z.array(z.string()),references:z.array(z.string()).optional(),links:z.array(link),steps:z.array(z.object({label:z.string(),state:z.string(),tool:z.string()}).strict()).optional(),needs:z.string().optional(),needsHref:z.string().optional(),needsForMember:z.string().optional(),expires:z.number().finite().optional(),more:z.array(z.object({id:z.string(),at:z.string(),title:z.string()}).strict())}).strict();
-interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
+export interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
 export interface ActivityReader {
  access(viewer:Viewer):{id:string;allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[];expires:number};
  nextDeadline():number|undefined;
@@ -24,10 +24,10 @@ interface Episode {ref:string;title:string;content:string;created:string;project
 const active="category='episode' AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))";
 const has=(db:Database)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").get();
 const parse=(s:string|null):Record<string,unknown>=>{try{const v=JSON.parse(s??'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{};}catch{return {};}};
-export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;conversations?:ActivityConversations;timezone?:string;owner?:string;ownerLabel?:string;github?:string}
+export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;conversations?:ActivityConversations;timezone?:string|(()=>string);owner?:string;ownerLabel?:string;github?:string}
 /** Read-only sources and the shared Conversations port; no legacy registry or transport. */
 export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOptions){
- const tz=options.timezone??'America/Chicago';isoDay(clock.now(),tz);
+ const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone??'America/Chicago';isoDay(clock.now(),tz());
  const sources=new Map<string,Database>(),sourceErrors=new Set<string>();
  for(const a of options.agents)try{if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch{sourceErrors.add(a.agent);}
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
@@ -39,7 +39,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
  const ownerPerson=(v:Viewer)=>v.kind==='member'?v.id:options.owner;
  const ownerLabel=(v:Viewer)=>{const person=ownerPerson(v);return (person===options.owner&&options.ownerLabel?options.ownerLabel:person??'Owner').split(/[\s-]+/)[0].replace(/^./,x=>x.toUpperCase());};
- const stamp=(at:string)=>({day:isoDay(Date.parse(at),tz),hour:hourOf(Date.parse(at),tz)});
+ const stamp=(at:string)=>({day:isoDay(Date.parse(at),tz()),hour:hourOf(Date.parse(at),tz())});
  function fromRun(r:ActivityRun,v:Viewer):ActivityEntry{
   const c=r.conversation,title=c.label.trim().replace(/^(?:schedule|alert) [\w.-]+:\s+(?=\S)/,'').replace(/^\p{Ll}/u,x=>x.toUpperCase())||`A ${VENUES[venueKey(c.venue)]??c.venue} conversation`;
   const venue=venueKey(c.venue),where=venue==='wakes'?(/^lane:|^schedule /.test(c.place)||/^schedule /.test(c.label)?'Lane':/^alert:/.test(c.place)?'Alert':'Wake'):whereLabel(whereOfConversation(c))||VENUES[venue]||c.venue;
@@ -70,12 +70,12 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  }
  function window(scope:string,v:Viewer):ActivityWindow|undefined{
   if(!agents(v).length)return;
-  const now=clock.now(),today=isoDay(now,tz),to=scope==='recent'?today:scope;
+  const now=clock.now(),today=isoDay(now,tz()),to=scope==='recent'?today:scope;
   if(!validDay(to)||to>today||to<dayBefore(today,MAX_BACK))return;
-  const days=windowDays(to,today),from=startOf(days.at(-1)!,tz),until=Math.min(now+60000,startOf(dayBefore(to,-1),tz));
+  const days=windowDays(to,today),from=startOf(days.at(-1)!,tz()),until=Math.min(now+60000,startOf(dayBefore(to,-1),tz()));
   const entries:ActivityEntry[]=[],runs:Array<{agent:string;venue:string;at:number}>=[],covered=new Set<string>();
   let conversations:ActivityWindow['conversations']=options.conversations?'available':'unavailable',episodes:ActivityWindow['episodes']='available',truncated=false;
-  const deadlines=[startOf(dayBefore(today,-1),tz)];
+  const deadlines=[startOf(dayBefore(today,-1),tz())];
   for(const {agent} of agents(v)){
    if(options.conversations&&conversationAllowed(v,agent))try{
     const answer=z.object({available:z.boolean(),rows:z.array(runSchema).max(MAX_ENTRIES+1),expires:z.number().finite().optional()}).strict().parse(options.conversations.list(v,{agent,from,until,limit:MAX_ENTRIES+1}));
@@ -113,7 +113,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  function read(id:string,v:Viewer):ActivityOpen|ActivityFailure|undefined{
   const m=/^([dce])~([a-z][a-z0-9-]{0,39})~(.{1,300})$/.exec(id);if(!m)return;
   const [,kind,agent,key]=m;if(!agents(v).some(a=>a.agent===agent))return;
-  const now=clock.now(),oldest=startOf(dayBefore(isoDay(now,tz),MAX_BACK),tz);
+  const now=clock.now(),oldest=startOf(dayBefore(isoDay(now,tz()),MAX_BACK),tz());
   if(kind!=='e'&&!conversationAllowed(v,agent))return;
   if(kind==='e'&&!allowed(v,agent))return;
   const failure=(state:'error'|'unavailable',message:string):ActivityFailure=>({id,state,message});
@@ -126,14 +126,14 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   const db=sources.get(agent);if(sourceErrors.has(agent))return failure('error','The episode store couldn’t open this entry.');if(!db)return failure('unavailable','The episode store is not available.');
   try{if(!has(db))return failure('unavailable','The episode store is not available.');const row=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories WHERE ref=? AND ${active} AND julianday(created)>=julianday(?) AND julianday(created)<=julianday(?)`).get(key,new Date(now).toISOString(),new Date(oldest).toISOString(),new Date(now+60000).toISOString()) as Episode|undefined;return row?episode(v,agent,row):undefined;}catch{return failure('error','The episode store couldn’t open this entry.');}
  }
- const access=(v:Viewer)=>{const today=isoDay(clock.now(),tz);return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:ownerLabel(v),timezone:tz,today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz)};};
+ const access=(v:Viewer)=>{const today=isoDay(clock.now(),tz());return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:ownerLabel(v),timezone:tz(),today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz())};};
  let closed=false;
  // Metadata only: all active episode deadlines, regardless of the current
  // viewer or list limit. The listener owns one timer for every projection.
  function nextDeadline():number|undefined {
-  if(closed)return;
+  if(closed||!options.agents.length)return;
   const now=clock.now();
-  let next=startOf(dayBefore(isoDay(now,tz),-1),tz);
+  let next=startOf(dayBefore(isoDay(now,tz()),-1),tz());
   try{const at=options.conversations?.nextDeadline?.(now);if(at!==undefined&&Number.isFinite(at)&&at>now)next=Math.min(next,at);}catch{/* Conversation source failures are reported by the reader. */}
   for(const db of sources.values())try{
    if(!has(db))continue;
@@ -156,12 +156,13 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
 /** Retiring operation/record binding over the same typed reader. */
 export function installMindActivity(operations:Operations,live:Live,options:ActivityOptions){
  const reader=createActivityReader(operations.clock,options),{window,read,access}=reader;
+ const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone??'America/Chicago';
  const changed=(c:{type:string})=>['memory','core.access','household.sharing','conversation','digest','attention.conversation'].includes(c.type)||c.type.startsWith('comms.');
  const allowed=reader.allowed;
  operations.register(operation({name:'mind.activityList',input:z.object({to:z.string().max(10).default('recent')}).strict(),output:z.unknown(),may:allowed,run:(ctx,i)=>window(i.to,ctx.viewer)??{ok:false,code:'not-found',message:'Activity window not found'}}));
  operations.register(operation({name:'mind.activityRead',input:z.object({id:z.string().max(350)}).strict(),output:z.unknown(),may:allowed,run:(ctx,i)=>read(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Activity entry not found'}}));
  live.register({name:'activity.window',ids:s=>s?[s]:[],read:window,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>(r as ActivityWindow).expires});
- live.register({name:'activity.entry',ids:s=>s?[s]:[],read,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>Math.min((r as ActivityOpen).expires??Infinity,startOf(dayBefore(isoDay(operations.clock.now(),options.timezone??'America/Chicago'),-1),options.timezone??'America/Chicago'))});
+ live.register({name:'activity.entry',ids:s=>s?[s]:[],read,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>Math.min((r as ActivityOpen).expires??Infinity,startOf(dayBefore(isoDay(operations.clock.now(),tz()),-1),tz()))});
  live.register({name:'activity.access',ids:()=>['activity'],read:(_id,v)=>access(v),inScope:()=>true,refreshOn:changed,expires:r=>r.expires as number});
  const installed={...reader,close(){if(readers.get(operations)===installed)readers.delete(operations);reader.close();}};
  readers.set(operations,installed);return installed;

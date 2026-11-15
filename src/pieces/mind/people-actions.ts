@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
-import { migrateMindReceipts } from './receipt-schema.js';
+import { mindReceiptsReady } from './receipt-schema.js';
 export interface NewPerson { slug:string; name:string; summary:string; channel:string; handle:string; actor:string }
 /** Composition injects the synchronous card validator/writer, with no schema opening. */
 export type PersonCreator = (db:BetterSqlite3.Database,input:NewPerson,now:number,half:'directory'|'relationship')=>void;
@@ -12,10 +12,11 @@ export function installMindPeopleActions(operations:Operations,options:{director
   try {
     for(const path of [options.directory,options.relationship]) {
       if (!path || !existsSync(path)) break;
-      const db=new BetterSqlite3(path,{fileMustExist:true,timeout:0});sources.push(db);migrateMindReceipts(db);
+      const db=new BetterSqlite3(path,{fileMustExist:true,timeout:0});sources.push(db);
     }
   } catch(e){sources.forEach(db=>db.close());throw e;}
   const prior=(db:BetterSqlite3.Database,ctx:Context)=>{
+    if(!mindReceiptsReady(db))return;
     const receipt=ctx.receipt!;
     const old=db.prepare('SELECT name,input_hash,result,expires FROM mind_operation_receipts WHERE viewer=? AND id=? AND expires>?').get(receipt.viewer,receipt.id,ctx.now) as {name:string;input_hash:string;result:string;expires:number}|undefined;
     if(old && (old.name!==receipt.name || old.input_hash!==receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
@@ -37,6 +38,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
     may:v=>mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd') && !!options.agent && mayAct(v,{type:'person',agent:options.agent},options.sharing(),'act','mind.personAdd'),
     run(ctx,input){
       if(sources.length!==2 || !options.agent) throw new OperationError('not-found','People sources are absent');
+      if(!sources.every(mindReceiptsReady))throw new OperationError('unavailable','People are not prepared for changes');
       const slug=input.name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').replace(/^[^a-z]+/,'').slice(0,40);
       if(!slug) throw new OperationError('invalid','A person needs a name that makes an address');
       const person={...input,slug,actor:ctx.viewer.id}, receipt=ctx.receipt!,result={slug,slugs:[slug]};

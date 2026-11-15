@@ -28,13 +28,14 @@ export interface SharedTempoOptions {
   mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
   chatMember?(viewer: Viewer): string | undefined;
   settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
+  beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
 }
 export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataWrites, operations: Operations,
   conversations: Conversations, changed: () => void, options: SharedTempoOptions = {}) {
   const jobs = new Jobs(db, () => new Date(clock.now()).toISOString());
   return installTempoComposition({ db, clock, writes, operations,
-    contributors: options.contributors,
+    contributors: options.contributors,beforeStart:options.beforeStart,
     delivery: { conversations, changed, instructions: options.instructions ?? (options.repository ? repositoryInstructions(options.repository) : undefined), changeRevision: options.changeRevision,
       admit: options.admit ?? ((who, items) => {
         if (who.kind === 'person') return options.notify?.(who.id, items.map(item => item.id)) ?? false;

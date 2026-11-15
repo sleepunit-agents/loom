@@ -20,6 +20,7 @@ import {verifyKnowledgePages,deriveSlaClass} from '../backends/knowledge-verific
 import {createPersonHalf} from '../backends/people-creation.js';
 import {installMindKnowledgeActions} from '../pieces/mind/actions.js';
 import {installMindPeopleActions} from '../pieces/mind/people-actions.js';
+import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 import {knowledgeQueryFields} from '../pieces/mind/knowledge-query.js';
 import {peopleQueryFields} from '../pieces/mind/people-query.js';
 const closes:Array<()=>unknown>=[];
@@ -35,6 +36,7 @@ async function fixture(){
  const path=join(home,'knowledge.db'),directory=join(home,'people.db'),relationship=join(home,'memories.db');
  const source=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>source.close());await source.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional pump words'});
  for(const dbPath of [directory,relationship])new PeopleStore({dbPath}).close();
+ for(const dbPath of [path,directory,relationship]){const prepared=new Database(dbPath);try{migrateMindReceipts(prepared);}finally{prepared.close();}}
  const knowledge=knowledgeQueryFields({path,sharing,now:()=>clock.now()}),people=peopleQueryFields({directory,agents:[{agent:'fiction',directory:home,memories:relationship}],sharing,now:()=>clock.now(),projectHref:(_agent,slug)=>'/project/'+slug});
  closes.push(()=>knowledge.close(),()=>people.close());
  const data=nextData(db,clock,()=>true,undefined,{...knowledge.fields,...people.fields});
