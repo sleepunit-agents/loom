@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
-import { readDraft, writeDraft, editDraft, clearDraft } from '../comms/drafts';
+import { useCommsDraft } from '../comms/drafts';
 import { useReplyFollow } from '../comms/use-follow';
 import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot, type ThreadChange } from './model';
 export type { CommsActions, CommsDetail, CommsSnapshot } from './model';
@@ -10,7 +10,8 @@ type Navigation = { archived: boolean; search: string; offset: number; hasNext: 
 type Cards = { screen?: ReactNode; question?(id: string): ReactNode; work?(refs: CommsDetail['refs'], conversation: string): ReactNode };
 function ThreadReader({ member, detail, actions, cards, navigation, readVisible = true }: { member: string; readVisible?: boolean; detail: CommsDetail; actions?: CommsActions; cards?: Cards; navigation?: MessageNavigation }) {
   const thread = detail.thread!;
-  const [draft, setDraft] = useState(() => thread.member === member ? readDraft(member, thread.id) : { id: '', text: '' }), [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
+  const composer=useCommsDraft(member,thread.id,thread.member===member),draft=composer.value;
+  const [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState(false), [title, setTitle] = useState(thread.title);
   const lock = useRef(false), mounted = useRef(true);
@@ -33,8 +34,7 @@ function ThreadReader({ member, detail, actions, cards, navigation, readVisible 
     const sent = draft;
     void run(async () => {
       await actions.send(thread.id, sent.text, sent.id);
-      clearDraft(member, thread.id, sent);
-      if (mounted.current) setDraft(current => current.id === sent.id && current.text === sent.text ? readDraft(member, thread.id) : current);
+      composer.acknowledged(sent);
     });
   };
   return <article ref={node => { scroller.current = node?.closest<HTMLDivElement>('.loom-split__reader') ?? null; }} className="grid gap-4 p-4" aria-label="Conversation">
@@ -51,7 +51,7 @@ function ThreadReader({ member, detail, actions, cards, navigation, readVisible 
     </li>)}</ol>
     {follow.unread > 0 && <Button onClick={follow.down}>{follow.unread} new messages</Button>}
     {cards?.work && <section aria-label="Work in this conversation"><h3>Work</h3>{cards.work(detail.refs, thread.conversation)}</section>}
-    {actions && !thread.archivedAt && <div><label>Message {thread.agent}<Textarea aria-label={`Message ${thread.agent}`} value={draft.text} maxLength={100000} rows={3} disabled={busy} onChange={event => { const next = editDraft(draft, event.target.value); setDraft(next); writeDraft(member, thread.id, next); }} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send(); } }} /></label><Button disabled={busy || !draft.text.trim()} onClick={send}>Send</Button></div>}
+    {actions && !thread.archivedAt && <div><label>Message {thread.agent}<Textarea aria-label={`Message ${thread.agent}`} value={draft.text} maxLength={100000} rows={3} disabled={busy} onChange={event => composer.edit(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send(); } }} /></label><Button disabled={busy || !draft.text.trim()} onClick={send}>Send</Button></div>}
     {failed && <Error text="Could not save. Try again." />}
   </article>;
 }

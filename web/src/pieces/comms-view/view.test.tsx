@@ -9,6 +9,7 @@ import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot } f
 let tree: ReturnType<typeof create>;
 beforeEach(() => {
   const data = new Map<string, string>();
+  vi.stubGlobal('window',new EventTarget());
   vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value), removeItem: (key: string) => data.delete(key) });
 });
 afterEach(async () => { await act(async () => tree?.unmount()); vi.unstubAllGlobals(); });
@@ -140,4 +141,20 @@ it('keeps a failed send identity across refresh and clears only acknowledged wor
   await act(async () => { tree.unmount(); });
   await draw(a);
   expect(tree.root.findByType('Textarea').props.value).toBe('');
+});
+
+it('clears a remounted composer when its earlier send acknowledges, preserving later edits', async () => {
+ const a=actions();let finish!:()=>void;a.send=vi.fn(()=>new Promise<void>(yes=>{finish=yes;}));await draw(a);
+ await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'Sending before refresh'}}));
+ await act(async()=>named('Send').props.onClick());
+ const update=async(status:CommsSnapshot['status'])=>act(async()=>tree.update(h(CommsView,{snapshot:{...snapshot,status},detail,selected:thread.id,select:vi.fn(),actions:a})));
+ await update('loading');await update('live');
+ expect(tree.root.findByType('Textarea').props.value).toBe('Sending before refresh');
+ await act(async()=>finish());
+ expect(tree.root.findByType('Textarea').props.value).toBe('');
+ await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'Second send'}}));
+ await act(async()=>named('Send').props.onClick());await update('loading');await update('live');
+ await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'Newer unsent words'}}));
+ await act(async()=>finish());
+ expect(tree.root.findByType('Textarea').props.value).toBe('Newer unsent words');
 });
