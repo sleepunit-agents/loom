@@ -3,18 +3,17 @@ import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges])}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(['runtime.box','bridges.venue']).not.toContain(type);return f.snapshots[type];}}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, changes:{status:'live',data:{changes:[]}} as any, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskChanges')?f.changes:document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges,f.changes])}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(['runtime.box','bridges.venue','change']).not.toContain(type);return f.snapshots[type];}}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
-beforeEach(()=>{f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
+beforeEach(()=>{f.changes={status:'live',data:{changes:[{id:'pr',checks:'failing'}]}};f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
  task:live([{id:'t-1',status:'in_progress',ready:false},{id:'t-2',status:'open',ready:true}]),
  wake:live([{id:'w-1',state:'parked'},{id:'w-2',state:'fired'}]),
- change:live([{id:'pr',state:'open',checks:{state:'failing'}},{id:'merged',state:'merged',checks:{state:'failing'}}]),
  'household.time':live([{id:'owner',at:Date.parse('2026-11-13T18:41:00Z'),timezone:'America/Chicago'}]),
  'attention.ownedAgent':live([{id:'art',name:'Art'}]),
  person:live([{id:'commons:art',slug:'art',kind:'agent',name:'Art E Fish'}]),
@@ -32,6 +31,7 @@ it('uses owned-agent facts and open asks, and opens Inbox through the router',as
 });
 it.each(['offline','denied','loading'] as const)('drops stale work, identity and count on %s',async(status)=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ f.changes={...f.changes,status};
  f.tempo={...f.tempo,status};
  f.bridges={...f.bridges,status};
  f.boxes={...f.boxes,status};
@@ -72,7 +72,7 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
  ]);
  expect(tree.root.findByProps({'aria-label':'1 enrolled box; health unavailable'})).toBeTruthy();
  // Each source drops its own stale values independently, including a retained red PR.
- f.snapshots.change={...f.snapshots.change,status:'denied'};
+ f.changes={...f.changes,status:'denied'};
  f.boxes={...f.boxes,status:'offline'};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  const parts=tree.root.findByType('ticker-test').props.parts;
@@ -129,4 +129,20 @@ it('updates generated bridge counts and clears retained configuration when unava
  f.bridges={status:'live',data:{bridgeConnections:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  expect(bridges().text).toBe('Bridges · 0 enabled connections');
+});
+
+it('updates generated Changes counts, clears retained failures and distinguishes live zero',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ const changes=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/changes-preview');
+ f.changes={status:'live',data:{changes:[{id:'a',checks:'passing'},{id:'b',checks:'running'}]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(changes()).toEqual({text:'Changes · 2 open',href:'/p/changes-preview',tone:undefined});
+ for(const status of ['loading','offline','denied']){
+  f.changes={status,data:{changes:[{id:'red',checks:'failing'}]}};
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  expect(changes()).toEqual({text:'Changes unavailable',href:'/p/changes-preview',tone:undefined});
+ }
+ f.changes={status:'live',data:{changes:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(changes().text).toBe('Changes · 0 open');
 });
