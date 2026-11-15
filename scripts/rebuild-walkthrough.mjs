@@ -24,6 +24,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
 import {exampleHome} from '../dist/example-home.js';
+import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
@@ -70,7 +71,8 @@ export async function* walkthroughSteps(output) {
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
-page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(8000);await installDataProbe(page);
+  page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(8000);await installDataProbe(page);
+  page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame()&&new URL(request.url()).origin===app.url)connections.clear();});
   page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigation++;});
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
@@ -95,6 +97,7 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
   const openLauncher=async()=>{await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await page.getByRole('dialog',{name:'Apps',exact:true}).waitFor();};
   await openLauncher();
   const launcher=page.getByRole('dialog',{name:'Apps',exact:true});
+  const openApp=async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;};
   const titles=await launcher.locator('.loom-lapp__nm').allTextContents();
   if(await launcher.getByRole('button',{name:'Open your account',exact:true}).count()&&!titles.includes('Your account'))titles.push('Your account');
   report.inventory=titles;
@@ -115,6 +118,7 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
     await page.waitForFunction(ready,`${title} tile`);
     row.opened=true;row.text=await tile.innerText();row.path=new URL(page.url()).pathname;
     row.unavailable=/unavailable|couldn.t load/i.test(row.text);
+    if(title==='Comms'&&row.opened){report.actions={...report.actions,conversationRecords:await conversationRecords({page,app,example:report.example,out})};}
     if(selections[title]){
      row.selection=selections[title];
      try{
@@ -136,14 +140,20 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
       :{...savedDefault,ok:false,persistedAfterReload:false,error:savedDefault.error??'The value sequence did not reach its verified reload.'};
      report.actions={...report.actions,secretDefault:row.action,secretValues:row.valueAction};
     }
-    await page.screenshot({path:join(out,row.screenshot),fullPage:true});
+    // The verified default capture is already the current Settings document.
+    if(title==='Settings'&&row.action?.screenshot)row.screenshot=row.action.screenshot;
+    else await page.screenshot({path:join(out,row.screenshot),fullPage:true});
     if(title==='Tempo'){
      row.actions={};
      await tempoWalkthrough({page,tile,url:app.url,clock,example:report.example,checks:row.actions,capture:async name=>{const file=row.screenshot.replace('.png','-'+name+'.png');await page.screenshot({path:join(out,file),fullPage:true});return file;}});
     }
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());const failureScreenshot=row.actions?row.screenshot.replace('.png','-error.png'):row.screenshot;row.failureScreenshot=failureScreenshot;await page.screenshot({path:join(out,failureScreenshot),fullPage:true}).catch(()=>{});}
+   // Measure the viewed selection before action helpers navigate to other selections.
+   row.dataDoor=await auditDataDoor(page,title);
    if(row.actions)report.actions={...report.actions,...Object.fromEntries(Object.entries(row.actions).map(([name,value])=>['tempo'+name[0].toUpperCase()+name.slice(1),value]))};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
+   if(title==='Activity'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSend'],previous:report.actions});
+   if(title==='People'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSendReload'],previous:report.actions});
    if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalActions({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out})};
    if(title==='Inbox'&&row.opened)report.actions={...report.actions,...await taskQuestions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await taskInlineQuestion({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
@@ -157,12 +167,11 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
-   row.dataDoor=await auditDataDoor(page,title);
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
   phase='conversation actions';
-  report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;}})};
+  report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
   Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
   save();yield {phase:'desk',actions:safeReport(report.actions)};
