@@ -8,16 +8,29 @@ import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js
 export type { PersonRecord } from './people-model.js';
 interface Row { slug: string; card_json: string; updated: string; synthesized_at: string | null; archived_at: string | null }
 const has = (db: Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
-export function installMindPeople(operations: Operations, live: Live, options: {
-  projectHref?(agent:string,slug:string):string|undefined; conversations?: PeopleConversations; directory?: string; agents: Array<{ agent: string; memories: string }>; sharing(): Sharing;
-}) {
-  const sources = new Map<string, Database>();
-  try {
-    for (const [id,path] of [['commons',options.directory], ...options.agents.map(a => [a.agent,a.memories])] as Array<[string,string | undefined]>) {
-      if (path && existsSync(path)) sources.set(id, new BetterSqlite3(path, { readonly: true, fileMustExist: true, timeout: 0 }));
-    }
-  } catch (e) { for (const db of sources.values()) db.close(); throw e; }
-  const allowed = (v: Viewer, agent?: string) => maySee(v, { type: 'person', ...(agent ? { agent } : {}) }, options.sharing());
+export interface PeopleReaderOptions {
+  projectHref?(agent:string,slug:string):string|undefined;
+  directory?:string; agents:Array<{agent:string;memories:string}>; sharing():Sharing; now():number;
+}
+/** Direct file projection shared by GraphQL and the retiring record transport. */
+export interface PeopleReader {
+ read(id:string,viewer:Viewer):PersonRecord|undefined;
+ ids(scope?:string):string[];
+ sources:Map<string,Database>;
+ allowed(viewer:Viewer,agent?:string):boolean;
+ list(viewer:Viewer):PersonRecord[];
+ history(id:string,viewer:Viewer):Array<{id:number;op:string;replacedAt:string;actor:string|null;card:PersonCard}>;
+ close():void;
+}
+export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
+export function peopleReader(options:PeopleReaderOptions):PeopleReader {
+  const sources = new Map<string, Database>(), failed=new Set<string>();
+  for (const [id,path] of [['commons',options.directory], ...options.agents.map(a => [a.agent,a.memories])] as Array<[string,string | undefined]>) {
+    try {if(path&&existsSync(path))sources.set(id,new BetterSqlite3(path,{readonly:true,fileMustExist:true,timeout:0}));}
+    catch {failed.add(id);}
+  }
+  const allowed = (v:Viewer,agent?:string)=>mayReadPerson(v,agent,options.sharing());
+  const available=(source:string)=>{if(failed.has(source))throw Error('People source unavailable');};
   function resolve(db: Database, slug: string) {
     if (!has(db,'person_merges')) return slug;
     const seen = new Set<string>();
@@ -33,20 +46,25 @@ export function installMindPeople(operations: Operations, live: Live, options: {
     const colon = id.indexOf(':'); if (colon < 1) return;
     const source = id.slice(0,colon), asked = id.slice(colon+1), agent = source === 'commons' ? undefined : source;
     if (!allowed(viewer,agent)) return;
+    available(source);
     const db = sources.get(source); if (!db || !has(db,'people')) return;
     return db.transaction(() => {
       // Directory redirects also select the corresponding authorized relationship.
-      const directory = sources.get('commons');
-      const slug = directory ? resolve(directory,asked) : resolve(db,asked);
-      if(agent && directory && has(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at) return;}
+      let slug=asked;
+      const directory=sources.get('commons');
+      try {
+        available('commons');
+        slug=directory?resolve(directory,asked):resolve(db,asked);
+        if(agent&&directory&&has(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at)return;}
+      } catch(error) {if(allowed(viewer))throw error;slug=resolve(db,asked);}
       const row = db.prepare('SELECT slug,card_json,updated,synthesized_at,archived_at FROM people WHERE slug=? AND archived_at IS NULL').get(slug) as Row | undefined;
       if (!row) return;
       const card = JSON.parse(row.card_json) as PersonCard;
-      const now = operations.clock.now(), nowIso = new Date(now).toISOString();
+      const now = options.now(), nowIso = new Date(now).toISOString();
       let evidence: PersonEvidence[] = [], newer = 0;
       if (agent && maySee(viewer,{type:'memory',agent},options.sharing()) && has(db,'memories')) {
-        evidence = db.prepare(`SELECT created,category,title,content FROM memories WHERE json_extract(metadata,'$.person')=? AND category IN ('user','feedback') AND archived=0 AND (expires_at IS NULL OR expires_at>?) ORDER BY created DESC LIMIT 40`).all(slug,nowIso) as PersonEvidence[];
-        newer = (db.prepare(`SELECT count(*) AS n FROM memories WHERE json_extract(metadata,'$.person')=? AND category='user' AND archived=0 AND (expires_at IS NULL OR expires_at>?) AND (? IS NULL OR created>?)`).get(slug,nowIso,row.synthesized_at,row.synthesized_at) as {n:number}).n;
+        evidence = db.prepare(`SELECT created,category,title,content FROM memories WHERE json_extract(metadata,'$.person')=? AND category IN ('user','feedback') AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) ORDER BY created DESC LIMIT 40`).all(slug,nowIso) as PersonEvidence[];
+        newer = (db.prepare(`SELECT count(*) AS n FROM memories WHERE json_extract(metadata,'$.person')=? AND category='user' AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?)) AND (? IS NULL OR julianday(created)>julianday(?))`).get(slug,nowIso,row.synthesized_at,row.synthesized_at) as {n:number}).n;
       }
       const projects:PersonRecord['projects']=[];
       for(const [agentId,store] of sources) {
@@ -66,12 +84,35 @@ export function installMindPeople(operations: Operations, live: Live, options: {
         kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== asked ? {mergedFrom:asked} : {}) };
     })();
   };
-  function ids(scope?: string) {
-    if (scope !== undefined) return scope ? [scope] : [];
-    return [...sources].flatMap(([source,db]) => has(db,'people') ? (db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r => `${source}:${r.slug}`) : []);
+  function sourceIds(source:string,db:Database) {
+    return has(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${source}:${r.slug}`):[];
   }
+  function ids(scope?:string) {
+    if(scope!==undefined)return scope?[scope]:[];
+    // The retiring Live transport asks for candidates without a viewer. A bad
+    // source must not fail every subscriber; scoped reads still report errors.
+    return [...sources].flatMap(([source,db])=>{try{return sourceIds(source,db);}catch{return [];}});
+  }
+  return {
+    read, ids, sources, allowed,
+    list(viewer:Viewer) {
+      for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);
+      return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source))
+        .flatMap(([source,db])=>sourceIds(source,db).flatMap(id=>{const row=read(id,viewer);return row?[row]:[];}));
+    },
+    history(id:string,viewer:Viewer) {
+      const person=read(id,viewer);if(!person)return [];
+      const db=sources.get(person.agent??'commons');if(!db||!has(db,'person_revisions'))return [];
+      return (db.prepare('SELECT id,op,replaced_at AS replacedAt,actor,snapshot_json FROM person_revisions WHERE slug=? ORDER BY id DESC LIMIT 10').all(person.slug) as Array<{id:number;op:string;replacedAt:string;actor:string|null;snapshot_json:string}>).map(({snapshot_json,...row})=>({...row,card:(JSON.parse(snapshot_json) as {card:PersonCard}).card}));
+    },
+    close(){for(const db of sources.values())db.close();}
+  };
+}
+export function installMindPeople(operations:Operations,live:Live,options:Omit<PeopleReaderOptions,'now'> & {conversations?:PeopleConversations}) {
+  const reader=peopleReader({...options,now:()=>operations.clock.now()});
+  const {read,ids,sources,allowed}=reader;
   operations.register(operation({ name:'mind.peopleList',input:z.object({}).strict(),output:z.unknown(),may:() => true,
-    run:ctx => ids().flatMap(id => {const r=read(id,ctx.viewer);return r ? [r] : [];}) }));
+    run:ctx => reader.list(ctx.viewer) }));
   operations.register(operation({ name:'mind.personRead',input:z.object({id:z.string().min(3).max(200)}).strict(),output:z.unknown(),
     may:(v,input) => { const source=input.id.slice(0,input.id.indexOf(':'));return allowed(v,source==='commons' ? undefined : source); },
     run:(ctx,input) => read(input.id,ctx.viewer) ?? {ok:false,code:'not-found',message:'Person card not found'} }));
@@ -82,7 +123,7 @@ export function installMindPeople(operations: Operations, live: Live, options: {
       const deadlines=Object.values(r.card.where ?? {}).flatMap(f => f.verified_at ? [Date.parse(f.verified_at)+(f.stale_after_days??14)*86400000+1] : []);
       const db=r.agent && sources.get(r.agent);
       if (db && has(db,'memories')) {
-        const next=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE archived=0 AND json_extract(metadata,'$.person')=? AND expires_at>?`).get(r.slug,new Date(now).toISOString()) as {at:string|null};
+        const next=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE archived=0 AND json_extract(metadata,'$.person')=? AND julianday(expires_at)>julianday(?)`).get(r.slug,new Date(now).toISOString()) as {at:string|null};
         if (next.at) deadlines.push(Date.parse(next.at));
       }
       return deadlines.filter(t => t>now).sort((a,b)=>a-b)[0];
@@ -92,5 +133,5 @@ export function installMindPeople(operations: Operations, live: Live, options: {
   live.register({name:'people.access',ids:()=>['people'],read:(_id,v)=>({id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
     agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),
     canAdd:mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd')}),inScope:()=>true});
-  return {close(){for(const db of sources.values()) db.close();}};
+  return {close:reader.close};
 }
