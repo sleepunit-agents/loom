@@ -128,3 +128,12 @@ it('withholds last-answer wording at an equal whole-second stored deadline', asy
   expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(0);
 });
+
+it('rechecks the independent household age deadline after opening the latest answer', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Household expiry' });
+  f.db.insert(household).values({ commsDays: 1 }).run();
+  f.onOpen(() => f.setTime('2026-11-15T18:00:00.000Z'));
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(f.opens()).toBe(1);
+});
