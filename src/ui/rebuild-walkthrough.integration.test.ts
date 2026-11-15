@@ -115,6 +115,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   for(const name of ['inboxTaskSettlement','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.inboxSourceTargets).toMatchObject(arrival.ok?{ok:true}:{inconclusive:true});
  });
+ it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
+  expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});
+  expect(step.value.actions.nativeProtocol.runs).toHaveLength(2);
+  expect(step.value.actions.nativeReply).toMatchObject({ok:true,persistedAfterReload:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;

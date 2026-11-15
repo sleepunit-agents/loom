@@ -8,7 +8,7 @@ import {defaultTimings} from './core/tempo/volume.js';
 const SETTLE_MARGIN_MS=1000;
 export const exampleSettleMs=defaultTimings.settleSeconds*1000+SETTLE_MARGIN_MS;
 export const exampleBackdateMs=exampleSettleMs+SETTLE_MARGIN_MS;
-export const exampleModelRoles=[{model:'example-model',provider:'example-provider',harness:'example-harness',series:'example'}];
+export const exampleModelRoles=[{model:'example-model',provider:'example-provider',harness:'claude',series:'example'}];
 export async function exampleRuntime(root:ReturnType<typeof sharedRoot>,clock:FakeClock,ownerToken:string,identity:WorkerAccountIdentity){
  let sequence=0;
  // Runtime commands share this envelope; account creation keeps its entry-point cleanup contract.
