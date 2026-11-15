@@ -66,7 +66,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     schema,
   });
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); } });
-  const http = dataHttp(db, authenticate, publicOrigin, schema);
+  const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());
   let closing: Promise<void> | undefined;
   return {
     http,
