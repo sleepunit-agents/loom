@@ -12,8 +12,7 @@ import {PeopleStore} from '../../backends/people.js';
 import {installTouched} from '../../core/touched/index.js';
 import {installTasks} from '../tasks/index.js';
 import {tasksRole} from '../tasks/role.js';
-import {mindRole} from './role.js';
-import {installMindPeople} from './people.js';
+import {peopleReader} from './people.js';
 import {installMindProjects,type ProjectRecord} from './projects.js';
 import {projectTasks,type ProjectSectionRole} from './projects-roles.js';
 const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
@@ -27,8 +26,8 @@ async function fixture(a:string,b?:string,roles:{notes?:ProjectSectionRole;conve
  const app=await startLoom({home:dir(),clock,authenticate:req=>({viewer:req.url?.includes('partial')?partial:owner,valid:()=>true}),install(app){
   installTasks(app.db,app.operations,app.live,()=>sharing);
   const agents=[{agent:'art',memories:a},...(b?[{agent:'other',memories:b}]:[])];
-  const people=installMindPeople(app.operations,app.live,{agents,sharing:()=>sharing});app.onClose(()=>people.close());
-  const projects=installMindProjects(app.operations,app.live,{agents,sharing:()=>sharing,people:mindRole(app.operations),tasks:projectTasks(tasksRole(app.operations)),...roles});app.onClose(()=>projects.close());
+  const people=peopleReader({agents,sharing:()=>sharing,now:()=>clock.now()});app.onClose(()=>people.close());
+  const projects=installMindProjects(app.operations,app.live,{agents,sharing:()=>sharing,people,tasks:projectTasks(tasksRole(app.operations)),...roles});app.onClose(()=>projects.close());
   installTouched(app.operations,(v,c)=>v.kind==='agent'&&v.id==='art'?c:undefined);
  }});closes.push(()=>app.close());return app;
 }

@@ -16,7 +16,6 @@ import { installApprovals } from '../pieces/approvals/index.js';
 import { installAttention } from '../pieces/attention/index.js';
 import { installBridges } from '../pieces/bridges/index.js';
 import { installExample } from '../pieces/example/index.js';
-import { installMindKnowledge } from '../pieces/mind/index.js';
 import { installRuntime } from '../pieces/runtime/index.js';
 import { installSecrets } from '../pieces/secrets/index.js';
 import { installSharing } from '../pieces/sharing/index.js';
@@ -96,14 +95,13 @@ it('registers the own types and exact namespace operations for every in-repo ins
   installSharing(app, home);
   for (const install of [installChanges, installTasks, installApprovals, installAttention, installExample, installRuntime, installSecrets]) install(app.db, app.operations, app.live, sharing);
   installBridges(app, sharing);
-  app.onClose(installMindKnowledge(app.operations, app.live, { path: join(home, 'absent.db'), sharing }).close);
   const types = {
     changes: ['change', 'change-sync'], tasks: ['task'], approvals: ['approval', 'approval-rule'],
     attention: ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'],
     example: ['example.record'], runtime: ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding'],
     secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change'],
     bridges: ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send'],
-    mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
+    sharing: ['household.project', 'household.sharing'],
   };
   const snapshot = sharing();
   expect(Object.keys(snapshot.services).sort()).toEqual(Object.keys(types).sort());

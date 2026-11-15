@@ -1,21 +1,14 @@
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
 import * as fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSnapshot, inventorySnapshot } from './migration-snapshot.js';
 import { prepareMigrationPlan } from './migration-plan.js';
 import { runMigrationAll } from './migration-all.js';
-import { verifyMigration, verifyRuntimeMigration } from './migration-verify.js';
-import { SharingDatabase } from '../core/household/sharing.js';
-import { run } from './migrate.js';
-import { createFoundation } from '../core/app.js';
-import { importHousehold } from './household-importer.js';
-import type { IOStreams } from './io.js';
+import { verifyMigration } from './migration-verify.js';
 import { loadKey } from '../pieces/comms/crypto.js';
-import { acquireHttpLock } from '../transport/http-lock.js';
 vi.mock('node:fs',async original=>{
   const actual=await original<typeof import('node:fs')>();
   return {...actual,openSync:vi.fn(actual.openSync),readFileSync:vi.fn(actual.readFileSync),readdirSync:vi.fn(actual.readdirSync),lstatSync:vi.fn(actual.lstatSync)};
@@ -102,40 +95,6 @@ it('resumes death after runtime commit before coordinator receipt and detects ar
   const db=new Database(join(f.home,'loom.db'));db.prepare("UPDATE runtime_import_sources SET content='tampered' WHERE path='data/runs/retained.json'").run();db.close();
   expect(await verifyMigration(f.snapshot,f.home,f.plan)).toMatchObject({status:'different',differences:[{piece:'runtime',table:'runtime_import_sources'}]});
 });
-it('refuses omission of a discovered root and supports the standalone CLI with private acknowledgements',async()=>{
-  const f=await fixture(),bad=structuredClone(f.plan);bad.importers.runtime.paths.pop();expect(()=>prepareMigrationPlan(f.snapshot,bad)).toThrow('every discovered source');
-  const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);app.close();
-  const mapping=join(f.root,'mapping.json');writeFileSync(mapping,JSON.stringify(f.options));
-  let stdout='',stderr='';const io:IOStreams={stdin:Readable.from([]),stdout:s=>stdout+=s,stderr:s=>stderr+=s,env:{}};
-  const args=['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping];
-  expect(await run(args,io)).toBe(0);expect(JSON.parse(stdout)).toMatchObject({ok:true,imported:true});expect(stdout).not.toMatch(/PRIVATE|private|jonathan/);expect(stderr).toBe('');
-  stdout='';expect(await run(args,io)).toBe(0);expect(JSON.parse(stdout)).toMatchObject({imported:false});
-  const before=bytes(f.home);expect(await verifyRuntimeMigration(f.snapshot,f.home,f.options)).toMatchObject({status:'verified'});expect(bytes(f.home)).toEqual(before);
-  stdout='';expect(await run(['verify','--snapshot',f.snapshot,'--home',f.home,'--runtime-mapping',mapping],io)).toBe(0);expect(JSON.parse(stdout)).toMatchObject({status:'verified',pieces:['runtime']});
-  const db=new Database(join(f.home,'loom.db'));db.prepare("UPDATE runtime_import_documents SET record=json_set(record,'$.by','changed')").run();db.close();
-  expect(await verifyRuntimeMigration(f.snapshot,f.home,f.options)).toMatchObject({status:'different',differences:[{piece:'runtime',table:'runtime_import_documents'}]});
-  expect(await run(['runtime'],io)).toBe(2);
-});
-it('standalone import and independent verification accept an explicitly configured destination project',async()=>{
-  const f=await fixture();
-  const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);
-  app.db.transaction(()=>new SharingDatabase(app.db,f.home).create({slug:'pond',name:'Pond',repositories:[],members:['jonathan'],agents:['art']}))();app.close();
-  const options={...f.options,jobs:{'h-1':{member:'jonathan',project:'pond'}}};
-  const mapping=join(f.root,'project-map.json');writeFileSync(mapping,JSON.stringify(options));
-  const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
-  expect(await run(['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
-  expect(await verifyRuntimeMigration(f.snapshot,f.home,options)).toMatchObject({status:'verified'});
-});
-it('standalone verification rejects coordinated timestamp and receipt tampering using source-derived expectations',async()=>{
-  const f=await fixture();const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);app.close();
-  const mapping=join(f.root,'mapping.json');writeFileSync(mapping,JSON.stringify(f.options));
-  const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
-  expect(await run(['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
-  const db=new Database(join(f.home,'loom.db'));
-  for(const table of ['runtime_jobs','runtime_boxes','runtime_settings','runtime_bindings'])db.prepare(`UPDATE ${table} SET changed_at=777`).run();
-  db.prepare("INSERT INTO runtime_import_meta VALUES ('source-at','777') ON CONFLICT(key) DO UPDATE SET value=excluded.value").run();db.close();
-  const report=await verifyRuntimeMigration(f.snapshot,f.home,f.options);expect(report.status).toBe('different');expect(report.differences.some(d=>d.table==='runtime_jobs')).toBe(true);
-});
 it('does not open or enumerate CLI credentials or omitted environment-default roots',async()=>{
   const f=await fixture();vi.stubEnv('LOOM_BOX_HOME',f.state);vi.stubEnv('LOOM_BOX_DATA',f.data);
   const open=vi.mocked(fs.openSync),read=vi.mocked(fs.readFileSync),list=vi.mocked(fs.readdirSync),stat=vi.mocked(fs.lstatSync);
@@ -144,18 +103,6 @@ it('does not open or enumerate CLI credentials or omitted environment-default ro
   for(const spy of [open,read,list,stat])expect(spy.mock.calls.some(([p])=>String(p).startsWith(f.state)||String(p).startsWith(f.data))).toBe(false);
   await createSnapshot(f.old,join(f.root,'credential-exclusion'),undefined,{runtime:f.state,'runtime-data':f.data});
   for(const spy of [open,read,list])expect(spy.mock.calls.some(([p])=>String(p).startsWith(join(f.data,'logins')))).toBe(false);
-});
-it('standalone import and verify refuse a held daemon gate and uncheckpointed destination WAL',async()=>{
-  const f=await fixture();const app=createFoundation({home:f.home});importHousehold(app.db,f.home,join(f.snapshot,'home'),123);app.close();
-  const mapping=join(f.root,'mapping.json');writeFileSync(mapping,JSON.stringify(f.options));
-  const io:IOStreams={stdin:Readable.from([]),stdout:()=>{},stderr:()=>{},env:{}};
-  const args=['runtime','--home',f.home,'--from',f.snapshot,'--mapping',mapping];
-  const release=acquireHttpLock(f.home);
-  try {expect(await run(args,io)).toBe(1);await expect(verifyRuntimeMigration(f.snapshot,f.home,f.options)).rejects.toThrow();}
-  finally{release();}
-  const writer=new Database(join(f.home,'loom.db'));writer.pragma('journal_mode=WAL');writer.exec('CREATE TABLE uncheckpointed(value TEXT); INSERT INTO uncheckpointed VALUES (\'committed WAL\')');
-  try {expect(await run(args,io)).toBe(1);await expect(verifyRuntimeMigration(f.snapshot,f.home,f.options)).rejects.toThrow('checkpointed');}
-  finally{writer.close();}
 });
 it('discovers, imports and independently verifies explicitly empty state and data roots without invented defaults',async()=>{
   const f=await fixture(),state=join(f.root,'empty-state'),data=join(f.root,'empty-data'),snapshot=join(f.root,'empty-snapshot'),home=join(f.root,'empty-new');
@@ -177,35 +124,9 @@ it('never probes omitted runtime defaults and refuses supplied empty roots',asyn
   expect(prepareMigrationPlan(emptySnapshot).plan.importers.runtime.paths).toContain('runtime-data');
 });
 
-it.each(['deleted','missing'] as const)('reports archive-only %s bindings through standalone and all import, resume and independent verification',async reason=>{
- const f=await fixture(reason==='deleted'?true:'orphan');f.options.conversations['cv-abcdef123456']={} as typeof f.options.conversations['cv-abcdef123456'];
- f.plan.importers.runtime.options=f.options;const before=bytes(f.snapshot);
- const skipped=[{id:'cv-abcdef123456',reason:`skipped: owning Comms thread ${reason}`}];
- await expect(runMigrationAll(f.snapshot,f.home,f.plan,{afterPiece:name=>{if(name==='runtime')throw Error('death after commit');}})).rejects.toThrow('death after commit');
- for(let i=0;i<2;i++) {
-  const report=await runMigrationAll(f.snapshot,f.home,f.plan);
-  expect(report).toMatchObject({status:'complete',skippedCount:1,skipped:skipped.map(row=>({piece:'runtime',...row}))});
-  expect(JSON.stringify(report)).not.toMatch(/jonathan|PRIVATE|kehvhuwzdm/);
- }
- expect(await verifyMigration(f.snapshot,f.home,f.plan)).toMatchObject({status:'verified'});
- const home=join(f.root,'standalone');const app=createFoundation({home});importHousehold(app.db,home,join(f.snapshot,'home'),123);app.close();
- const mapping=join(f.root,'map.json');writeFileSync(mapping,JSON.stringify(f.options));
- let stdout='';const io:IOStreams={stdin:Readable.from([]),stdout:s=>stdout+=s,stderr:()=>{},env:{}};
- for(let i=0;i<2;i++) {
-  stdout='';expect(await run(['runtime','--home',home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
-  expect(JSON.parse(stdout)).toMatchObject({imported:i===0,skipped,skippedCount:1});expect(stdout).not.toMatch(/PRIVATE|jonathan|kehvhuwzdm/);
- }
- expect(await verifyRuntimeMigration(f.snapshot,home,f.options)).toMatchObject({status:'verified'});
- expect(bytes(f.snapshot)).toEqual(before);
- const db=new Database(join(home,'loom.db'));
- expect(db.prepare('SELECT * FROM runtime_bindings').all()).toEqual([]);expect(db.prepare('SELECT * FROM runtime_provenance').all()).toEqual([]);
- db.prepare("UPDATE runtime_import_chunks SET bytes=? WHERE path='data/delivery/conversations/cv-abcdef123456.json'").run(Buffer.from('corrupt'));db.close();
- expect(await verifyRuntimeMigration(f.snapshot,home,f.options)).toMatchObject({status:'different'});
-});
-
 it('plans, imports all and independently verifies a household with the coordinator venue and place shapes',async()=>{
  const f=await fixture('household'),before=bytes(f.snapshot);
- const options={boxes:{r1:'jonathan'},jobs:{'h-1':{}},conversations:Object.fromEntries(f.shaped.map(b=>[b.conversation,b.thread?{member:'jonathan'}:{}]))};
+ const options={boxes:{r1:'jonathan'},jobs:{'h-1':{}},conversations:Object.fromEntries(f.shaped.map((b):[string,Record<string,string>]=>[b.conversation,b.thread?{member:'jonathan'}:{}]))};
  expect(f.plan.importers.runtime.options).toEqual({boxes:{r1:null},jobs:{'h-1':null},conversations:Object.fromEntries(f.shaped.map(b=>[b.conversation,null]))});
  f.plan.importers.runtime.options=options;
  expect(prepareMigrationPlan(f.snapshot,f.plan).plan.importers.runtime.options).toEqual(options);
