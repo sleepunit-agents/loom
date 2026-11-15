@@ -1,5 +1,5 @@
 import {handoffEnvelope} from './handoff-words.js';
-import {privateInboxEnvelope} from './private-inbox-words.js';
+import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words.js';
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
 import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
@@ -66,7 +66,7 @@ export class Conversations {
       const conversation = input.conversation ? this.conversation(input.conversation) : undefined;
       if (conversation && input.toKind === 'agent' && input.to !== conversation.agent) throw new Error('Recipient differs from conversation agent');
       if(input.source==='handoff'&&input.words!=null&&!handoffEnvelope(input.words))throw new Error('Handoff briefs must be encrypted');
-      if(conversation?.member&&conversation.venue!=='loom'&&input.source==='thread'&&input.answers&&!privateInboxEnvelope(input.words??null))throw new Error('Private questions must be encrypted');
+      if(conversation?.member&&conversation.venue!=='loom'&&input.source==='thread'&&input.answers&&(!privateInboxEnvelope(input.words??null)||[input.why,input.ifYes,input.ifNo,input.link].some(value=>value!=null)))throw new Error('Private questions must be encrypted');
       const at = this.now();
       const seq = conversation ? (this.db.select({ seq: max(inbox.seq) }).from(inbox).where(eq(inbox.conversation, conversation.id)).get()?.seq ?? 0) + 1 : null;
       const { refs = [], ...values } = input;
@@ -83,6 +83,18 @@ export class Conversations {
     const row = this.db.select().from(inbox).where(eq(inbox.id, id)).get();
     if (!row) throw new Error('Inbox item not found');
     return row;
+  }
+
+  /** Work-source facts keep their own scope. Their reply to an agent in a
+   * private conversation must carry that conversation's current labels. A
+   * different member's private source can never be relabelled into it. */
+  answerScope(conversation:string|null,agent:string,source:{project:string|null;member:string|null}){
+    if(!conversation)return source;
+    const cv=this.conversation(conversation);
+    if(cv.agent!==agent)throw new Error('Answer recipient differs from conversation');
+    if(!cv.member)return source;
+    if(source.member&&source.member!==cv.member)throw new Error('Answer source is private to another member');
+    return {project:cv.project,member:cv.member};
   }
 
   /** Read a delivery snapshot without claiming mail or holding a transaction
@@ -127,7 +139,7 @@ export class Conversations {
     return this.db.transaction(() => {
       const item = this.item(itemId);
       if (item.toKind !== 'person' || !item.answers) throw new Error('Item is not a question for a person');
-      if (item.thread || item.conversation && item.member && item.source==='thread') throw new Error('Answer through encrypted conversation service');
+      if (item.thread || isPrivateInboxQuestion(item)) throw new Error('Answer through encrypted conversation service');
       if (item.state === 'answered') return item;
       if (item.state !== 'waiting') throw new Error('Question is already settled');
       if (item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');

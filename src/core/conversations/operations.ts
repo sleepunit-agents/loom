@@ -1,4 +1,5 @@
 import { threadTitle } from './title.js';
+import {isPrivateInboxQuestion} from './private-inbox-words.js';
 /** Shared-schema mutation adapters. Composition supplies CURRENT authorization;
  * these adapters do not grant access, load keys or expose a private read door. */
 import { z } from 'zod';
@@ -120,7 +121,7 @@ export function registerConversationOperations(operations: Operations, service: 
     async prepare(i, ctx) {
       const actor = member(ctx.viewer), item = cvs.item(i.item);
       if (item.thread) return service.prepareAnswer(i.item, actor, i.answer, i.words);
-      if(item.conversation&&item.member&&item.source==='thread')return service.prepareInboxAnswer(i.item,actor,i.answer,i.words);
+      if(isPrivateInboxQuestion(item))return service.prepareInboxAnswer(i.item,actor,i.answer,i.words);
       return () => cvs.answer(i.item, actor, i.answer, i.words);
     },
     run(ctx, i, prepared) {

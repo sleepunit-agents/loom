@@ -5,6 +5,7 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { conversations, conversationPeople, digests, digestItems, inbox, turns } from '../../core/data/schema.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
 import type { ActivityConversation, ActivityConversations, ActivityRun } from './activity-role.js';
+import {hasPrivateInboxWords} from '../../core/conversations/private-inbox-words.js';
 
 type Conversation = typeof conversations.$inferSelect;
 type Digest = typeof digests.$inferSelect;
@@ -48,7 +49,7 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       tasks: items.filter(i => i.kind === 'task').map(i => i.text),
       references: items.map(i => i.text),
       links: href ? [{ label: 'Conversation', href }] : [],
-      ...(viewer.kind === 'member' && question?.toKind === 'person' && question.to === viewer.id && question.state === 'waiting' && question.words ? {
+      ...(viewer.kind === 'member' && question?.toKind === 'person' && question.to === viewer.id && question.state === 'waiting' && question.words && !hasPrivateInboxWords(question.words) ? {
         needs: question.words, needsForMember: question.to,
         ...(question.link ? { needsHref: question.link } : {}),
       } : {}),

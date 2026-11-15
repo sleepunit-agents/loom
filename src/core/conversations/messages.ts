@@ -1,5 +1,5 @@
 import {handoffExpiries} from './handoff-words.js';
-import {privateInboxExpiries,privateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
+import {privateInboxExpiries,hasPrivateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
 import { inboxContentChanged } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 /** Trusted private-message service. External doors authenticate and authorize;
@@ -205,7 +205,7 @@ export class CommsMessages {
     const cvs=this.threads.conversations;
     const check=()=>{
       const item=cvs.item(itemId),cv=item.conversation?cvs.conversation(item.conversation):undefined;
-      if(!cv||!cv.member||item.thread||cv.venue==='loom'||item.member!==cv.member||item.toKind!=='person'||item.to!==cv.member||item.agent!==cv.agent||item.project!==cv.project||item.source!=='thread'||item.fromKind!=='agent'||item.fromId!==cv.agent||!item.answers||!privateInboxWords(item.words)&&item.words!==null)throw Error('Not a standalone private question');
+      if(!cv||!cv.member||item.thread||cv.venue==='loom'||item.member!==cv.member||item.toKind!=='person'||item.to!==cv.member||item.agent!==cv.agent||item.project!==cv.project||item.source!=='thread'||item.fromKind!=='agent'||item.fromId!==cv.agent||!item.answers||!hasPrivateInboxWords(item.words)&&item.words!==null)throw Error('Not a standalone private question');
       if(item.waitsOnKind)throw Error('Answer at the linked source');
       return {item,cv};
     };

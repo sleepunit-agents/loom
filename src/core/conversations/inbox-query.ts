@@ -1,5 +1,5 @@
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
-import {privateInboxAnswer,privateInboxWords,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion} from './private-inbox-words.js';
+import {privateInboxAnswer,hasPrivateInboxWords,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion,isPrivateInboxQuestion} from './private-inbox-words.js';
 import { wordsDeadline } from './retention.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
@@ -108,7 +108,7 @@ export class InboxQueries {
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;
       const keep = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
       const thread = item.thread ? this.db.select().from(threads).where(eq(threads.id, item.thread)).get() : undefined;
-      const standalone=fromAnswer?this.standaloneAnswer(viewer,item):privateInboxWords(item.words)?item:undefined;
+      const standalone=fromAnswer?this.standaloneAnswer(viewer,item):hasPrivateInboxWords(item.words)?item:undefined;
       return { message, keep, thread, answerMail: answer?.mail,standalone };
     };
     const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
@@ -119,11 +119,11 @@ export class InboxQueries {
       // Handoffs are agent mail. Their wording is delivered only by take,
       // while this personal mailbox search can match their metadata.
       if(item.source==='handoff')continue;
-      const state = item.thread||privateInboxWords(item.words) ? privateState(item) : undefined;
+      const state = item.thread||hasPrivateInboxWords(item.words) ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
       {
-        const answerState = item.thread||item.conversation&&item.member&&item.source==='thread' ? privateState(item, true) : undefined;
+        const answerState = item.thread||isPrivateInboxQuestion(item) ? privateState(item, true) : undefined;
         const answer = await this.answerText(viewer, item.id);
         if (answer?.toLocaleLowerCase().includes(query)) matches.push({ item, state: answerState, fromAnswer: true });
       }
@@ -140,7 +140,12 @@ export class InboxQueries {
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
     const unique = new Map<string, typeof current[number]>();
-    const deadline = (match: typeof current[number]) => match.metadata?Infinity:match.state?.standalone?privateInboxDeadline(match.state.standalone,match.state.keep):match.state?.message?wordsDeadline(match.state.message,match.state.keep):Infinity;
+    const deadline = (match: typeof current[number]) => {
+      if(match.metadata)return Infinity;
+      if(match.state?.standalone)return privateInboxDeadline(match.state.standalone,match.state.keep);
+      if(match.state?.message)return wordsDeadline(match.state.message,match.state.keep);
+      return Infinity;
+    };
     for (const match of current) {
       const prior = unique.get(match.item.id);
       if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
@@ -183,7 +188,7 @@ export class InboxQueries {
   private standaloneAnswer(viewer:Viewer,item:Item){const answer=privateInboxAnswer(this.db,item);return answer&&this.current(viewer,answer.id)?answer:undefined;}
   bodyKeepUntil(viewer: Viewer, id: string): string | null {
     const item = this.current(viewer, id);
-    if(item&&privateInboxWords(item.words)){const until=viewer.kind==='member'?privateInboxDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
+    if(item&&hasPrivateInboxWords(item.words)){const until=viewer.kind==='member'?privateInboxDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
     if(item?.source==='handoff'){const until=viewer.kind==='member'?handoffDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
     if (!item?.thread || !item.conversation) return null;
     const message = this.db.select({ at: messages.at, keepUntil: messages.keepUntil }).from(messages)
@@ -201,7 +206,7 @@ export class InboxQueries {
   async answerText(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<string | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
-    if(!item.thread&&item.conversation&&item.member&&item.source==='thread'){
+    if(isPrivateInboxQuestion(item)){
       if(!['words','replied'].includes(item.answer??''))return null;
       const before=this.standaloneAnswer(viewer,item);if(!before)return null;
       const body=await this.body(viewer,before.id,retainedUntil);
@@ -221,7 +226,7 @@ export class InboxQueries {
   async body(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<Body | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
-    if(privateInboxWords(item.words)){
+    if(hasPrivateInboxWords(item.words)){
       if(viewer.kind!=='member')return null;
       const days=this.keepDays(),until=privateInboxDeadline(item,days);if(!(until>Date.parse(this.now())))return null;
       const envelope=privateInboxEnvelope(item.words)!;const words=await this.key.open(Buffer.from(envelope.cipher,'base64'));

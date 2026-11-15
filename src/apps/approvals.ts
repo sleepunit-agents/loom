@@ -29,13 +29,14 @@ export type ApprovedOperations = ReadonlyMap<string, (approval: Approval) => voi
 export function approvalService(db: DataDatabase, operations: ApprovedOperations = new Map(), now: () => string = () => new Date().toISOString()) {
   const mail = new Conversations(db, now);
   const answer = (row: Approval, member: string, allowed: boolean) => {
+    const scope=mail.answerScope(row.conversation,row.agent,{project:row.project,member:row.member});
     const questions = mail.resolve('approval', row.id, allowed ? 'Allowed' : 'Denied');
     // One answer returns to the asking agent, even if several owners saw it.
     // A later denial of an allowance is a new event, not a replay of its answer.
     mail.send({ toKind: 'agent', to: row.agent, conversation: row.conversation,
       source: questions.length ? 'answer' : 'approval', sourceId: questions[0]?.id ?? `${row.id}:denied`,
       fromKind: 'person', fromId: member, words: [allowed ? 'Allow' : 'Deny', row.ask, allowed ? row.ifYes : row.ifNo].join('\n'),
-      project: row.project, agent: row.agent, member: row.member, refs: [row.id, ...questions.map(q => q.id)] });
+      ...scope, agent: row.agent, refs: [row.id, ...questions.map(q => q.id)] });
   };
   const get = (id: string) => {
     const row = db.select().from(approvals).where(eq(approvals.id, id)).get();

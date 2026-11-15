@@ -5,7 +5,11 @@ import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixture
 import {bodyProgram} from './runtime/body-program.js';
 import {sealHandoff} from './core/conversations/handoff-words.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
-import {privateInboxEnvelope,privateInboxWords} from './core/conversations/private-inbox-words.js';
+import {privateInboxEnvelope,hasPrivateInboxWords,sealPrivateInbox} from './core/conversations/private-inbox-words.js';
+import {sharedActivityConversations} from './pieces/mind/activity-conversations.js';
+import {sharedSharing} from './shared-sharing.js';
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
+import {InboxQueries} from './core/conversations/inbox-query.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{vi.restoreAllMocks();for(const close of clean.splice(0).reverse())await close();});
 const question={words:'PRIVATE PUMP QUESTION',why:'PRIVATE PUMP REASON',ifYes:'PRIVATE YES OUTCOME',ifNo:'PRIVATE NO OUTCOME',link:'https://example.invalid/private-pump'};
@@ -24,7 +28,7 @@ function deadline(f:F,id:string,at:number){f.root.writes.run(()=>{const row=f.db
 function noCopies(f:F){for(const table of [s.inbox,s.jobs,s.operationResults,s.turns,s.digests,s.digestItems])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain('PRIVATE');expect(f.db.select().from(s.threads).all()).toEqual([]);expect(f.db.select().from(s.messages).all()).toEqual([]);}
 it.each(['wake','handoff','discord','slack'] as const)('a current private %s body raises an encrypted question in its actual conversation',async venue=>{
  const f=await fixture(venue);expect((await f.call('digest',{summary:'Baseline'},'baseline')).status).toBe(200);const id=await ask(f);
- const q=f.db.select().from(s.inbox).where(eq(s.inbox.id,id)).get()!;expect(q).toMatchObject({conversation:f.thread.conversation,toKind:'person',to:'alice',member:'alice',agent:'art',project:'pond',source:'thread',state:'waiting',thread:null,why:null,ifYes:null,ifNo:null,link:null});expect(privateInboxWords(q.words)).toBe(true);
+ const q=f.db.select().from(s.inbox).where(eq(s.inbox.id,id)).get()!;expect(q).toMatchObject({conversation:f.thread.conversation,toKind:'person',to:'alice',member:'alice',agent:'art',project:'pond',source:'thread',state:'waiting',thread:null,why:null,ifYes:null,ifNo:null,link:null});expect(hasPrivateInboxWords(q.words)).toBe(true);
  expect(await (await query(f,`{inboxItem(id:"${id}"){body{words why ifYes ifNo link} canAnswer}}`)).json()).toEqual({data:{inboxItem:{body:question,canAnswer:true}}});
  expect((await f.call('digest',{summary:'Wrong recipient',question:{...question,to:'bob',answers:'yes-no'}},'wrong')).status).toBe(403);
  expect((await f.call('digest',{summary:'Weak caller',question:{...question,to:'alice',answers:'yes-no'}},'weak',raw.agent)).status).toBe(403);
@@ -99,4 +103,32 @@ it.each(['wake','handoff'] as const)('preserves an owner question through actual
  const job={id:'job',box:'box',agent:'art',conversation:f.thread.conversation,thread:null,venue,model:'fixture',account:'fictional',harness:'claude' as const,brief:'',house:{repository:'fiction',file:'Housefile',branch:'next'}};
  const errors:string[]=[];expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fictional/claude',cwd:'/fictional'}),stdin:async()=>Buffer.from(JSON.stringify({job,build:'fictional',bootstrap:{origin:'https://loom.invalid',job:'job',token}})),env:{},signal:new AbortController().signal,clock:f.clock,schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,fetch:async(url,init)=>f.root.http.request(new Request(url,init)),native:async(_job,words)=>{expect(words).toBe(instruction);const response=await f.call('digest',{summary:'Inspection needs a decision',question:{...question,to:'alice',answers:'yes-no'}},'authored',token);expect(response.status).toBe(200);return {text:'Fictitious work paused for its owner.',model:'fixture',actions:[]};},error:text=>errors.push(text)})).toBe(0);
  expect(errors).toEqual([]);const digest=f.db.select().from(s.digests).get()!;expect(digest).toMatchObject({summary:'Inspection needs a decision',revision:1});expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,digest.inboxItem!)).get()).toMatchObject({to:'alice',state:'waiting',thread:null});expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});noCopies(f);
+});
+it('Activity keeps a wordless link to a private question without projecting its ciphertext as a need',async()=>{
+ const f=await fixture();await ask(f);const digest=f.db.select().from(s.digests).get()!,reader=sharedActivityConversations(f.db,{sharing:()=>sharedSharing(f.db),conversationHref:id=>'/p/comms-preview/conversation/'+id});const result=reader.read({kind:'member',id:'alice'},'art','digest',digest.id);expect(result?.summary).toBe(digest.summary);expect(result?.links).toEqual([{label:'Conversation',href:'/p/comms-preview/conversation/'+f.thread.conversation}]);expect(result).not.toHaveProperty('needs');expect(JSON.stringify(result)).not.toContain('loom:private-inbox');expect(JSON.stringify(result)).not.toContain('PRIVATE');
+});
+it('refuses plaintext question display fields even alongside a valid encrypted words envelope',async()=>{
+ const f=await fixture(),words=await sealPrivateInbox(f.key,JSON.stringify(question),new Date(f.clock.now()).toISOString(),14);for(const field of ['why','ifYes','ifNo','link'])expect(()=>f.root.services.conversations.send({conversation:f.thread.conversation,toKind:'person',to:'alice',source:'thread',fromKind:'agent',fromId:'art',words,answers:'yes-no',[field]:'PRIVATE FIELD'})).toThrow('encrypted');expect(f.db.select().from(s.inbox).all()).toEqual([]);
+});
+it('rolls back a failed digest rewrite together with its new question and old question retirement',async()=>{
+ const f=await fixture(),id=await ask(f),before=f.db.select().from(s.digests).all();f.db.$client.exec("CREATE TRIGGER reject_private_digest BEFORE UPDATE ON digests BEGIN SELECT RAISE(FAIL,'fictional digest failure'); END");const response=await f.call('digest',{summary:'Fictitious rewrite',question:{...question,to:'alice',answers:'yes-no'}},'failed-rewrite');expect(response.status).toBe(503);expect(f.db.select().from(s.digests).all()).toEqual(before);expect(f.db.select().from(s.inbox).all()).toEqual([expect.objectContaining({id,state:'waiting',resolution:null})]);noCopies(f);
+});
+function bobReader(f:F){
+ const token='e'.repeat(64),cookie='f'.repeat(64),at=new Date(f.clock.now()).toISOString();f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictitious Bob owner',kind:'owner',member:'bob',createdAt:at}).run();f.db.insert(s.sessions).values({id:credentialHash(cookie),token:credentialHash(token),device:'Fictional owner',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();});
+ return {revoke:()=>f.root.writes.run(()=>f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'bob')).run()),query:(source:string)=>f.root.http.request('/graphql',{method:'POST',headers:{cookie:'loom_ui='+cookie,'content-type':'application/json'},body:JSON.stringify({query:source})})};
+}
+it.each(['question','answer'] as const)('rechecks person sharing after async opening of a private %s',async kind=>{
+ const f=await fixture(),id=await ask(f);if(kind==='answer')expect((await answer(f,id)).status).toBe(200);const bob=bobReader(f),reader=new InboxQueries(f.db,f.root.services.comms!.key,conversationQuestionPolicy(f.db).visibility,()=>new Date(f.clock.now()).toISOString());f.openGate(async()=>{bob.revoke();});expect(kind==='question'?await reader.body({kind:'member',id:'bob'},id):await reader.answerText({kind:'member',id:'bob'},id)).toBeNull();noCopies(f);
+});
+it('withdraws delayed and cloned person-read response bytes when household-owner sharing ends',async()=>{
+ const f=await fixture(),id=await ask(f),bob=bobReader(f);const response=await bob.query(`{inboxItem(id:"${id}"){body{words why}}}`),copy=response.clone();bob.revoke();await expect(response.text()).rejects.toThrow();await expect(copy.text()).rejects.toThrow();noCopies(f);
+});
+it('refuses another conversation current body attempting to ask this private member',async()=>{
+ const f=await fixture(),id=await ask(f),token='body_'+'e'.repeat(64);f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'bob',agent:'mark'}).run());const other=f.root.services.comms!.threads.open({member:'bob',agent:'mark',title:'Fictitious foreign context'}),old=f.db.select().from(s.jobs).get()!;f.root.writes.run(()=>{f.db.insert(s.jobs).values({...old,id:'foreign-job',agent:'mark',member:'bob',project:null,conversation:other.conversation}).run();f.db.update(s.conversations).set({job:'foreign-job'}).where(eq(s.conversations.id,other.conversation)).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictitious foreign body',kind:'agent',agent:'mark',job:'foreign-job',createdAt:new Date(f.clock.now()).toISOString()}).run();});expect((await f.call('digest',{summary:'Fictitious foreign baseline'},'foreign-baseline',token)).status).toBe(200);expect((await f.call('digest',{summary:'Fictitious foreign ask',question:{...question,to:'alice',answers:'yes-no'}},'foreign-ask',token)).status).toBe(403);expect(f.db.select().from(s.inbox).all()).toEqual([expect.objectContaining({id})]);
+});
+it('refuses a finished body before creating or replaying a private question',async()=>{
+ const f=await fixture(),id=await ask(f);f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect((await f.call('digest',{summary:'Fictitious work needs a decision',question:{...question,to:'alice',answers:'yes-no'}},'ask')).status).toBe(401);expect((await f.call('digest',{summary:'Fictitious stale work',question:{...question,to:'alice',answers:'yes-no'}},'stale-new')).status).toBe(401);expect(f.db.select().from(s.inbox).all()).toEqual([expect.objectContaining({id})]);
+});
+it('leases a private question-word search independently from its later answer deadline',async()=>{
+ const f=await fixture(),id=await ask(f);expect((await answer(f,id)).status).toBe(200);deadline(f,id,f.clock.now()+1000);const search=()=>query(f,'{inboxItems(folder:"answered",search:"PRIVATE PUMP QUESTION"){id}}');expect(await (await search()).json()).toEqual({data:{inboxItems:[{id}]}});const delayed=await search(),copy=delayed.clone();vi.spyOn(f.clock,'now').mockReturnValue(f.clock.now()+1000);await expect(delayed.text()).rejects.toThrow();await expect(copy.text()).rejects.toThrow();noCopies(f);
 });
