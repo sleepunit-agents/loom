@@ -45,7 +45,7 @@ const choices = <><option value="ask">Ask each time</option><option value="auto"
 export function DefaultControl({ answer }: { answer: 'ask' | 'auto' | 'never' }) {
   const command = useCommand();
   return <form className="grid gap-3" onSubmit={event => { event.preventDefault(); const data = new FormData(event.currentTarget); void command.run(() => settingsCommand('command', { action: 'default', answer: data.get('answer') })); }}>
-    <label>For a secret with no rule<select name="answer" defaultValue={answer}>{choices}</select></label><Button disabled={command.busy}>Save household default</Button><p role="status">{command.message}</p>
+    <label>For a secret with no rule<select name="answer" defaultValue={answer}>{choices}</select></label><Button type="submit" disabled={command.busy}>Save household default</Button><p role="status">{command.message}</p>
   </form>;
 }
 export function RuleControl({ secret, snapshot }: { secret: string; snapshot: SecretsSnapshot }) {

@@ -1,53 +1,30 @@
 /** One shipped Comms proof. CI owns Chromium; data and credentials are fictitious. */
 import { it, expect } from 'vitest';
-import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { extname, join, resolve } from 'node:path';
-import { getRequestListener } from '@hono/node-server';
+import { existsSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { eq } from 'drizzle-orm';
-import { generateX25519Identity } from 'age-encryption';
 import { FakeClock } from '../core/clock.js';
-import { createDataSchema } from '../core/data/database.js';
-import { dataAuthentication } from '../core/data/authentication.js';
 import { members, memberAgents, agents, messages, inbox, operationResults, threads, boxes, jobs, conversations, tokens, sessions } from '../core/data/schema.js';
-import { wordsKey } from '../pieces/comms/crypto.js';
-import { sharedRoot } from '../shared-root.js';
+import {sharedUiProgram} from '../../test/fixtures/shared-ui-program.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, sends and answers messages and Tempo settings inline across windows', async () => {
-  const client = new Database(':memory:'), clock = new FakeClock(Date.now());
-  const now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
-  db.insert(members).values({ id: 'alice', role: 'member', joinedAt: now() }).run();
+  const clock = new FakeClock(Date.now()),now=()=>new Date(clock.now()).toISOString();
+  const program=await sharedUiProgram({clock,webRoot:root,seed(db){
+  db.insert(members).values([{ id: 'alice', role: 'member', joinedAt: now() },{id:'fixture-owner',role:'owner',joinedAt:now()}]).run();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
   db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
   const token = 't'.repeat(64), cookie = 'c'.repeat(64);
-  client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(hash(token), 'Fixture', 'owner', 'alice', now(), new Date(clock.now() + 3600000).toISOString());
-  client.prepare('INSERT INTO sessions (id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES (?,?,?,?,?,?,?,?)').run(hash(cookie), hash(token), 'Browser', 'token', 0, now(), now(), now());
-  const key = wordsKey(await generateX25519Identity());
-  const composition = sharedRoot({ db, clock, commsKey: key, originAllowed: req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`, reportError: error => { throw error; } });
-  const authenticate = dataAuthentication(db, () => clock.now());
-  const handler = getRequestListener(composition.http.fetch);
-  const server = createServer((req, res) => {
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-    if (path === '/graphql' || path.startsWith('/api/')) { void handler(req, res); return; }
-    if (path === '/auth/session') {
-      const auth = authenticate(new Request('http://localhost/', { headers: { cookie: req.headers.cookie ?? '' } }));
-      res.setHeader('content-type','application/json'); res.end(JSON.stringify({viewer:auth?.viewer ?? null,csrf:''})); return;
-    }
-    const file = path.startsWith('/app/') ? resolve(root,path.slice(5)) : join(root,'index.html');
-    if (!file.startsWith(root + '/') || !existsSync(file)) { res.writeHead(404).end(); return; }
-    res.setHeader('content-type',({'.js':'application/javascript','.css':'text/css','.html':'text/html'} as Record<string,string>)[extname(file)] ?? 'application/octet-stream');
-    res.end(readFileSync(file));
-  });
-  const detach = composition.attach(server); let browser: import('playwright-core').Browser | undefined;
+  db.$client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(hash(token), 'Fixture', 'owner', 'alice', now(), new Date(clock.now() + 3600000).toISOString());
+  db.$client.prepare('INSERT INTO sessions (id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES (?,?,?,?,?,?,?,?)').run(hash(cookie), hash(token), 'Browser', 'token', 0, now(), now(), now());
+  }});
+  const {client,db,composition,url}=program;
+  const token='t'.repeat(64),cookie='c'.repeat(64);
+  let browser: import('playwright-core').Browser | undefined;
   try {
-    await new Promise<void>(ok => server.listen(0,'127.0.0.1',ok));
-    const address = server.address(); if (!address || typeof address === 'string') throw Error('No address');
-    const url = `http://127.0.0.1:${address.port}`;
     browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
     const context = await browser.newContext({serviceWorkers:'block'}); context.setDefaultTimeout(10_000);
     await context.addCookies([{name:'loom_ui',value:cookie,url}]);
@@ -116,7 +93,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     await expect.poll(()=>a.getByRole('region',{name:'Tempo settings change',exact:true}).count()).toBe(2);
     composition.writes.run(()=>client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(now(),hash(ownerToken)));
     await expect.poll(()=>a.getByRole('region',{name:'Tempo settings change',exact:true}).count()).toBe(0);
+    expect(program.errors).toEqual([]);
   } finally {
-    if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); await browser?.close(); console.info('Proof: closing root'); detach(); await composition.close(); console.info('Proof: closing listener'); await new Promise<void>(ok => server.close(() => ok())); client.close();
+    if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); try{await browser?.close();}finally{await program.close();}
   }
 }, 60_000);

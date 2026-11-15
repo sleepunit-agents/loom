@@ -55,7 +55,9 @@ export class DataLive {
   /** Timing rows cannot change private selection membership. Wake readers
    * without making an otherwise current read invalidate its own publication.
    * Real data/access writes must always use changed(). */
-  timingsChanged() { for (const listener of [...this.listeners]) listener(); }
+  timingsChanged() { this.metadataChanged(); }
+  /** Non-authority presentation/timing metadata cannot withdraw private data. */
+  metadataChanged() { for (const listener of [...this.listeners]) listener(); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
 
   /** After stopping admission, wait for actual resolvers, including executions

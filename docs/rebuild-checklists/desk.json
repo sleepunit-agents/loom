@@ -40,7 +40,10 @@
     {
       "id": "desk-006",
       "promise": "Each tile asks for its rows over the one live connection.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "legacy-data-socket"
+      }
     },
     {
       "id": "desk-007",
