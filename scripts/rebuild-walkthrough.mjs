@@ -18,7 +18,6 @@ import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {prepareRetention} from './rebuild-retention.mjs';
-import {FakeClock} from '../dist/core/clock.js';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
