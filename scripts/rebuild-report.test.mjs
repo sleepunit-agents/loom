@@ -64,6 +64,16 @@ it('keeps the measured revision and every page count in both regenerated reports
   for(const page of report.summary)expect(md).toContain('](#page-'+page.page+')');
  }finally{rmSync(out,{recursive:true,force:true});}
 });
+it('requires persisted Account Household and Sharing action evidence from their checked-in checklists',()=>{
+ for(const [file,app]of [['signing-in','Your account'],['people','Household setup'],['people','Project sharing']]){
+  const checklist=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+file+'.json',import.meta.url),'utf8'));
+  const promise=checklist.promises.find(row=>row.probe?.kind==='action'&&row.probe.app===app);
+  expect(promise).toBeDefined();
+  expect(evaluate(promise,{apps:[{title:app,opened:true}]}).status).toBe('not checkable yet');
+  expect(evaluate(promise,{apps:[{title:app,action:{ok:false,error:'Fixture failed'}}]}).status).toBe('not met');
+  expect(evaluate(promise,{apps:[{title:app,action:{ok:true,screenshot:'proof.png'}}]}).status).toBe('met');
+ }
+});
 
 it('can disprove a one-query-door promise without claiming the converse proves it',()=>{
  const promise={probe:{kind:'legacy-data-socket'}};

@@ -11,7 +11,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   out=process.env.LOOM_TEST_SHOTS??mkdtempSync(join(tmpdir(),'loom-walkthrough-proof-'));
   steps=walkthroughSteps(out);const step=await steps.next();
   expect(step.value.phase,step.value.fatal).toBe('ready');ready=true;const report=step.value.report;
-  expect(report.signin.ok).toBe(true);expect(report.example.members).toEqual(['alex','robin']);
+  expect(report.signin.ok).toBe(true);expect(report.signin.personBrowser).toBe(true);expect(report.example.members).toEqual(['alex','robin']);
   expect(report.isolation).toMatchObject({http:'blocked',websocket:'blocked'});
   expect(report.isolation.consoleErrors.join(' ')).toContain('Walkthrough console capture probe');
   expect(report.inventory).toEqual(titles);
@@ -28,6 +28,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Tasks')for(const name of ['taskReady','taskLifecycle','taskStructure','taskComments'])expect(step.value.report.actions?.[name],JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Bridges')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,discordChannel:true,slackPerson:true,persistedAfterReload:true});
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
+  if(['Your account','Household setup','Project sharing'].includes(title))expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true});
   if(title==='Knowledge')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
  });
  it('sends and answers through the real Comms and Inbox controls',{retry:0,timeout:20_000},async()=>{
