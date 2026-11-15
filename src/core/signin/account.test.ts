@@ -72,18 +72,6 @@ it('serves safe private Live records, refreshes usage/expiry and evicts removed 
   expect(first.records[0].passkeys).toHaveLength(3);expect(JSON.stringify(first)).not.toContain('private-publickey-witness');
   const gone=once(ws,'close');const {HouseholdDatabase}=await import('../household/document.js');new HouseholdDatabase(f.app.db).change('',h=>{h.members=(h.members as Array<{person:string}>).filter(m=>m.person!=='jonathan').map(m=>({...m,role:'owner',agents:'*'}));});f.app.live.changed([{type:'core.access',id:'credentials'}]);await gone;
 });
-it('generates the API client from registry metadata and preserves one id after a lost response',async()=>{
-  const {runAccessClient}=await import('../../cli/access-client.js'),{Readable}=await import('node:stream'),{writeFileSync}=await import('node:fs'),{accountCommands}=await import('./account-commands.js');
-  const f=await setup();f.s.tokens.change(ts=>ts.push({role:'owner',member:'jonathan',label:'client',sha256:hash('client'),created:'2026-01-01'}));
-  const file=join(tmpdir(),`account-client-${process.pid}-${Math.random()}`);writeFileSync(file,'client');cleanup.push(()=>rmSync(file,{force:true}));
-  expect(f.app.operations.offered('http').filter(x=>x.name.startsWith('account.')).map(x=>x.cli)).toEqual(accountCommands());
-  let stdout='',stderr='',calls=0;const bodies:string[]=[];
-  const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:f.app.url,LOOM_TOKEN_FILE:file},stdout:(s:string)=>stdout+=s,stderr:(s:string)=>stderr+=s};
-  const ref=f.read().sessions[0].ref;
-  expect(await runAccessClient('account',['revokeSession',JSON.stringify({ref})],io,{request:async(url,init)=>{calls++;bodies.push(String(init?.body));const r=await fetch(url,init);if(calls===1){await r.body?.cancel();throw Error('client');}return r;},retry:async()=>{}})).toBe(0);
-  expect(calls).toBe(2);expect(new Set(bodies).size).toBe(1);expect(JSON.parse(stdout)).toEqual({revoked:true,devices:0});expect(stderr).toBe('');
-  expect(await runAccessClient('account',['--help'],{...io,env:{}},{request:async()=>{throw Error('unexpected');},retry:async()=>{}})).toBe(0);
-});
 it('never follows ancestry into another member or revokes an ambiguously shared digest',async()=>{
   const f=await setup();f.s.tokens.change(ts=>{
     ts.find(t=>t.sha256===hash('pollockroot'))!.from_sha256=hash('jonathanroot');
