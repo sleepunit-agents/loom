@@ -127,3 +127,8 @@ it.each(['member','project','job'] as const)('binds receipts against a valid sam
  });
  expect((await f.call('rule',target)).status).toBe(200);expect((await f.call('request',request,'original')).status).toBe(409);expect(f.db.select().from(s.approvals).all().map(row=>row.id)).toEqual([id]);
 });
+
+it('isolates receipt namespaces after a valid current agent reassignment',async()=>{
+ const f=await fixture(),old=await f.ask('actor-receipt');f.root.writes.run(()=>{f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run();f.db.insert(s.projectAgents).values({project:'pond',agent:'mark'}).run();f.db.update(s.jobs).set({agent:'mark'}).run();f.db.update(s.conversations).set({agent:'mark'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.changes).set({agent:'mark'}).run();f.db.update(s.tokens).set({agent:'mark'}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();});
+ expect((await f.call('rule',target)).status).toBe(200);const next=await f.ask('actor-receipt');expect(next).not.toBe(old);expect(f.root.services.approvals.get(next).agent).toBe('mark');expect((await f.call('withdraw',{id:old})).status).toBe(403);expect(f.root.services.approvals.get(old).state).toBe('pending');
+});
