@@ -9,9 +9,6 @@ import { fixtureSharing } from '../../fixture.js';
 import { installApprovals } from './index.js';
 import { approvalsRole, type Caller } from './role.js';
 import { load } from './store.js';
-import { installClock } from '../clock/index.js';
-import { clockLocalFiling } from '../clock/role.js';
-import { filedLocal, localWords } from '../clock/local-filing.js';
 const owner:Viewer={kind:'member',id:'jonathan'};
 const caller:Caller={who:{agent:'art',where:'house (queue)'},for:'owner',project:'pond'};
 const closes:(()=>Promise<void>)[]=[];
@@ -23,13 +20,12 @@ async function setup() {
   access.services.runtime={types:['approval'],operations:['approvals.piece-standing-local','approvals.piece-standing-local-check']};
   const options={home,clock,sharing:()=>access,install(app:Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
     installApprovals(app.db,app.operations,app.live,()=>access,{localAgent:'art'});
-    const jobs=installClock(app.db,app.operations,app.live,()=>access);app.onClose(jobs.close);
   }};
   let app=await startLoom(options);
   closes.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  const approval=value<{id:string}>(clockLocalFiling(app.operations).request(caller,'<!-- house: local -->\nInspect disk usage.','disk')).id;
-  const filing=filedLocal(app.db,approval)!,words=localWords(filing.prompt,filing.note);
-  const input={approval,mode:'use' as 'use'|'check',expected:{target:filing.target,digest:words.digest,details:words.details,caller:filing.caller}};
+  const words={digest:'a'.repeat(64),details:'Inspect disk usage.'},target=`art:${words.digest.slice(0,16)}`;
+  const approval=value<{id:string}>(approvalsRole(app.operations,'clock').call('request',caller,{kind:'local-wake',target,...words,ask:'Run this work?',why:'Synthetic standing work',if_yes:'Allow',if_no:'Deny'},randomUUID())).id;
+  const input={approval,mode:'use' as 'use'|'check',expected:{target,digest:words.digest,details:words.details,caller}};
   const call=(extra:Partial<typeof input>={},who=caller,receipt=randomUUID())=>approvalsRole(app.operations,'clock').localStanding(who,{...input,...extra},receipt);
   const every=()=>value<{id:string}>(app.operations.call('direct',owner,'approvals.every-time',{id:approval},randomUUID()));
   return {get app(){return app;},access,clock,approval,input,call,every,

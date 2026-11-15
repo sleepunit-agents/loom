@@ -49,7 +49,6 @@ import type { Authentication } from './core/live/index.js';
 import { maySee, mayAct } from './core/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
-import { clockVouchApplication } from './pieces/clock/role.js';
 import { installTasks, connectTaskAttention } from './pieces/tasks/index.js';
 import { Bridges } from './pieces/bridges/engine.js';
 import { venueAdapters } from './pieces/bridges/adapters.js';
@@ -154,7 +153,6 @@ export interface NextOptions {
   secretWrites?: {holder: AsyncSecretMutations; retryKeys: string | SecretRetryKeyFiles};
   bridges?: NextBridgesOptions;
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
-  clockDeadmanAgents?: readonly string[];
 }
 export async function installNext(app: Foundation, options: NextOptions) {
   if (options.secretWrites && !options.secretAuthority) throw new Error('Secret writes require holder authority');
@@ -192,7 +190,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     caller: conversations.approvalCaller,
     localAgent:()=>new HouseholdDatabase(app.db).household(options.home)?.default ?? 'agent',
-    applications: { clock: clockVouchApplication(app.operations), runtime: runtimeOwnerApplication(app.operations) },
+    applications: { runtime: runtimeOwnerApplication(app.operations) },
     projects: () => {
       try {
         const store = new SharingDatabase(app.db, options.home);
@@ -285,6 +283,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   const clockBodies=clockDelivery(app,sharing,effects,v=>signin(app).agent(v));
   conversations.connectClock(clockBodies);
   installVenueHistory(app,sharing,conversations.clockProvenance);
+
   let historyRead: HistoryAccess['read'] = async () => ({value:'wait',current:()=>false});
   installDiscordHistory(app, {permit:(viewer,place)=>runtimeDiscordHistoryPermit(app,viewer,place),read:(...args)=>historyRead(...args)});
   if (options.bridges && !bridgeDaemons.has(app)) {
