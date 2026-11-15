@@ -12,7 +12,7 @@ import type {Viewer} from './policy.js';
 
 export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string){
  const requireCurrent=requireBodyScope(current),common={...bodyOperationDefaults(current,hash,'body-work'),inputHash:(input:string,identity:Readonly<{actor:Viewer}>)=>{const bound=current(identity.actor);return hash(JSON.stringify(['body-work',bound?.job.id,bound?.cv.id,bound?.cv.agent,bound?.cv.project,bound?.cv.member,input]));}};
- const boundedText=z.string().min(1).max(2000),target=z.object({kind:approvalRuleKind,target:boundedText}).strict();
+ const boundedText=z.string().trim().min(1).max(2000),target=z.object({kind:approvalRuleKind,target:boundedText}).strict();
  const source=(viewer:Viewer)=>{const {cv}=requireCurrent(viewer);return {agent:cv.agent,conversation:cv.id,askedFrom:cv.id,actingFor:cv.member??'unknown',project:cv.project,member:cv.member};};
  const merge=(viewer:Viewer,kind:string,value:string,open=false)=>{
   if(kind!=='merge')return;

@@ -132,3 +132,9 @@ it('isolates receipt namespaces after a valid current agent reassignment',async(
  const f=await fixture(),old=await f.ask('actor-receipt');f.root.writes.run(()=>{f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run();f.db.insert(s.projectAgents).values({project:'pond',agent:'mark'}).run();f.db.update(s.jobs).set({agent:'mark'}).run();f.db.update(s.conversations).set({agent:'mark'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.changes).set({agent:'mark'}).run();f.db.update(s.tokens).set({agent:'mark'}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();});
  expect((await f.call('rule',target)).status).toBe(200);const next=await f.ask('actor-receipt');expect(next).not.toBe(old);expect(f.root.services.approvals.get(next).agent).toBe('mark');expect((await f.call('withdraw',{id:old})).status).toBe(403);expect(f.root.services.approvals.get(old).state).toBe('pending');
 });
+
+it('normalizes rule targets exactly like stored requests before reading an exact ask decision',async()=>{
+ const f=await fixture();for(const [scope,tier] of [['box:box:echo','ask'],['box:box:echo *','do']] as const)f.root.services.approvalRules.set({kind:'command',scope,person:'alice',tier},'pat');
+ const target='box:box:echo ';expect((await (await f.call('rule',{kind:'command',target})).json()).value).toEqual({tier:'ask',scope:'box:box:echo',person:'alice'});
+ const response=await f.call('request',{...request,kind:'command',target});expect(response.status).toBe(200);const id=(await response.json()).value.id;expect(f.root.services.approvals.get(id)).toMatchObject({target:'box:box:echo',state:'pending'});
+});
