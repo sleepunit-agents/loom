@@ -13,6 +13,7 @@ import { useHiding } from './hiding';
 import { useCompanion } from './companion';
 import { RailContext } from '../desk-rail';
 import { useMemberPreferences } from './member-preferences';
+import { buzz, HapticLabel, useHaptics } from '../haptic';
 import { oneWindowKept } from '../look';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
@@ -30,6 +31,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
   const preferences = useMemberPreferences();
+  const haptics = useHaptics();
   const [keptOneWindow] = useState(oneWindowKept);
   const lastOneWindow = useRef(keptOneWindow);
   if (preferences.status === 'live') lastOneWindow.current = preferences.records[0]?.prefs.oneWindow === true;
@@ -62,7 +64,8 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
   const presented = presentedTiles(route,phone||oneWindow);
   const boxes = layout(router.asTiles(presented),workArea,width).apps;
-  const open = (id: string) => {
+  const open = (id: string, tap = false) => {
+    buzz(haptics,tap);
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width,undefined,oneWindow);
     setNotice(gone?.map(t => t.why).join('. ') ?? ''); setLauncher(false);
     if (document.documentElement.dataset.sound === 'on') void import('../sound').then(s => s.chime('done'));
@@ -137,9 +140,9 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     <div className="next-dock-bar loom-dock-bar" data-hide-part="dock" data-peek={hiding.peek.dock||undefined} inert={!phone&&hiding.modes.dock!=='always'&&!hiding.peek.dock}
       onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerLeave={e=>{if(hiding.modes.dock==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('dock',false);}}
       onContextMenu={e=>{if(!phone&&(!(e.target as Element).closest('button')||(e.target as Element).closest('button[aria-label="Home"],button[aria-label="All apps"]')))setMenu(hiding.menu('dock',e));}}><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
-      {value:'home',label:'Home',tint:'pink',icon:<AppIcon label="Home" name="home" />,onSelect:()=>router.home()},
-      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<AppIcon label={app.title} name={app.icon} />,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>route.focused===app.id?router.remove(app.id,true):open(app.id)})),
-      {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<AppIcon label="Places" name="grid-2x2" />,onSelect:()=>setLauncher(true)},
+      {value:'home',label:'Home',tint:'pink',icon:<><AppIcon label="Home" name="home" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);router.home();}},
+      ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<><AppIcon label={app.title} name={app.icon} /><HapticLabel on={haptics}/></>,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>{if(route.focused===app.id){buzz(haptics,true);router.remove(app.id,true);}else open(app.id,true);}})),
+      {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<><AppIcon label="Places" name="grid-2x2" /><HapticLabel on={haptics}/></>,onSelect:()=>{buzz(haptics,true);setLauncher(true);}},
     ]} /></div>
     {menu&&<ContextMenu at={menu} close={()=>setMenu(undefined)} />}
     <p className="next-notice" role="status" aria-live="polite">{notice}</p>

@@ -11,7 +11,7 @@ import {eq} from 'drizzle-orm';
 import {generateX25519Identity} from 'age-encryption';
 import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
-import {agents,agentStatus,household,members,memberAgents,tokens,jobs} from '../core/data/schema.js';
+import {agents,agentStatus,household,members,memberAgents,tokens,jobs,boxes} from '../core/data/schema.js';
 import {CommsMessages} from '../core/conversations/messages.js';
 import {wordsKey} from '../pieces/comms/crypto.js';
 import {serveShared} from '../shared-serve.js';
@@ -31,6 +31,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  db.insert(agentStatus).values(ids.map(agent=>({agent,state:agent==='art'?'working' as const:'idle' as const,work:agent==='art'?'Rebuilding the shared desk':'',changedAt:now()}))).run();
  db.insert(tokens).values({fingerprint,label:'Disposable desk fixture',kind:'owner',member:'owner',createdAt:now()}).run();
  const privateBrief='PRIVATE JOB INSTRUCTIONS OMITTED';db.insert(jobs).values({id:'desk-current-job',agent:'art',member:'owner',state:'waiting',title:'Fixture current desk work',brief:privateBrief,model:'fixture-model',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+ const machine={owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()};
+ db.insert(boxes).values([{...machine,id:'desk-box',name:'Disposable worker'},{...machine,id:'retired-box',name:'Retired worker',revokedAt:now()}]).run();
  const picture=sheet(),layout=manifestFromPixelLab(JSON.parse(picture.json.toString()));storeDeskSprite(db,'art',layout,{'sheet.png':picture.png});
  const key=wordsKey(await generateX25519Identity()),messages=new CommsMessages(db,key,now);
  const thread=messages.threads.open({member:'owner',agent:'art',title:'Desk fixture conversation'});
@@ -40,7 +42,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
-  const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block'});
+  const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block',hasTouch:true});
+  await context.addInitScript(()=>{const w=window as typeof window&{__deskVibrations:number};w.__deskVibrations=0;Object.defineProperty(navigator,'vibrate',{value:()=>{w.__deskVibrations++;return true;}});});
   const a=await context.newPage(),b=await context.newPage(),errors:string[]=[],connections=new Map<Page,number>();let maximumConnections=0,legacyConnections=0,faceRequests=0;
   for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/faces/'))faceRequests++;if(request.isNavigationRequest()&&request.frame()===page.mainFrame())connections.set(page,0);});page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/graphql'){const count=(connections.get(page)??0)+1;connections.set(page,count);maximumConnections=Math.max(maximumConnections,count);}else if(new URL(socket.url()).pathname==='/live')legacyConnections++;});}
   const issued=await app.http.request(app.url+'/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+raw}});
@@ -54,6 +57,11 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await expect.poll(()=>a.locator('.next-shell').count()).toBe(1);await b.goto(app.url);
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
   for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
+  app.writes.run(()=>db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,'desk-box')).run());
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'0 enrolled boxes; health unavailable',exact:true}).count()).toBe(1);
+  app.writes.run(()=>db.insert(boxes).values({...machine,id:'new-desk-box',name:'New disposable worker'}).run());
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
   await a.locator('.next-preferences summary').click();
   await a.getByRole('combobox',{name:'Look',exact:true}).selectOption('daylight');
   for(const page of [a,b])await expect.poll(()=>page.locator('html').getAttribute('data-look')).toBe('daylight');
@@ -174,11 +182,18 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await compose.getByRole('button',{name:'Send',exact:true}).click();
   const openResponse=await opened,sendResponse=await sent;expect(openResponse.status()).toBe(200);expect(sendResponse.status()).toBe(200);
   const openResult=await openResponse.json(),sendResult=await sendResponse.json();expect(openResult.ok).toBe(true);expect(sendResult.ok).toBe(true);expect(sendResult.value.thread).toBe(openResult.value.thread);
-  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/comms-preview/thread/'+encodeURIComponent(openResult.value.thread));
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/comms-preview/thread/'+encodeURIComponent(openResult.value.thread.replace(/^th:/,'')));
   const confirmed=await app.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{ commsMessages(thread:${JSON.stringify(openResult.value.thread)}) { words } }`})});
   expect((await confirmed.json()).data.commsMessages.map((message:{words:string})=>message.words)).toEqual([draftWords]);
   await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
   await expect.poll(()=>b.getByRole('region',{name:'Art conversations',exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
+  // A supporting touch browser gets navigation feedback only when enabled.
+  const vibrations=()=>b.evaluate(()=>(window as typeof window&{__deskVibrations:number}).__deskVibrations);
+  await set({haptics:false},'haptics-off');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('off');
+  const muted=await vibrations();await b.getByRole('button',{name:'Open Agents',exact:true}).click();
+  await expect.poll(()=>b.locator('[data-tile=agents]').count()).toBe(1);expect(await vibrations()).toBe(muted);
+  await set({haptics:true},'haptics-on');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('on');
+  const audible=await vibrations();await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(vibrations).toBeGreaterThan(audible);
   // Changing ownership must remove cards even though an owner's directory and
   // status rows remain visible. This is an actual same-root write + socket read.
   await b.goto(app.url);app.writes.run(()=>db.delete(memberAgents).run());

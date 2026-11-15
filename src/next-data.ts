@@ -17,6 +17,7 @@ import { DataLive, type MeasureRead } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
+import { boxVisibility } from './core/data/box-visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { tempoVisibility } from './core/tempo/visibility.js';
 import { DataWrites } from './core/data/writes.js';
@@ -52,11 +53,11 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
-    tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents', 'agentStatus', 'triggers', 'triggerLog', 'agentPauses',
+    tables: ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'agents', 'agentStatus', 'triggers', 'triggerLog', 'agentPauses',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer), ...tempoVisibility(viewer),
+    visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer), ...tempoVisibility(viewer),
       ...measuringVisibility(viewer),
       // Status has the same scope as its agent; keep the existing current SQL policy.
       agentStatus: fields => taskVisibility(viewer).agents!({ id: fields.agent }),
