@@ -38,12 +38,12 @@ it('shows checks, people and tasks and binds a merge answer to the current head'
   await select();
   const words = JSON.stringify(tree.toJSON());
   expect(words).toContain('Lint'); expect(words).toContain('reviewer'); expect(words).toContain('Order pump');
-  expect(buttons().map((b: { props: { children: ReactNode } }) => b.props.children).flat()).toContain('Always for ');
+  expect(buttons().map((b: { props: { children: ReactNode } }) => b.props.children).flat()).toContain('Always for pond');
   await act(async () => { buttons().find((b: { props: { children: string } }) => b.props.children === 'Yes, merge it').props.onClick(); });
   expect(answer).toHaveBeenCalledExactlyOnceWith(change.id, change.headCommit, 'yes');
   const next = { ...snapshot, changes: [{ ...change, headCommit: 'b'.repeat(40) }] };
   await act(async () => { tree.update(h(Changes, { snapshot: next, actions, openTask })); });
-  expect(buttons().map((b: { props: { children: ReactNode } }) => b.props.children).flat()).not.toContain('Always for ');
+  expect(buttons().map((b: { props: { children: ReactNode } }) => b.props.children).flat()).not.toContain('Always for pond');
   await act(async () => { buttons().find((b: { props: { children: string } }) => b.props.children === 'Not yet').props.onClick(); });
   expect(answer).toHaveBeenLastCalledWith(change.id, 'b'.repeat(40), 'no');
   await act(async () => { tree.root.findAllByType('Row').find((r: { props: { title: string } }) => r.props.title === 'Order pump').props.onClick(); });
