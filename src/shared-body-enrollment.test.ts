@@ -60,3 +60,14 @@ it('rechecks captured worker proof after token rebinding, job reassignment, revo
  f.root.writes.run(()=>f.db.update(tokens).set({box:'worker'}).where(eq(tokens.fingerprint,hash(raw.runner))).run());f.root.writes.run(()=>f.db.update(jobs).set({box:'foreign'}).where(eq(jobs.id,'job')).run());expect((await f.call({job:'job',fingerprint:hash(f.credential())})).status).toBe(403);
  f.root.writes.run(()=>f.db.update(boxes).set({revokedAt:f.now()}).where(eq(boxes.id,'worker')).run());expect((await f.call({job:'job',fingerprint:hash(f.credential())})).status).toBe(401);await f.root.close();f.client.close();expect(f.root.credentials.runnerEnrollment(auth.viewer)).toBeUndefined();
 });
+it('rejects cookie-backed and mixed-claim enrollment proofs even though a viewer label exists',async()=>{
+ const f=fixture(),cookie=f.root.credentials.authenticate(new Request('http://loom',{headers:{cookie:'loom_ui='+raw.cookie}}))!;expect(cookie.viewer).toEqual({kind:'runner',id:'worker'});expect(f.root.credentials.runnerEnrollment(cookie.viewer)).toBeUndefined();
+ f.db.update(tokens).set({member:'owner'}).where(eq(tokens.fingerprint,hash(raw.runner))).run();const mixed=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!;expect(mixed.viewer).toEqual({kind:'runner',id:'worker'});expect(f.root.credentials.runnerEnrollment(mixed.viewer)).toBeUndefined();expect((await f.call({job:'job',fingerprint:hash(f.credential())})).status).toBe(403);
+});
+it('conflicts old enrollment receipts after current worker credential or saved context changes',async()=>{
+ const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);const replacement='z'.repeat(64);f.db.insert(tokens).values({fingerprint:hash(replacement),label:'Replacement worker',kind:'runner',box:'worker',createdAt:f.now()}).run();expect((await f.call(input,replacement,id)).status).toBe(409);
+ f.db.update(jobs).set({member:'owner'}).where(eq(jobs.id,'job')).run();expect((await f.call(input,raw.runner,id)).status).toBe(409);expect(f.db.select().from(tokens).where(eq(tokens.job,'job')).all()).toHaveLength(1);
+});
+it('refuses malformed fingerprints without creating a credential or receipt',async()=>{
+ const f=fixture();for(const fingerprint of [f.credential(),'a'.repeat(63),'A'.repeat(64)])expect((await f.call({job:'job',fingerprint})).status).toBe(400);expect(f.db.select().from(operationResults).all()).toEqual([]);expect(f.db.select().from(tokens).where(eq(tokens.job,'job')).all()).toEqual([]);
+});
