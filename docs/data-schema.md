@@ -172,3 +172,24 @@ Typed relations include `jobs.accountRow`, `modelAccounts.jobsByAccount`, and
 `modelAccounts.modelAccountWindowsByAccount`. These are schema additions for a
 fresh database, not a migration. They add no public GraphQL projection: exact
 account observations still require the account-owner/household-owner projection.
+
+## Shared operation receipts
+
+`OperationResults` in `src/core/data/operation-results.ts` implements
+`ReceiptPersistence` over the shared `operation_results` table. Its receipt has
+`caller`, `id`, `operation`, `inputHash`, `result: Result`, and `expires` (integer
+milliseconds). The input fingerprint is a named `input_hash` column; only the
+opaque answer is serialized into the result bytes. No input words are retained.
+
+The dispatcher owns caller identity, fingerprints, current access checks,
+30-day retention, expiry scheduling with its Clock, and wrapping the effect plus
+receipt in the same shared transaction. `insert` refuses duplicate keys;
+`recover` inserts a missing receipt or updates only the answer and deadline of a
+matching operation and fingerprint. A mismatch throws `OperationError` with
+code `conflict`. `get` returns the stored receipt even if expired: the dispatcher
+must call `expire(now)` before lookup, as the existing dispatcher does.
+`nextExpiry()` returns the next millisecond deadline for its Clock. This adapter
+writes canonical millisecond UTC strings and does not create tables, schedule
+work, check permission, or publish changes. Mounting it and removing the legacy
+receipt table remain composition work; its presence alone does not switch the
+running program.

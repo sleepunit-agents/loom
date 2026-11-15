@@ -79,3 +79,22 @@ it('selects the newest ten prior versions without changing the current page',asy
  expect(result.data).toEqual({memoryKnowledgePage:{body:'Version 12',history:Array.from({length:10},(_,i)=>({body:`Version ${11-i}`,op:'write-replace',replacedAt:expect.any(String)}))}});
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { history { body } } }',{viewer:{kind:'member',id:'member'}})).toEqual({data:{memoryKnowledgePage:null}});
 });
+
+it('projects the same current capabilities without a legacy record subscription',async()=>{
+ const f=fixture(join(home(),'absent.db'));
+ const source='{ memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } }';
+ expect(await f.query(source)).toMatchObject({data:{memoryKnowledgeAccess:{allowed:true,canAdd:true,canVerify:true,canRecheck:true}}});
+ expect(await f.query(source,{viewer:{kind:'member',id:'member'}})).toMatchObject({data:{memoryKnowledgeAccess:{allowed:false,canAdd:false,canVerify:false,canRecheck:false}}});
+ f.sharing.members.owner.owner=false;
+ expect(await f.query(source)).toMatchObject({data:{memoryKnowledgeAccess:{allowed:false,canAdd:false,canVerify:false,canRecheck:false}}});
+});
+it('lists every active page beyond the old two-thousand-page ceiling',async()=>{
+ const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ await store.writePage({slug:'first',title:'First',domain:'fiction',body:'Fictional'});
+ const writer=new Database(path);closes.push(()=>writer.close());
+ const insert=writer.prepare("INSERT INTO pages(uuid,slug,title,domain,body,created,updated,status) VALUES(?,?,?,'fiction','Fictional','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z','active')");
+ writer.transaction(()=>{for(let i=0;i<2001;i++)insert.run(`uuid-${i}`,`fiction-${i}`,`Fiction ${i}`);})();
+ const f=fixture(path),result=await f.query('{ memoryKnowledge { total pages { slug } } }');
+ expect(result.errors).toBeUndefined();const index=result.data!.memoryKnowledge as {total:number;pages:Array<{slug:string}>};
+ expect(index.total).toBe(2002);expect(index.pages).toHaveLength(2002);expect(index.pages).toContainEqual({slug:'fiction-2000'});
+});

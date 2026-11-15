@@ -4,6 +4,8 @@
  * runner reads {job,build} JSON on stdin after the running acknowledgement.
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { z } from 'zod';
+import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 export interface WorkerCommand {
@@ -34,20 +36,30 @@ function command(plan: WorkerCommand): WorkerCommand {
   if (!plan.command || !plan.cwd) throw new Error('Worker command and directory are required');
   return { ...plan, args: [...plan.args], env: { ...plan.env } };
 }
-function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntime) {
+function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntime, closePipesOnKill = false) {
   if (signal.aborted) throw new Error('Worker attempt cancelled');
   const child = runtime.spawn(plan);
   let spawned = false, closed = false, stopRequested = false, logTail = '', stdout = '', overflow = false;
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
   let exitResolve!: (result: { exitCode: number; logTail: string }) => void;
+  let exitReject!: (error: Error) => void;
   const ready = new Promise<void>((yes, no) => { spawnResolve = yes; spawnReject = no; });
   void ready.catch(() => {});
-  const exited = new Promise<{ exitCode: number; logTail: string }>(yes => { exitResolve = yes; });
+  const exited = new Promise<{ exitCode: number; logTail: string }>((yes, no) => { exitResolve = yes; exitReject = no; });
+  void exited.catch(() => {});
   let killed = false;
+  let cleanupError: Error | undefined;
   const kill = () => {
+    if (closePipesOnKill && signal.aborted) { child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); }
     if (killed || !child.pid) return;
     killed = true;
-    try { runtime.kill(child); } catch (error) { killed = false; throw error; }
+    try { runtime.kill(child); } catch {
+      killed = false;
+      // Abort/exit listeners must not throw into the event loop. Failed cleanup
+      // still rejects the attempt; it must never become a successful report.
+      cleanupError = new Error('Worker cleanup failed');
+      spawnReject(cleanupError); exitReject(cleanupError);
+    }
   };
   signal.addEventListener('abort', kill, { once: true });
   const outDecoder = new StringDecoder('utf8'), errorDecoder = new StringDecoder('utf8');
@@ -101,10 +113,9 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
       await new Promise<void>((yes, no) => child.stdin.end(JSON.stringify(input) + '\n', (error?: Error | null) => error ? no(error) : yes()));
     },
     stop: () => {
-      // A pending spawn may not have a PID yet. Retain the stop request so its
-      // spawn listener kills it, and no caller can release input while reaping.
+      // Retain cancellation until a pending spawn has a PID to reap.
       stopRequested = true;
-      return stopping ??= (async () => { kill(); await exited; })();
+      return stopping ??= (async () => { kill(); if (cleanupError) throw cleanupError; await exited; })();
     },
   };
 }
@@ -151,5 +162,60 @@ export function commandWorkerExecutor(config: {
       return { spawned: attempt.spawned, exited: attempt.exited,
         release: () => attempt.release({ job, build }), stop: attempt.stop };
     },
+  };
+}
+
+const quotaWindows = z.array(z.object({
+  name: z.string().min(1), usage: z.number().min(0).max(1).nullable(),
+  readAt: z.string().datetime({ offset: true }).nullable(),
+  resetsAt: z.string().datetime({ offset: true }).nullable(),
+  durationMs: z.number().positive(), reserve: z.number().min(0).max(1).optional(),
+}).strict()).max(128);
+
+/** Worker-side configured private quota reader. It reads {account,owner,provider}
+ * JSON on stdin and returns the complete QuotaWindow[] JSON on stdout. Provider
+ * credentials stay in the configured command's environment/files. Never run this
+ * in loom's control process. Feed the returned provider to refreshAccountWindows;
+ * that function owns account identity, stale completion and admission checks.
+ * No command output is exposed in failures. Every read has a bounded deadline.
+ * Cancellation kills the group and closes local pipes; if OS reaping remains
+ * pending, the read still fails at its deadline rather than waiting for close.
+ */
+export function commandUsageProvider(plan: WorkerCommand, options: {
+  signal: AbortSignal; timeoutMs?: number;
+}, runtime: ProcessRuntime = native): UsageProvider {
+  const fixed = command(plan), timeoutMs = options.timeoutMs ?? 30_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000)
+    throw new Error('Invalid quota reader deadline');
+  return async identity => {
+    const abort = new AbortController();
+    let rejectCancelled!: (error: Error) => void;
+    const cancelled = new Promise<never>((_, no) => { rejectCancelled = no; });
+    void cancelled.catch(() => {});
+    const cancel = () => { abort.abort(); rejectCancelled(new Error('Quota reader unavailable')); };
+    options.signal.addEventListener('abort', cancel, { once: true });
+    if (options.signal.aborted) cancel();
+    const timer = setTimeout(cancel, timeoutMs);
+    let attempt: ReturnType<typeof launch> | undefined;
+    try {
+      attempt = launch(fixed, abort.signal, runtime, true);
+      const reading = attempt;
+      return await Promise.race([cancelled, (async () => {
+        await reading.spawned;
+        await reading.release({ account: identity.account, owner: identity.owner, provider: identity.provider });
+        const result = await reading.exited;
+        if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Quota reader failed');
+        return quotaWindows.parse(JSON.parse(reading.output()));
+      })()]);
+    } catch { throw new Error('Quota reader unavailable'); }
+    finally {
+      try {
+        if (attempt) await Promise.race([attempt.stop(), cancelled]);
+      } catch { throw new Error('Quota reader unavailable'); }
+      finally {
+        clearTimeout(timer);
+        options.signal.removeEventListener('abort', cancel);
+      }
+    }
   };
 }

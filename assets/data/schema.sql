@@ -1218,6 +1218,7 @@ CREATE TABLE `operation_results` (
 	`caller` text NOT NULL,
 	`id` text NOT NULL,
 	`operation` text NOT NULL,
+	`input_hash` text NOT NULL,
 	`result` blob NOT NULL,
 	`expires_at` text NOT NULL,
 	PRIMARY KEY(`caller`, `id`),
@@ -1283,14 +1284,19 @@ CREATE TABLE `bridge_resume` (
 CREATE TABLE `secret_write_journal` (
 	`id` text PRIMARY KEY NOT NULL,
 	`secret` text NOT NULL,
+	`member` text NOT NULL,
+	`description` text DEFAULT '' NOT NULL,
+	`input_hash` text NOT NULL,
 	`operation` text NOT NULL,
 	`state` text NOT NULL,
 	`started_at` text NOT NULL,
 	`completed_at` text,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "secretWriteJournal_startedAt_utc" CHECK("secret_write_journal"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_write_journal"."started_at") = "secret_write_journal"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_write_journal"."started_at") = "secret_write_journal"."started_at", 0)),
 	CONSTRAINT "secretWriteJournal_completedAt_utc" CHECK("secret_write_journal"."completed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_write_journal"."completed_at") = "secret_write_journal"."completed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_write_journal"."completed_at") = "secret_write_journal"."completed_at", 0)),
 	CONSTRAINT "secret_write_journal_operation_choice" CHECK("secret_write_journal"."operation" in ('add', 'replace', 'remove')),
-	CONSTRAINT "secret_write_journal_state_choice" CHECK("secret_write_journal"."state" in ('prepared', 'committed', 'undone'))
+	CONSTRAINT "secret_write_journal_state_choice" CHECK("secret_write_journal"."state" in ('prepared', 'committed', 'undone')),
+	CONSTRAINT "secret_write_journal_input_hash_required" CHECK(length(trim("secret_write_journal"."input_hash", char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0)
 );
 
 CREATE TRIGGER "tasks_owner_member_insert" BEFORE INSERT ON "tasks" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;

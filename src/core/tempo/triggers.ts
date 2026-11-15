@@ -32,6 +32,8 @@ export interface TriggerEffects {
 export class TriggerEngine {
   private cancel?: () => void;
   private closed = false;
+  private ticking = false;
+  private again = false;
   constructor(private db: DataDatabase, private clock: Clock, private effects: TriggerEffects) {}
   private open() { if (this.closed) throw new Error('Tempo is closed'); }
   private now() { return new Date(this.clock.now()).toISOString(); }
@@ -119,9 +121,23 @@ export class TriggerEngine {
   /** Startup recovery and source/clock changes. No polling or model required. */
   tick(): void {
     if (this.closed) return;
+    // Built-in operations can change triggers in the firing transaction. Finish
+    // that transaction before another scan can observe or fire its rows.
+    if (this.ticking) { this.again = true; return; }
+    this.ticking = true;
+    try {
+      do { this.again = false; this.scan(); } while (this.again && !this.closed);
+    } finally { this.ticking = false; }
+    if (!this.closed) this.effects.changed?.();
+  }
+  private scan(): void {
     this.cancel?.(); this.cancel = undefined;
     let next: number | undefined;
-    for (const t of this.active()) {
+    for (const entry of this.active()) {
+      if (this.closed) return;
+      // An earlier operation in this scan may have stopped or paused this row.
+      const t = this.get(entry.id);
+      if (!t.enabled) continue;
       if (this.expired(t)) { this.stopExpired(t); continue; }
       if (t.lifespan === 'today') {
         // First instant of the next local date; scan at most a DST day.
@@ -137,15 +153,16 @@ export class TriggerEngine {
         const logs = this.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all();
         const consumed = new Set(logs.filter(l => ['fired', 'failed'].includes(l.event)).map(l => l.note));
         for (const log of logs.filter(l => l.event === 'observed' && !consumed.has(l.note))) {
+          if (this.closed) return;
           const current = this.get(t.id);
-          if (current.enabled) this.fire(current, log.note);
+          if (current.enabled && !this.paused(current)) this.fire(current, log.note);
         }
       }
+      if (this.closed) return;
       const current = this.get(t.id);
       if (current.enabled && current.nextDueAt && current.state !== 'failed') next = Math.min(next ?? Infinity, Date.parse(current.nextDueAt));
     }
-    if (next !== undefined) this.cancel = this.clock.at(next, () => this.tick());
-    this.effects.changed?.();
+    if (!this.closed && next !== undefined) this.cancel = this.clock.at(next, () => this.tick());
   }
   private stopExpired(t: Trigger) {
     this.db.transaction(() => { this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped', 'today ended'); });
@@ -162,9 +179,10 @@ export class TriggerEngine {
           this.effects.inbox(t, delivery, words);
         }
         const next = t.sourceKind === 'time' && t.lifespan !== 'once' ? nextTime(t.times!, t.days, this.clock.now(), this.zone()) : Infinity;
-        const standing = t.lifespan !== 'once' && (t.sourceKind !== 'time' || Number.isFinite(next)) &&
+        const stopped = !this.get(t.id).enabled;
+        const standing = !stopped && t.lifespan !== 'once' && (t.sourceKind !== 'time' || Number.isFinite(next)) &&
           (t.lifespan !== 'today' || t.sourceKind !== 'time' || localDate(next, this.zone()) === localDate(this.clock.now(), this.zone()));
-        this.db.update(triggers).set({ state: standing ? 'standing' : 'fired', enabled: standing, nextDueAt: standing && Number.isFinite(next) ? new Date(next).toISOString() : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+        this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing && Number.isFinite(next) ? new Date(next).toISOString() : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         this.log(t.id, 'fired', eventId);
       });
     } catch {
