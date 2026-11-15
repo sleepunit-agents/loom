@@ -178,7 +178,7 @@ export function sharedRoot(options: {
     bridgeDaemon.changed(credentialsChanged);
   });
   comms?.install(operations);
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion);
   const services = {
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
