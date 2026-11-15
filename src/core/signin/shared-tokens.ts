@@ -6,6 +6,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
+import type { Viewer } from '../../policy.js';
 import type { Clock } from '../clock.js';
 import { agents, boxes, jobs, members, tokens } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
@@ -17,6 +18,7 @@ export const sharedTokenInput = z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('agent'), agent: id, job: id.optional() }).strict(),
   z.object({ ...common, kind: z.literal('runner'), box: id }).strict(),
 ]);
+export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner';
 export function sharedTokens(db: DataDatabase, clock: Clock) {
   return {
     issue(input: z.input<typeof sharedTokenInput>) {
@@ -50,7 +52,7 @@ export function sharedTokens(db: DataDatabase, clock: Clock) {
 export function registerSharedTokenAdmin(operations: Operations, db: DataDatabase, service: ReturnType<typeof sharedTokens>) {
   operations.register({ name: 'token.revoke', write: true, recheckPolicy: true,
     input: z.object({ fingerprint: z.string().regex(/^[0-9a-f]{64}$/) }).strict(), output: z.object({ revoked: z.literal(true) }).strict(),
-    may: viewer => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner',
+    may: viewer => sharedTokenOwner(db, viewer),
     run(ctx, input) { const result = service.revoke(input.fingerprint); ctx.changed('core.access', 'household'); return result; },
   });
 }

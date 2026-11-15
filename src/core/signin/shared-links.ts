@@ -7,7 +7,7 @@ import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import { members, notificationDevices, sessions, signinLinks, tokens } from '../data/schema.js';
 import { dataAuthentication } from '../data/authentication.js';
-import { sharedTokens, sharedTokenInput } from './shared-tokens.js';
+import { sharedTokens, sharedTokenInput, sharedTokenOwner } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 
@@ -85,7 +85,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   routes.post('/api/signin/token', async c => {
     const input = sharedTokenInput.safeParse(await c.req.json().catch(() => null));
     const auth = authenticate(c.req.raw);
-    if (!auth?.valid() || auth.viewer.kind !== 'member' || options.db.select().from(members).where(eq(members.id, auth.viewer.id)).get()?.role !== 'owner') return c.json({ error: 'Household owner required' }, 403);
+    if (!auth?.valid() || !sharedTokenOwner(options.db, auth.viewer)) return c.json({ error: 'Household owner required' }, 403);
     if (!input.success) return c.json({ error: 'Invalid token request' }, 400);
     try { return c.json({ ok: true, value: write(() => sharedTokens(options.db, options.clock).issue(input.data)) }); }
     catch (error) {
