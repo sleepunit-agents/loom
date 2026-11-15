@@ -54,10 +54,12 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
  const port=address.port;await new Promise<void>(resolve=>reservation.close(()=>resolve()));
  const origin=`http://localhost:${port}`,client=new Database(':memory:'),clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),raw='f'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  db.insert(members).values({id:'sam',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw),kind:'owner',member:'sam',label:'Sam browser fixture',createdAt:at}).run();
+ db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash('g'.repeat(64)),kind:'owner',member:'other',label:'Other member fixture',createdAt:at}).run();
  const app=await serveShared({db,clock,port,publicOrigin:origin,webRoot,originAllowed:()=>true,reportError:error=>{throw error;}});
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined,trap:ReturnType<typeof createServer>|undefined;
  try{
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  // This proof represents a person; separate route tests exercise headless six-hour sessions.
   const context=await browser.newContext({serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   let blockedHttp=0,blockedSocket=0,trapped=0;
   trap=createServer((_request,response)=>{trapped++;response.end('Disposable isolation trap');});trap.on('upgrade',(_request,socket)=>{trapped++;socket.destroy();});

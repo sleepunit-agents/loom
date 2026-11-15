@@ -4,7 +4,8 @@ on:
     paths:
       - 'web/src/pieces/account/**'
       - 'src/core/signin/**'
-      - 'web/src/shell/signin.tsx'
+      - 'web/src/shell/**'
+      - 'web/src/signin/**'
       - 'src/shared-serve.ts'
       - 'src/shared-root.ts'
       - 'src/shared-credentials.ts'
