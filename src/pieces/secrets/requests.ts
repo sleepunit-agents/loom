@@ -7,6 +7,7 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { household, secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, members, jobs, conversations, inbox } from '../../core/data/schema.js';
 import { secretName, secretAgent, requestReason } from './input.js';
+import { secretHasValue } from './presence.js';
 const duration = z.number().int().min(1).max(525600);
 const requestInput = z.object({ id: z.string().min(1).max(200), secret: secretName, agent: secretAgent,
   job: z.string().min(1).optional(), conversation: z.string().min(1).optional(), why: requestReason, minutes: duration }).strict();
@@ -27,7 +28,7 @@ export class SecretRequests {
         if (old.secret !== input.secret || old.agent !== input.agent || old.job !== (input.job ?? null) || old.conversation !== (input.conversation ?? null) || old.why !== input.why || old.minutes !== input.minutes) throw new Error('Secret request id reused');
         return old;
       }
-      if (!this.db.select().from(secrets).where(eq(secrets.name, input.secret)).get()) throw new Error('Unknown secret');
+      if (!this.db.select().from(secrets).where(eq(secrets.name, input.secret)).get() || !secretHasValue(this.db, input.secret)) throw new Error('Unknown secret');
       if (input.job) {
         const job = this.db.select().from(jobs).where(eq(jobs.id, input.job)).get();
         if (!job || job.agent !== input.agent || (input.conversation && job.conversation !== input.conversation)) throw new Error('Job does not belong to this agent and conversation');
@@ -95,6 +96,7 @@ export class SecretRequests {
   }
 
   grantFor(secret: string, agent: string, job?: string): typeof secretGrants.$inferSelect | undefined {
+    if (!secretHasValue(this.db, secret)) return;
     const at = this.now();
     return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
@@ -119,6 +121,7 @@ export class SecretRequests {
           or(eq(secretRules.answer, 'ask'), eq(secretRules.answer, 'auto')))).all();
       const result: (typeof secretGrants.$inferSelect)[] = [];
       for (const rule of rules) {
+        if (!secretHasValue(this.db, rule.secret)) continue;
         const minutes = duration.parse(rule.minutes);
         const id = `sg-start-${createHash('sha256').update(JSON.stringify([jobId, rule.secret])).digest('hex')}`;
         this.db.insert(secretGrants).values({ id, secret: rule.secret, agent: job.agent, job: jobId,
