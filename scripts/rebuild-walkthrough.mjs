@@ -3,8 +3,9 @@ import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
 import {approvalActions} from './rebuild-approval-actions.mjs';
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
+import {secretValueAction} from './rebuild-secret-value-actions.mjs';
+import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {workVisibility} from './rebuild-work-visibility.mjs';
-import {secretDefaultAction} from './rebuild-secret-actions.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
@@ -16,7 +17,7 @@ import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
-import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
@@ -58,6 +59,12 @@ export async function* walkthroughSteps(output) {
  const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
  try {
   report.example=await exampleHome(home);
+  // Only this disposable acceptance home gets this adapter, never exampleHome
+  // or installed configuration. The ordinary startup loads its existing port.
+  const adapter=join(home,'walkthrough-adapter.mjs'),programPath=join(home,'program.json');
+  writeFileSync(adapter,"export {default} from "+JSON.stringify(new URL('./rebuild-secret-holder.mjs',import.meta.url).href)+";\n",{mode:0o600,flag:'wx'});
+  const program=JSON.parse(readFileSync(programPath,'utf8'));program.adapters=adapter;
+  writeFileSync(programPath,JSON.stringify(program),{mode:0o600});
   const clock=new FakeClock(Date.now());
   let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
@@ -124,7 +131,14 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
-    if(title==='Settings'){row.action=await secretDefaultAction({page,tile,out});report.actions={...report.actions,secretDefault:row.action};}
+    if(title==='Settings'){
+     const savedDefault=await secretDefaultAction({page,tile,out,deferReload:true});
+     row.valueAction=await secretValueAction({page,tile,out,home});
+     row.action=savedDefault.ok&&row.valueAction.ok
+      ?await verifySecretDefaultAfterReload({page,out,navigate:true})
+      :{...savedDefault,ok:false,persistedAfterReload:false,error:savedDefault.error??'The value sequence did not reach its verified reload.'};
+     report.actions={...report.actions,secretDefault:row.action,secretValues:row.valueAction};
+    }
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
     if(title==='Tempo'){
      row.actions={};
