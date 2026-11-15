@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
@@ -24,7 +24,7 @@ function fixture() {
     ['a-blocked', 'open', 'task', 'pond'], ['b-ready', 'open', 'task', 'pond'],
     ['c-ready', 'open', 'task', 'pond'], ['epic', 'open', 'epic', 'pond'],
     ['closed', 'closed', 'task', 'pond'], ['held', 'in_progress', 'task', 'pond'],
-    ['secret-blocker', 'in_progress', 'task', 'hidden'], ['secret-ready', 'open', 'task', 'hidden'],
+    ['secret-blocker', 'in_progress', 'task', 'hidden'], ['0-secret-ready', 'open', 'task', 'hidden'],
   ] as const) db.insert(s.tasks).values({ id, title: id, status, type, project, ownerKind: 'household', createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
   db.insert(s.taskLinks).values([
     { task: 'a-blocked', dependsOn: 'secret-blocker', type: 'blocks' },
@@ -75,5 +75,19 @@ it('streams readiness changes after a hidden blocker commits without disclosing 
     const pending = stream.next();
     writes.run(() => db.update(s.tasks).set({ status: 'closed' }).where(eq(s.tasks.id, 'secret-blocker')).run());
     expect((await pending).value.patches).toEqual([{ path: ['selected', 0], value: { id: 'a-blocked' } }]);
+    const revoked = stream.next();
+    writes.run(() => db.delete(s.projectMembers).run());
+    expect((await revoked).value.patches).toEqual([{ path: ['selected', 0] }, { path: ['tasks', 0] }]);
   } finally { await stream.return?.(); live.close(); }
+});
+
+it('allows installed services to read readiness with an explicit unrestricted SQL policy', async () => {
+  const { client, db, statements } = fixture();
+  db.delete(s.projectMembers).run();
+  const schema = dataQueries(client, { tables: ['tasks'], visibility: { tasks: () => sql`true` } });
+  statements.length = 0;
+  const result = await graphql({ schema, source: '{ readyTasks(orderBy:{id:{direction:asc,priority:0}}) { id } }' });
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ readyTasks: [{ id: '0-secret-ready' }, { id: 'b-ready' }, { id: 'c-ready' }] });
+  expect(statements).toHaveLength(1);
 });
