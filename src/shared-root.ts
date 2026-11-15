@@ -1,4 +1,6 @@
-import type {ProgramGrantReader} from './shared-program-access.js';
+import {sharedProgramSetup,programIssueInput} from './shared-program-setup.js';
+import {programSetupQueries,registerProgramSetup} from './shared-program-queries.js';
+import type {ProgramGrantStore,ProgramGrantReader} from './shared-program-access.js';
 import { sharedProjects, sharedProjectQueries, registerSharedProjects } from './shared-projects.js';
 import { sharedHouseholdAccess, householdAccessQueries, registerSharedHouseholdAccess } from './shared-household-access.js';
 import { sharedNotifications, type SharedNotificationOptions } from './core/signin/shared-notifications.js';
@@ -9,10 +11,12 @@ import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
+import { sharedRunProposals } from './shared-run-proposals.js';
 
 import { registerBoxSettings } from './shared-box-settings.js';
 import {registerMachineRegistry} from './shared-machine-registry.js';
 import { registerAgentModels } from './shared-agent-models.js';
+import { sharedModelProposals } from './shared-model-proposals.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
@@ -29,6 +33,7 @@ import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
+import {sharedBridgeProposals} from './shared-bridge-proposals.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
@@ -49,7 +54,7 @@ import type { Clock } from './core/clock.js';
 import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
 import {installMemoryTempo} from './transport/memory-tempo.js';
 import {installMemorySignals} from './transport/memory-signals.js';
-import { Operations, failure, type Change } from './core/operations/index.js';
+import { OperationError, Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
@@ -78,7 +83,7 @@ import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
-import { nextData } from './next-data.js';
+import { nextData,sharedQueryTables } from './next-data.js';
 import { deskTimeFields, startDeskTime } from './desk-time.js';
 import { deskSpriteFields } from './desk-sprites.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
@@ -96,8 +101,11 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
-  /** Canonical persistent program marker/grants, supplied by the schema owner. */
+  /** Read-only programme grant adapter. Writable setup must supply programStore. */
   programGrants?: ProgramGrantReader;
+  /** Writable setup and outside enforcement share this exact reader; it
+   * takes precedence over the read-only programGrants test/adapter port. */
+  programStore?: ProgramGrantStore;
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
@@ -124,7 +132,10 @@ export function sharedRoot(options: {
   const now = () => new Date(clock.now()).toISOString();
   householdService(db,now).synchronizeFullOwners();
   const settings = tempoSettingsProposals(db, clock);
+  const modelProposals = sharedModelProposals(db, roles);
+  const runProposals = sharedRunProposals(db);
   const secretProposals=sharedSecretProposals(db,now);
+  const bridgeProposals=sharedBridgeProposals(db,now);
   const boxProposals=sharedBoxProposals(db);
   let closing: Promise<void> | undefined;
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
@@ -132,18 +143,22 @@ export function sharedRoot(options: {
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation,boxProposals.operation,secretProposals.operation]);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
+  const programStore=options.programStore;
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
-  const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action),options.programGrants);
+  const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action),programStore?(id=>programStore.read(id)):options.programGrants);
+  let programOperations:()=>readonly string[]=()=>[];
+  const programSetup=programStore?sharedProgramSetup(db,clock,programStore,()=>({records:sharedQueryTables,operations:programOperations()})):undefined;
+  const programQueries=programSetupQueries(db,programSetup);
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
-  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)};};
+  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
@@ -154,7 +169,7 @@ export function sharedRoot(options: {
   startupCleanups.push(notices.close);
   let pushes:ReturnType<typeof sharedNotifications>|undefined;
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...programQueries.fields, ...householdQueries.fields, ...projectQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work(),viewer=>credentials.program(viewer)?.records);
   credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
@@ -163,6 +178,8 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   startupCleanups.push(()=>operations.close());
+  programOperations=()=>operations.offered('http').map(operation=>operation.name);
+  if(programSetup)registerProgramSetup(operations,db,programSetup);
   pushes=sharedNotifications({db,clock,writes:data.writes,config:options.notifications,browser:credentials.browser,visible:conversationQuestionPolicy(db).visibility,reportError:options.reportError});pushes.install(operations);startupCleanups.push(()=>{void pushes?.close();});
   memory.register(operations,options.commsKey?{body:credentials.body,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
@@ -245,6 +262,7 @@ export function sharedRoot(options: {
     household: householdService(db, now),
     projects: sharedProjects(db),
     signin: sharedTokens(db, clock),
+    programSetup,
     account: sharedAccount(db, clock),
     householdAccess,
     notifications: pushes,
@@ -266,6 +284,14 @@ export function sharedRoot(options: {
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
   startupCleanups.push(()=>commsLifetime?.close());
+  if (options.commsKey) modelProposals.register(operations, bodyScope, services.approvals, value => options.commsKey!.hash(value));
+  const stopModelProposals = data.writes.observe(() => modelProposals.committed(() => tempo?.capacityChanged()));
+  startupCleanups.push(stopModelProposals);
+  if (options.commsKey) runProposals.register(operations, bodyScope, services.approvals, value => options.commsKey!.hash(value));
+  const stopRunProposals = data.writes.observe(() => runProposals.committed(() => tempo?.capacityChanged()));
+  startupCleanups.push(stopRunProposals);
+
+  if(options.commsKey)bridgeProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   if(options.commsKey)secretProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   if(options.commsKey)boxProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   const stopBoxProposals=data.writes.observe(()=>boxProposals.committed(()=>tempo?.capacityChanged()));
@@ -326,7 +352,7 @@ export function sharedRoot(options: {
       await next();
     } finally { active.delete(entry); finished(); }
   });
-  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
+  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, issueProgram:programSetup?input=>{const parsed=programIssueInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid program token request');return programSetup.issue(parsed.data);}:undefined, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
@@ -374,7 +400,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      stopMemoryWrites();stopBoxProposals();memorySignals?.close();
+      stopMemoryWrites();stopModelProposals();stopRunProposals();stopBoxProposals();memorySignals?.close();
       accountReports.close();
       commsLifetime?.close();workLife.close();
       runtime.close();

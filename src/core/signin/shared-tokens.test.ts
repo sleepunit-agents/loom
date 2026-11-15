@@ -4,7 +4,8 @@ import { eq } from 'drizzle-orm';
 import { afterEach, expect, it, vi } from 'vitest';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, boxes, jobs, members, tokens } from '../data/schema.js';
+import { agents, boxes, jobs, members, tokens, sessions } from '../data/schema.js';
+import { sharedSigninLinks } from './shared-links.js';
 import { sharedRoot } from '../../shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -94,4 +95,35 @@ it.each(['revoke','demote'] as const)('rechecks issuer authority inside the issu
   });
   expect((await f.issue({kind:'owner',member:'sam',label:'Refused'})).status).toBe(403);
   expect(f.db.select().from(tokens).where(eq(tokens.label,'Refused')).all()).toEqual([]);
+});
+
+it.each(['revoke','demote','expire'] as const)('withholds the one-time bearer if post-commit publication %s ends issuer authority',async change=>{
+ const f=fixture();let observed=false,insideTransaction=true;
+ const stop=f.root.writes.observe(()=>{
+  if(observed||!f.db.select().from(tokens).where(eq(tokens.label,'Committed but withheld')).get())return;
+  observed=true;insideTransaction=f.client.inTransaction;
+  if(change==='revoke')f.db.update(tokens).set({revokedAt:f.at}).where(eq(tokens.fingerprint,hash(f.raw.owner))).run();
+  else if(change==='expire')f.db.update(tokens).set({expiresAt:f.at}).where(eq(tokens.fingerprint,hash(f.raw.owner))).run();
+  else f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
+ });clean.push(stop);
+ const response=await f.issue({kind:'owner',member:'sam',label:'Committed but withheld'});
+ expect(observed).toBe(true);expect(insideTransaction).toBe(false);
+ expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Household owner required'});
+ expect(f.db.select().from(tokens).where(eq(tokens.label,'Committed but withheld')).get()).toMatchObject({kind:'owner',member:'sam'});
+ expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
+});
+it('withholds a committed one-time bearer if publication starts shutdown',async()=>{
+ const f=fixture();let stopped=false;
+ const stop=f.root.writes.observe(()=>{if(stopped||!f.db.select().from(tokens).where(eq(tokens.label,'Shutdown issuance')).get())return;stopped=true;void f.root.close();});clean.push(stop);
+ const response=await f.issue({kind:'owner',member:'sam',label:'Shutdown issuance'});
+ expect(stopped).toBe(true);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});
+ expect(f.db.select().from(tokens).where(eq(tokens.label,'Shutdown issuance')).get()).toBeDefined();
+});
+it('withholds an issued bearer when publication ends the presenting owner browser',async()=>{
+ const f=fixture(),link=f.root.writes.run(()=>sharedSigninLinks(f.db,f.clock).makeLink(hash(f.raw.owner))).value;
+ const signed=await f.root.http.request('http://loom'+link.path,{method:'POST'}),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];let ended=false;
+ const stop=f.root.writes.observe(()=>{if(ended||!f.db.select().from(tokens).where(eq(tokens.label,'Browser issuance')).get())return;ended=true;f.db.delete(sessions).where(eq(sessions.id,hash(cookie.slice(8)))).run();});clean.push(stop);
+ const response=await f.root.http.request('http://loom/api/signin/token',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({kind:'owner',member:'sam',label:'Browser issuance'})});
+ expect(ended).toBe(true);expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Household owner required'});
+ expect(f.db.select().from(tokens).where(eq(tokens.label,'Browser issuance')).get()).toBeDefined();
 });

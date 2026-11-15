@@ -446,6 +446,8 @@ export const inbox = sqliteTable('inbox', {
   member: text('member').references((): AnySQLiteColumn => members.id),
   job: text('job').references((): AnySQLiteColumn => jobs.id),
   takenAt: text('taken_at'),
+  // Internal lease metadata: current quiet volume can change after confirmation.
+  takenVolume: text('taken_volume', {enum:['full','dim','mute']}),
   doneAt: text('done_at'),
   answers: text('answers').$type<'yes-no' | 'words'>(),
   why: text('why'),
@@ -475,6 +477,7 @@ export const inbox = sqliteTable('inbox', {
   check('inbox_source_choice', sql`${t.source} in ('thread', 'discord', 'slack', 'trigger', 'handoff', 'answer', 'task', 'approval', 'secret-request', 'notice')`),
   check('inbox_from_kind_choice', sql`${t.fromKind} in ('person', 'agent', 'schedule', 'unknown')`),
   check('inbox_state_choice', sql`${t.state} in ('waiting', 'taken', 'done', 'answered', 'resolved')`),
+  check('inbox_taken_volume_choice', sql`${t.takenVolume} in ('full', 'dim', 'mute')`),
   check('inbox_volume_choice', sql`${t.volume} in ('full', 'dim', 'mute')`),
   check('inbox_answers_choice', sql`${t.answers} in ('yes-no', 'words')`),
   check('inbox_answer_choice', sql`${t.answer} in ('yes', 'no', 'done', 'dismiss', 'words', 'replied')`),

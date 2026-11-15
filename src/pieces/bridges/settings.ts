@@ -6,13 +6,15 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeSends } from '../../core/data/schema.js';
 const text=z.string().trim().min(1).max(200), platform=z.enum(['discord','slack']);
 const address={platform,workspace:text};
-export const bridgeSetting=z.discriminatedUnion('action',[
+export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('connection'),id:text,platform,agent:text,workspace:text,botUser:text,tokenSecret:text,appSecret:text.nullable(),enabled:z.boolean(),only:z.array(text).max(200),ignore:z.array(text).max(200)}).strict(),
  z.object({action:z.literal('disconnect'),id:text}).strict(),
  z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean()}).strict(),
  z.object({action:z.literal('removeChannel'),...address,channel:text}).strict(),
  z.object({action:z.literal('person'),...address,user:text,member:text}).strict(),
  z.object({action:z.literal('removePerson'),...address,user:text}).strict(),
+]);
+export const bridgeSetting=z.discriminatedUnion('action',[...bridgeConfiguration.options,
  z.object({action:z.literal('review'),id:text,decision:z.enum(['release','dismiss'])}).strict(),
 ]);
 export class BridgeSettings {
@@ -30,8 +32,9 @@ export class BridgeSettings {
      // a new connection rather than reinterpretation of old private receipts.
      if(existing&&(['platform','workspace','botUser','agent'] as const).some(key=>existing[key]!==input[key]))throw Error('Connection identity is fixed');
      const {action:_action,only,ignore,...config}=input;
-     const fields={...config,state:'disconnected' as const,stateAt:this.now()};
-     // Every edit retires the prior socket/config lifetime before reconnect.
+     const sameSocket=existing&&existing.enabled===config.enabled&&existing.tokenSecret===config.tokenSecret&&existing.appSecret===config.appSecret;
+     // Filters are read live by the receiver; they do not retire this socket.
+     const fields={...config,state:sameSocket?existing.state:'disconnected' as const,stateAt:sameSocket?existing.stateAt:this.now()};
      this.db.insert(bridgeConnections).values(fields).onConflictDoUpdate({target:bridgeConnections.id,set:fields}).run();
      this.db.delete(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection,input.id)).run();
      for(const [rule,channels] of [['only',only],['ignore',ignore]] as const){

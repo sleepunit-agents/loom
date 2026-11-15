@@ -40,7 +40,11 @@
     {
       "id": "inbox-006",
       "promise": "Every item has one recipient: a person or an agent.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxRecipients"
+      }
     },
     {
       "id": "inbox-007",
@@ -108,12 +112,20 @@
     {
       "id": "inbox-018",
       "promise": "a The recipient. An item is for one person or one agent. A person's Inbox shows the waiting items addressed to them.",
-      "source": "docs/how-it-works/site/inbox.html#see-h"
+      "source": "docs/how-it-works/site/inbox.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxRecipients"
+      }
     },
     {
       "id": "inbox-019",
       "promise": "b Who else sees it. An item also carries the usual labels: a project's people, an agent's owners, or one member alone. A household owner sees everything, including what is private to another member. Private to a member means that member plus household owners.",
-      "source": "docs/how-it-works/site/inbox.html#see-h"
+      "source": "docs/how-it-works/site/inbox.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxVisibility"
+      }
     },
     {
       "id": "inbox-020",

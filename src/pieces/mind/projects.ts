@@ -5,6 +5,7 @@ import {z} from 'zod';
 import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import type {Clock} from '../../core/clock.js';
 import {projectDeadline} from './project-deadlines.js';
+import {resolveCardReference} from './card-references.js';
 import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
 import type {ProjectSectionRole,ProjectQuery} from './projects-roles.js';
@@ -50,8 +51,9 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  }
  function read(id:string,viewer:Viewer,readingHub=false):ProjectRecord|undefined{
   const colon=id.indexOf(':');if(colon<1)return;
-  const agent=id.slice(0,colon),asked=id.slice(colon+1),db=sources.get(agent);
+  const agent=id.slice(0,colon),reference=id.slice(colon+1),db=sources.get(agent);
   if(!allowed(viewer,agent)||!db||!has(db,'projects'))return;
+  const asked=resolveCardReference(db,'project',reference);
   const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as {slug:string;card_json:string;updated:string;archived_at:string|null}|undefined;
   if(!row)return;
   const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
@@ -108,6 +110,22 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ${selector} AND ${activeMemory}`).get(...params,new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
  };
+ const retained=(agent:string,v:Viewer,kind:'archive'|'proposal',first:number,before?:string|null)=>{
+  const db=sources.get(agent);if(!db||!maySee(v,{type:'memory',agent},options.sharing()))return null;
+  const table=kind==='archive'?'memories':'proposals';if(!has(db,table))return {entries:[],nextBefore:null};
+  const columns=new Set((db.pragma(`table_info(${table})`) as {name:string}[]).map(column=>column.name));
+  if(!columns.has(kind==='archive'?'archived':'status'))throw Error('Retained source schema is unavailable');
+  const fields={uuid:'uuid',ref:'ref',title:'title',content:'content',category:'category',project:'project',ttl:'ttl',created:'created',expires_at:'expiresAt',archive_note:'archiveNote',source:'source'};
+  const projection=Object.entries(fields).map(([column,alias])=>`${columns.has(column)?column:'NULL'} AS ${alias}`).join(',');
+  const cursor=before===undefined||before===null?[]:[before];
+  const rows=db.prepare(`SELECT CAST(id AS TEXT) AS cursor,${projection} FROM ${table} WHERE ${kind==='archive'?'archived=1':"status='pending'"}${cursor.length?' AND id<?':''} ORDER BY id DESC LIMIT ?`).all(...cursor,first+1) as Array<{cursor:string;uuid:string|null;ref:string|null;title:string|null;content:string|null;category:string|null;project:string|null;ttl:string|null;created:string|null;expiresAt:string|null;archiveNote:string|null;source:string|null}>;
+  const page=rows.slice(0,first);
+  return {entries:page.map(({cursor:_cursor,uuid,archiveNote,...row})=>{
+   let note=archiveNote,archivedAt:string|null=null;
+   try{const parsed:unknown=JSON.parse(archiveNote??'null');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){const value=parsed as Record<string,unknown>;note=typeof value.note==='string'?value.note:null;archivedAt=typeof value.archived_at==='string'?value.archived_at:null;}}catch{/* Unparsed archive notes stay readable without source changes. */}
+   return {...row,id:uuid&&/^[a-f0-9-]{36}$/.test(uuid)?`${agent}:${kind==='proposal'?'proposal:':''}${uuid}`:null,note,archivedAt};
+  }),nextBefore:rows.length>first?page.at(-1)!.cursor:null};
+ };
  const memoryHistory=(id:string,v:Viewer)=>{
   const source=memorySource(id,v);if(!source||!has(source.db,'memory_revisions'))return [];const {db,selector,params}=source;
   const row=db.prepare(`SELECT id FROM memories WHERE ${selector}`).get(...params) as {id:number}|undefined;
@@ -117,6 +135,6 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  };
  const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,retained,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }
