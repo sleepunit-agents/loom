@@ -14,6 +14,18 @@ it('does not turn missing apps or failed sign-in into a pass',()=>{
  expect(evaluate(promise,{apps:[],fatal:'Sign-in failed'}).status).toBe('not checkable yet');
  expect(evaluate({probe:{kind:'signin'}},{signin:{ok:false}}).status).toBe('not met');
 });
+it.each([
+ ['Shown day\nRepair the garden pump\nFern · 3 turns', 'met'],
+ ['Shown day\nRepair the garden pump\nFern · 19 turns, 2 replies', 'met'],
+ ['Shown day\nRepair the garden pump\nFern · 0 turns', 'not met'],
+ ['Shown day\nRepair the garden pump\nNo turns recorded', 'not met'],
+ ['Shown day\nRepair the garden pump\nFern · 0 turns\nAnother conversation\nFern · 9 turns', 'not met'],
+ ['Repair the garden pump\nFern · 9 turns', 'not met'],
+])('measures Activity counts in the named conversation as the fixture grows: %s',(text,status)=>{
+ const checklist=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/memory.json',import.meta.url),'utf8'));
+ const criterion=checklist.promises.find(row=>row.probe?.app==='Activity');
+ expect(evaluate(criterion,{apps:[{title:'Activity',opened:true,text}]}).status).toBe(status);
+});
 it('requires actual GraphQL data and no GraphQL errors for the live observation',()=>{
  const promise={probe:{kind:'live'}};
  expect(evaluate(promise,{live:{dataFrames:0,errors:[]}}).status).toBe('not met');
@@ -64,3 +76,30 @@ it('keeps the measured revision and every page count in both regenerated reports
   for(const page of report.summary)expect(md).toContain('](#page-'+page.page+')');
  }finally{rmSync(out,{recursive:true,force:true});}
 });
+it('requires persisted Account Household and Sharing action evidence from their checked-in checklists',()=>{
+ for(const [file,app]of [['signing-in','Your account'],['people','Household setup'],['people','Project sharing']]){
+  const checklist=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+file+'.json',import.meta.url),'utf8'));
+  const promise=checklist.promises.find(row=>row.probe?.kind==='action'&&row.probe.app===app);
+  expect(promise).toBeDefined();
+  expect(evaluate(promise,{apps:[{title:app,opened:true}]}).status).toBe('not checkable yet');
+  expect(evaluate(promise,{apps:[{title:app,action:{ok:false,error:'Fixture failed'}}]}).status).toBe('not met');
+  expect(evaluate(promise,{apps:[{title:app,action:{ok:true,screenshot:'proof.png'}}]}).status).toBe('met');
+ }
+});
+
+it('requires every observed component of a broad page promise',()=>{
+ const promise={probe:{kind:'all',probes:[{kind:'action',action:'claim'},{kind:'action',action:'blockers'}]}};
+ expect(evaluate(promise,{actions:{claim:{ok:true},blockers:{ok:true}}}).status).toBe('met');
+ expect(evaluate(promise,{actions:{claim:{ok:true},blockers:{ok:false,error:'blocked work appeared'}}}).status).toBe('not met');
+ expect(evaluate(promise,{actions:{claim:{ok:true}}}).status).toBe('not checkable yet');
+ expect(evaluate({probe:{kind:'all',probes:[]}},{actions:{}}).status).toBe('not checkable yet');
+});
+
+it('can disprove a one-query-door promise without claiming the converse proves it',()=>{
+ const promise={probe:{kind:'legacy-data-socket'}};
+ expect(evaluate(promise,{}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{transport:{sockets:[{path:'/graphql',phase:'Tasks'}]}}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{transport:{sockets:[{path:'/live',phase:'Project sharing',failed:true}]}})).toMatchObject({status:'not met',evidence:'walkthrough.json#transport'});
+});
+
+it('keeps an explicitly incomplete action unknown even if partial checks passed',()=>{expect(evaluate({probe:{kind:'action',action:'partial'}},{actions:{partial:{ok:true,inconclusive:true,reason:'A new app has no query signature yet.'}}})).toMatchObject({status:'not checkable yet',reason:'A new app has no query signature yet.'});});

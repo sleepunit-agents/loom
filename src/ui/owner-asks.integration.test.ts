@@ -4,7 +4,7 @@
  * ("Count these 5 scheduled jobs as your work?"), the runtime a `principal-reset` ("Count this conversation as your work
  * from now on?"); the household owner's Allow has core read the approval back and post it, as him, to the piece that
  * applies it (the clock's `vouch-approved`, the runtime's `reset-approved`). Deny records no and asks nothing; a member
- * can't apply one; an ask that waits on it clears itself once it's answered.
+ * can't apply one. Current Inbox settlement is checked on the canonical service.
  *
  * The approvals piece is the t-1970 test's stub, widened to these kinds; the clock and the runtime are stubs recording
  * each action they're posted (and the caller) in $LOOM_HOME, and spending it as the real ones do: allowed, exact target.
@@ -94,7 +94,7 @@ function piece(home: string, name: string, raw: Record<string, unknown>, src: st
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
   writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
-    bins: [`loom-${name}`], loom: { settings: [], services: [], ...loom } }));
+    bins: [`loom-${name}`], loom }));
   writeFileSync(join(dir, 'current', 'cli'), src);
   chmodSync(join(dir, 'current', 'cli'), 0o755);
   mkdirSync(join(home, 'pieces', 'bin'), { recursive: true });
@@ -287,19 +287,6 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
     expect(acts()).toEqual([]);
   });
 
-  it('an ask that waits on the approval clears itself once it\'s answered', async () => {
-    const art = agentDir(h, 'art');
-    const conv = recordTurn(art, 'art', { venue: 'wake', place: 'wake:w-000001', label: 'A check', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:runtime').conversation;
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'asked', needs_owner: { ask: 'Count these 5 scheduled jobs as your work?', why: 'They were set before loom kept whom each was for.',
-      if_yes: 'They fire as yours.', if_no: 'Nothing changes.', refs: ['a-0000beef'], waits_on: { approval: 'a-0000beef' } } });
-    const cookie = await login('jonathan');
-    const d = await inbox(cookie);
-    const ask = (x: Data) => (x.items as Data[]).find((i) => i.kind === 'alert' && i.source.id === 'loom');
-    expect(ask(d).approval.actions.map((b: Data) => b.label)).toEqual(['Allow', 'Deny']);
-    await press(cookie, d, 'allow', { id: 'a-0000beef' });
-    expect(ask(await inbox(cookie))).toBeUndefined();
-  });
-
   it('only an allowed one is applied: a pending, denied or used one leaves the answer as it was', async () => {
     const pieces = (await pieceManifests(process.env)).pieces;
     const owner = { kind: 'owner' as const, who: 'jonathan', agents: '*' as const };
@@ -333,21 +320,6 @@ describe('owner-only actions are asked on loom\'s page, and his Allow does them 
       expect(r.ok).toBe(false);
       expect(r.message).toMatch(/It wasn't applied: Nothing changed: the approval could not be spent\.$/);
     }
-  });
-
-  it('an ask waiting on a card that was withdrawn (asked again with an up-to-date list) clears itself', async () => {
-    const art = agentDir(h, 'art');
-    const conv = recordTurn(art, 'art', { venue: 'wake', place: 'wake:w-000002', label: 'A check', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:runtime').conversation;
-    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'asked', needs_owner: { ask: 'Count these 5 scheduled jobs as your work?', why: 'w',
-      if_yes: 'y', if_no: 'n', refs: ['a-0000beef'], waits_on: { approval: 'a-0000beef' } } });
-    const cookie = await login('jonathan');
-    const ask = (x: Data) => (x.items as Data[]).find((i) => i.kind === 'alert' && i.source.id === 'loom');
-    expect(ask(await inbox(cookie))).toBeDefined();
-    approvals({ ...CARDS, 'a-0000beef': { ...CARDS['a-0000beef'], state: 'withdrawn' } });
-    const { resolveNeeds, pieceCheckers } = await import('../needs-resolve.js');
-    const done = await resolveNeeds(h, pieceCheckers(process.env));
-    expect(done.map((d) => d.reason)).toContain('the approval was withdrawn unanswered (asked again with an up-to-date list)');
-    expect(ask(await inbox(cookie))).toBeUndefined();
   });
 
   it('a reset for a conversation core has as another agent\'s is refused', async () => {

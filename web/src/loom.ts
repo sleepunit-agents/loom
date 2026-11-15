@@ -91,7 +91,7 @@ export interface AgentHead { label: string; bg: string; fg: string; sub?: string
   on?: { text: string; href?: string } }
 
 export type View =
-  | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string; /** The Projects index's cards (web/src/projects.tsx). */ projects?: ProjectCards; people?: import('./people').PeopleData }
+  | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string; projects?: ProjectCards; people?: { rows: { slug: string; name: string; meta?: string; badge?: string; kind: string }[]; q: string; kind: string; selected?: string; open?: Page; conversations?: { title: string; href: string }[]; permissions?: string } }
   | { view: 'home' | 'house-home' | 'dashboard' | 'inbox' | 'sheet' | 'passkeys' | 'comms' | 'knowledge' | 'activity'; chrome: Chrome; ctx?: Ctx; [k: string]: unknown };
 
 // ---- links: loom's own rule (src/ui/vocab.ts splitPage, render.ts pageHref) ----------------------

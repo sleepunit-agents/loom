@@ -40,7 +40,9 @@ It records each tile's actual text, screenshot, console/page/network errors and
 GraphQL connection activity during that visit. Connection activity may also
 include the shell and other open tiles; it is not proof of a specific app's query.
 There are no injected sessions, mocked HTTP routes or sample UI components.
-Screenshots and `walkthrough.json` are uploaded by the Rebuild walkthrough CI job.
+Screenshots and `walkthrough.json` are uploaded by the required CI run’s built
+program walkthrough job for next, or by a manual Rebuild walkthrough run. Artifacts
+include the head SHA and run attempt so a failed-job rerun keeps separate evidence.
 App failures are measurements in that report; fatal startup/sign-in failures fail
 the command. A green walkthrough job means evidence was collected, not that all
 product promises are fulfilled.

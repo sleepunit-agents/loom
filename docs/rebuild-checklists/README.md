@@ -8,7 +8,7 @@ Tables from `model.py` are listed as model references, not counted as user actio
 The source page's SHA detects drift rather than silently measuring older words.
 
 Regenerate these copies with `python3 scripts/rebuild-checklists.py`. This never
-edits the approved site. Add behavioral probes in the generator as the walkthrough
+edits the approved site. Add behavioral probes bound to exact source promises as the walkthrough
 grows. Do not turn a button's presence into proof of the action behind it.
 
 The walkthrough writes `report.md` and `report.json` beside its screenshots and
@@ -30,8 +30,9 @@ observed gaps to the listed owning task. Unchecked promises describe missing
 measurement coverage, not demonstrated product defects. `report.json` exposes
 the same page summary in `summary`, with individual results under `pages`.
 
-CI publishes these files in the **Rebuild walkthrough** workflow's
-`rebuild-walkthrough-<head SHA>` artifact. The SHA identifies the tested branch
+For next pull requests and pushes, the required **CI** run publishes these files
+through its **built program walkthrough** job. Manual **Rebuild walkthrough** runs
+remain available. The artifact is `rebuild-walkthrough-<head SHA>-<attempt>`. The SHA identifies the tested branch
 head; compare it with `next` before treating a run as evidence for current
 code. Download the whole artifact so relative screenshot links work. A green
 workflow means evidence collection completed; the page summary is the product
@@ -54,3 +55,11 @@ where a report is regenerated.
 The browser job also writes the per-page table into the Actions run summary,
 so the coordinator can see failures and missing coverage before downloading the
 artifact. Keep the artifact for promise-level reasons, screenshots and raw facts.
+
+
+Before committing probe mappings, run `python3 scripts/rebuild-checklists.py --check`.
+It compares every generated file without changing any of them. CI runs the same
+check before collecting browser evidence. Existing probe bindings survive only when
+the exact source promise and source-page hash still match. New generated criteria
+belong in the generator. This check detects stale source copies and generated
+metadata; review remains responsible for whether a probe proves its promise.
