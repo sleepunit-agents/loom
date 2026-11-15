@@ -59,7 +59,7 @@ it('publishes scheduled Changes source commits and failures through the actual s
   expect(f.errors).toEqual([]);
 });
 
-it('drains a configured Changes read before closing the data owner and never rearms it', async () => {
+it('drains a configured Changes read before root close completes and never rearms it', async () => {
   let finish!: (rows: Change[]) => void, reads = 0;
   const f = fixture(async () => { reads++; return new Promise(resolve => { finish = resolve; }); });
   const pending = f.root.refreshChanges!();
@@ -99,4 +99,34 @@ it('fences late GraphQL callbacks immediately while an unrelated source read sti
     releaseRead(); finishSource([]); await source; await closing;
   }
   expect(f.errors).toEqual([]);
+});
+
+it('commits a source failure during shutdown without waking a stopped real subscriber', async () => {
+  let rejectSource!: (error: Error) => void, reads = 0, probes = 0;
+  const f = fixture(async () => { reads++; return new Promise((_resolve, reject) => { rejectSource = reject; }); }, {
+    probe: { type: GraphQLString, resolve() { probes++; f.client.prepare('select 1').get(); return 'ready'; } },
+  });
+  const http = createServer(getRequestListener(request => f.root.http.fetch(request)));
+  const detach = f.root.attach(http);
+  await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
+  cleanup.push(async () => { detach(); await f.root.close(); await new Promise<void>(ok => http.close(() => ok())); });
+  const address = http.address(); if (!address || typeof address === 'string') throw new Error('No address');
+  const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { cookie: 'loom_ui=' + cookie, origin: 'http://loom' } });
+  cleanup.push(() => ws.terminate());
+  await once(ws, 'open');
+  let next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await next;
+  next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'subscribe', id: 'probe', payload: { query: 'subscription { observe(query:"{ probe }") { revision patches { path value removed } } }' } }));
+  await next; expect(probes).toBe(1);
+  const pending = f.root.refreshChanges!(); void pending.catch(() => {});
+  await new Promise<void>(resolve => queueMicrotask(resolve));
+  const closing = f.root.close(); expect(f.root.close()).toBe(closing);
+  try {
+    await expect.poll(() => ws.readyState).toBe(WebSocket.CLOSED);
+    rejectSource(new Error('upstream'));
+    await expect(pending).rejects.toThrow('GitHub read unavailable');
+    await closing;
+    expect(f.root.services.changes.syncStatus()?.failed).toBe(true);
+    expect(probes).toBe(1); expect(f.errors).toEqual([]);
+    f.clock.advance(120_000); expect(reads).toBe(1);
+  } finally { rejectSource(new Error('cleanup')); await pending.catch(() => {}); await closing; }
 });

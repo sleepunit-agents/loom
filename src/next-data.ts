@@ -46,14 +46,9 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
     schema,
   });
+  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => live.changed() });
   const http = dataHttp(db, authenticate, publicOrigin, schema);
   let closing: Promise<void> | undefined;
-  // A source read already in flight may commit while its owner drains shutdown.
-  // Keep that transaction; its read clients have already stopped admission.
-  const writes = new DataWrites(db, {
-    refreshAccess: () => { if (!closing) socket.refreshAccess(); },
-    changed: () => { if (!closing) live.changed(); },
-  });
   return {
     http,
     attach: socket.attach,

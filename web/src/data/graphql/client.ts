@@ -1,5 +1,5 @@
 import { createClient, CombinedError, type Exchange, type OperationResult } from '@urql/core';
-import { cacheExchange } from '@urql/exchange-graphcache';
+import { cacheExchange, type KeyingConfig } from '@urql/exchange-graphcache';
 import { print, type FormattedExecutionResult } from 'graphql';
 import { createClient as createSocket, type Sink, type SubscribePayload } from 'graphql-ws';
 import { filter, make, mergeMap, pipe, share, takeUntil } from 'wonka';
@@ -85,6 +85,13 @@ export function browserQueryTransport(url: string): QueryTransport {
   const socket = createSocket({ url, lazy: true, retryAttempts: Infinity, on: { closed: () => { for (const listener of listeners) listener(); } } });
   return { subscribe: (request, sink) => socket.subscribe(request, sink), disconnected(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; }, close() { listeners.clear(); void socket.dispose(); } };
 }
+export const dataCacheKeys: KeyingConfig = {
+  // Sequence numbers are local to a thread. Encode the complete tuple so
+  // messages from different threads cannot share a normalized entity.
+  CommsMessageView: row =>
+    typeof row.thread === 'string' && typeof row.seq === 'number'
+      ? JSON.stringify([row.thread, row.seq]) : null,
+};
 export function generatedDataClient(transport: QueryTransport) {
-  return createClient({ url: '/graphql', requestPolicy: 'network-only', exchanges: [cacheExchange({}), liveQueryExchange(transport)] });
+  return createClient({ url: '/graphql', requestPolicy: 'network-only', exchanges: [cacheExchange({ keys: dataCacheKeys }), liveQueryExchange(transport)] });
 }
