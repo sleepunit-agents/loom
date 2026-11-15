@@ -88,6 +88,11 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith(('Takes a yes, a no', 'An item that is a question says')):row['probe']={'kind':'action','action':'inboxDecisions'}
    if row['promise'].startswith(('Marks what you have read', 'Opening an item marks it read')):row['probe']={'kind':'action','action':'inboxHistory'}
+ if f.stem=='desk':
+  for row in rows:
+   if row['promise'].startswith('Places tiles by one rule'):row['probe']={'kind':'action','action':'deskGeometry'}
+   if row['promise'].startswith('The first tile takes the big slot.'):row['probe']={'kind':'action','action':'deskLayout'}
+   if row['promise'].startswith(('Keeps every installed app within reach', 'The launcher lists every app in groups')):row['probe']={'kind':'action','action':'deskLauncher'}
  if f.stem=='data':
   for row in rows:
    if row['promise'].startswith('A query names a table from the model'):row['probe']={'kind':'legacy-data-socket'}
