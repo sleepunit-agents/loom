@@ -15,7 +15,7 @@
       "source": "docs/how-it-works/site/desk.html",
       "probe": {
         "kind": "action",
-        "action": "deskLayout"
+        "action": "deskGeometry"
       }
     },
     {

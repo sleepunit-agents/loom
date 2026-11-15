@@ -59,6 +59,8 @@ export async function deskActions({page,out,inventory}) {
   await page.setViewportSize({width:1100,height:1500});
   await page.waitForFunction(()=>{const a=document.querySelector('[aria-label="Tasks tile"]')?.getBoundingClientRect(),b=document.querySelector('[aria-label="Inbox tile"]')?.getBoundingClientRect();return a&&b&&a.bottom<=b.top;});
   const tall=await snapshot();
+  const geometryShot='action-deskGeometry.png';await page.screenshot({path:join(out,geometryShot),fullPage:true});
+  evidence.deskGeometry={ok:true,reason:'Wide and tall tile bounds filled the available desk without overlap.',wide,tall,screenshot:geometryShot};
   await page.setViewportSize({width:1920,height:900});
   await tile('Inbox').getByRole('button',{name:'Make Inbox big',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('[aria-label="Inbox tile"]').getBoundingClientRect().left<document.querySelector('[aria-label="Tasks tile"]').getBoundingClientRect().left);
@@ -67,11 +69,12 @@ export async function deskActions({page,out,inventory}) {
   phase='restore Inbox from dock';await page.locator('.next-dock').getByRole('button',{name:'Open Inbox',exact:true}).click();await tile('Inbox').waitFor();
   phase='close Inbox';await tile('Inbox').getByRole('button',{name:'Close Inbox',exact:true}).click();await tile('Inbox').waitFor({state:'detached'});
   // A two-tile screen: make Tasks older than Inbox, then open a third app.
-  await page.setViewportSize({width:1100,height:1500});await launch('Inbox');await launch('Approvals');
+  phase='start eviction';await page.setViewportSize({width:1100,height:1500});await launch('Inbox');await launch('Approvals');
   await tile('Tasks').waitFor({state:'hidden'});check(await tile('Inbox').isVisible()&&await tile('Approvals').isVisible(),'The most recently used tiles did not remain');
   const evicted=await snapshot();phase='restore evicted Tasks';await page.locator('.next-dock').getByRole('button',{name:'Open Tasks',exact:true}).click();await tile('Tasks').waitFor();
   return{reason:'Wide and tall tile bounds filled the desk without overlap; promotion, minimize/restore, close, and least-recently-used eviction worked.',wide,tall,promoted,minimizedRestored:true,closedRemoved:true,leastRecentlyUsed:'Tasks',evicted};
  });
+ if(!evidence.deskGeometry)evidence.deskGeometry={ok:false,error:evidence.deskLayout?.error,phase:evidence.deskLayout?.phase,screenshot:evidence.deskLayout?.screenshot};
  await page.setViewportSize({width:1600,height:1000});
  return evidence;
 }
