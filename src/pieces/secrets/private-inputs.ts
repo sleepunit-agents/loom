@@ -22,6 +22,7 @@ export class SecretPrivateInputs {
  readonly requests:SecretRequests;
  constructor(private db:DataDatabase,private clock:Clock,private source:SecretValueSource|undefined,
   private commit:<T>(write:()=>T)=>T){this.requests=new SecretRequests(db,()=>new Date(clock.now()).toISOString());}
+ startGrants(job:string){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job));}
  startup(job:string):{alias:string}[]{
   if(this.closed)throw failed();
   return this.commit(()=>{
@@ -32,7 +33,7 @@ export class SecretPrivateInputs {
   });
  }
  dispatch<T>(input:{job:string;secret:string;attempt:string},current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{
-  if(this.closed||this.db.$client.inTransaction)return Promise.reject(failed());
+  if(this.closed||this.active.size>=1024||this.db.$client.inTransaction)return Promise.reject(failed());
   let resolve!:(value:T)=>void,reject!:(error:unknown)=>void;
   const work=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});this.active.add(work);void work.finally(()=>this.active.delete(work)).catch(()=>{});
   void this.perform(input,current,capture).then(resolve,reject);return work;
@@ -40,6 +41,8 @@ export class SecretPrivateInputs {
  private async perform<T>(input:{job:string;secret:string;attempt:string},current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{
   secretName.parse(input.secret);z.string().min(1).max(300).parse(input.attempt);
   if(!this.source||!this.available(current))throw failed();
+  for(const [key,until] of this.delivered)if(until<=this.clock.now())this.delivered.delete(key);
+  if(this.delivered.size>=4096)throw failed();
   const target=this.db.select().from(jobs).where(eq(jobs.id,input.job)).get();if(!target)throw failed('denied');
   const id='use-input-'+createHash('sha256').update('loom-private-secret-input-v1\0').update(JSON.stringify([target.agent,target.id,input.attempt])).digest('hex');
   const permitted=()=>this.available(current)&&this.db.select({agent:jobs.agent}).from(jobs).where(eq(jobs.id,target.id)).get()?.agent===target.agent&&!!this.requests.grantFor(input.secret,target.agent,target.id)

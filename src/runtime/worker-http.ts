@@ -1,3 +1,4 @@
+import { privateSecretClient } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. No local retries: a lost
  * claim or report is reconciled by loom's job-silence sweep. */
 import { randomUUID } from 'node:crypto';
@@ -74,6 +75,7 @@ export function httpWorkerControl(input: WorkerHttpOptions): WorkerControl {
   const ack = z.object({ ok: z.literal(true) });
   return {
     next: async () => (await call('next', {}, workerAssignment.nullable())) ?? undefined,
+    repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
     started: async (job, build) => { await call('started', { job, build }, ack); },
     heartbeat: async (job, state) => (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active,
     finish: async (job, exitCode, logTail) => { await call('finish', { job, exitCode, logTail }, ack); },
