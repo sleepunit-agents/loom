@@ -2,21 +2,20 @@
 import { it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { join, extname, resolve } from 'node:path';
-import { getRequestListener } from '@hono/node-server';
+import { existsSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { chromium } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { sharedRoot } from '../shared-root.js';
+import { serveShared } from '../shared-serve.js';
 import { tmpdir } from 'node:os';
 import * as s from '../core/data/schema.js';
 import { changesQuery } from '../../web/src/data/work-query.js';
 
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
+if(process.env.CI==='true'&&(!chrome||!existsSync(join(root,'index.html'))))throw Error('Changes evidence requires Chrome and the built app');
 const title = 'Keep shared changes current', hiddenTitle = 'Private other project change';
 const changeId = 'github:acme/app#3';
 
@@ -57,22 +56,10 @@ async function fixture() {
   db.insert(s.sessions).values({id:createHash('sha256').update(ownerCookie).digest('hex'),token:ownerFingerprint,device:'Owner fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
   db.insert(s.projectRepositories).values({project:'pond',repository:'acme/app'}).run();
   let sourceReads=0;
-  const data = sharedRoot({db,clock,changes:{read:async()=>{sourceReads++;return [];},rule:()=>undefined},originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
-  await data.ready;
-  const serveData = getRequestListener(request => data.http.fetch(request));
-  const http = createServer((request, response) => {
-    const url = new URL(request.url!, 'http://localhost');
-    if (url.pathname === '/graphql' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/')) { void serveData(request, response); return; }
-    const file = url.pathname.startsWith('/app/') ? resolve(root, url.pathname.slice(5)) : join(root, 'index.html');
-    if (!file.startsWith(`${root}/`) || !existsSync(file)) { response.writeHead(404).end(); return; }
-    response.setHeader('content-type', ({ '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2' } as Record<string, string>)[extname(file)] ?? 'application/octet-stream');
-    response.end(readFileSync(file));
-  });
-  const detach = data.attach(http);
-  await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
-  const address = http.address(); if (!address || typeof address === 'string') throw new Error('No fixture listener');
-  return { db, data, cookie, ownerCookie, session, sourceReads:()=>sourceReads, url: `http://127.0.0.1:${address.port}`,
-    async close() { detach(); await data.close(); await new Promise<void>(ok => http.close(() => ok())); client.close(); } };
+  const data = await serveShared({db,clock,webRoot:root,changes:{read:async()=>{sourceReads++;return [];},rule:()=>undefined},
+    originAllowed:request=>!request.headers.origin||request.headers.origin===`http://${request.headers.host}`,reportError:error=>{throw error;}});
+  return {db,data,cookie,ownerCookie,session,sourceReads:()=>sourceReads,url:data.url,
+    async close(){await data.close();client.close();}};
 }
 
 // Runs without a browser or built assets: catches /graphql falling through to
@@ -83,6 +70,9 @@ it('serves the shipped Changes selection over the real authenticated HTTP listen
     const post = (cookie?: string) => fetch(`${app.url}/graphql`, { method: 'POST',
       headers: { 'content-type': 'application/json', ...(cookie ? { cookie: `loom_ui=${cookie}` } : {}) }, body: JSON.stringify({ query: changesQuery }) });
     expect((await post()).status).toBe(401);
+    const session = await fetch(app.url+'/auth/session',{headers:{cookie:`loom_ui=${app.cookie}`}});
+    expect(session.headers.get('content-type')).toContain('application/json');
+    expect((await session.json()).viewer).toMatchObject({id:'sam'});
     const response = await post(app.cookie);
     expect(response.headers.get('cache-control')).toBe('no-store');
     const result = await response.json(); expect(result.errors).toBeUndefined();
@@ -137,7 +127,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     for (const page of [a, b]) await expect.poll(() => row(page).count()).toBe(0);
     await b.reload();
-    await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
+    await expect.poll(() => b.getByRole('heading', { name:'Sign in to loom', exact:true }).count()).toBe(1);
     expect(await row(b).count()).toBe(0);
 
     app.data.writes.run(()=>{

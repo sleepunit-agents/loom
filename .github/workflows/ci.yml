@@ -219,6 +219,7 @@ jobs:
   # Same required result as the shards: a separate failing workflow cannot be ignored.
   walkthrough:
     name: built program walkthrough
+    # The result gate independently rejects a skipped required job; both scopes are guarded.
     if: github.base_ref == 'next' || github.ref == 'refs/heads/next'
     uses: ./.github/workflows/rebuild-walkthrough.yml
 
@@ -274,8 +275,8 @@ jobs:
       - name: Require every shard, deploy build and next walkthrough to pass
         if: always()
         env:
-          RESULT: ${{ needs.test.result }}
-          PACKAGE: ${{ needs.package.result }}
-          WALKTHROUGH: ${{ needs.walkthrough.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          WALKTHROUGH_RESULT: ${{ needs.walkthrough.result }}
           REBUILD_REQUIRED: ${{ github.base_ref == 'next' || github.ref == 'refs/heads/next' }}
-        run: node scripts/check-ci-results.mjs
+        run: node scripts/ci-results.ts
