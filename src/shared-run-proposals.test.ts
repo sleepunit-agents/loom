@@ -4,7 +4,7 @@ import {bodyFixture,bodyCredentials} from '../test/fixtures/conversation-body.js
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 async function fixture(){
- const f=await bodyFixture(clean);f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ const f=await bodyFixture(clean);f.db.insert(s.memberAgents).values({member:'bob',agent:'mark'}).run();f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
  const value={agent:'art',houseRepository:'https://example.invalid/house.git',houseFile:'Housefile',houseBranch:'next',nestedContainers:true,gpu:true,boxes:['box'],ports:[{address:'127.0.0.1',port:8080}]};
  const post=(path:string,input:unknown,id:string,token=bodyCredentials.body)=>f.root.http.request('/api/'+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});
  const propose=(id='proposal',input:unknown=value,token=bodyCredentials.body)=>post('runtime/proposeAgentRunSettings',input,id,token);
@@ -70,8 +70,17 @@ it('rejects public or withdrawn body assignment without filing cards',async()=>{
  f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();f.db.update(s.conversations).set({member:null,project:null}).run();f.db.update(s.jobs).set({member:null,project:null}).run();expect((await f.propose('public')).status).toBe(403);expect(f.db.select().from(s.approvals).all()).toEqual([]);
 });
 it.each([{what:'Keep everything'},{changeSummary:'Another change'},{actingFor:'bob'},{member:null},{details:'{}'}])('rejects inconsistent run card %j',async extra=>{
- const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;f.db.update(s.approvals).set(extra).run();const before=f.read();expect((await f.answer(card.id)).status).not.toBe(200);expect(f.read()).toEqual(before);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
+ const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;f.db.update(s.approvals).set(extra).run();const before=f.read();expect((await f.answer(card.id)).status).toBe('details'in extra?409:403);expect(f.read()).toEqual(before);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
 });
 it('refuses to create an impossible typed approval from invalid existing configuration',async()=>{
  const f=await fixture();const {boxes,ports,...settings}=f.value;f.db.insert(s.agentRunSettings).values({...settings,houseFile:'../obsolete'}).run();expect((await f.propose()).status).toBe(409);expect(f.db.select().from(s.approvals).all()).toEqual([]);
+});
+
+it('refuses an ordinary member Allow even when that member owns the target agent',async()=>{
+ const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;
+ const token=f.root.writes.run(()=>{f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();return f.root.services.signin.issue({kind:'owner',member:'bob',label:'Ordinary agent owner fixture'}).token;}).value;
+ const before=f.read();expect((await f.post('approvals/answer',{id:card.id,answer:'allow'},'ordinary-answer',token)).status).toBe(403);expect(f.read()).toEqual(before);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
+});
+it('refuses an impossible card when old stored settings would normalize differently on Allow',async()=>{
+ const f=await fixture();const {boxes,ports,...settings}=f.value;f.db.insert(s.agentRunSettings).values({...settings,houseBranch:' next '}).run();expect((await f.propose()).status).toBe(409);expect(f.db.select().from(s.approvals).all()).toEqual([]);
 });
