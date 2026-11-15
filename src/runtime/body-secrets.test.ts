@@ -46,6 +46,7 @@ it.each(['failure','abort','close'])('erases already acquired buffers when a lat
  const running=f.start(),refused=expect(running).rejects.toThrow(/^Startup secret environment unavailable$/);await started;
  expect(copies.some(bytes=>bytes.toString()==='PRIVATE_FIRST')).toBe(true);
  if(mode==='failure')release(new Response(null,{status:503}));else if(mode==='abort')f.abort.abort();else f.hook.close();
+ if(mode!=='failure')expect(copies.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  await refused;expect(copies.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.environment).toEqual(f.base);
  if(mode!=='failure')release(new Response(new Blob(['PRIVATE_SECOND'])));
 });
