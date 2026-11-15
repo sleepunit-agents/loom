@@ -1,4 +1,4 @@
-import { registerExportFilter, privateExportCopy, type Db, type Scope, type Viewer, type Context } from '../../core/index.js';
+import { registerExportFilter, privateExportCopy, type Db, type Scope, type Viewer } from '../../core/index.js';
 export type WakeState = 'pending' | 'parked' | 'firing' | 'held' | 'fired' | 'cancelled' | 'failed';
 export interface Work extends Scope {
   /** Original filing evidence, independent of capacity and saved Viewer attribution. */
@@ -40,29 +40,6 @@ export interface Schedule extends Work {
 }
 export function wakes(db: Db): Wake[] { return (db.prepare('SELECT record FROM clock_wakes ORDER BY id').all() as { record: string }[]).map(r => JSON.parse(r.record)); }
 export function schedules(db: Db): Schedule[] { return (db.prepare('SELECT record FROM clock_schedules ORDER BY id').all() as { record: string }[]).map(r => JSON.parse(r.record)); }
-export function wake(db: Db, id: string): Wake | undefined { const r = db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(id) as { record: string } | undefined; return r && JSON.parse(r.record); }
-export function schedule(db: Db, id: string): Schedule | undefined { const r = db.prepare('SELECT record FROM clock_schedules WHERE id=?').get(id) as { record: string } | undefined; return r && JSON.parse(r.record); }
-export function rememberPrivateId(ctx: Context, w: Work & {id:string}) {
-  if(w.member)ctx.db.prepare("INSERT OR IGNORE INTO clock_meta(key,value) VALUES (?,?)").run("private-id:"+w.id,JSON.stringify({member:w.member}));
-}
-export function saveWake(ctx: Context, w: Wake) {
-  w.changedAt = ctx.now;
-  rememberPrivateId(ctx, w);
-  ctx.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record, changed_at=excluded.changed_at').run(w.id, JSON.stringify(w), ctx.now);
-  ctx.changed('wake', w.id);
-}
-export function saveSchedule(ctx: Context, s: Schedule) {
-  s.changedAt = ctx.now;
-  rememberPrivateId(ctx, s);
-  ctx.db.prepare('INSERT INTO clock_schedules VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record, changed_at=excluded.changed_at').run(s.id, JSON.stringify(s), ctx.now);
-  ctx.changed('schedule', s.id);
-}
-export function event(ctx: Context, w: Wake, kind: string) {
-  ctx.db.prepare('INSERT INTO clock_events(wake,record) VALUES (?,?)').run(w.id, JSON.stringify({ at: ctx.now, kind, outcome: w.outcome, note: w.note, agent: w.agent, ...(w.member?{member:w.member}:{}) }));
-}
-export const paused = (db: Db, agent: string) => !!db.prepare('SELECT 1 FROM clock_pauses WHERE agent=?').get(agent);
-export const active = (w: Wake) => ['pending', 'parked', 'firing', 'held'].includes(w.state);
-
 const privateReceiptOperations = ['clock.command','clock.requestLocal','clock.recoverLocal','clock.scheduleLocalFromWindow'];
 export function installPrivateExport(db:Db) {
  registerExportFilter(db,'clock',(table,row)=>{
