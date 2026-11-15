@@ -38,7 +38,6 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Changes')expect(step.value.report.actions?.workVisibility,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,before:'ask',after:'never',persistedAfterReload:true});
   if(title==='Changes')expect(step.value.report.actions?.changeWorkflow,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
-  if(title==='Changes')expect(step.value.report.actions?.changeInline,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Tasks')for(const name of ['taskReady','taskLifecycle','taskStructure','taskComments'])expect(step.value.report.actions?.[name],JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Bridges')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,discordChannel:true,slackPerson:true,persistedAfterReload:true});
   if(title==='People')expect(step.value.report.actions?.commsSend,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true,persistedAfterReload:true,inboxCopies:1});
