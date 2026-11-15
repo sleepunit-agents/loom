@@ -74,3 +74,10 @@ it('requires persisted Account Household and Sharing action evidence from their 
   expect(evaluate(promise,{apps:[{title:app,action:{ok:true,screenshot:'proof.png'}}]}).status).toBe('met');
  }
 });
+
+it('can disprove a one-query-door promise without claiming the converse proves it',()=>{
+ const promise={probe:{kind:'legacy-data-socket'}};
+ expect(evaluate(promise,{}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{transport:{sockets:[{path:'/graphql',phase:'Tasks'}]}}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{transport:{sockets:[{path:'/live',phase:'Project sharing',failed:true}]}})).toMatchObject({status:'not met',evidence:'walkthrough.json#transport'});
+});
