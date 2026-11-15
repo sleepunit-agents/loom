@@ -7,6 +7,7 @@ import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agentSprites, agents, members, memberAgents, tokens } from './core/data/schema.js';
+import { householdService } from './apps/household.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -174,4 +175,34 @@ it.each([
   expect((await f.call('setAgent', { id: 'art', ...visual, about: 'New biography', [field]: value }, 'sam', 'visual')).status).toBe(200);
   expect(f.db.select().from(agents).all().find(row => row.id === 'art')?.spriteVersion).toBeNull();
   expect(f.db.select().from(agentSprites).all()).toEqual([sprite]);
+});
+
+it('lets installed typed services bootstrap membership and agents without any door or credential', () => {
+  const client = new Database(':memory:'); clean.push(() => { client.close(); });
+  const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString();
+  const db = createDataSchema(client, now), service = householdService(db, now);
+  expect(db.select().from(members).all()).toEqual([]);
+  expect(db.select().from(tokens).all()).toEqual([]);
+  expect(service.setAgent({ id: 'first-agent', ...visual })).toEqual({ id: 'first-agent' });
+  expect(service.setMember({ id: 'first-owner', role: 'owner', fullOwner: true, agents: ['first-agent'] })).toEqual({ id: 'first-owner' });
+  expect(service.members()).toMatchObject([{ id: 'first-owner', role: 'owner', fullOwner: true, agents: ['first-agent'] }]);
+  expect(db.select().from(tokens).all()).toEqual([]);
+});
+it('keeps generic member output types free of credential relations and generated credential tables', async () => {
+  const f = fixture();
+  const read = async (query: string) => (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: {
+    'content-type': 'application/json', authorization: 'Bearer '+credentials.sam,
+  }, body: JSON.stringify({ query }) })).json();
+  for (const [relation, fields] of [
+    ['tokensByMember', 'fingerprint label'],
+    ['notificationDevicesByMember', 'endpoint keys'],
+  ]) {
+    const answer = await read('{ members { '+relation+' { '+fields+' } } }');
+    expect(answer.data).toBeUndefined();
+    expect(answer.errors).toEqual(expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining(relation) })]));
+  }
+  const answer = await read('{ __schema { types { name } } }');
+  const leaked = answer.data.__schema.types.map((type: { name: string }) => type.name)
+    .filter((name: string) => /^(Tokens|Sessions|Passkeys|SigninLinks|SigninChallenges|NotificationDevices|OperationResults)/.test(name));
+  expect(leaked).toEqual([]);
 });
