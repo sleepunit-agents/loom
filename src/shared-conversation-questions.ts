@@ -1,11 +1,11 @@
 /** Outside question targets and reads. Trusted producers/settlement stay free
  * of caller policy; no body inherits a member's general registry identity. */
-import {getTableColumns,sql,eq,type AnyColumn,type SQL} from 'drizzle-orm';
+import {getTableColumns,sql,eq,and,type AnyColumn,type SQL} from 'drizzle-orm';
 import type {Viewer} from './policy.js';
 import {maySee} from './policy.js';
 import {sharedSharing} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
-import {tasks,approvals,members} from './core/data/schema.js';
+import {tasks,approvals,members,inbox} from './core/data/schema.js';
 import {taskVisibility} from './core/data/visibility.js';
 import {workVisibility} from './core/data/work-visibility.js';
 import type {BodyQuestionAuthority} from './core/conversations/body-operations.js';
@@ -41,5 +41,6 @@ export function conversationQuestionPolicy(db:DataDatabase){
   return !!row&&row.sourceKind==='conversation'&&row.sourceId===cv.id&&(!row.project||row.project===cv.project)&&(
    row.ownerKind==='member'&&row.owner===cv.member||row.ownerKind==='agent'&&row.owner===cv.agent||row.ownerKind==='household'&&recipient.role==='owner');
  };
- return {visibility,ask};
+ const canReadItem=(viewer:Viewer,id:string)=>!!db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),visibility(viewer,getTableColumns(inbox)))).get();
+ return {visibility,ask,canReadItem};
 }

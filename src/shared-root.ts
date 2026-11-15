@@ -12,6 +12,7 @@ import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
 import { recordActionResult } from './shared-action-results.js';
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
@@ -104,7 +105,7 @@ export function sharedRoot(options: {
   const chat = new AsyncLocalStorage<TempoChatAuthentication>();
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
-  const notices = settledNotices(db, () => data.changed());
+  const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
   let measuringReady: ReturnType<typeof installMeasuring>;
   const stops: (() => void)[] = [];

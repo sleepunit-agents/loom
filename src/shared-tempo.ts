@@ -1,5 +1,6 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import type { DataDatabase } from './core/data/database.js';
 import type { Clock } from './core/clock.js';
 import type { DataWrites } from './core/data/writes.js';
@@ -49,7 +50,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // Chat is the control surface. A current body may carry out its recorded
       // member's ordinary mailbox preference, without becoming that member.
       const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
-      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person
+      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).canReadItem({kind:'member',id:person},access.item.id)
         : access.action === 'settings' && access.who.kind === 'person' && access.who.id === person);
       return (tempoCommandAllowed(db, viewer, access) || delegated) &&
         (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who));

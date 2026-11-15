@@ -21,7 +21,7 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
   const recipient = (kind: 'person' | 'agent', id: string) => kind === 'agent' ? ownsAgent(id) :
     !!db.select().from(members).where(eq(members.id, id)).get() && (owner || viewer.kind === 'member' && viewer.id === id);
   const sharedProject = (id: string) => !!db.select().from(projects).where(and(eq(projects.id, id), taskVisibility(viewer).projects!(getTableColumns(projects)))).get();
-  const visibleItem = (id:string) => !!db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),conversationQuestionPolicy(db).visibility(viewer,getTableColumns(inbox)))).get();
+  const visibleItem = (id:string) => conversationQuestionPolicy(db).canReadItem(viewer,id);
   const sourceAllowed = (kind: string, watch: string | null | undefined) => {
     if (kind === 'time' || owner && !(kind==='answer' && watch?.startsWith('question:'))) return true;
     if (!watch) return false;

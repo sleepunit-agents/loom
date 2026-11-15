@@ -100,3 +100,17 @@ it('refuses recipient access withdrawn while private question encryption is pend
  expect(f.db.select().from(s.inbox).all()).toEqual([]);
  expect(f.db.select().from(s.operationResults).all()).toEqual([]);
 });
+
+it('withdraws connected notice counts and delegated body volume controls with source access',async()=>{
+ const f=await bodyFixture(clean),task=f.root.services.tasks.create({title:'Project',goal:'Do',why:'Because',project:'pond',owner:{kind:'member',id:'bob'}},{kind:'member',id:'bob'});
+ expect((await f.call('digest',question(task.id),'notice')).status).toBe(200);
+ const item=f.db.select().from(s.digests).get()!.inboxItem!;
+ const volume=(id:string)=>f.root.http.request('/api/inbox/volume',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{item,volume:'full'},id})});
+ expect((await volume('visible-body-volume')).status).toBe(200);
+ f.clock.advance(5000);
+ expect(await query(f,'{settledInboxNotice{count}}')).toEqual({data:{settledInboxNotice:{count:1}}});
+ f.root.writes.run(()=>f.db.update(s.tasks).set({project:null}).where(eq(s.tasks.id,task.id)).run());
+ expect(await query(f,'{settledInboxNotice{count}}')).toEqual({data:{settledInboxNotice:null}});
+ expect((await volume('hidden-body-volume')).status).toBe(403);
+ expect((await volume('visible-body-volume')).status).toBe(403);
+});
