@@ -1,6 +1,7 @@
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
 import Database from 'better-sqlite3';
+import {z} from 'zod';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {createDataSchema} from './core/data/database.js';
@@ -43,13 +44,13 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   const change=s.changes.put({id:'github:example-house/garden#12',repo:'github:example-house/garden',number:12,page:'',title:`Plan the pump repair (${tasks[0].id})`,body:'Fictitious pull request for the browser walkthrough.',url:'https://github.com/example-house/garden/pull/12',state:'open',draft:false,author:{login:'example-fern'},created:at,updated:at,closed:null,head:{ref:'pump-repair',id:'a'.repeat(40)},base:{ref:'next'},checks:{state:'passing',failing:[],running:[],total:1},review:{state:'approved',by:[]},mergeable:'yes',conflicts:false,people:[]});
   // This is an outside operation: use an actual current credential rather
   // than treating a caller label as identity. The setup token never survives.
-  const setup=root.writes.run(()=>s.signin.issue({kind:'owner',member:'alex',label:'Example setup'})).value;
+  const setup=root.writes.run(()=>s.signin.issue({kind:'owner',member:'alex',label:'Example setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
   let account:{id:string};
   try{
    const response=await root.http.request('http://example/api/runtime/accountCreate',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({id:'example-account',input:{provider:'example-provider',label:'Example model subscription'}})});
-   const answer:unknown=await response.json();
-   if(!response.ok||!answer||typeof answer!=='object'||!('ok' in answer)||answer.ok!==true||!('value' in answer)||!answer.value||typeof answer.value!=='object'||!('id' in answer.value)||typeof answer.value.id!=='string')throw Error('Example account could not be created through its API');
-   account={id:answer.value.id};
+   const answer=z.object({ok:z.literal(true),value:z.object({id:z.string()}).strict()}).strict().safeParse(await response.json());
+   if(!response.ok||!answer.success)throw Error('Example account could not be created through its API');
+   account=answer.data.value;
   }finally{root.writes.run(()=>s.signin.revoke(setup.fingerprint));}
   const commons=join(home,'commons');
   const program={database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
