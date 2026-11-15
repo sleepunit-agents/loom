@@ -1,5 +1,5 @@
-/** Fresh shared composition. The caller initializes the approved schema and owns
- * the connection; this never bootstraps legacy tables or opens another store. */
+/** Fresh shared composition. The caller owns the approved shared connection;
+ * portable Memory stays in its declared files. No legacy loom tables. */
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -13,6 +13,8 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
+import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
+import {installMemorySignals} from './transport/memory-signals.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
@@ -23,6 +25,7 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
+  memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
   changed?(changes: Change[]): void;
@@ -31,10 +34,18 @@ export function sharedRoot(options: {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
-  const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
+  const memory=sharedMemory(db,clock,options.memory);
+  const startupCleanups:Array<()=>void>=[memory.close];
+  try{
+  let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields,...options.fields}, () => !closing);
+  startupCleanups.push(()=>{void data.close().catch(options.reportError);});
+  const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
+  startupCleanups.push(()=>operations.close());
+  memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());
+  startupCleanups.push(()=>memorySignals?.close());
   registerSharedPreferences(operations, db);
   const services = {
     tasks: taskService(db, now),
@@ -89,7 +100,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services, writes: data.writes, changed: data.changed,
+    http, operations, services, memory, writes: data.writes, changed: ()=>memorySignals!.changed(),
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -100,15 +111,20 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
+      memorySignals?.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
       void Promise.allSettled([stopped, ...pending.map(entry => entry.done)]).then(results => {
-        try { operations.close(); } catch (error) { reject(error); return; }
+        try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
       });
       return closing;
     },
   };
+  }catch(error){
+    for(const stop of startupCleanups.reverse())try{stop();}catch(cleanup){try{options.reportError(cleanup);}catch{/* Preserve the startup failure. */}}
+    throw error;
+  }
 }

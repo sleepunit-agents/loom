@@ -3,30 +3,36 @@
 import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { getRequestListener } from '@hono/node-server';
+import {listenForTouchSources} from './core/touched/group.js';
+import {prepareSharedMemorySources} from './shared-memory.js';
 import { sharedRoot } from './shared-root.js';
 
 export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number }) {
+  await prepareSharedMemorySources(options.memory);
   const root = sharedRoot(options);
   const sockets = new Set<Socket>();
   const server = createServer(getRequestListener(request => root.http.fetch(request)));
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   let detach: (() => void) | undefined;
+  let stopTouches:(()=>Promise<void>)|undefined;
   let closing: Promise<void> | undefined;
   const close = () => {
     if (closing) return closing;
     let resolve!: () => void, reject!: (error: unknown) => void;
     closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
     void (async () => {
+      const touchesStopped=stopTouches?.();
       const stopped = root.close();
       detach?.();
       const listening = new Promise<void>(done => server.close(() => done()));
       server.closeAllConnections();
       for (const socket of sockets) socket.destroy();
-      try { await stopped; } finally { await listening; }
+      try { await Promise.all([stopped,touchesStopped]); } finally { await listening; }
     })().then(resolve, reject);
     return closing;
   };
   try {
+    stopTouches=await listenForTouchSources(root.operations,root.memory.touches);
     detach = root.attach(server);
     const host = options.host ?? '127.0.0.1';
     await new Promise<void>((resolve, reject) => {
