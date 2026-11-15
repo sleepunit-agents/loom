@@ -75,6 +75,14 @@ it('requires persisted Account Household and Sharing action evidence from their 
  }
 });
 
+it('requires every observed component of a broad page promise',()=>{
+ const promise={probe:{kind:'all',probes:[{kind:'action',action:'claim'},{kind:'action',action:'blockers'}]}};
+ expect(evaluate(promise,{actions:{claim:{ok:true},blockers:{ok:true}}}).status).toBe('met');
+ expect(evaluate(promise,{actions:{claim:{ok:true},blockers:{ok:false,error:'blocked work appeared'}}}).status).toBe('not met');
+ expect(evaluate(promise,{actions:{claim:{ok:true}}}).status).toBe('not checkable yet');
+ expect(evaluate({probe:{kind:'all',probes:[]}},{actions:{}}).status).toBe('not checkable yet');
+});
+
 it('can disprove a one-query-door promise without claiming the converse proves it',()=>{
  const promise={probe:{kind:'legacy-data-socket'}};
  expect(evaluate(promise,{}).status).toBe('not checkable yet');

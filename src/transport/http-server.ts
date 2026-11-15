@@ -70,7 +70,7 @@ import { nudge as collectionsNudge } from '../collections/pull.js';
 import { configureCollectionBackground, pullPieceSoon } from '../collections/subs.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
-import { ConversationError, foldConversations } from '../backends/conversations.js';
+import { ConversationError } from '../backends/conversations.js';
 import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { sweepComms } from '../comms.js';
@@ -418,23 +418,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     maintaining.set(name, run);
     return run;
   };
-  // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
-  // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
-  // start and daily. Neither ever stops the daemon.
-  const foldAll = () => maintain('conversations fold', async () => {
-    if (!backgroundActive || closing) return;
-    const h = live?.();
-    const dirs = h ? h.agents.map((a) => agentDir(h, a)) : opts.createServer ? [] : [opts.contextDir];
-    for (const d of dirs) {
-      await waitForLocks({ write: [resolveSqliteDbPath(d)], budgetMs: WRITE_WAIT_MS });
-      if (!backgroundActive || closing) return;
-      try { stalls.timed('conversations fold', () => foldConversations(d)); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
-    }
-  });
+  // Retained legacy venue registration; current conversation maintenance belongs to the shared program.
   if (household && backgroundActive) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
-  foldAll();
-  const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
-  foldTimer.unref();
   // The audit log's sweep (docs/specs/conversations.md, "The audit log"): every entry older
   // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
   // measures on the scorecards. Neither ever stops the daemon.
@@ -1340,7 +1325,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     backgroundActive = true;
     stalls.timed('worker activation', () => {
       if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
-      void foldAll(); void sweepAll();
+      void sweepAll();
       if (live && !opts.createServer) { void commsSweep(); void refsBackfill(); }
     });
   });
@@ -1372,7 +1357,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (pushTimer) clearInterval(pushTimer);
       if (backupTimer) clearInterval(backupTimer);
       if (backupFirst) clearTimeout(backupFirst);
-      clearInterval(foldTimer);
       clearInterval(sweepTimer);
       if (commsTimer) { clearInterval(commsTimer); stopComms?.(); }
       stopPieceServers();
