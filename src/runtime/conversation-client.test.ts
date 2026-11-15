@@ -53,3 +53,21 @@ it.each(['job','conversation','order','duplicate','limit','extra','deadline'] as
  if(change==='job')value.job='other';if(change==='conversation')value.conversation='other';if(change==='order')value.items=[{...base,id:'two',seq:2},base];if(change==='duplicate')value.items=[base,{...base,seq:2}];if(change==='limit')value.items=[base,{...base,id:'two',seq:2}];if(change==='extra')value.extra=true;if(change==='deadline')value.items=[{...base,keepUntil:'not-a-time'}];
  f.fetcher.mockResolvedValue(Response.json({ok:true,value}));const accept=vi.fn(async()=>{});await expect(f.client.takeAndAccept(accept,change==='limit'?1:50)).rejects.toThrow('Conversation body request failed');expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);
 });
+it('rejects an oversized request before any fetch',async()=>{
+ const f=await fixture();await expect(f.client.reply({clientId:'large',words:'x'.repeat(1_048_577)})).rejects.toThrow('Conversation body request failed');expect(f.fetcher).not.toHaveBeenCalled();
+});
+it.each(['declared','streamed'] as const)('cancels a %s oversized valid response before acceptance',async mode=>{
+ const f=await fixture(),value={job:'job',conversation:f.thread.conversation,stopRequested:false,items:[{id:'large',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:new Date(f.clock.now()).toISOString(),words:mode==='streamed'?'x'.repeat(16_777_216):'Fictitious',keepUntil:null,verdict:null,refs:[]}]};
+ const bytes=new TextEncoder().encode(JSON.stringify({ok:true,value}));let sent=false,cancelled=false;
+ const stream=new ReadableStream<Uint8Array>({pull(controller){if(sent)controller.close();else{sent=true;controller.enqueue(bytes);}},cancel(){cancelled=true;}},{highWaterMark:0});
+ f.fetcher.mockResolvedValue(new Response(stream,{headers:{'content-type':'application/json',...(mode==='declared'?{'content-length':'16777217'}:{})}}));const accept=vi.fn(async()=>{});
+ await expect(f.client.takeAndAccept(accept)).rejects.toThrow('Conversation body request failed');expect(cancelled).toBe(true);expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);
+});
+it.each([['abort','fetch'],['close','fetch'],['abort','body'],['close','body']] as const)('ends parent %s during stalled %s and cancels any late response',async(how,phase)=>{
+ const f=await fixture();let entered!:()=>void,release!:(response:Response)=>void;const started=new Promise<void>(r=>{entered=r;});let cancelled=false;
+ const stream=new ReadableStream<Uint8Array>({cancel(){cancelled=true;}},{highWaterMark:0}),response=new Response(stream,{headers:{'content-type':'application/json'}});
+ f.fetcher.mockImplementation(async()=>{entered();return phase==='body'?response:new Promise<Response>(r=>{release=r;});});
+ const accept=vi.fn(async()=>{}),pending=f.client.takeAndAccept(accept);await started;await Promise.resolve();if(how==='close')f.client.close();else f.abort.abort();await expect(pending).rejects.toThrow('Conversation body request failed');
+ if(phase==='fetch'){release(response);await Promise.resolve();await Promise.resolve();}
+ expect(cancelled).toBe(true);expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);expect(f.fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
+});
