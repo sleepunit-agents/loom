@@ -1,5 +1,7 @@
 import { installMeasuring } from './core/measuring/install.js';
 import { measuringSettingsProposals } from './core/measuring/proposal.js';
+import { BridgeSettings } from './pieces/bridges/settings.js';
+import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
@@ -110,6 +112,7 @@ export function sharedRoot(options: {
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   const services = {
+    bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: new Conversations(db, now),
@@ -117,6 +120,7 @@ export function sharedRoot(options: {
     secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
