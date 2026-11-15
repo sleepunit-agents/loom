@@ -118,6 +118,7 @@ export class Conversations {
         const outcome = answer === 'yes' ? item.ifYes : answer === 'no' ? item.ifNo : null;
         this.send({ toKind: 'agent', to: conversation.agent, conversation: conversation.id, source: 'answer', sourceId: item.id, fromKind: 'person', fromId: member,
           words: [words?.trim() || answer, item.words, outcome].filter(Boolean).join('\n'), refs: [item.id] });
+        this.turn({ conversation: conversation.id, kind: 'message', fromKind: 'person', fromId: member });
       }
       return updated;
     });
