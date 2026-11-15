@@ -14,19 +14,19 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads, sets recipient volume and answers across windows, then withdraws revoked words', async () => {
   const clock = new FakeClock(Date.now()),now=()=>new Date(clock.now()).toISOString();
   const program=await sharedUiProgram({clock,webRoot:root,seed(db){
-  db.insert(members).values({ id: 'alice', role: 'member', joinedAt: now() }).run();
+  db.insert(members).values([{ id: 'alice', role: 'member', joinedAt: now() },{id:'fixture-owner',role:'owner',joinedAt:now()}]).run();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
   db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
   const token = 't'.repeat(64), cookie = 'c'.repeat(64);
   db.$client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(hash(token), 'Fixture', 'owner', 'alice', now(), new Date(clock.now() + 3600000).toISOString());
   db.$client.prepare('INSERT INTO sessions (id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES (?,?,?,?,?,?,?,?)').run(hash(cookie), hash(token), 'Browser', 'token', 0, now(), now(), now());
   }});
-  const {client,db,key,composition,url}=program;
+  const {client,db,composition,url}=program;
   const token='t'.repeat(64),cookie='c'.repeat(64);
-  const thread = composition.services.comms!.threads.open({member:'alice',agent:'art',title:'Pump'});
-  const question = await composition.services.comms!.ask(thread.id,'art','question',{words:'PRIVATE PUMP QUESTION',answers:'yes-no'});
   let browser: import('playwright-core').Browser | undefined;
   try {
+  const thread = composition.services.comms!.threads.open({member:'alice',agent:'art',title:'Pump'});
+  const question = await composition.services.comms!.ask(thread.id,'art','question',{words:'PRIVATE PUMP QUESTION',answers:'yes-no'});
     browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
     const context = await browser.newContext({serviceWorkers:'block'}); context.setDefaultTimeout(10_000);
     await context.addCookies([{name:'loom_ui',value:cookie,url}]);
@@ -62,7 +62,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads, s
     }
     composition.writes.run(() => client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(now(),hash(token)));
     for (const page of [a,b]) for (const words of ['PRIVATE PUMP QUESTION']) await expect.poll(() => page.getByText(words,{exact:true}).count()).toBe(0);
+    expect(program.errors).toEqual([]);
   } finally {
-    if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); await browser?.close(); console.info('Proof: closing root'); await program.close();
+    if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); try{await browser?.close();}finally{await program.close();}
   }
 }, 60_000);
