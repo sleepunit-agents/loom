@@ -19,17 +19,17 @@ export async function startSharedHolder(directory:string,clock:Clock){
   get connected(){return child.connected;},
   send:(value,callback)=>child.send(value as object,callback),
   on:(event,fn)=>child.on(event,fn),off:(event,fn)=>child.off(event,fn),
-  disconnect(){fault=true;if(!exited)try{child.kill('SIGKILL');}catch{fault=true;}},
+  disconnect(){fault=true;terminate();},
  };
  const client=sharedHolderClient(channel,clock);
  const lost=()=>{if(!closing){fault=true;void close().catch(()=>{});}};
  const error=()=>{fault=true;client.stop();void close().catch(()=>{});};
  child.once('close',(code,signal)=>{exited=true;if(code!==0||signal!==null||!closing)fault=true;client.stop();finish();if(!closing)void close().catch(()=>{});});
  child.on('disconnect',lost);child.on('error',error);
+ function terminate(){if(!exited)try{child.kill('SIGKILL');}catch{fault=true;}}
  function close(){return closing??=Promise.resolve().then(async()=>{
   // The original OS close event, not a protocol acknowledgment, proves exit.
   let cancelKill:()=>void=()=>{};
-  const terminate=()=>{if(!exited)try{child.kill('SIGKILL');}catch{fault=true;}};
   cancelKill=clock.at(clock.now()+5000,terminate);
   try{if(fault)terminate();try{await client.close();}catch{fault=true;terminate();}await done;}
   finally{cancelKill();fingerprintKey?.fill(0);child.off('disconnect',lost);child.off('error',error);}
