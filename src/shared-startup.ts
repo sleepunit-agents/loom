@@ -1,9 +1,10 @@
 /** Default web startup from an explicit, already prepared shared household.
  * No importer, discovery, schema upgrade, or legacy database fallback. */
 import Database from 'better-sqlite3';
-import {createHash,randomBytes} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {realpathSync} from 'node:fs';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
@@ -45,7 +46,8 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  let bytes:Buffer|undefined;
  const program=(()=>{try{bytes=privateBytes(config);return programSchema.parse(JSON.parse(bytes.toString('utf8')));}finally{bytes?.fill(0);}})();
  const webRoot=resolve(options.webRoot??program.webRoot??resolve(import.meta.dirname,'../dist/web'));
- const inside=(parent:string,child:string)=>{const part=relative(resolve(parent),resolve(child));return !part||part!=='..'&&!part.startsWith('..'+sep)&&!isAbsolute(part);};
+ const canonical=(path:string):string=>{try{return realpathSync(path);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const parent=resolve(path,'..');if(parent===path)throw error;return resolve(canonical(parent),relative(parent,path));}};
+ const inside=(parent:string,child:string)=>{const part=relative(canonical(resolve(parent)),canonical(resolve(child)));return !part||part!=='..'&&!part.startsWith('..'+sep)&&!isAbsolute(part);};
  const directories=[program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
  const files=[config,program.database,program.commsKey,program.adapters,...[program.memory.sources.commons.knowledge,program.memory.sources.commons.people,...program.memory.sources.agents.map(source=>source.memories)]];
  if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
@@ -71,18 +73,19 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock);
-  const issue=({member,label,ttl}:{member:string;label:string;ttl:number})=>app!.writes.run(()=>{
-   if(!db.select().from(members).where(eq(members.id,member)).get())throw Error('Unknown member');
+  const issue=({member,label,ttl,ownerOnly=false}:{member:string;label:string;ttl:number;ownerOnly?:boolean})=>app!.writes.run(()=>{
+   const current=db.select().from(members).where(eq(members.id,member)).get();
+   if(!current||ownerOnly&&current.role!=='owner')throw Error('Local sign-in member is no longer allowed');
    const id=fingerprint(randomBytes(32).toString('hex'));
    // Token labels are globally unique while active. Separate local issuances
    // must not collide or reuse another person's similarly labelled token.
-   db.insert(tokens).values({fingerprint:id,label:`${label.slice(0,120)} [local ${id}]`,kind:'owner',member,createdAt:new Date(clock.now()).toISOString()}).run();
+   db.insert(tokens).values({fingerprint:id,label:`${label.slice(0,150)} [local ${randomUUID()}]`,kind:'owner',member,createdAt:new Date(clock.now()).toISOString()}).run();
    const link=signin.makeLink(id);
    if(ttl<300)db.update(signinLinks).set({expiresAt:new Date(clock.now()+ttl*1000).toISOString()}).where(eq(signinLinks.id,fingerprint(link.path.slice('/login/'.length)))).run();
    return link.path;
   }).value;
   operator=await listenOperatorLinks(home,publicOrigin??app.url,issue);
-  (options.stdout??(text=>{process.stdout.write(text);}))(`${publicOrigin??app.url}${issue({member:program.signinMember,label:'Local startup sign-in',ttl:300})}\n`);
+  (options.stdout??(text=>{process.stdout.write(text);}))(`${publicOrigin??app.url}${issue({member:program.signinMember,label:'Local startup sign-in',ttl:300,ownerOnly:true})}\n`);
   return {...app,close};
  }catch(error){await close();throw error;}
 }
