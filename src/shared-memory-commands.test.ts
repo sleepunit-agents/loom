@@ -16,6 +16,7 @@ import {bodyCommandClient} from './runtime/body-command-client.js';
 import {bodyMemoryIdentity,bodyIdentityQuery} from './runtime/body-memory-identity.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {WorkerAssignment} from './runtime/worker.js';
+import {propose} from './backends/proposals.js';
 const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
 vi.mock('better-sqlite3',async importOriginal=>{
  const original=await importOriginal<{default:typeof Database}>();
@@ -60,6 +61,17 @@ async function fixture(options:{unprepared?:boolean}={}){
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
+it('browses retained private archive and proposal words through the actual canonical HTTP door without source or shared copies',async()=>{
+ const f=await fixture(),made=await f.call('remember',{...input,ttl:'1h'},'retained-make'),id=made.result.value.ids[0];expect((await f.call('archive',{id,note:'PRIVATE_ARCHIVE_REASON'},'retained-archive')).status).toBe(200);
+ const proposal=propose(dirname(f.path),{category:'rough capture',title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'},null);
+ const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
+ const query='{memoryArchive(agent:"art",first:1){entries{id title content note expiresAt} nextBefore} memoryProposals(agent:"art"){entries{id title content source} nextBefore}}';
+ const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryProposals).toEqual({entries:[{id:'art:proposal:'+proposal.uuid,title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'}],nextBefore:null});
+ expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(f.source.serialize()).toEqual(before);
+ expect(await f.query('{memoryArchive(agent:"mark"){entries{content}} memoryProposals(agent:"mark"){entries{content}}}')).toEqual({memoryArchive:null,memoryProposals:null});
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query(query,raw.member)).toEqual({memoryArchive:null,memoryProposals:null});
+ for(const value of [words,title,'PRIVATE_ARCHIVE_REASON','PRIVATE_PROPOSAL_TITLE','PRIVATE_PROPOSAL_WORDS',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
 it('edits and restores bounded private revisions through actual native commands and authorized GraphQL',async()=>{
  const f=await fixture(),id=(await f.call('remember',{...input,ttl:'1h'},'history-make')).result.value.ids[0];
  const history=async(token=raw.body)=>(await f.query(`{memoryHistory(id:"${id}"){id op replacedAt content}}`,token)).memoryHistory as {id:number;op:string;replacedAt:string;content:string}[];

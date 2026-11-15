@@ -2,7 +2,7 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { agents, members, memberAgents } from '../core/data/schema.js';
+import { agents, members, memberAgents, household } from '../core/data/schema.js';
 const id = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
 export const memberInput = z.object({
   id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
@@ -18,6 +18,11 @@ export class HouseholdError extends Error {
 }
 export function householdService(db: DataDatabase, now: () => string) {
   return {
+    /** Initial settings belong to the household, not the first browser's zone.
+     * Seed from this server once; never replace a stored household choice. */
+    initialize(defaultAgent: string | null = null) {
+      db.insert(household).values({defaultAgent,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}).onConflictDoNothing().run();
+    },
     synchronizeFullOwners(){db.insert(memberAgents).select(db.select({member:members.id,agent:agents.id}).from(members).crossJoin(agents).where(eq(members.fullOwner,true))).onConflictDoNothing().run();},
     setMember(input: z.input<typeof memberInput>) {
       const value = memberInput.parse(input);
