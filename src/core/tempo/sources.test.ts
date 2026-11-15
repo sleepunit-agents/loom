@@ -100,7 +100,14 @@ it('keeps answer words out of persisted trigger occurrences while retaining one 
  const tempo=createTempo(db,clock,{conversations:new Conversations(db,now),admit:()=>false,operation(){throw Error('Unexpected operation');}});
  try {
   tempo.triggers.set({ownerKind:'member',owner:'sam',sourceKind:'answer',watches:'question:question',lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',note:'Answer watcher',instructions:'An answer arrived'});
+  const original=db.select().from(inbox).where(eq(inbox.id,'question')).get();
+  db.update(inbox).set({state:'waiting'}).where(eq(inbox.id,'question')).run();
   tempo.start();
+  expect(db.select().from(inbox).all().filter(i=>i.source==='trigger')).toHaveLength(0);
+  db.update(inbox).set({state:'answered'}).where(eq(inbox.id,'question')).run();
+  tempo.committed();
+  expect(db.select().from(inbox).where(eq(inbox.id,'question')).get()).toEqual(original);
+  tempo.committed();
   expect(db.select().from(inbox).all().filter(i=>i.source==='trigger')).toHaveLength(1);
   expect(JSON.stringify(db.select().from(inbox).all().filter(i=>i.source==='trigger'))).not.toContain('PRIVATE ANSWER WORDS');
   expect(JSON.stringify(db.select().from(triggerLog).all())).not.toContain('PRIVATE ANSWER WORDS');
@@ -108,4 +115,25 @@ it('keeps answer words out of persisted trigger occurrences while retaining one 
   expect(db.select().from(inbox).all().filter(i=>i.source==='trigger')).toHaveLength(1);
   expect(JSON.stringify(db.select().from(triggerLog).all())).not.toContain('REVISED WORDING');
  } finally {tempo.close();client.close();}
+});
+
+it('uses only answer occurrence metadata and ignores late callbacks after close',()=>{
+ const client=new Database(':memory:'),db=createDataSchema(client),events:unknown[][]=[];
+ const sources=new TempoSources(db,{event:(...args)=>{events.push(args);}}),at='2026-11-14T12:00:00.000Z';
+ try {
+  db.insert(members).values([{id:'sam',role:'owner',joinedAt:at},{id:'lee',role:'member',joinedAt:at}]).run();
+  db.insert(inbox).values({id:'q',toKind:'person',to:'sam',source:'notice',fromKind:'person',state:'answered',answer:'yes',answeredBy:'sam',answeredAt:at,at,changedAt:at}).run();
+  sources.question('q');
+  db.update(inbox).set({answer:'no',answerText:'DIFFERENT WORDS'}).where(eq(inbox.id,'q')).run();sources.question('q');
+  expect(events[1]).toEqual(events[0]);
+  db.update(inbox).set({answeredBy:'lee'}).where(eq(inbox.id,'q')).run();sources.question('q');
+  expect(events[2]?.[2]).not.toEqual(events[0]?.[2]);
+  db.update(inbox).set({answeredAt:'2026-11-14T12:01:00.000Z'}).where(eq(inbox.id,'q')).run();sources.question('q');
+  expect(events[3]?.[2]).not.toEqual(events[2]?.[2]);
+  const row=db.select().from(inbox).where(eq(inbox.id,'q')).get()!;
+  db.insert(inbox).values({...row,id:'q2',seq:undefined}).run();sources.question('q2');
+  expect(events[4]?.[2]).not.toEqual(events[3]?.[2]);
+  sources.close();sources.question('q');sources.recover();
+  expect(events).toHaveLength(5);
+ } finally {client.close();}
 });
