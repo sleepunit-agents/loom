@@ -1,20 +1,24 @@
-import { and, eq, ne, or, sql } from 'drizzle-orm';
+import { and, eq, ne, or, sql, getTableColumns } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import { approvals, changes, tasks } from '../data/schema.js';
+import { taskVisibility } from '../data/visibility.js';
+import { workVisibility } from '../data/work-visibility.js';
 import type { SweepPart } from './sweep.js';
 
 export const WORK_SWEEP_LIMIT = 20;
 /** Trusted contributors over committed work. Tasks go to their assignee,
  * otherwise owner; changes to their agent; approvals to their actingFor person.
  * Unassigned household work needs an explicit assignment. Counts cover all open
- * work; wording lists the oldest twenty. Register once before starting Tempo.
+ * work visible to the recipient; wording lists the oldest twenty. Assignment
+ * routes work but never grants access to it. Register once before starting Tempo.
  */
 export function workSweepParts(db: DataDatabase, clock: Clock): readonly SweepPart[] {
   return [
     { name: 'Tasks', open(who) {
       const kind = who.kind === 'person' ? 'member' : 'agent';
       const where = and(ne(tasks.status, 'closed'),
+        taskVisibility({kind: who.kind === 'person' ? 'member' : 'agent',id: who.id}).tasks!(getTableColumns(tasks)),
         or(and(eq(tasks.assigneeKind, kind), eq(tasks.assignee, who.id)),
           and(sql`${tasks.assignee} is null`, eq(tasks.ownerKind, kind), eq(tasks.owner, who.id))));
       return db.transaction(() => ({
@@ -36,6 +40,7 @@ export function workSweepParts(db: DataDatabase, clock: Clock): readonly SweepPa
       if (who.kind !== 'person') return [];
       const now = new Date(clock.now()).toISOString();
       const where = and(eq(approvals.state, 'pending'), eq(approvals.actingFor, who.id),
+        workVisibility({kind:'member',id:who.id}).approvals!(getTableColumns(approvals)),
         sql`(${approvals.member} is null or ${approvals.member} = ${who.id})`,
         // UTC columns allow both second and millisecond precision.
         sql`(${approvals.expiresAt} is null or julianday(${approvals.expiresAt}) > julianday(${now}))`);
