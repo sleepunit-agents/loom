@@ -241,3 +241,11 @@ it('keeps a mentioned source task labelled Made here while the source list is on
  setup();f.data.sourceTasks=[];f.data.commsRefs=[{ref:'t-77',messageSeq:1}];f.data.mentionedTasks={'t-77':[{id:'t-77',title:'MENTIONED SOURCE',status:'open',sourceKind:'conversation',sourceId:'cv-pump'}]};
  await draw();expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('MENTIONED SOURCE')).props.children).toContain(' · Made here');
 });
+
+it('opens both a source task and a mentioned task in the Tasks tile',async()=>{
+ setup();f.data.sourceTasks=[{id:'t-90',title:'SOURCE TO OPEN',status:'open'}];f.data.commsRefs=[{ref:'t-91',messageSeq:1}];f.data.mentionedTasks={'t-91':[{id:'t-91',title:'MENTION TO OPEN',status:'open'}]};
+ const go=await draw();
+ for(const [label,id] of [['SOURCE TO OPEN','t-90'],['MENTION TO OPEN','t-91']]){
+  const button=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes(label));await act(async()=>{button.props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/'+id);
+ }
+});

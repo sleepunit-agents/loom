@@ -27,8 +27,8 @@ export function SharedWork({ conversation, refs, go }: { conversation: string; r
   const rows = reading.status === 'live' ? reading.data?.tasks ?? [] : [], source = rows.slice(0,50);
   const madeChanges = reading.status === 'live' ? reading.data?.changes ?? [] : [];
   const mentioned = [...new Set(refs.map(row => row.ref))].filter(id => /^t-\d+$/.test(id) && !source.some(task => task.id === id));
+  const displayedChanges=[...new Set([...madeChanges.slice(0,50).map(row=>row.id),...refs.filter(row=>/^github:[\w.-]+\/[\w.-]+#\d+$/.test(row.ref)).map(row=>row.ref)])];
   return <><nav aria-label="Conversation work pages"><button type="button" disabled={reading.status !== 'live' || !offset} onClick={() => setOffset(value => Math.max(0,value-50))}>Previous work</button><button type="button" disabled={reading.status !== 'live' || rows.length <= 50 && madeChanges.length <= 50} onClick={() => setOffset(value => value+50)}>Next work</button></nav><TaskRows tasks={source} go={go} madeHere />{mentioned.map(id => <MentionedTask key={id} id={id} go={go} conversation={conversation} />)}
-    {madeChanges.slice(0,50).map(row => <MentionedChange key={row.id} id={row.id} go={go} conversation={conversation} />)}
-    {[...new Set(refs.filter(row => /^github:[\w.-]+\/[\w.-]+#\d+$/.test(row.ref)).map(row => row.ref))].filter(id=>!madeChanges.slice(0,50).some(row=>row.id===id)).map(id => <MentionedChange key={id} id={id} go={go} conversation={conversation} />)}
+    {displayedChanges.map(id=><MentionedChange key={id} id={id} go={go} conversation={conversation} />)}
     {refs.filter(row => !/^t-\d+$/.test(row.ref) && !/^github:[\w.-]+\/[\w.-]+#\d+$/.test(row.ref)).map((row,n) => <p key={`${row.ref}:${n}`}>{row.ref}</p>)}</>;
 }
