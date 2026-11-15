@@ -7,6 +7,8 @@ import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import { members, notificationDevices, sessions, signinLinks, tokens } from '../data/schema.js';
 import { dataAuthentication } from '../data/authentication.js';
+import { sharedTokens, sharedTokenInput } from './shared-tokens.js';
+import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 
 const fingerprint = (secret: string) => createHash('sha256').update(secret).digest('hex');
@@ -68,7 +70,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     }
     await next();
   };
-  routes.use('/api/signin/link', guard); routes.use('/login/*', guard);
+  routes.use('/api/signin/token', guard); routes.use('/api/signin/link', guard); routes.use('/login/*', guard);
   routes.use('/auth/session', guard); routes.use('/logout', guard);
   routes.onError(() => Response.json({ error: 'Sign-in could not complete' }, { status: 401, headers: { 'cache-control': 'no-store' } }));
   const write = <T>(action: () => T): T => {
@@ -80,6 +82,17 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const secure = (options.publicOrigin ?? new URL(url).origin).startsWith('https:');
     return `loom_ui=${cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
   };
+  routes.post('/api/signin/token', async c => {
+    const input = sharedTokenInput.safeParse(await c.req.json().catch(() => null));
+    const auth = authenticate(c.req.raw);
+    if (!auth?.valid() || auth.viewer.kind !== 'member' || options.db.select().from(members).where(eq(members.id, auth.viewer.id)).get()?.role !== 'owner') return c.json({ error: 'Household owner required' }, 403);
+    if (!input.success) return c.json({ error: 'Invalid token request' }, 400);
+    try { return c.json({ ok: true, value: write(() => sharedTokens(options.db, options.clock).issue(input.data)) }); }
+    catch (error) {
+      if (error instanceof OperationError) return c.json({ error: error.message }, error.code === 'conflict' ? 409 : 400);
+      throw error;
+    }
+  });
   routes.post('/api/signin/link', c => {
     const bearer = /^Bearer ([^\s]{32,4096})$/i.exec(c.req.header('authorization') ?? '')?.[1];
     const auth = bearer ? authenticate(c.req.raw) : undefined;
