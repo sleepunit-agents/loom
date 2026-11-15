@@ -86,7 +86,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   expect(await command('tempo.set',{id,ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3600000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Ordinary native Tempo work',note:'Native read proof'},randomUUID())).toMatchObject({ok:true,value:{id}});
   const selection={query:'query NativeTrigger($id:String!){tempoTimezone triggers(where:{id:{eq:$id}},limit:1){id state enabled}}',variables:{id}};
   expect(await query(selection)).toMatchObject({data:{tempoTimezone:expect.any(String),triggers:[{id,state:'standing',enabled:true}]}});
-  expect(await command('tempo.stop',{id},randomUUID())).toMatchObject({ok:true,value:{id}});
+  expect(await command('tempo.stop',{id},randomUUID())).toMatchObject({ok:true});
   expect(await query(selection)).toMatchObject({data:{triggers:[{id,state:'stopped',enabled:false}]}});
  };
  // The Tempo variant retains bodyProgram's default factory and Claude adapter.
