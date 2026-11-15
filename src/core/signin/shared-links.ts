@@ -87,9 +87,12 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const auth = authenticate(c.req.raw);
     if (!auth?.valid() || !sharedTokenOwner(options.db, auth.viewer)) return c.json({ error: 'Household owner required' }, 403);
     if (!input.success) return c.json({ error: 'Invalid token request' }, 400);
-    try { return c.json({ ok: true, value: write(() => sharedTokens(options.db, options.clock).issue(input.data)) }); }
+    try { return c.json({ ok: true, value: write(() => {
+      if(!auth.valid() || !sharedTokenOwner(options.db, auth.viewer))throw new OperationError('denied','Household owner required');
+      return sharedTokens(options.db, options.clock).issue(input.data);
+    }) }); }
     catch (error) {
-      if (error instanceof OperationError) return c.json({ error: error.message }, error.code === 'conflict' ? 409 : 400);
+      if (error instanceof OperationError) return c.json({ error: error.message }, error.code === 'denied' ? 403 : error.code === 'conflict' ? 409 : 400);
       throw error;
     }
   });

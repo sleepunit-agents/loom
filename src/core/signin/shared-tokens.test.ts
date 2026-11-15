@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
 import { agents, boxes, jobs, members, tokens } from '../data/schema.js';
@@ -39,7 +39,7 @@ it('checks owner authority, strict identities, active machines and live label un
   const f = fixture(), input = { kind: 'runner', box: 'box', label: 'Machine' };
   for (const actor of ['sam','art'] as const) expect((await f.issue(input,actor)).status).toBe(403);
   expect((await f.issue(input,'owner',{origin:'http://evil'})).status).toBe(403);
-  expect((await f.issue({...input,member:'owner'})).status).toBe(400);
+  for(const mixed of [{...input,member:'owner'},{kind:'owner',member:'sam',agent:'art',label:'mixed-member'},{kind:'agent',agent:'art',box:'box',label:'mixed-agent'}])expect((await f.issue(mixed)).status).toBe(400);
   expect((await f.issue({...input,box:'missing'})).status).toBe(400);
   expect((await f.issue({...input,expiresAt:f.at})).status).toBe(400);
   expect((await f.issue(input)).status).toBe(200);
@@ -79,4 +79,15 @@ it('binds job credentials only to assigned current work for the named agent', as
   expect(auth?.viewer).toEqual({kind:'agent',id:'art'});
   f.root.writes.run(()=>f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'current')).run());
   expect(auth?.valid()).toBe(false);
+});
+
+it.each(['revoke','demote'] as const)('rechecks issuer authority inside the issuance transaction after %s', async change => {
+  const f=fixture(),run=f.root.writes.run.bind(f.root.writes);
+  vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+    if(change==='revoke')f.db.update(tokens).set({revokedAt:f.at}).where(eq(tokens.fingerprint,hash(f.raw.owner))).run();
+    else f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
+    return run(action);
+  });
+  expect((await f.issue({kind:'owner',member:'sam',label:'Refused'})).status).toBe(403);
+  expect(f.db.select().from(tokens).where(eq(tokens.label,'Refused')).all()).toEqual([]);
 });
