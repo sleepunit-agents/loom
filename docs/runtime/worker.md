@@ -377,3 +377,34 @@ receipt preserves the previous active job and Stop request, while cached heartbe
 replay cannot restore active authority. Running-body Stop remains with the receiving
 body's status protocol. Preparation changes the thread working indicator, without
 inventing a reported agent status or consuming another conversation's Stop.
+
+## Body command/read consumer
+
+`bodyCommandClient` calls the existing Root HTTP operation and generated GraphQL
+doors using only the receiving body's existing credential. Callers supply a stable
+operation ID; uncertain writes are never retried automatically. Current Root policy,
+input validation and receipts remain authoritative. A command name cannot change
+the destination origin or select a different credential or caller.
+
+Requests are limited to one MiB of UTF8 JSON and responses to sixteen MiB, with
+a bounded request deadline (15 seconds by default, at most 30). Redirects, malformed
+JSON/UTF8, invalid response envelopes/statuses and accidental Root-bearer echoes
+are refused with a generic error. Command failures keep Root's structured result;
+GraphQL validation errors remain generated read errors.
+
+The client shares the private bootstrap's origin validation. Abort/close cancels
+pending work and erases owned partial response bytes at the cancellation point;
+completed requests erase received chunks and retained byte copies. A late response
+is cancelled, and a closed client starts no further requests. Native tool
+composition is a subsequent step using this consumer in the body-local MCP server.
+
+The constructor snapshots its credential and origin; later reuse of the options
+object cannot change request authority or the echo check. It requests identity
+content encoding, rejects unnegotiated coding, and requires a declared content
+length to match the received UTF8 bytes. Echo checks include every JSON string,
+even an escaped value discarded by a duplicate property. Final lifetime checks
+after response completion prevent cancellation from publishing decoded data.
+
+GraphQL responses validate standard error locations, paths and extensions. HTTP400
+is accepted only for errors without a data entry; partial execution data and its
+errors remain HTTP200 results. Loopback HTTP includes localhost,127.0.0.1 and::1.
