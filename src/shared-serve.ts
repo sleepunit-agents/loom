@@ -5,14 +5,19 @@ import type { Socket } from 'node:net';
 import { getRequestListener } from '@hono/node-server';
 import {listenForTouchSources} from './core/touched/group.js';
 import {prepareSharedMemorySources,validateSharedMemoryOptions} from './shared-memory.js';
+import {sharedWeb} from './shared-web.js';
 import { sharedRoot } from './shared-root.js';
 
-export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number }) {
+export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number; webRoot?:string }) {
+  const web=options.webRoot?sharedWeb(options.webRoot):undefined;
   validateSharedMemoryOptions(options.db,options.memory);
   await prepareSharedMemorySources(options.memory);
   const root = sharedRoot(options);
   const sockets = new Set<Socket>();
-  const server = createServer(getRequestListener(request => root.http.fetch(request)));
+  const server = createServer(getRequestListener(async request => {
+    const response=await root.http.fetch(request);
+    return web&&response.status===404&&['GET','HEAD'].includes(request.method)?web.fetch(request):response;
+  }));
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   let detach: (() => void) | undefined;
   let stopTouches:(()=>Promise<void>)|undefined;

@@ -1,5 +1,6 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
 import {afterEach,expect,it,vi} from 'vitest';
+import {memoryCall} from '../web/src/memory/commands.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync} from 'node:fs';
@@ -51,7 +52,7 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  expect((await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
  const first=await waitMessage(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}}})));
  expect(first.payload.data.observe.patches[0].value).toEqual(await read());
- const added=await waitMessage(ws,async()=>{const result=await request('/api/mind/knowledgeAdd',{id:'add',input:{title:'Fictional pump',domain:'fiction',body:'Fictional pump words',source:''}},headers);expect(result.status).toBe(200);});
+ const added=await waitMessage(ws,async()=>{const command=memoryCall('mind.knowledgeAdd',{title:'Fictional pump',domain:'fiction',body:'Fictional pump words',source:''},(path,init)=>fetch(app.url+path,{...init,headers:{...init.headers,cookie,origin:app.url}}));expect((await command.result).ok).toBe(true);});
  expect(JSON.stringify(added)).toContain('Fictional pump');
  const people=new PeopleStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>people.close());
  const person=await waitMessage(ws,()=>people.write({slug:'friend',name:'Private fictional friend'}));expect(JSON.stringify(person)).toContain('Private fictional friend');

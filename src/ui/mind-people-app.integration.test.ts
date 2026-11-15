@@ -1,15 +1,11 @@
 /** One CI-only browser test, two windows and six responsive look screenshots. */
+import {memorySharedFixture} from './memory-shared-fixture.js';
 import { expect,it } from 'vitest';
 import { existsSync,mkdtempSync,mkdirSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { chromium } from 'playwright-core';
-import { startLoom } from '../foundation.js';
-import { createFoundation } from '../core/app.js';
 import { FakeClock } from '../core/clock.js';
-import { migrateHouseholdTables } from '../core/household/schema.js';
-import { TokenDatabase } from '../core/household/tokens.js';
-import { HouseholdDatabase } from '../core/household/document.js';
 import { PeopleStore } from '../backends/people.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -18,9 +14,7 @@ if(enabled&&process.env.RUNNER_ENVIRONMENT==='self-hosted')throw new Error('Peop
 if(enabled&&(!chrome||!existsSync(join(root,'next.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
 it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'people-app-'));const clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
-  metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art','other'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
-  metadata.db.transaction(()=>new TokenDatabase(metadata.db).replace({v:1,tokens:[]},{}))();metadata.close();
+
   for(const directory of ['commons','agents/art','agents/other'])mkdirSync(join(home,directory),{recursive:true});
   const directory=new PeopleStore({dbPath:join(home,'commons/people.db'),now:()=>clock.now()});
   const relationship=new PeopleStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()});
@@ -30,7 +24,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   directory.write({slug:'casey',name:'Casey Smith'});
   relationship.write({slug:'jonathan',name:'Jonathan Barket',summary:'Builds the household',how:{mode:'direct'},may:[{text:'May discuss projects',source:'Jonathan'}]});
   other.write({slug:'casey',name:'Casey Smith',summary:'Knows the workshop'});
-  const app=await startLoom({home,next:true,clock,webRoot:root});
+  const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art','other']}),{app}=fixture;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
@@ -46,8 +40,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       });
     }
     try {
-    const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});if(!link.ok)throw Error('Fixture sign-in failed');
-    await a.goto(app.url+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');
+    await a.goto(app.url+await fixture.signInPath());const signedIn=a.waitForResponse(r=>r.request().method()==='POST');
     await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
     await Promise.all([a.goto(`${app.url}/p/people-preview`),b.goto(`${app.url}/p/people-preview`)]);
     const row=(p:typeof a,name:string)=>p.locator('[data-split-row]').filter({hasText:name});
@@ -133,5 +126,5 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       }
       console.error('People fixture diagnostics',diagnostics);throw error;
     }
-  } finally {await browser.close();await app.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
+  } finally {await browser.close();await fixture.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
