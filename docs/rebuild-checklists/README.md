@@ -8,7 +8,7 @@ Tables from `model.py` are listed as model references, not counted as user actio
 The source page's SHA detects drift rather than silently measuring older words.
 
 Regenerate these copies with `python3 scripts/rebuild-checklists.py`. This never
-edits the approved site. Add behavioral probes in the generator as the walkthrough
+edits the approved site. Add behavioral probes bound to exact source promises as the walkthrough
 grows. Do not turn a button's presence into proof of the action behind it.
 
 The walkthrough writes `report.md` and `report.json` beside its screenshots and
@@ -55,3 +55,11 @@ where a report is regenerated.
 The browser job also writes the per-page table into the Actions run summary,
 so the coordinator can see failures and missing coverage before downloading the
 artifact. Keep the artifact for promise-level reasons, screenshots and raw facts.
+
+
+Before committing probe mappings, run `python3 scripts/rebuild-checklists.py --check`.
+It compares every generated file without changing any of them. CI runs the same
+check before collecting browser evidence. Existing probe bindings survive only when
+the exact source promise and source-page hash still match. New generated criteria
+belong in the generator. This check detects stale source copies and generated
+metadata; review remains responsible for whether a probe proves its promise.

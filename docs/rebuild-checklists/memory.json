@@ -117,8 +117,10 @@
         "app": "Activity",
         "contains": [
           "Shown day",
-          "Repair the garden pump",
-          "3 turns"
+          "Repair the garden pump"
+        ],
+        "patterns": [
+          "Repair the garden pump\\s+[^\\n]*\\b[1-9][0-9]* turns\\b"
         ]
       }
     },
