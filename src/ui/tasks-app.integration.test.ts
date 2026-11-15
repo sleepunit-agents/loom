@@ -70,6 +70,9 @@ it('executes the registered Tasks selection and real command envelope over share
     expect(await (await send()).json()).toEqual({ ok: true, value: { id: 't-1' } });
     expect((await send()).status).toBe(200);
     expect(app.db.select().from(s.taskComments).all()).toMatchObject([{ actorKind: 'member', actor: 'sam', text: input.text }]);
+    const ask = await fetch(`${app.url}/api/tasks/command`, {method:'POST',headers,body:JSON.stringify({id:'fixture-ask',input:{action:'ask',id:'t-1',input:{to:{kind:'member',id:'sam'},ask:'Node question?',ifYes:'Continue',ifNo:'Wait',answers:'yes-no'}}})});
+    expect(ask.status).toBe(200);
+    expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source,'task'),eq(s.inbox.waitsOnKind,'task'),eq(s.inbox.waitsOnId,'t-1'))).all()).toEqual([expect.objectContaining({to:'sam',words:'Node question?',answers:'yes-no'})]);
     app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     expect((await send()).status).toBe(401);
   } finally { await app.close(); }
@@ -136,7 +139,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const [label,text] of [['Question','Which pump?'],['If yes','Order it'],['If no','Wait']]) await form.getByLabel(label, { exact: true }).fill(text);
     await form.getByRole('button', { name: 'Ask a person', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Which pump?', { exact: true }).count()).toBe(1);
-    expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source, 'task'), eq(s.inbox.sourceId, 't-1'))).all()).toEqual(expect.arrayContaining([expect.objectContaining({ to: 'sam', answers: 'yes-no' })]));
+    expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source, 'task'), eq(s.inbox.waitsOnKind, 'task'), eq(s.inbox.waitsOnId, 't-1'))).all()).toEqual(expect.arrayContaining([expect.objectContaining({ to: 'sam', answers: 'yes-no' })]));
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
     form = a.getByRole('form', { name: 'Close task', exact: true });
     await form.getByLabel('Reason (cancelled marks it cancelled)', { exact: true }).fill('Finished in browser');
