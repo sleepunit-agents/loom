@@ -429,8 +429,9 @@ it('searches recorded public answers and resolution text in the same recipient m
  const verdict=cvs.send({toKind:'person',to:'alice',source:'notice',sourceId:'isolated-decision',member:'alice',fromKind:'agent',answers:'yes-no',words:'Proceed with this fixture?'});expect(await f.service.search(alice,{search:'yes',folder:'answered'})).toEqual([]);cvs.answer(verdict.id,'alice','yes');expect((await f.service.search(alice,{search:'yes',folder:'answered'})).map(row=>row.id)).toEqual([verdict.id]);
 });
 it('searches retained encrypted answer words before paging and binds only their own deadline',async()=>{
- const f=await fixture();await f.comms.answer(f.ask.inboxItem!,'alice','words','Use the violet answer fixture');
+ const f=await fixture();await f.comms.answer(f.ask.inboxItem!,'alice','words','Use the violet answer fixture');f.time('2026-11-14T18:00:00.500Z');
  for(let n=0;n<55;n++){const row=f.comms.threads.conversations.send({toKind:'person',to:'alice',source:'notice',sourceId:'noise-'+n,member:'alice',fromKind:'agent',answers:'words',words:'Noise question'});f.comms.threads.conversations.answer(row.id,'alice','words','Noise answer');}
+ expect(f.service.list(alice,{folder:'answered',limit:50}).map(row=>row.id)).not.toContain(f.ask.inboxItem);
  // The question expired; its separately retained answer can still be searched.
  f.db.update(messages).set({keepUntil:'2026-11-14T17:00:00Z'}).where(eq(messages.kind,'ask')).run();f.db.update(messages).set({keepUntil:'2026-11-15T18:00:00Z'}).where(eq(messages.kind,'answer')).run();
  const leases:number[]=[];expect((await f.service.search(alice,{search:'violet answer fixture',folder:'answered',limit:1},at=>leases.push(at))).map(row=>row.id)).toEqual([f.ask.inboxItem]);expect(leases).toEqual([Date.parse('2026-11-15T18:00:00Z')]);expect(f.db.select().from(inbox).where(eq(inbox.id,f.ask.inboxItem!)).get()?.answerText).toBeNull();

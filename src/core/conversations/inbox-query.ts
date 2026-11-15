@@ -127,9 +127,7 @@ export class InboxQueries {
       if (byMetadata) return metadata(item);
       if (!state) return true;
       const after = privateState(item, fromAnswer), message = after.message;
-      return JSON.stringify(after) === JSON.stringify(state) && !!message?.words && !!message.keepUntil
-        && Number.isInteger(after.keep) && after.keep >= 1 && after.keep <= 14
-        && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
+      return JSON.stringify(after) === JSON.stringify(state) && this.retainedMessage(message, after.keep);
     });
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
