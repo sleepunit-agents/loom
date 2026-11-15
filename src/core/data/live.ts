@@ -43,16 +43,21 @@ export class DataLive {
     query: string;
     variables?: Record<string, unknown>;
     operationName?: string;
+    /** Trusted executor context; never derive this from query variables. */
+    contextValue?: unknown;
     valid(): boolean;
   }): AsyncIterableIterator<DataDelta> {
+    if (this.stopped) throw new Error('Live data access ended');
     const document = parse(options.query);
     const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
     let ended = false, dirty = true, previous: unknown, revision = 0, reading = false;
     let wake: (() => void) | undefined;
-    const signal = () => { dirty = true; wake?.(); wake = undefined; };
-    const finish = () => { ended = true; this.listeners.delete(signal); wake?.(); wake = undefined; };
+    const cancelled = Symbol('cancelled');
+    let cancel: (() => void) | undefined;
+    const signal = () => { dirty = true; if (this.stopped) cancel?.(); wake?.(); wake = undefined; };
+    const finish = () => { ended = true; cancel?.(); this.listeners.delete(signal); wake?.(); wake = undefined; };
     // Register before the initial read: a commit cannot fall between the first
     // snapshot and subscription. Slow consumers retain one dirty bit, not an
     // unbounded queue of snapshots or patches against an unsent revision.
@@ -65,8 +70,16 @@ export class DataLive {
           if (this.stopped || !options.valid()) throw new Error('Live data access ended');
           if (!dirty) { await new Promise<void>(resolve => { wake = resolve; }); continue; }
           dirty = false;
-          const result = await execute({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName });
+          // Cancellation must release next() even if an async projection never
+          // settles. The losing execution stays observed, including rejection.
+          const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
+          const result = await Promise.race([
+            execute({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }),
+            cancellation,
+          ]);
+          cancel = undefined;
           if (ended) break;
+          if (this.stopped || result === cancelled) throw new Error('Live data access ended');
           if (result.errors?.length) throw result.errors[0];
           if (!options.valid()) throw new Error('Live data access ended');
           // The generator resolves asynchronously. A commit while execution
@@ -78,7 +91,7 @@ export class DataLive {
         }
         return { done: true, value: undefined };
       } catch (error) { finish(); throw error; }
-      finally { reading = false; }
+      finally { cancel = undefined; reading = false; }
     };
     return { next, return: async () => { finish(); return { done: true, value: undefined }; }, [Symbol.asyncIterator]() { return this; } };
   }

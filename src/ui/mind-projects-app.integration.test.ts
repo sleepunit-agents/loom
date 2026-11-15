@@ -40,7 +40,8 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-fi
   const signed=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signed).status()).toBe(303);
   await Promise.all([a.goto(`${app.url}/p/projects-preview`),b.goto(`${app.url}/p/projects-preview`)]);
   const row=(p:typeof a,name:string)=>p.locator('[data-split-row]').filter({has:p.getByText(name,{exact:true})});
-  await expect.poll(()=>row(b,'Pond').count()).toBe(1);expect(await row(a,'Workshop').count()).toBe(1);
+  // Each window establishes its own live list; the phone arriving does not ready the desktop.
+  await expect.poll(()=>row(b,'Pond').count()).toBe(1);await expect.poll(()=>row(a,'Workshop').count()).toBe(1);
   await a.getByRole('combobox',{name:'Agent',exact:true}).selectOption('art');await expect.poll(()=>row(a,'Workshop').count()).toBe(0);
   await row(a,'Pond').click();await row(b,'Pond').click();
   await expect.poll(()=>b.getByRole('heading',{name:'Pond',exact:true}).count()).toBe(1);
