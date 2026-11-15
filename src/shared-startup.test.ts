@@ -15,6 +15,7 @@ import {members,agents,memberAgents,household} from './core/data/schema.js';
 import {requestLocalLink} from './core/signin/operator.js';
 import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
+import * as startup from './shared-startup.js';
 import {run} from './cli/serve.js';
 import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
 import {PeopleStore} from './backends/people.js';
@@ -129,6 +130,9 @@ it('keeps existing precious source bytes unchanged through failed and complete s
 });
 
 it('runs file triggers, pauses, notices and recipient volume through the normal CLI program',async()=>{
+ const clock=new FakeClock(Date.now()),actualStart=startSharedHome;
+ const injection=vi.spyOn(startup,'startSharedHome').mockImplementation(options=>actualStart({...options,clock}));
+ cleanups.push(()=>injection.mockRestore());
  const f=await fixture(),repository=join(f.home,'routine-repository');
  mkdirSync(join(repository,'routines'),{recursive:true});
  const routine=join(repository,'routines','tempo.md');writeFileSync(routine,'ORIGINAL ROUTINE WORDS');
@@ -156,7 +160,7 @@ it('runs file triggers, pauses, notices and recipient volume through the normal 
  };
  const rows=()=>query('{triggers{id state enabled} inboxItems(source:"trigger"){id body{words}}}');
  const base={ownerKind:'household',sourceKind:'time',lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fiction',note:'Normal entry routine'};
- const future=new Date(Date.now()+3600000).toISOString();
+ const future=new Date(clock.now()+3600000).toISOString();
  await command('tempo.pause',{agent:'fiction'},'normal-pause');
  await command('tempo.set',{...base,id:'normal-paused',times:future,instructions:'HELD AGENT WORDS'},'normal-paused');
  let state=await rows();expect(state.triggers.find((row:{id:string})=>row.id==='normal-paused')).toMatchObject({state:'held'});
@@ -175,14 +179,15 @@ it('runs file triggers, pauses, notices and recipient volume through the normal 
  await command('tempo.stop',{id:'normal-cancel'},'normal-stop');
  await command('tempo.set',{...base,id:'normal-person',times:future,toKind:'person',to:'owner',instructions:'NORMAL PERSON NOTICE'},'normal-person');
  await command('tempo.runNow',{id:'normal-person'},'normal-now');
- await expect.poll(async()=> (await query('{settledInboxNotice{id count}}')).settledInboxNotice?.count).toBe(2);
+ clock.advance(0);
+ expect((await query('{settledInboxNotice{id count}}')).settledInboxNotice?.count).toBe(2);
  state=await rows();expect(state.triggers.find((row:{id:string})=>row.id==='normal-cancel')).toMatchObject({state:'stopped',enabled:false});
  const item=state.inboxItems.find((row:{body?:{words:string}})=>row.body?.words==='NORMAL PERSON NOTICE');expect(item).toBeDefined();
  const readItem=async()=> (await query('query($id:String!){inboxItem(id:$id){volume quietUntil}}',{id:item.id})).inboxItem;
  for(const volume of ['dim','mute','full']){
   await command('inbox.volume',{item:item.id,volume},'normal-volume-'+volume);
   const current=await readItem();expect(current.volume).toBe(volume);
-  if(volume==='mute')expect(Math.ceil((Date.parse(current.quietUntil)-Date.now())/86400000)).toBe(7);
+  if(volume==='mute')expect(current.quietUntil).toBe(new Date(clock.now()+7*86400000).toISOString());
   if(volume==='full')expect(current.quietUntil).toBeNull();
  }
  expect((await fetch(url+'/api/clock/in',{method:'POST',headers,body:JSON.stringify({input:{},id:'retired'})})).status).toBe(404);
