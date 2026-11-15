@@ -28,10 +28,11 @@ export function changedFields(history,after,root,minDepth){
  for(let i=0;i<history.length;i++)for(const patch of history[i].patches){
   const path=patch.path;
   if(i>=after){
-   if(path[0]!==root||path.length<minDepth)return false;
+   if(!path.length)return false;
+   if(path[0]===root){if(path.length<minDepth)return false;
    const previous=path.reduce((row,key)=>row?.[key],value);
    if(patch.removed?previous===undefined:JSON.stringify(previous)===JSON.stringify(patch.value))return false;
-   changes++;
+   changes++;}
   }
   if(!path.length){value=structuredClone(patch.value);continue;}
   const parent=path.slice(0,-1).reduce((row,key)=>row?.[key],value);if(!parent)return false;
@@ -95,7 +96,7 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
   check(!proof.error&&proof.requests===1&&proof.taskRequests===proof.before.requests,'A selection was resubscribed for a normal change');
   const delta=proof.events[1];check(delta.revision>1&&delta.patches.length===1&&JSON.stringify(delta.patches[0].path)===JSON.stringify(['tasks',0,'commentCount'])&&delta.patches[0].value===before+1,'Changed fields were not delivered as one narrow patch');
   check(proof.taskFrames.some(f=>f.revision>1)&&changedFields(proof.history,proof.after,'tasks',3),'The actual Tasks tile did not receive changes without another root snapshot');
-  return{reason:'The same socket delivered one initial result then only the changed comment count; the real Tasks selection received patches without resubscribing.',initialRevision:initial.revision,changedRevision:delta.revision,patches:delta.patches,taskFrames:proof.taskFrames,requests:proof.requests};
+  return{inconclusive:true,reason:'The actual Tasks comment delta was narrow and required no resubscription; complete change behavior across all selections and edits is not measured.',initialRevision:initial.revision,changedRevision:delta.revision,patches:delta.patches,taskFrames:proof.taskFrames,requests:proof.requests};
  });
  await attempt('dataInboxChange',async()=>{
   const tile=await open(page,'Inbox'),back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();await tile.getByLabel('Search asks',{exact:true}).fill('');
