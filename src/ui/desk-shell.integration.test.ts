@@ -18,6 +18,7 @@ import {serveShared} from '../shared-serve.js';
 import {storeDeskSprite} from '../desk-sprites.js';
 import {manifestFromPixelLab} from '../household.js';
 import {sheet} from './pixel-sheet.fixture.js';
+import {deskMemoryFixture} from './desk-memory.fixture.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Desk evidence needs Chrome and the built app');
 it.runIf(enabled)('shared desk applies live appearance, renders owned cards and opens actual Inbox rows at three looks and sizes',async()=>{
@@ -40,9 +41,18 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  const question=await messages.ask(thread.id,'art','desk-question',{words:'OK to run the backup now?',why:'A disposable browser fixture question.',answers:'yes-no'});
  // Newer unanswered threads must not hide the latest actual agent reply.
  for(let n=0;n<9;n++){clock.advance(1);messages.threads.open({member:'owner',agent:'art',title:`Unanswered seed ${n}`});}
- const app=await serveShared({db,clock,webRoot,commsKey:key,originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
+ const memory=deskMemoryFixture(ids),displayName=memory.name;
+ const activityTitle='Shared desk activity proof',activitySummary='The actual shared Activity reader is available from Home.';
+ clock.advance(1);
+ const history=messages.threads.conversations;
+ const activity=history.open({agent:'art',member:'owner',venue:'wake',place:'desk-activity-fixture',label:activityTitle});
+ history.turn({conversation:activity.id,kind:'reply',fromKind:'agent',fromId:'art'});
+ const digest=history.digest({conversation:activity.id,run:'fictional-desk-activity',summary:activitySummary});
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
+ let closeApp=async()=>{};
  try {
+  const app=await serveShared({db,clock,webRoot,commsKey:key,memory:{sources:memory.sources,checkingAgent:'art'},originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
+  closeApp=()=>app.close();
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block',hasTouch:true});
   await context.addInitScript(()=>{const w=window as typeof window&{__deskVibrations:number};w.__deskVibrations=0;Object.defineProperty(navigator,'vibrate',{value:()=>{w.__deskVibrations++;return true;}});});
@@ -57,6 +67,19 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   if(response.status()!==303){const headers=response.request().headers();console.error('Desk sign-in headers',{origin:headers.origin??'absent',fetchSite:headers['sec-fetch-site']??'absent',status:response.status()});}
   expect(response.status()).toBe(303);
   await expect.poll(()=>a.locator('.next-shell').count()).toBe(1);await b.goto(app.url);
+  for(const page of [a,b]){
+   await expect.poll(()=>page.getByRole('heading',{name:displayName,exact:true}).count()).toBe(1);
+   expect(await page.getByRole('button',{name:`${displayName} in People`,exact:true}).count()).toBe(1);
+   await expect.poll(()=>page.getByRole('region',{name:`${displayName} last steps`,exact:true}).getByText(activityTitle,{exact:true}).count()).toBe(1);
+  }
+  await b.getByRole('region',{name:`${displayName} last steps`,exact:true}).getByText(activityTitle,{exact:true}).click();
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/activity-preview/');
+  expect(new URL(b.url()).searchParams.get('who')).toBe('art');
+  expect(new URL(b.url()).searchParams.get('e')).toBe(`d~art~${digest.id}`);
+  const activityTile=b.locator('[data-tile=activity]');
+  await expect.poll(()=>activityTile.getByRole('heading',{name:activityTitle,exact:true}).count()).toBe(1);
+  await expect.poll(()=>activityTile.getByText(activitySummary,{exact:true}).count()).toBeGreaterThan(0);
+  await b.goto(app.url);
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
   for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
   for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
@@ -135,7 +158,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     await b.screenshot({path:join(shots,`new-work-${look}-${width}.png`),animations:'disabled'});
     if(width>=1024){await expect.poll(()=>b.locator('.desk-rail-card').count()).toBe(1);await b.locator('.next-rail').screenshot({path:join(shots,`new-rail-${look}-${width}.png`),animations:'disabled'});}
     await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
-    const screen=b.getByRole('region',{name:"Art's comm screen",exact:true});
+    const screen=b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true});
     await expect.poll(()=>screen.count()).toBe(1);
     await expect.poll(()=>screen.getAttribute('data-location')).toBe(width>=1280?'rail':'inline');
     const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);
@@ -153,7 +176,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // A narrow desktop keeps the full-size screen inline; minimizing clears
   // selection even though the reader component remains mounted in the tile.
   await b.setViewportSize({width:1024,height:900});await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
-  await expect.poll(()=>b.getByRole('region',{name:"Art's comm screen",exact:true}).getAttribute('data-location')).toBe('inline');
+  await expect.poll(()=>b.getByRole('region',{name:`${displayName}'s comm screen`,exact:true}).getAttribute('data-location')).toBe('inline');
   await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
   await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);expect(await b.locator('[data-companion=true]').count()).toBe(0);
   // Shell behavior uses actual registered apps on the same shared program.
@@ -193,7 +216,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // returns to current query facts; navigation alone is not a successful send.
   clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
   await b.goto(app.url);
-  const compose=b.getByRole('region',{name:'Message Art',exact:true}),draftWords='Disposable shared desk composer message';
+  const compose=b.getByRole('region',{name:`Message ${displayName}`,exact:true}),draftWords='Disposable shared desk composer message';
   await compose.getByRole('textbox',{name:'Message',exact:true}).fill(draftWords);
   const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
   const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
@@ -204,7 +227,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   const confirmed=await app.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{ commsMessages(thread:${JSON.stringify(openResult.value.thread)}) { words } }`})});
   expect((await confirmed.json()).data.commsMessages.map((message:{words:string})=>message.words)).toEqual([draftWords]);
   await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
-  await expect.poll(()=>b.getByRole('region',{name:'Art conversations',exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
+  await expect.poll(()=>b.getByRole('region',{name:`${displayName} conversations`,exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
   // A supporting touch browser gets navigation feedback only when enabled.
   const vibrations=()=>b.evaluate(()=>(window as typeof window&{__deskVibrations:number}).__deskVibrations);
   await set({haptics:false},'haptics-off');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('off');
@@ -221,5 +244,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).where(eq(tokens.fingerprint,fingerprint)).run());
   for(const page of [a,b])await expect.poll(()=>page.getByText('OK to run the backup now?',{exact:true}).count()).toBe(0);
   expect(errors).toEqual([]);
- }finally{await browser?.close();await app.close();client.close();}
+ }finally{
+  try{await browser?.close();}
+  finally{try{await closeApp();}finally{client.close();memory.close();}}
+ }
 },300000);
