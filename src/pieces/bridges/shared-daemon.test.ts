@@ -5,7 +5,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
 import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
-import { SharedBridges, bridgeCredentialBinding, type SharedBridgeOptions } from './shared-daemon.js';
+import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -32,8 +32,7 @@ function fixture(overrides:Partial<SharedBridgeOptions>={}){
  const notify=()=>{expect(client.inTransaction).toBe(false);published.push(db.select().from(bridgeIncoming).all().map(row=>row.state));};
  const writes=new DataWrites(db,{refreshAccess(){},changed:notify}),errors:Error[]=[];
  let allowed=true;
- const resume=vi.fn(()=>{throw Error('Slack must not use Discord resume');});
- const daemon=new SharedBridges({db,clock,writes,source,effectsAllowed:()=>allowed,resume,changed:notify,inboxCommitted:signal,reportError:error=>errors.push(error),request,slack,...overrides});clean.push(()=>daemon.close());
+ const daemon=new SharedBridges({db,clock,writes,source,effectsAllowed:()=>allowed,changed:notify,inboxCommitted:signal,reportError:error=>errors.push(error),request,slack,...overrides});clean.push(()=>daemon.close());
  const raw=(event='event',envelope='ack')=>Buffer.from(JSON.stringify({type:'events_api',envelope_id:envelope,payload:{type:'event_callback',event_id:event,team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text:'A synthetic question',ts:'1794432000.000001'}}}));
  return {client,db,clock,writes,source,buffers,request,transports,closed,published,signal,errors,daemon,raw,deny:()=>{allowed=false;}};
 }
@@ -70,11 +69,6 @@ it('closes admission synchronously and drains a metadata call without touching t
  const closing=f.daemon.close();expect(f.daemon.close()).toBe(closing);
  release(Response.json({ok:true,channel:{id:'CROOM',context_team_id:'TWORK',is_channel:true}}));await closing;
  expect(f.db.select().from(bridgeIncoming).all()).toEqual([]);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);expect(f.signal).not.toHaveBeenCalled();
-});
-it('binds private resume identity to every authentication/configuration field and holder generation',()=>{
- const f=fixture(),row=f.db.select().from(bridgeConnections).get()!,baseline=bridgeCredentialBinding(row,generation);
- for(const change of [{id:'other'},{platform:'discord' as const},{workspace:'OTHER'},{botUser:'OTHER'},{agent:'other'},{tokenSecret:'OTHER'},{appSecret:'OTHER'}])expect(bridgeCredentialBinding({...row,...change},generation)).not.toBe(baseline);
- expect(bridgeCredentialBinding(row,'87654321-1234-4234-8234-123456789abc')).not.toBe(baseline);
 });
 
 it('flushes the shared send queue through the current bot credential and confirms the actual platform receipt',async()=>{
@@ -121,17 +115,12 @@ it.each([{state:'dropped' as const},{channel:'OTHER'},{member:null}])('revokes a
 });
 it('recovers a failed attachment fetch from the same durable raw receipt after manager restart',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;let succeeds=false;f.request.mockImplementation(async(url,options)=>String(url).startsWith('https://files.slack.com/')?succeeds?new Response('DATA'):new Response('Unavailable',{status:503}):original(url,options));const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'file',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/file'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await f.daemon.idle();expect(f.db.select().from(bridgeFiles).all()).toEqual([]);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);await f.daemon.close();succeeds=true;
- const restarted=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,resume(){throw Error('Slack');},changed(){},reportError(){},request:f.request,slack:options=>{options.state?.('connected');return {close:async()=>{}};}});clean.push(()=>restarted.close());await restarted.ready();await restarted.idle();f.clock.advance(1);await restarted.idle();expect(f.db.select().from(bridgeFiles).get()?.contents).toEqual(Buffer.from('DATA'));expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);expect(f.db.select().from(inbox).all()).toHaveLength(1);
+ const restarted=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,slack:options=>{options.state?.('connected');return {close:async()=>{}};}});clean.push(()=>restarted.close());await restarted.ready();await restarted.idle();f.clock.advance(1);await restarted.idle();expect(f.db.select().from(bridgeFiles).get()?.contents).toEqual(Buffer.from('DATA'));expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
 it('drains an active attachment fetch before close and refuses its late bytes',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;let release!:(response:Response)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){entered();return new Promise(resolve=>{release=resolve;});}return original(url,options);});const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'file',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/file'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await started;let stopped=false;const closing=f.daemon.close().then(()=>{stopped=true;});expect(stopped).toBe(false);release(new Response('DATA'));await closing;expect(f.db.select().from(bridgeFiles).all()).toEqual([]);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
 });
-it('connects Discord through the explicit derived binding carrier and retains raw before commit resolves',async()=>{
- let gateway:Parameters<NonNullable<SharedBridgeOptions['discord']>>[0]|undefined,retained=false;
- const carrier=vi.fn<SharedBridgeOptions['resume']>((connection,binding,receiver)=>{expect(binding).toBe(bridgeCredentialBinding(connection,generation));return {checkpoint:()=>undefined,retain(raw,checkpoint){receiver.discord(connection.id,raw,{session:checkpoint.session,sequence:checkpoint.seq,resumeUrl:checkpoint.url});retained=true;},reset(){receiver.reset(connection.id);}};});
- const f=fixture({resume:carrier,discord:options=>{gateway=options;expect(options.load()).toBeUndefined();return {close:async()=>{}};}});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();expect(carrier).toHaveBeenCalledOnce();expect(gateway).toBeDefined();
- const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}}));await gateway!.commit({type:'READY',data:{},seq:1},{session:'session',seq:1,url:'wss://gateway.discord.gg'},raw);expect(retained).toBe(true);expect(f.db.select().from(bridgeRawEvents).get()?.event).toEqual(raw);await gateway!.reset();
-});
+
 it('fetches only the first five attachments and erases fetched buffers after private SQLite copies',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!,store=vi.spyOn(f.daemon.files,'store');f.request.mockImplementation(async(url,options)=>String(url).startsWith('https://files.slack.com/')?new Response('DATA'):original(url,options));const frame=JSON.parse(f.raw().toString());frame.payload.event.files=Array.from({length:6},(_,i)=>({id:'FABC'+i,name:'file-'+i,size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC'+i+'/file'}));await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await f.daemon.idle();f.clock.advance(1);await f.daemon.idle();
  expect(f.request.mock.calls.filter(([url])=>String(url).startsWith('https://files.slack.com/'))).toHaveLength(5);const cached=f.db.select().from(bridgeFiles).all();expect(cached.map(file=>file.file).sort()).toEqual(['FABC0','FABC1','FABC2','FABC3','FABC4']);expect(cached.every(file=>file.contents.equals(Buffer.from('DATA')))).toBe(true);expect(store).toHaveBeenCalledTimes(5);for(const [input] of store.mock.calls)expect(input.contents.every(byte=>byte===0)).toBe(true);expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);store.mockRestore();
@@ -141,4 +130,10 @@ it.each([true,false])('never drains retained raw during pending authentication, 
  let release!:(response:Response)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.request.mockImplementationOnce(()=>{entered();return new Promise(resolve=>{release=resolve;});});await f.daemon.ready();await started;
  f.writes.run(()=>f.db.update(members).set({role:'owner'}).run());f.daemon.changed();await f.daemon.reconcile();expect(f.db.select().from(inbox).all()).toEqual([]);expect(f.db.select().from(bridgeIncoming).all()).toEqual([]);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
  release(Response.json(success?{ok:true,user_id:'UBOT',team_id:'TWORK',bot_id:'BBOT'}:{ok:false}));await f.daemon.idle();expect(f.db.select().from(inbox).all()).toHaveLength(success?1:0);expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(success?1:0);
+});
+
+it('connects Discord through its owned live cursor and durably retains raw before advancing',async()=>{
+ let gateway:Parameters<NonNullable<SharedBridgeOptions['discord']>>[0]|undefined;
+ const f=fixture({discord:options=>{gateway=options;expect(options.load()).toBeUndefined();return {close:async()=>{}};}});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();expect(gateway).toBeDefined();
+ const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateway!.commit({type:'READY',data:{},seq:1},checkpoint,raw);expect(f.db.select().from(bridgeRawEvents).get()?.event).toEqual(raw);expect(gateway!.load()).toEqual(checkpoint);await gateway!.reset();expect(gateway!.load()).toBeUndefined();
 });

@@ -1,10 +1,10 @@
+import { liveDiscordReceipts } from './discord-receipts.js';
 import { slackFiles, type SlackFilesPermit } from './slack-files.js';
 import { BridgeSends } from './sends.js';
 import { bridgeReplyApi } from './reply-api.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
  * asynchronous metadata/drain work follows separately. Installed parts share the
  * database directly; all outside permissions live at their respective doors. */
-import { createHash } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
@@ -18,23 +18,14 @@ import { BridgeChannels } from './channels.js';
 import { BridgeReceiver } from './receiver.js';
 import { bridgeAuthentication } from './authentication.js';
 import { bridgeChannelApi } from './channel-api.js';
-import { discordGateway, type DiscordCheckpoint } from './discord-gateway.js';
+import { discordGateway } from './discord-gateway.js';
 import { bridgeSlackSocket } from './slack-socket.js';
 import { BridgeFiles } from './files.js';
 type Connection=typeof bridgeConnections.$inferSelect;
-/** The concrete private resume carrier binds the cursor to this exact config +
- * holder generation. It MUST atomically retain raw frame/cursor/binding before
- * returning. No unbound resume default; caller input never supplies a binding. */
-export interface BoundDiscordReceipts {
- checkpoint():DiscordCheckpoint|undefined;
- retain(raw:Buffer,checkpoint:DiscordCheckpoint):void;
- reset():void;
-}
 export interface SharedBridgeOptions {
  db:DataDatabase;clock:Clock;writes:DataWrites;
  source:SecretValueSource&HolderGeneration;
  effectsAllowed():boolean;
- resume(connection:Connection,binding:string,receiver:BridgeReceiver):BoundDiscordReceipts;
  changed():void;
  inboxCommitted?(ids:readonly string[]):void;
  reportError(error:Error):void;
@@ -43,12 +34,9 @@ export interface SharedBridgeOptions {
  slack?:typeof bridgeSlackSocket;
 }
 type Life={connection:Connection;key:string;generation:string;active:boolean;authenticated:boolean;
- secrets:ReturnType<typeof sharedBridgeSecretUse>;channels?:ReturnType<BridgeChannels['bind']>;
+ secrets:ReturnType<typeof sharedBridgeSecretUse>;receipts?:ReturnType<typeof liveDiscordReceipts>;channels?:ReturnType<BridgeChannels['bind']>;
  transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
 const configuration=(row:Connection)=>JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,row.enabled]);
-export function bridgeCredentialBinding(row:Connection,generation:string):string{
- return createHash('sha256').update('loom-shared-bridge-resume-v1\0').update(JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,generation])).digest('hex');
-}
 export class SharedBridges {
  private closed=false;
  private readonly channels=new BridgeChannels();
@@ -92,7 +80,7 @@ export class SharedBridges {
   for(const _error of result.notificationErrors)this.report();
  }
  private retire(life:Life){
-  life.active=false;life.retry?.();life.channels?.close();life.secrets.close();
+  life.active=false;life.receipts?.reset();life.retry?.();life.channels?.close();life.secrets.close();
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
  }
@@ -143,7 +131,7 @@ export class SharedBridges {
    life.authenticated=true;
    const state=(value:Connection['state'])=>{if(current()){this.state(row.id,value);if(value==='connected')this.track(this.sends.flush());}};
    if(row.platform==='discord'){
-    const receipts=this.options.resume(row,bridgeCredentialBinding(row,life.generation),this.receiver);
+    const receipts=life.receipts=liveDiscordReceipts(this.receiver,row.id,current);
     if(!current())throw Error();
     life.transport=(this.options.discord??discordGateway)({bot:row.botUser,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,beforeConnect:current,state,
      load:()=>{if(!current())throw Error();return receipts.checkpoint();},

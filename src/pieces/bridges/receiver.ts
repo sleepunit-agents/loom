@@ -36,11 +36,11 @@ export class BridgeReceiver {
   }
 
   /** The checkpoint must be the authenticated transport's cursor for this frame. */
-  discord(connection: string, raw: Buffer, checkpoint: BridgeCheckpoint): void {
+  discord(connection: string, raw: Buffer, checkpoint: BridgeCheckpoint, persistCheckpoint = true): void {
     this.connection(connection, 'discord');
     const frame = discordFrame.parse(this.parse(raw));
     if (frame.s !== checkpoint.sequence) throw Error('Discord frame does not match checkpoint');
-    this.events.retain(connection, JSON.stringify([checkpoint.session, frame.s]), raw, checkpoint);
+    this.events.retain(connection, JSON.stringify([checkpoint.session, frame.s]), raw, persistCheckpoint ? checkpoint : undefined);
   }
 
   slack(connection: string, raw: Buffer): void {

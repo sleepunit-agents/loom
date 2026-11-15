@@ -20,10 +20,10 @@ export interface DiscordGatewayOptions {
   /** Private identity/credential-generation-bound storage. Never expose session
    * IDs as records. A replacement credential must never reuse this store. */
   load(): DiscordCheckpoint | undefined;
-  /** Atomically retain needed raw events AND checkpoint before resolving.
+  /** Retain needed raw events before advancing the supplied cursor and resolving.
    * Must not wait for metadata/admission/runtime. Deduplicate platform messages. */
   commit(event: DiscordDispatch, checkpoint: DiscordCheckpoint, raw: Buffer): Promise<void>;
-  /** Durably forget the invalid resume cursor before another Identify. */
+  /** Forget the invalid resume cursor before another Identify. */
   reset(): Promise<void>;
   socket?: (url: string, options: WebSocket.ClientOptions) => Socket;
   random?: () => number;
