@@ -133,3 +133,10 @@ for (const cancel of [false, true]) it(`bounds quota reporting by ${cancel ? 'wo
     await pending; expect(fetcher).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });
+
+it('snapshots configured machine facts for each poll without caller-supplied machine identity', async () => {
+  const facts = ['gpu:5090'], fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response(null));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
+  facts[0] = 'changed'; await control.next(); await control.next();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
+});

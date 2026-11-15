@@ -8,6 +8,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import { Dispatcher } from './runtime/dispatcher.js';
 import type { ModelRole } from './runtime/placement.js';
+import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
 
 const jobInput = z.object({ job: z.string().min(1) });
@@ -34,12 +35,12 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     return viewer.id;
   };
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
-    input: z.object({}).strict(), output: workerAssignment.nullable(), may: machine,
+    input: z.object({ facts: machineFacts.optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment
     // could launch work that is already terminal, so it never releases a body.
     validateReplay() { throw new OperationError('conflict', 'Poll with a new operation id'); },
-    run(ctx) {
-      const box = runner(ctx.viewer), assignment = dispatcher.next(box);
+    run(ctx, input) {
+      const box = runner(ctx.viewer), assignment = dispatcher.next(box, input.facts);
       ctx.changed('box', box); if (assignment) ctx.changed('job', assignment.id);
       return assignment ?? null;
     },
