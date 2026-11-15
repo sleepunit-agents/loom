@@ -8,10 +8,12 @@ import {z} from 'zod';
 import {clock as systemClock,type Clock} from '../core/clock.js';
 import {secretName,requestReason} from '../pieces/secrets/input.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
+import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
 import {bodyConversationClient} from './conversation-client.js';
 const unavailable=()=>new Error('Private Secret tool unavailable; do not retry an uncertain value with a new attempt');
 const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable().message}]});
-export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void}){
+export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[]}){
+ const extensions=bodyModelTools(input.extraTools),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>'mcp__loom_secrets__'+name));
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
  const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
  const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
@@ -61,6 +63,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
     return{content:[{type:'text',text:JSON.stringify({encoding:'base64',value:encoded})}]};
    }finally{value?.fill(0);privateInput.close();client.close();if(waitingHere){waiting--;input.waiting?.(waiting>0);}}
   },extra.mcpReq.signal));
+  for(const tool of extensions)server.registerTool(tool.name,{description:tool.description,inputSchema:tool.inputSchema},(args,extra)=>run(signal=>tool.execute(args,signal),extra.mcpReq.signal));
   try{await server.connect(transport);if(closed||signal.aborted)throw unavailable();const response=await transport.handleRequest(bounded);if(closed||signal.aborted){await response.body?.cancel();return new Response(null,{status:403});}return response;}
   catch{return new Response(null,{status:503});}
   finally{await transport.close();await server.close();}
@@ -82,6 +85,6 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   if(signal.aborted)throw unavailable();const address=listener.address();if(!address||typeof address==='string')throw unavailable();
   authority=`127.0.0.1:${address.port}`;
   config=Buffer.from(JSON.stringify({mcpServers:{loom_secrets:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
-  return{config,close,allowsReply};
+  return{config,close,allowsReply,allowedTools};
  }catch{await close();throw unavailable();}
 }

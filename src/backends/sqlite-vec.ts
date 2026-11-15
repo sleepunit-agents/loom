@@ -195,7 +195,7 @@ export class SqliteVecBackend implements MemoryBackend {
     if (hit) {
       // Re-read under the write lock; if the holder was archived meanwhile,
       // fall through to a fresh insert.
-      const reheated = retryWrite(() => this.reheatTx(uniqKey, timestamp).immediate());
+      const reheated = retryWrite(() => this.reheatTx(uniqKey, timestamp,input.ttl).immediate());
       if (reheated) return reheated;
     }
 
@@ -228,7 +228,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const tx = this.db.transaction((): MemoryRef | undefined => {
       // Recheck under the write lock: a concurrent writer may have stored
       // this exact content while we were embedding.
-      const winner = this.reheatTx(uniqKey, timestamp)();
+      const winner = this.reheatTx(uniqKey, timestamp,input.ttl)();
       if (winner) return winner;
       const result = insertMem.run(
         uuid,
@@ -1105,12 +1105,16 @@ export class SqliteVecBackend implements MemoryBackend {
    * active row holds it. Run it with .immediate() on its own, or call it
    * inside another transaction (better-sqlite3 nests it as a savepoint).
    */
-  private reheatTx(uniqKey: string, timestamp: string) {
+  private reheatTx(uniqKey: string, timestamp: string,ttl?:string) {
     return this.db.transaction((): MemoryRef | undefined => {
       const existing = this.db
-        .prepare('SELECT id, ref, title, category FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
-        .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'> | undefined;
+        .prepare('SELECT id, ref, title, category,ttl,expires_at FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
+        .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'|'ttl'|'expires_at'> | undefined;
       if (!existing) return undefined;
+      if(existing.expires_at&&(!Number.isFinite(Date.parse(existing.expires_at))||isExpired(existing.expires_at,new Date(timestamp)))){
+        const duration=ttl??existing.ttl??undefined;
+        this.db.prepare('UPDATE memories SET ttl=?,expires_at=? WHERE id=?').run(duration??null,computeExpiresAt(timestamp,duration),existing.id);
+      }
       this.db
         .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ?, authored_at = ? WHERE id = ?')
         .run(timestamp, timestamp, existing.id);

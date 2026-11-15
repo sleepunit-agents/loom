@@ -99,6 +99,7 @@ it('recalls active candidates past expired top matches without reheating expired
  const f=await fixture(),expired=(await f.call('remember',{...input,ttl:'1h'},'recall-expired')).result.value.ids[0],active=(await f.call('remember',{...input,title:'Still active',content:'alpha beta ACTIVE',ttl:'permanent'},'recall-active')).result.value.ids[0];
  const now=f.clock.now()+3600000;vi.setSystemTime(now);vi.spyOn(f.clock,'now').mockReturnValue(now);
  const result=await f.call('recall',{query:'alpha',limit:1},'recall-after-expiry');expect(result.status).toBe(200);expect(result.result.value.ids).toEqual([active]);expect(f.source.prepare('SELECT recall_heat FROM memories WHERE uuid=?').get(expired.slice(4))).toEqual({recall_heat:0});expect(f.count()).toBe(2);
+ expect((await f.call('remember',{...input,ttl:'1h'},'remember-after-expiry')).result.value.ids).toEqual([expired]);expect(await f.query(`{memoryProjectMemory(id:"${expired}"){content}}`)).toEqual({memoryProjectMemory:{content:words}});expect(f.count()).toBe(2);
 });
 it('forwards TTL, metadata, category and project filters and truncates eligible recall matches',async()=>{
  const f=await fixture(),ids:string[]=[];

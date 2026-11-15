@@ -1,0 +1,96 @@
+{
+  "page": "outside",
+  "title": "Outside programs",
+  "ownerTask": "t-2236",
+  "sourceSha256": "00f079084d8ee4a3f9af133996c0a98ba07a07becba57b594235120a9386297c",
+  "promises": [
+    {
+      "id": "outside-001",
+      "promise": "An outside program has one door: the API, with a token. The command line, the web app, agents and anything outside loom call the same operations through the same permission check.",
+      "source": "docs/how-it-works/site/outside.html"
+    },
+    {
+      "id": "outside-002",
+      "promise": "One API for the command line, the web app and agents.",
+      "source": "docs/how-it-works/site/outside.html"
+    },
+    {
+      "id": "outside-003",
+      "promise": "A token says who is calling and what it may reach.",
+      "source": "docs/how-it-works/site/outside.html"
+    },
+    {
+      "id": "outside-004",
+      "promise": "Someone else's program sees only what a household owner granted it.",
+      "source": "docs/how-it-works/site/outside.html"
+    },
+    {
+      "id": "outside-005",
+      "promise": "The phone and any other interface are callers like any other.",
+      "source": "docs/how-it-works/site/outside.html"
+    },
+    {
+      "id": "outside-006",
+      "promise": "A token belongs to one member, one agent or one machine.",
+      "source": "docs/how-it-works/site/outside.html#con-h"
+    },
+    {
+      "id": "outside-007",
+      "promise": "Every part's operations are reached the same way.",
+      "source": "docs/how-it-works/site/outside.html#con-h"
+    },
+    {
+      "id": "outside-008",
+      "promise": "The labels on each record decide what this caller may reach.",
+      "source": "docs/how-it-works/site/outside.html#con-h"
+    },
+    {
+      "id": "outside-009",
+      "promise": "The live connection is how a caller gets rows and then changes.",
+      "source": "docs/how-it-works/site/outside.html#con-h"
+    },
+    {
+      "id": "outside-010",
+      "promise": "A runner sees and reports only the jobs assigned to it.",
+      "source": "docs/how-it-works/site/outside.html#con-h"
+    },
+    {
+      "id": "outside-011",
+      "promise": "Anything outside loom calls the API with a token. Someone else's program is a caller with a token: it sees only the record types and operations a household owner granted it.",
+      "source": "docs/how-it-works/site/outside.html#how-h"
+    },
+    {
+      "id": "outside-012",
+      "promise": "There is one loom per home: one program and one data folder. Beyond Node and npm nothing is required. A restart is an acceptable deploy.",
+      "source": "docs/how-it-works/site/outside.html#how-h"
+    },
+    {
+      "id": "outside-013",
+      "promise": "Each part is a module with a declared, typed interface. A role has one implementation at a time, so replacing the task store means writing another module that fills the tasks role. A bridge is replaced the same way.",
+      "source": "docs/how-it-works/site/outside.html#how-h"
+    },
+    {
+      "id": "outside-014",
+      "promise": "The phone does what the desk does, built after the desk is right. It is a caller like any other.",
+      "source": "docs/how-it-works/site/outside.html#how-h"
+    },
+    {
+      "id": "outside-015",
+      "promise": "a Checked here. Permission is checked where something outside calls the API, and nowhere else.",
+      "source": "docs/how-it-works/site/outside.html#see-h"
+    },
+    {
+      "id": "outside-016",
+      "promise": "b Installed means trusted. Loom's own parts never ask each other for permission.",
+      "source": "docs/how-it-works/site/outside.html#see-h"
+    },
+    {
+      "id": "outside-017",
+      "promise": "c The rule. A household owner sees everything, including what is private to another member. Anyone else sees what is in their projects, plus what belongs to agents they own. Private to a member means that member plus household owners.",
+      "source": "docs/how-it-works/site/outside.html#see-h"
+    }
+  ],
+  "modelTables": [
+    "tokens"
+  ]
+}
