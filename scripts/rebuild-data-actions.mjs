@@ -14,12 +14,16 @@ export async function installDataProbe(page){
   };
  });
 }
-export function connectionEvidence({title,pattern}){
+export function connectionEvidence({title,pattern,waitForSelection=false}){
  const state=globalThis.__loomDataProbe,open=state.sockets.filter(s=>s.readyState===WebSocket.OPEN),graphql=open.filter(s=>new URL(s.url).pathname==='/graphql');
- return{known:true,title,graphql:graphql.length,other:open.filter(s=>new URL(s.url).pathname!=='/graphql').map(s=>new URL(s.url).pathname),selectionSeen:graphql.some(s=>{const e=state.entries.get(s);return [...e.active.values()].some(r=>new RegExp(pattern).test(r.query)&&e.frames.some(f=>f.id===r.id));})};
+ const evidence={known:true,title,graphql:graphql.length,other:open.filter(s=>new URL(s.url).pathname!=='/graphql').map(s=>new URL(s.url).pathname),selectionSeen:graphql.some(s=>{const e=state.entries.get(s);return [...e.active.values()].some(r=>new RegExp(pattern).test(r.query)&&e.frames.some(f=>f.id===r.id));})};
+ return waitForSelection?evidence.selectionSeen:evidence;
 }
 export async function auditDataDoor(page,title){
  if(!signatures[title])return{known:false,title};
+ // A final folder click can replace the selection before its first result arrives.
+ // Wait for actual successful data; a timeout still produces the missing-evidence result.
+ await page.waitForFunction(connectionEvidence,{title,pattern:signatures[title],waitForSelection:true},{timeout:4000}).catch(error=>{if(error.name!=='TimeoutError')throw error;});
  return page.evaluate(connectionEvidence,{title,pattern:signatures[title]});
 }
 /** Reconstruct prior selected data; reject unchanged fields and collection snapshots. */

@@ -2,7 +2,24 @@ import {readFileSync} from 'node:fs';
 import {evaluate} from './rebuild-report.mjs';
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
-import {connectionEvidence,changedFields,sqlRead,installDataProbe} from './rebuild-data-actions.mjs';
+import {connectionEvidence,changedFields,sqlRead,installDataProbe,auditDataDoor} from './rebuild-data-actions.mjs';
+it('waits for the replacement selection result and keeps missing evidence on timeout',async()=>{
+ const oldSocket=globalThis.WebSocket,oldState=globalThis.__loomDataProbe;
+ try{
+  globalThis.WebSocket={OPEN:1};const socket={readyState:1,url:'ws://127.0.0.1/graphql'};
+  const entry={active:new Map([['new',{id:'new',query:'query Inbox { inboxItems { id } }'}]]),frames:[{id:'old'}]};
+  globalThis.__loomDataProbe={sockets:[socket],entries:new Map([[socket,entry]])};
+  const page={evaluate:async(read,args)=>read(args),waitForFunction:async(read,args)=>{
+   expect(read(args)).toBe(false);entry.frames.push({id:'new'});expect(read(args)).toBe(true);
+  }};
+  expect(await auditDataDoor(page,'Inbox')).toMatchObject({selectionSeen:true,graphql:1,other:[]});
+  entry.frames=[];
+  page.waitForFunction=async()=>{throw Object.assign(Error('No data'),{name:'TimeoutError'});};
+  expect(await auditDataDoor(page,'Inbox')).toMatchObject({selectionSeen:false});
+  page.waitForFunction=async()=>{throw Error('Page closed');};
+  await expect(auditDataDoor(page,'Inbox')).rejects.toThrow('Page closed');
+ }finally{globalThis.WebSocket=oldSocket;globalThis.__loomDataProbe=oldState;}
+});
 it('requires an active selection with successful data, not just a sent request',()=>{
  const oldSocket=globalThis.WebSocket,oldState=globalThis.__loomDataProbe;
  try{
