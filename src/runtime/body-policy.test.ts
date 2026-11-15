@@ -91,3 +91,18 @@ it('keeps a linked thread sender key and configured tier across venues', () => {
   f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 2 }).run();
   expect(f.read().people).toEqual([{ kind: 'person', person: 'owner', tier: 2 }]);
 });
+
+it('excludes audible waiting mail still assigned to another job', () => {
+  const f = fixture(), second = f.receive('other-job', 'other-job');
+  f.db.insert(jobs).values({ id: 'old-job', agent: 'art', conversation: f.job.conversation, title: 'Old work', state: 'done', queuedAt: '2026-11-14T12:00:00.000Z', brief: 'Old', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  const item = f.db.select().from(inboxRefs).where(eq(inboxRefs.ref, second.id)).get()!.item;
+  f.db.update(inbox).set({ job: 'old-job' }).where(eq(inbox.id, item)).run();
+  expect(f.read().people).toEqual([{ kind: 'outside', person: f.key, tier: null }]);
+});
+it('does not take sender policy from mail addressed to another agent or person', () => {
+  const f = fixture();
+  for (const target of [{ toKind: 'agent' as const, to: 'mark' }, { toKind: 'person' as const, to: 'owner' }]) {
+    f.db.update(inbox).set(target).run();
+    expect(f.read().people).toEqual([]);
+  }
+});

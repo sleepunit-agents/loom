@@ -3,7 +3,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections } from '../core/data/schema.js';
+import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -182,14 +183,16 @@ it('projects current agent capabilities and only its configured ports at claim',
 
 it('hands the configured outside tier and tool rules to the runner on actual claim', () => {
   const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
-  const conversation = f.comms.open({ agent: 'art', venue: 'discord', place: 'room', label: 'Outside work' });
-  f.comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'discord', fromKind: 'person', fromId: 'owner', words: 'Work' });
-  const job = f.runtime.jobs.admit(conversation.id)!;
-  f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 2 }).run();
+  f.db.insert(secrets).values({ name: 'bot', description: '', changedAt: f.now(), changedBy: 'owner' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'c', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-art', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
+  const incoming = new BridgeIncoming(f.db, f.now).receive({ id: 'm', connection: 'c', channel: 'room', isDm: true, user: 'outside', text: 'Work', postedAt: f.now(), mentions: [] });
+  const job = f.runtime.jobs.admit(incoming.conversation!)!;
+  const person = JSON.stringify(['discord', 'w', 'outside']);
+  f.db.insert(agentPeople).values({ agent: 'art', person, tier: 2 }).run();
   f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
   const assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(job.id);
-  expect(assignment.run.policy).toEqual({ people: [{ kind: 'person', person: 'owner', tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }] });
+  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }] });
 });
 
 it('reads tool and person policy within the same placement and claim transaction', () => {
