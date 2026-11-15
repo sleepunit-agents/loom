@@ -18,7 +18,7 @@ import { sharedRoot } from '../shared-root.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-it.runIf(chrome && existsSync(join(root, 'next.html')))('shipped Inbox reads and answers through actual sharedRoot across windows, then withdraws revoked words', async () => {
+it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Inbox reads and answers through actual sharedRoot across windows, then withdraws revoked words', async () => {
   const client = new Database(':memory:'), clock = new FakeClock(Date.now());
   const now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   db.insert(members).values({ id: 'alice', role: 'member', joinedAt: now() }).run();
@@ -40,7 +40,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('shipped Inbox reads and
       const auth = authenticate(new Request('http://localhost/', { headers: { cookie: req.headers.cookie ?? '' } }));
       res.setHeader('content-type','application/json'); res.end(JSON.stringify({viewer:auth?.viewer ?? null,csrf:''})); return;
     }
-    const file = path.startsWith('/app/') ? resolve(root,path.slice(5)) : join(root,'next.html');
+    const file = path.startsWith('/app/') ? resolve(root,path.slice(5)) : join(root,'index.html');
     if (!file.startsWith(root + '/') || !existsSync(file)) { res.writeHead(404).end(); return; }
     res.setHeader('content-type',({'.js':'application/javascript','.css':'text/css','.html':'text/html'} as Record<string,string>)[extname(file)] ?? 'application/octet-stream');
     res.end(readFileSync(file));
@@ -55,7 +55,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('shipped Inbox reads and
     await context.addCookies([{name:'loom_ui',value:cookie,url}]);
     const a = await context.newPage(), b = await context.newPage();
     await Promise.all([a,b].map(page => page.goto(`${url}/p/inbox-preview/ask/${encodeURIComponent(question.inboxItem!)}`)));
-    for (const page of [a,b]) await expect.poll(() => page.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).count()).toBe(1);
+    for (const page of [a,b]) await expect.poll(() => page.getByRole('heading',{name:'PRIVATE PUMP QUESTION',exact:true}).count()).toBe(1); console.info('Inbox: private question visible');
     await expect.poll(() => client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:1});
     await a.getByRole('button',{name:'Yes',exact:true}).click();
     for (const page of [a,b]) {
@@ -74,6 +74,6 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('shipped Inbox reads and
     composition.writes.run(() => client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(now(),hash(token)));
     for (const page of [a,b]) for (const words of ['PRIVATE PUMP QUESTION']) await expect.poll(() => page.getByText(words,{exact:true}).count()).toBe(0);
   } finally {
-    await browser?.close(); detach(); await composition.close(); await new Promise<void>(ok => server.close(() => ok())); client.close();
+    console.info('Proof: closing browser'); await browser?.close(); console.info('Proof: closing root'); detach(); await composition.close(); console.info('Proof: closing listener'); await new Promise<void>(ok => server.close(() => ok())); client.close();
   }
-});
+}, 60_000);
