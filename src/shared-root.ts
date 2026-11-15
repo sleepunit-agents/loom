@@ -13,8 +13,10 @@ import { changeService, type PullRequestReader, type MergeRuleReader } from './a
 import { pollChanges } from './apps/changes-polling.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
+import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { nextData } from './next-data.js';
+import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -41,6 +43,7 @@ export function sharedRoot(options: {
     for (const error of result.notificationErrors) { try { options.reportError(error); } catch { /* reporting cannot undo a source commit */ } }
     return result.value;
   };
+  registerSharedPreferences(operations, db);
   const services = {
     tasks: taskService(db, now),
     changes: changeService(db, options.changes?.rule ?? (() => undefined), now, commit),
@@ -73,6 +76,7 @@ export function sharedRoot(options: {
     active.add(entry); c.set('shutdown', abort);
     try { await next(); } finally { active.delete(entry); finished(); }
   });
+  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/:piece/:operation', async c => {
@@ -88,7 +92,7 @@ export function sharedRoot(options: {
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, false, () => !closing && auth.valid());
+      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
