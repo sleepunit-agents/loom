@@ -61,3 +61,15 @@ it('renders a closed cancelled task as cancelled and offers reopen rather than c
   const labels=tree.root.findAllByType('Button').map((b:{props:{children:string}})=>b.props.children);
   expect(labels).toContain('Reopen'); expect(labels).not.toContain('Claim'); expect(labels).not.toContain('Close');
 });
+
+it('shows current linked pull request state and drops it with the authorized snapshot', async () => {
+  const task = { id:'t-1', title:'Work', type:'task', status:'open', priority:2, position:0, ownerKind:'household', owner:null, project:null, assigneeKind:null, assignee:null, goal:'', why:'', doneWhen:'', description:'', ask:null, ifYes:null, ifNo:null, closeReason:null, sourceKind:null, sourceId:null } as SharedTask;
+  const change = { task:'t-1',id:'github:acme/app#3',repository:'github:acme/app',number:3,state:'open',checks:'passing',review:'approved' } as const;
+  const p = props({tasks:[task],selected:task.id,changes:[change]}); await draw(p);
+  expect(tree.root.findByType('a').props.href).toBe('https://github.com/acme/app/pull/3');
+  expect(visibleText(tree.root.findByType('a').parent)).toContain('passing · approved');
+  await act(async () => tree.update(h(SharedTasks,{...p,changes:[{...change,checks:'failing',review:'changes_requested'}]})));
+  expect(visibleText(tree.root.findByType('a').parent)).toContain('failing · changes requested');
+  await act(async () => tree.update(h(SharedTasks,{...p,status:'denied'})));
+  expect(tree.root.findAllByType('a')).toHaveLength(0);
+});

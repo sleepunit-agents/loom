@@ -9,6 +9,7 @@ import { build } from 'esbuild';
 import { getRequestListener } from '@hono/node-server';
 import { chromium } from 'playwright-core';
 import { createDataSchema } from '../core/data/database.js';
+import { changes, changeTasks } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { FakeClock } from '../core/clock.js';
 import { taskService } from '../apps/tasks.js';
@@ -39,7 +40,11 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Tasks reads live canoni
   const blocker = make('Other project work', 'other');
   make('Unfiled household work', null);
   const blocked = make('Visible blocked work', 'pond');
-  data.writes.run(() => tasks.link(blocked.id, blocker.id, 'blocks'));
+  data.writes.run(() => {
+    tasks.link(blocked.id, blocker.id, 'blocks');
+    db.insert(changes).values({ id:'github:acme/app#3',repository:'github:acme/app',number:3,title:'Linked fixture change',body:'',url:'https://github.com/acme/app/pull/3',state:'open',draft:false,authorLogin:'fixture',project:'pond',branch:'feature',headCommit:'abc',baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'done',openedAt:now(),updatedAt:now() }).run();
+    db.insert(changeTasks).values({change:'github:acme/app#3',task:pond.id}).run();
+  });
   const bundle = await build({
     stdin: {
       contents: `import {createElement} from 'react'; import {createRoot} from 'react-dom/client'; import Tasks from './src/pieces/tasks'; createRoot(document.getElementById('root')).render(createElement(Tasks));`,
@@ -100,9 +105,14 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Tasks reads live canoni
     await row(a,'Pond work').click(); await row(b,'Pond work').click();
     data.writes.run(() => tasks.comment(pond.id,'A comment shared between windows',owner));
     await expect.poll(() => b.getByText('A comment shared between windows',{exact:true}).count()).toBe(1);
+    const badge = (page:typeof a) => page.getByRole('link',{name:'acme/app#3',exact:true}).locator('..');
+    for (const page of [a,b]) await expect.poll(() => badge(page).textContent()).toBe('acme/app#3 · passing · approved');
+    data.writes.run(() => client.exec("UPDATE changes SET checks='failing',review='changes_requested'"));
+    for (const page of [a,b]) await expect.poll(() => badge(page).textContent()).toBe('acme/app#3 · failing · changes requested');
     expect(new URL(b.url()).pathname).toContain(`/task/${pond.id}`);
     await b.reload();
     await expect.poll(() => b.getByText('A comment shared between windows',{exact:true}).count()).toBe(1);
+    await expect.poll(() => badge(b).textContent()).toBe('acme/app#3 · failing · changes requested');
     expect(sockets).toEqual([1,2]); // One connection per page lifetime, including the deliberate reload.
     const shots = process.env.LOOM_TEST_SHOTS ?? resolve('artifacts/tasks-app');mkdirSync(shots,{recursive:true});
     for (const look of ['neon','daylight']) for (const width of [390,1280,1920]) {

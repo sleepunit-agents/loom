@@ -42,6 +42,7 @@ export default function TasksApp({ path: shellPath, go, questionFor = '', conver
   const target = tasks.find(task => task.id === action?.id);
   return <>
     <SharedTasks status={status} tasks={tasks} selected={selected} select={navigate} questionFor={questionFor}
+      changes={tasks.flatMap(task => task.changeTasksByTask.flatMap(link => link.changeRow ? [{ ...link.changeRow, task: task.id }] : []))}
       links={tasks.flatMap(task => task.taskLinksByTask)} comments={tasks.flatMap(task => task.taskCommentsByTask)}
       ready={tasks.filter(task => task.isReady).map(task => task.id)} conversation={openConversation}
       act={submit ? (action, task) => { navigate(task?.id); setAction({action, id: task?.id}); } : undefined}/>

@@ -1,3 +1,4 @@
+import type { changes } from '../../../../src/core/data/schema';
 import { useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, type SplitFolder } from '../../kit';
 
@@ -13,6 +14,7 @@ export interface SharedTask {
 }
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
+export type SharedTaskChange = Pick<typeof changes.$inferSelect, 'id' | 'repository' | 'number' | 'state' | 'checks' | 'review'> & { task: string };
 type Task = SharedTask;
 type Link = SharedTaskLink;
 type Comment = SharedTaskComment;
@@ -22,6 +24,7 @@ export interface SharedTasksProps {
   tasks: readonly Task[];
   links: readonly Link[];
   comments: readonly Comment[];
+  changes?: readonly SharedTaskChange[];
   /** IDs returned by the authorized ready query, never inferred from partial visible links. */
   ready: readonly string[];
   selected?: string;
@@ -75,6 +78,13 @@ export function SharedTasks(props: SharedTasksProps) {
       {selected.assignee && <p>Assigned to {selected.assigneeKind} {selected.assignee}</p>}
       {props.act && <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actions(selected).map(action => <Button variant="outline" key={action} onClick={() => props.act?.(action,selected)}>{labels[action]}</Button>)}</div>}
       {([['Goal',selected.goal],['Why',selected.why],['Done when',selected.doneWhen],['Description',selected.description],['Question',selected.ask],['If yes',selected.ifYes],['If no',selected.ifNo],['Closed because',selected.closeReason]] as const).filter(([,value]) => value).map(([label,value]) => <section key={label}><h3>{label}</h3><p className="whitespace-pre-wrap break-words">{value}</p></section>)}
+      {!!props.changes?.some(change => change.task === selected.id) && <section><h3>Pull requests</h3>{props.changes.filter(change => change.task === selected.id).map(change => {
+        const repository = /^(?:github:)?([\w.-]+\/[\w.-]+)$/.exec(change.repository)?.[1];
+        const label = repository ? `${repository}#${change.number}` : change.id;
+        const href = repository && Number.isInteger(change.number) && change.number > 0 ? `https://github.com/${repository}/pull/${change.number}` : undefined;
+        const status = change.state === 'open' ? `${change.checks} · ${change.review.replaceAll('_',' ')}` : change.state;
+        return <p key={change.id}>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{label}</a> : label}{` · ${status}`}</p>;
+      })}</section>}
       {selected.sourceKind === 'conversation' && selected.sourceId && props.conversation && <Button variant="outline" onClick={() => props.conversation!(selected.sourceId!)}>From conversation</Button>}
       {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}
       {relations('Children',links.filter(l => l.dependsOn === selected.id && l.type === 'parent-child').map(l => l.task))}

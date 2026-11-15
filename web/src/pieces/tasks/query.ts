@@ -1,4 +1,4 @@
-import type { SharedTask, SharedTaskComment, SharedTaskLink } from './shared-view';
+import type { SharedTask, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
 /** A single generated relational selection, including comment/link deltas.
  * Readiness is computed in SQL against all blockers, including hidden ones. */
@@ -7,11 +7,13 @@ export const tasksQuery = `query Tasks {
     id title type status priority position ownerKind owner project assigneeKind assignee
     goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId
     commentCount isReady
+    changeTasksByTask { changeRow { id repository number state checks review } }
     taskLinksByTask { task dependsOn type }
     taskCommentsByTask(orderBy: {seq: {direction: asc, priority: 0}}) { task seq actorKind actor at text }
   }
 }`;
 export interface TaskSelection extends SharedTask {
+  changeTasksByTask: { changeRow: Omit<SharedTaskChange, 'task'> | null }[];
   commentCount: number;
   isReady: boolean;
   taskLinksByTask: SharedTaskLink[];
