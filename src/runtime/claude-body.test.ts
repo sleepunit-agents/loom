@@ -109,3 +109,11 @@ it('erases an unsettled private MCP pipe at cancellation before its write callba
  const f=fixture(),chunks:Buffer[]=[];let release!:()=>void;const pipe=new Writable({write(chunk,_encoding,done){chunks.push(chunk);release=done;}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{"private":"LOCAL_CAPABILITY"}')});const result=run(job,'mail',f.abort.signal),refused=expect(result).rejects.toThrow('Native Claude execution unavailable');f.abort.abort();expect(chunks).toHaveLength(1);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);await refused;release();
 });
+it('snapshots composed private tool names without broadening denied native tools',async()=>{
+ const f=fixture(),names=['mcp__loom_secrets__command'],pipe=new Writable({write(_chunk,_encoding,done){done();}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
+ const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names});names.push('Bash');const pending=run(job,'mail',f.abort.signal),args=f.launch.mock.calls[0][1];
+ expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom_secrets__command']);expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await pending;
+});
+it.each([{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom_secrets__command','mcp__loom_secrets__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
+ const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
+});

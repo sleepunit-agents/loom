@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {z} from 'zod';
 import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
-const tool=():BodyModelTool=>({name:'command',description:'Use canonical commands',inputSchema:z.object({command:z.string()}).strict(),execute:vi.fn(async()=>({content:[{type:'text',text:'done'}]}))});
+const tool=():BodyModelTool=>({name:'command',description:'Use canonical commands',inputSchema:z.object({command:z.string()}).strict(),execute:vi.fn(async()=>({content:[{type:'text' as const,text:'done'}]}))});
 it('snapshots the exact tool identity and executor used by registration and native policy',()=>{
  const original=tool(),execute=original.execute,input=[original],result=bodyModelTools(input);original.name='other';original.execute=vi.fn();input.length=0;
  expect(result).toHaveLength(1);expect(result[0].name).toBe('command');expect(result[0].execute).toBe(execute);expect(Object.isFrozen(result)).toBe(true);expect(Object.isFrozen(result[0])).toBe(true);expect(result[0].inputSchema.safeParse({command:'list',agent:'foreign'}).success).toBe(false);
