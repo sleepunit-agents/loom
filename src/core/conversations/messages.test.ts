@@ -263,3 +263,13 @@ it('sweeps at the exact household deadline when message age uses whole seconds',
   at('2026-11-15T18:00:00.000Z');
   expect(service.expire()).toBe(1); expect(db.select().from(messages).get()?.words).toBeNull();
 });
+it.each(['dim','mute'] as const)('encrypted question content changes reset %s without making retry or read a new named ask',async volume=>{
+ const {db,service,thread}=await fixture(),until='2026-11-21T18:00:00.000Z';
+ const ask=await service.ask(thread.id,'art','volume-ask',{words:'Use fixture?',answers:'yes-no'});const id=ask.inboxItem!;
+ db.update(inbox).set({volume,quietUntil:until}).where(eq(inbox.id,id)).run();service.threads.conversations.read(id,'jonathan');
+ expect(await service.ask(thread.id,'art','volume-ask',{words:'Retry is not a new ask',answers:'yes-no'})).toEqual(ask);expect(service.threads.conversations.item(id)).toMatchObject({volume,quietUntil:until});
+ const prepare=await service.prepareAnswer(id,'jonathan','yes');expect(()=>db.transaction(()=>{prepare();throw Error('Rollback');})).toThrow('Rollback');expect(service.threads.conversations.item(id)).toMatchObject({state:'waiting',volume,quietUntil:until});
+ expect(await service.answer(id,'jonathan','yes')).toMatchObject({state:'answered',volume:volume==='dim'?'full':'mute',quietUntil:volume==='dim'?null:until});
+ db.update(inbox).set({volume:'dim',quietUntil:until}).where(eq(inbox.id,id)).run();expect(await service.answer(id,'jonathan','yes')).toMatchObject({volume:'dim',quietUntil:until});
+ const fresh=await service.ask(thread.id,'art','new-named-ask',{words:'Another explicit question?',answers:'yes-no'});expect(service.threads.conversations.item(fresh.inboxItem!)).toMatchObject({volume:'full',quietUntil:null});
+});

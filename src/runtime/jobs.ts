@@ -4,7 +4,7 @@ import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
@@ -15,6 +15,13 @@ export class Jobs {
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
     if (!row) throw new Error('Job not found');
     return row;
+  }
+
+  /** Only unconfirmed original messages held by this exact job. Delivery is
+   * separate from the agent's explicitly reported status and from mail ACKs. */
+  private delivery(job: string, delivery: 'sending' | 'held' | 'failed'): void {
+    const pending = this.db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.job,job),inArray(inbox.state,['waiting','taken'])));
+    this.db.update(messages).set({delivery}).where(and(eq(messages.kind,'message'),inArray(messages.inboxItem,pending))).run();
   }
 
   private keepText(job: Pick<Job, 'conversation'>): boolean {
@@ -60,6 +67,7 @@ export class Jobs {
       }).returning().get();
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
+      this.delivery(job.id,'held');
       this.db.update(conversations).set({ job: job.id }).where(eq(conversations.id, conversationId)).run();
       return job;
     }, { behavior: 'immediate' });
@@ -71,8 +79,10 @@ export class Jobs {
     return this.db.transaction(() => {
       const job = this.get(id), at = this.now();
       if (job.state !== 'queued' || (job.retryAt && job.retryAt > at)) return;
-      return this.db.update(jobs).set({ box, state: 'starting', claimedAt: at, heardAt: at })
+      const claimed = this.db.update(jobs).set({ box, state: 'starting', claimedAt: at, heardAt: at })
         .where(and(eq(jobs.id, id), eq(jobs.state, 'queued'))).returning().get();
+      if(claimed)this.delivery(id,'sending');
+      return claimed;
     }, { behavior: 'immediate' });
   }
 
@@ -121,6 +131,7 @@ export class Jobs {
       }).returning().get();
       for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
       this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run();
+      this.delivery(retry.id,'held');
       if (before.conversation) this.db.update(conversations).set({ job: retry.id }).where(eq(conversations.id, before.conversation)).run();
       return { job, retry };
     }, { behavior: 'immediate' });
@@ -147,6 +158,7 @@ export class Jobs {
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
+    this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
     this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() })
       .where(and(eq(inbox.job, job.id), eq(inbox.state, 'taken'))).run();
