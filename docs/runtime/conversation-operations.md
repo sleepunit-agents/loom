@@ -8,8 +8,9 @@ installing both would duplicate operation names. This adapter does not bootstrap
 the data schema or switch the root. The root supplies OperationResults and DataWrites to Operations on that same
 shared database; no legacy core retry-table bootstrap is needed.
 
-All six are writes from a signed-in member window, through the existing socket
-door. Dispatch with `callAsync` and the door's current-authentication predicate.
+All six are writes from a signed-in member window, through the shared HTTP or socket
+door. The HTTP root admits a window only from a current member cookie; a bearer,
+including one accompanying a cookie, is not a window. Dispatch with `callAsync` and the door's current-authentication predicate.
 The predicate is essential: a captured Viewer alone cannot prove that a session
 remains signed in after encryption. The adapter uses the same member identity for
 message sender, thread creator, answerer and Inbox read mark; these identities are

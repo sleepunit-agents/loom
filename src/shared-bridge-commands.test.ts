@@ -63,12 +63,12 @@ it('releases held sends but never requeues an uncertain send; dismissal retains 
 it('retires an edited connection and atomically replaces filters while preserving referenced history',async()=>{
  const f=fixture();await f.call(f.config);f.db.update(bridgeConnections).set({state:'connected'}).run();
  f.db.insert(bridgeIncoming).values({id:'incoming',connection:'discord',channel:'room',isDm:false,user:'outside',text:'Kept',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
- expect((await f.call({...f.config,botUser:'new-bot',only:['new-room'],ignore:[]})).body).toEqual({ok:true,value:{saved:true}});
- expect(f.db.select().from(bridgeConnections).get()).toMatchObject({botUser:'new-bot',state:'disconnected'});expect(f.db.select().from(bridgeIncoming).get()?.text).toBe('Kept');
+ expect((await f.call({...f.config,tokenSecret:'APP',only:['new-room'],ignore:[]})).body).toEqual({ok:true,value:{saved:true}});
+ expect(f.db.select().from(bridgeConnections).get()).toMatchObject({tokenSecret:'APP',state:'disconnected'});expect(f.db.select().from(bridgeIncoming).get()?.text).toBe('Kept');
  expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
  f.client.exec("CREATE TRIGGER fail_filter BEFORE INSERT ON bridge_channel_filters BEGIN SELECT RAISE(ABORT, 'PRIVATE upstream failure'); END");
- const failed=await f.call({...f.config,botUser:'rolled-back',only:['fail']});expect(failed.status).toBe(400);expect(failed.body).toMatchObject({ok:false,message:'Bridge change could not complete'});expect(JSON.stringify(failed.body)).not.toContain('PRIVATE');
- expect(f.db.select().from(bridgeConnections).get()?.botUser).toBe('new-bot');expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
+ const failed=await f.call({...f.config,tokenSecret:'TOKEN',only:['fail']});expect(failed.status).toBe(400);expect(failed.body).toMatchObject({ok:false,message:'Bridge change could not complete'});expect(JSON.stringify(failed.body)).not.toContain('PRIVATE');
+ expect(f.db.select().from(bridgeConnections).get()?.tokenSecret).toBe('APP');expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
 });
 it('rejects fresh reviews outside held/uncertain and permits held dismissal',async()=>{
  const f=fixture();await f.call(f.config);f.db.insert(bridgeIncoming).values({id:'incoming',connection:'discord',channel:'room',isDm:false,user:'outside',text:'Words',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
@@ -95,4 +95,11 @@ it('updates existing composite keys and removes only the addressed channel/perso
  expect(f.db.select().from(bridgeChannels).where(eq(bridgeChannels.workspace,'w')).get()?.botsMayTalk).toBe(true);expect(f.db.select().from(bridgePeople).where(eq(bridgePeople.workspace,'w')).get()?.member).toBe('member');
  await f.call({action:'removeChannel',platform:'discord',workspace:'w',channel:'room'});await f.call({action:'removePerson',platform:'discord',workspace:'w',user:'outside'});
  expect(f.db.select().from(bridgeChannels).all().map(row=>row.workspace)).toEqual(['neighbor']);expect(f.db.select().from(bridgePeople).all().map(row=>row.workspace)).toEqual(['neighbor']);
+});
+
+it('keeps retained receipts scoped to one connection identity while permitting credential-name changes',async()=>{
+ const f=fixture();await f.call(f.config);f.db.insert(agents).values({...f.db.select().from(agents).get()!,id:'another'}).run();
+ for(const changed of [{agent:'another'},{workspace:'another'},{botUser:'another'},{platform:'slack',appSecret:'APP'}])expect((await f.call({...f.config,...changed})).status).toBe(400);
+ expect(f.db.select().from(bridgeConnections).get()).toMatchObject({platform:'discord',workspace:'w',botUser:'bot',agent:'art'});
+ expect((await f.call({...f.config,tokenSecret:'APP'})).status).toBe(200);
 });
