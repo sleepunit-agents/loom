@@ -13,7 +13,7 @@ function fixture(venue: 'loom' | 'handoff' = 'handoff') {
   let at = '2026-11-14T20:00:00.000Z';
   const now = () => at, db = createDataSchema(client, now);
   db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: at }).run();
-  db.insert(projects).values({ id: 'pond', name: 'Pond', createdAt: at }).run();
+  db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
   db.insert(boxes).values({ id: 'worker', name: 'Worker', owner: 'owner', sameMachineAsLoom: true, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at, lastSeenAt: at }).run();
   db.insert(agentModels).values({ agent: 'art', model: 'primary', position: 0 }).run();
@@ -201,4 +201,27 @@ it('does not copy a legacy private brief into a new failed-start retry', () => {
   expect(result.retry?.brief).toBe(''); expect(result.job.logTail).toBeNull();
   expect(f.runtime.get(result.retry!.id).brief).toBe('');
   expect(f.runtime.get(job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
+});
+
+for (const venue of ['handoff', 'loom'] as const) it(`keeps dim admission and retry briefs to one line for ${venue}`, () => {
+  const f = fixture(venue); f.send(); const dim = f.send();
+  f.db.update(inbox).set({ volume: 'dim', words: '\n  First dim line  \nDETAILS_MUST_NOT_REACH_THE_BODY' }).where(eq(inbox.id, dim.id)).run();
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.brief).toBe(venue === 'loom' ? '' : 'Hello\n\nFirst dim line');
+  expect(f.runtime.workerBrief(job.id)).toBe(job.brief); f.runtime.claim(job.id, 'worker');
+  const retry = f.runtime.finish(job.id, 'worker', 1).retry!;
+  expect(retry.brief).toBe(job.brief); expect(f.runtime.workerBrief(retry.id)).toBe(job.brief);
+  expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('DETAILS_MUST_NOT_REACH_THE_BODY');
+  expect(f.db.select().from(inbox).where(eq(inbox.id, dim.id)).get()).toMatchObject({ state: 'waiting', job: retry.id, volume: 'dim' });
+});
+
+for (const separator of ['\r\n', '\v', '\f', '\u0085', '\u2028', '\u2029']) it('keeps dim paragraphs out of worker briefs across supported line separators', () => {
+  const f = fixture(), item = f.send(); f.db.update(inbox).set({ volume: 'dim', words: ' Summary '+separator+'Details' }).where(eq(inbox.id, item.id)).run();
+  expect(f.runtime.admit(f.conversation.id)?.brief).toBe('Summary');
+});
+it('preserves full multiline public mail in the same admission with a dim item', () => {
+  const f = fixture(), full = f.send(), dim = f.send();
+  f.db.update(inbox).set({ words: 'Full first\nFull second' }).where(eq(inbox.id, full.id)).run();
+  f.db.update(inbox).set({ volume: 'dim', words: 'Dim first\nDim second' }).where(eq(inbox.id, dim.id)).run();
+  expect(f.runtime.admit(f.conversation.id)?.brief).toBe('Full first\nFull second\n\nDim first');
 });
