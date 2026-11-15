@@ -96,3 +96,62 @@ it('withdraws agent ownership through a retained real socket schema after a memb
   expect((await f.call('setMember', { id: 'lee', role: 'member', agents: [] }, 'sam', 'withdraw')).status).toBe(200);
   expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([{ path: ['agents', 0], removed: true, value: null }]);
 });
+it('denies ordinary member and agent appearance writes and rechecks owner demotion before replay', async () => {
+  const f = fixture(), input = { id: 'art', ...visual, about: 'Changed by owner' };
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('setAgent', input, actor)).status).toBe(403);
+  expect((await f.call('setAgent', input)).status).toBe(200);
+  f.root.writes.run(() => f.client.exec("UPDATE members SET role='member' WHERE id='sam'; INSERT INTO member_agents(member,agent) VALUES('sam','art')"));
+  expect((await f.call('setAgent', input)).status).toBe(403);
+  expect((await f.call('setAgent', { ...input, about: 'Unauthorized' }, 'sam', 'fresh')).status).toBe(403);
+  expect(f.db.select().from(agents).all().find(row => row.id === 'art')?.about).toBe('Changed by owner');
+});
+it('exposes populated agent ownership only to current owners in direct and connected selections', async () => {
+  const f = fixture();
+  await f.call('setMember', { id: 'lee', role: 'member', agents: ['art'] });
+  const query = '{ members(where:{id:{eq:"lee"}}) { id memberAgentsByMember { agent } } memberAgents { member agent } }';
+  const read = async (actor: keyof typeof credentials) => (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ query }) })).json();
+  expect(await read('sam')).toEqual({ data: { members: [{ id: 'lee', memberAgentsByMember: [{ agent: 'art' }] }], memberAgents: [{ member: 'lee', agent: 'art' }] } });
+  expect(await read('lee')).toEqual({ data: { members: [{ id: 'lee', memberAgentsByMember: [] }], memberAgents: [] } });
+  expect(await read('art')).toEqual({ data: { members: [], memberAgents: [] } });
+  f.root.writes.run(() => f.client.exec("UPDATE members SET role='member' WHERE id='sam'"));
+  expect(await read('sam')).toEqual({ data: { members: [], memberAgents: [] } });
+});
+it('persists full ownership and permitted demotion without changing member position or join time', async () => {
+  const f = fixture(), joinedAt = f.root.services.household.members().find(row => row.id === 'sam')!.joinedAt;
+  f.client.exec("UPDATE members SET position=73 WHERE id='sam'");
+  expect((await f.call('setMember', { id: 'lee', role: 'owner', fullOwner: true, agents: ['art'] })).status).toBe(200);
+  expect(f.root.services.household.members().find(row => row.id === 'lee')).toMatchObject({ role: 'owner', fullOwner: true, agents: ['art'] });
+  f.clock.advance(1000);
+  expect((await f.call('setMember', { id: 'sam', role: 'member', agents: ['mark'] }, 'lee', 'demote')).status).toBe(200);
+  expect(f.root.services.household.members().find(row => row.id === 'sam')).toMatchObject({ role: 'member', fullOwner: false, position: 73, joinedAt, agents: ['mark'] });
+});
+it('creates agents and updates descriptions colors and eyes without overwriting unrelated metadata', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  const created = { id: 'jun', about: 'New assistant', markBg: '#123456', markFg: '#abcdef', faceShape: 'drop', faceEyes: 'oval' };
+  expect((await f.call('setAgent', created)).status).toBe(200);
+  expect(f.db.select().from(agents).all().find(row => row.id === 'jun')).toMatchObject({ ...created, spriteVersion: null });
+  f.client.prepare("UPDATE agents SET about_asked_at=?,position=7 WHERE id='art'").run(at);
+  expect((await f.call('setAgent', { id: 'art', ...visual, about: 'New biography' }, 'sam', 'bio')).status).toBe(200);
+  expect(f.db.select().from(agents).all().find(row => row.id === 'art')).toMatchObject({ about: 'New biography', aboutAskedAt: at, position: 7, spriteVersion: 'old-png' });
+  expect((await f.call('setAgent', { id: 'art', ...visual, markBg: '#778899', markFg: '#112233', faceEyes: 'oval' }, 'sam', 'visual')).status).toBe(200);
+  expect(f.db.select().from(agents).all().find(row => row.id === 'art')).toMatchObject({ markBg: '#778899', markFg: '#112233', faceEyes: 'oval', spriteVersion: null, aboutAskedAt: at, position: 7 });
+});
+it('withdraws populated owner metadata through an already subscribed socket after permitted demotion', async () => {
+  const f = fixture();
+  await f.call('setMember', { id: 'lee', role: 'owner', fullOwner: true, agents: ['art'] });
+  const server = createServer(), detach = f.root.attach(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  clean.push(async () => { detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); if (!address || typeof address === 'string') throw Error('No port');
+  const ws = new WebSocket('ws://127.0.0.1:'+address.port+'/graphql', 'graphql-transport-ws', { headers: { authorization: 'Bearer '+credentials.sam } });
+  clean.push(() => ws.terminate()); await once(ws, 'open');
+  let next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await next;
+  next = once(ws, 'message');
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'members', payload: { query: 'subscription { observe(query:"{ members(where:{id:{eq:\\"lee\\"}}) { id } memberAgents { member agent } }") { patches { path value removed } } }' } }));
+  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches[0].value).toEqual({ members: [{ id: 'lee' }], memberAgents: [{ member: 'lee', agent: 'art' }] });
+  next = once(ws, 'message');
+  expect((await f.call('setMember', { id: 'sam', role: 'member', agents: [] }, 'lee', 'demote')).status).toBe(200);
+  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([
+    { path: ['members', 0], removed: true, value: null }, { path: ['memberAgents', 0], removed: true, value: null },
+  ]);
+});
