@@ -13,7 +13,8 @@ import type { Viewer } from '../../policy.js';
 const clients: Database.Database[] = [], dispatchers: Operations[] = [];
 afterEach(() => { for (const op of dispatchers.splice(0)) op.close(); for (const client of clients.splice(0)) client.close(); });
 function fixture() {
-  const client = new Database(':memory:'); clients.push(client);
+  const statements: string[] = [];
+  const client = new Database(':memory:', { verbose: s => statements.push(s) }); clients.push(client);
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   for (const id of ['jonathan', 'other']) db.insert(members).values({ id, role: 'member', joinedAt: now() }).run();
@@ -37,7 +38,7 @@ function fixture() {
   const viewer: Viewer = { kind: 'member', id: 'jonathan' };
   const call = (name: string, input: unknown, id: string, valid = () => true) => operations.callAsync('socket', viewer, name, input, id, true, valid);
   const thread = service.threads.open({ id: 'th:one', member: 'jonathan', agent: 'art', title: 'Pump' });
-  return { client, db, clock, service, operations, changes, publicationTransactions, policyCalls, thread, call,
+  return { client, db, clock, statements, service, operations, changes, publicationTransactions, policyCalls, thread, call,
     seals: () => seals,
     gate: (fn: () => Promise<void>) => { encryptionGate = fn; }, allow: (value: boolean) => { allowed = value; } };
 }
@@ -239,4 +240,19 @@ it('rolls action-result dismissal back if the shared operation receipt cannot co
   f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'receipt refused'); END");
   expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss')).toMatchObject({ ok: false });
   expect(f.db.select().from(actionResults).get()?.readAt).toBeNull(); expect(f.changes).toEqual([]);
+});
+
+it('selects only the outcome ID during dismissal authorization and receipt replay', async () => {
+  const f = fixture();
+  f.db.insert(actionResults).values({ id: 'mine', member: 'jonathan', at: new Date(f.clock.now()).toISOString(), ok: false, text: 'Private failure details', page: '/inbox' }).run();
+  for (const phase of ['initial', 'replay']) {
+    f.statements.splice(0);
+    expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss')).toEqual({ ok: true, value: { saved: true } });
+    const reads = f.statements.filter(s => /^\s*select\b/i.test(s) && s.includes('"action_results"'));
+    expect(reads.length, phase).toBeGreaterThan(0);
+    for (const query of reads) {
+      expect(query, phase).not.toMatch(/"(?:text|page|ok|at|read_at)"/);
+      expect(query.slice(0, query.toLowerCase().indexOf(' from ')), phase).not.toContain('*');
+    }
+  }
 });
