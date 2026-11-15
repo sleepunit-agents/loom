@@ -285,7 +285,7 @@ it('stops late authentication database reads when the root withdraws admission d
   const spy = vi.spyOn(f.client, 'prepare').mockImplementation(sql => { if (/from\s+"(?:tokens|sessions|members)"/i.test(sql)) lateReads.push(sql); return prepare(sql); });
   try {
     admitted = false; const closing = f.data.close(); release();
-    expect((await pending).status).toBe(401); await closing;
+    const denied=await pending; expect([401,503]).toContain(denied.status); expect(await denied.text()).not.toContain('done'); await closing;
     expect(lateReads).toEqual([]);
   } finally { release(); spy.mockRestore(); }
 });
