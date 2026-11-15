@@ -15,6 +15,7 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
+import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
@@ -27,6 +28,7 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  workAnswerAuthority?: WorkAnswerAuthority;
   changes?: { read: PullRequestReader; rule: MergeRuleReader };
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
@@ -52,6 +54,7 @@ export function sharedRoot(options: {
   };
   const changePolling = options.changes ? pollChanges(services.changes, options.changes.read, clock) : undefined;
   registerSharedTaskCommands(operations, db, services.tasks);
+  if (options.workAnswerAuthority) registerSharedWorkCommands(operations, db, services.approvals, options.workAnswerAuthority);
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
