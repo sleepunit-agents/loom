@@ -59,8 +59,17 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Tasks reads live canoni
       },
     }],
   });
-  const styles = [...readFileSync(join(root,'next.html'),'utf8').matchAll(/<link[^>]+rel="stylesheet"[^>]*>/g)].map(match => match[0]).join('');
-  const html = `<!doctype html><html data-look="neon" data-mode="dark" data-motion="reduce"><head><meta name="viewport" content="width=device-width, initial-scale=1">${styles}</head><body><div id="root"></div><script type="module" src="/tasks-proof.js"></script></body></html>`;
+  const manifest = JSON.parse(readFileSync(join(root,'.vite/manifest.json'),'utf8')) as Record<string,{imports?:string[];css?:string[]}>;
+  const seen = new Set<string>(), css = new Set<string>();
+  const stylesFor = (key:string) => {
+    if (seen.has(key)) return; seen.add(key);
+    const entry = manifest[key]; if (!entry) throw Error(`Missing built fixture entry: ${key}`);
+    for (const imported of entry.imports ?? []) stylesFor(imported);
+    for (const file of entry.css ?? []) css.add(file);
+  };
+  stylesFor('next.html'); stylesFor('src/pieces/tasks/index.tsx');
+  const styles = [...css].map(file => `<link rel="stylesheet" href="/app/${file}">`).join('');
+  const html = `<!doctype html><html data-look="neon" data-mode="dark" data-motion="reduce"><head><meta name="viewport" content="width=device-width, initial-scale=1">${styles}</head><body><div id="root" style="height:100dvh"></div><script type="module" src="/tasks-proof.js"></script></body></html>`;
   const listener = getRequestListener(data.http.fetch);
   const server = createServer((req,res) => {
     const path = new URL(req.url ?? '/', 'http://fixture').pathname;
