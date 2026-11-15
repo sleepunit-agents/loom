@@ -14,6 +14,12 @@ export function evaluate(promise,run){
   const status=results.some(row=>row.status==='not met')?'not met':results.some(row=>row.status==='not checkable yet')?'not checkable yet':'met';
   return {status,reason:results.map((row,index)=>`${index+1}. ${row.reason}`).join(' '),evidence:'walkthrough.json#actions'};
  }
+ if(p.kind==='legacy-data-socket'){
+  const sockets=run.transport?.sockets;
+  if(!sockets)return{status:'not checkable yet',reason:'The walkthrough did not record websocket paths.'};
+  const alternate=sockets.filter(socket=>socket.path==='/live');
+  return alternate.length?{status:'not met',reason:`Observed ${alternate.length} attempts to use the retired /live data websocket while visiting ${[...new Set(alternate.map(socket=>socket.phase))].join(', ')}. Tiles are not all asking through the one GraphQL connection.`,evidence:'walkthrough.json#transport'}:{status:'not checkable yet',reason:'No retired data websocket was observed. This does not yet prove the whole generated-schema/query promise.',evidence:'walkthrough.json#transport'};
+ }
  if(p.kind==='signin')return {status:run.signin?.ok?'met':'not met',reason:run.signin?.ok?'Normal first-run link signed in the browser.':'Normal first-run browser sign-in did not complete.',evidence:'00-signin.png'};
  if(p.kind==='live')return {status:run.live?.dataFrames>0&&!run.live.errors.length?'met':'not met',reason:`GraphQL data frames: ${run.live?.dataFrames??0}; GraphQL errors: ${run.live?.errors?.length??0}.`,evidence:'walkthrough.json#live'};
  if(p.kind==='launcher')return {status:run.inventory?.length&&run.apps.length===run.inventory.length&&run.apps.every(app=>app.opened)?'met':'not met',reason:`${run.apps.filter(app=>app.opened).length} of ${run.inventory?.length??0} launcher apps opened.`,evidence:'walkthrough.json#apps'};
