@@ -43,9 +43,10 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);expect(await b.getByText('Keep content in the agents’ stores',{exact:true}).count()).toBe(1);
   expect(await b.locator('article a[href="/p/tasks-preview/task/t-2207"]').count()).toBe(1);expect(await b.getByText('Review the result',{exact:false}).count()).toBe(1);
   await b.getByRole('link',{name:'Conversation',exact:true}).click();
-  await expect.poll(()=>b.getByRole('heading',{name:'Conversation activity',exact:true}).count()).toBe(1);
-  await expect.poll(()=>b.getByText('Build the household desk',{exact:true}).count()).toBe(1);
-  await expect.poll(()=>b.getByText('reply · art',{exact:true}).count()).toBe(1);
+  const conversationTile=b.locator('[data-tile=comms]');
+  await expect.poll(()=>conversationTile.getByRole('heading',{name:'Conversation activity',exact:true}).count()).toBe(1);
+  await expect.poll(()=>conversationTile.getByText('Build the household desk',{exact:true}).count()).toBe(1);
+  await expect.poll(()=>conversationTile.getByText('reply · art',{exact:true}).count()).toBe(1);
   await b.goBack();await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);
   await a.setViewportSize({width:800,height:900});await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe('two');await a.setViewportSize({width:1280,height:900});
   await expect.poll(()=>b.getByText('Shipped the household desk. The live timeline brings the work together.',{exact:true}).count()).toBe(1);
