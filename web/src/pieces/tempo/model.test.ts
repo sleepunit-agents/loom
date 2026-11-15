@@ -52,3 +52,11 @@ it('shows pause status only for live agent work and isolates each trigger histor
   const events = [1, 3, 2].map(seq => ({ seq, trigger: seq === 3 ? 'other' : 'held', at: pauses[0].since, event: 'set', note: '' }));
   expect(history(events, 'held').map(event => event.seq)).toEqual([2, 1]);
 });
+it('orders mixed UTC precision by instant and keeps internal source fingerprints out of the displayed history',()=>{
+ const earlier=trigger('earlier',{nextDueAt:'2026-11-15T00:00:00Z',changedAt:'2026-11-15T00:00:00Z',state:'fired'});
+ const later=trigger('later',{nextDueAt:'2026-11-15T00:00:00.500Z',changedAt:'2026-11-15T00:00:00.500Z',state:'fired'});
+ expect(rows([later,earlier],'history').map(t=>t.id)).toEqual(['later','earlier']);
+ expect(rows([{...later,state:'standing'},{...earlier,state:'standing'}],'due').map(t=>t.id)).toEqual(['earlier','later']);
+ expect(history([{seq:1,trigger:'earlier',at:earlier.changedAt,event:'source-snapshot',note:'internal-fingerprint'},
+  {seq:2,trigger:'earlier',at:earlier.changedAt,event:'fired',note:'Delivery'}],'earlier').map(e=>e.seq)).toEqual([2]);
+});
