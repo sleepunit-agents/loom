@@ -191,3 +191,40 @@ it('requires a browser window outside the exact body record even when policy adm
   expect((await f.call('private/control', { job: 'job-2' }, raw.member, 'member-bearer')).status).toBe(403);
   expect(f.db.select().from(tasks).all()).toHaveLength(2);
 });
+it('records valid bearer/browser presentation without renewing fixed proof or session expiry', async () => {
+ const f=fixture(), before=f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()!;
+ f.clock.advance(5000);
+ const at=new Date(f.clock.now()).toISOString();let commits=0;f.root.writes.observe(()=>commits++);
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member}))).toBeDefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBe(at);
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(before.seenAt);
+ expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeDefined();
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()).toMatchObject({seenAt:at,issuedAt:before.issuedAt,provedAt:before.provedAt});
+ expect(commits).toBe(2);
+ f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));expect(commits).toBe(2);
+ f.db.update(sessions).set({issuedAt:new Date(f.clock.now()-30*86400000).toISOString()}).where(eq(sessions.id,hash(raw.cookie))).run();
+ expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeUndefined();expect(commits).toBe(2);
+});
+it('does not record forged, revoked or stopped-body credentials, and rechecks after publication', () => {
+ const f=fixture();f.clock.advance(1000);
+ f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'job-1')).run();
+ f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.member))).run();
+ for(const value of [raw.member,raw.body,'z'.repeat(64)])expect(f.root.credentials.authenticate(request({authorization:'Bearer '+value}))).toBeUndefined();
+ expect(f.db.select().from(tokens).all().every(row=>row.lastUsedAt===null)).toBe(true);
+ const stop=f.root.writes.observe(()=>f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run());
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.agent}))).toBeUndefined();stop();
+});
+it('uses the same presentation metadata at the sign-in link door',async()=>{
+ const f=fixture();f.clock.advance(2000);const at=new Date(f.clock.now()).toISOString();
+ const response=await f.root.http.request('http://loom/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+raw.member}});
+ expect(response.status).toBe(200);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBe(at);
+});
+it('records new incoming socket selections but not retained validity checks or outgoing updates',()=>{
+ const f=fixture(), auth=f.root.credentials.authenticate(request({authorization:'Bearer '+raw.agent,upgrade:'websocket'}))!;
+ const initial=f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt;
+ f.clock.advance(1000);expect(auth.valid()).toBe(true);expect(f.root.credentials.current(auth.viewer)).toBe(true);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(initial);
+ auth.activity!();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
+ f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run();
+ f.clock.advance(1000);auth.activity!();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(new Date(f.clock.now()-1000).toISOString());
+});

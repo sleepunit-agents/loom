@@ -128,7 +128,8 @@ export function sharedRoot(options: {
     // Synchronous outer writes have committed or rolled back before this runs.
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
-  const credentials = sharedCredentials(db, clock, () => !closing);
+  let credentialWrite: (action:()=>void)=>void = () => { throw Error("Credential writes unavailable during startup"); };
+  const credentials = sharedCredentials(db, clock, () => !closing, action => credentialWrite(action));
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const householdQueries=householdAccessQueries(db,householdAccess);
   const authenticateOutside=(request:Request)=>{const auth=credentials.authenticate(request);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)};};
@@ -144,6 +145,7 @@ export function sharedRoot(options: {
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...householdQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
+  credentialWrite=action=>{const result=data.writes.run(action);for(const error of result.notificationErrors)report(error);};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
     receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.current,
@@ -295,7 +297,7 @@ export function sharedRoot(options: {
       await next();
     } finally { active.delete(entry); finished(); }
   });
-  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError }));
+  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
