@@ -1,98 +1,43 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createElement as h, useSyncExternalStore } from '../../web/node_modules/react/index.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import { createElement as h } from '../../web/node_modules/react/index.js';
 import { act, create } from '../../web/node_modules/react-test-renderer/index.js';
-import type { Task } from '../../web/src/pieces/tasks/model';
-const f = vi.hoisted(() => ({ snapshot: { records: [] as Task[], status: 'live' }, listeners: new Set<() => void>(), call: vi.fn() }));
-vi.mock('../../web/src/data', () => ({ useRecords: () => useSyncExternalStore((fn) => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshot), call: f.call }));
-vi.mock('../../web/src/lib/cojeev-motion/use-reduced-motion', () => ({ useReducedMotion: () => true }));
+import type { DataQuerySnapshot } from '../../web/src/data/graphql';
+import type { TasksSelection, TaskSelection } from '../../web/src/pieces/tasks/query';
+import { tasksQuery } from '../../web/src/pieces/tasks/query';
+const f = vi.hoisted(() => ({snapshot: {status:'loading'} as DataQuerySnapshot<TasksSelection>, read: vi.fn()}));
+vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string) => { f.read(query); return f.snapshot; }}));
+vi.mock('../../web/src/pieces/tasks/shared-view', () => ({SharedTasks: (props: unknown) => h('Tasks',props)}));
+vi.mock('../../web/src/pieces/tasks/shared-form', () => ({SharedTaskForm: (props: unknown) => h('Form',props)}));
 import TasksApp from '../../web/src/pieces/tasks';
-import { ActionForm } from '../../web/src/pieces/tasks/actions';
-import { pullRequests, type TaskAnswer } from '../../web/src/pieces/tasks/model';
-import type { CallState, Result } from '../../web/src/data';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const task = (id: string, fields: Partial<Task> = {}): Task => ({ id,title:`Work ${id}`,type:'task',status:'open',priority:2,ready:true,dependsOn:[],comments:[],createdAt:'2026-11-12T00:00:00Z',...fields });
 let tree: ReturnType<typeof create>;
-const draw = async (element = h(TasksApp)) => { await act(async () => { tree = create(element); }); };
-const text = () => JSON.stringify(tree.toJSON());
-const words = (node: any): string => typeof node === 'string' ? node : (node.children ?? []).map(words).join('');
-const button = (name: string) => tree.root.findAllByType('button').find(b => words(b).startsWith(name))!;
-const click = async (name: string) => { await act(async () => button(name).props.onClick()); };
-beforeEach(() => { f.call.mockReset(); f.listeners.clear(); f.snapshot={records:[task('t-1',{goal:'A useful result',description:'Full detail',project:'pond',parent:'t-4',comments:[{actor:'art',at:'2026-11-12T00:00:00Z',text:'First comment'}]}),task('t-2',{status:'in_progress',ready:false,assignee:'art'}),task('t-3',{assignee:'jonathan',blocked:true,ready:false}),task('t-4',{type:'epic',ready:false}),task('t-5',{status:'closed',ready:false})],status:'live'}; });
-describe('Tasks component on a fake store', () => {
-  it('shows folders, projects, open-child epics, search and full reader, newest comment last', async () => {
-    await draw();
-    for (const name of ['Ready','In progress','Needs Jonathan','All open','Recently closed','pond','Work t-4']) expect(text()).toContain(name);
-    await click('All open');
-    const row = tree.root.findAllByType('button').find(b => b.props['data-split-row'] !== undefined && words(b).includes('Work t-1'))!;
-    await act(async () => row.props.onClick());
-    expect(text()).toContain('Full detail'); expect(text()).toContain('First comment'); expect(text()).toContain('Parent');
-    await act(async () => { f.snapshot={...f.snapshot,records:f.snapshot.records.map(t => t.id==='t-1' ? {...t,comments:[...t.comments,{actor:'jonathan',at:'2026-11-12T01:00:00Z',text:'Second comment'}]} : t)}; f.listeners.forEach(fn=>fn()); });
-    expect(text().indexOf('Second comment')).toBeGreaterThan(text().indexOf('First comment'));
-    await act(async () => tree.root.findByProps({type:'search'}).props.onChange({target:{value:'useful'}}));
-    expect(tree.root.findAllByProps({'data-split-row':''}).filter(b => b.props['aria-current'] !== undefined)).toHaveLength(1);
-    await click('In progress'); expect(text()).toContain('Nothing matches');
-    await act(async () => tree.unmount());
-  });
-  it('drops tasks and reader content on scope loss and displays offline/denied as errors', async () => {
-    await draw();
-    const row=tree.root.findAllByProps({'data-split-row':''})[0]; await act(async()=>row.props.onClick());
-    for (const status of ['live','offline','denied']) {
-      await act(async()=>{f.snapshot={records:[],status};f.listeners.forEach(fn=>fn());});
-      expect(text()).not.toContain('Full detail');
-      if(status!=='live') expect(tree.root.findAllByProps({role:'alert'}).length).toBeGreaterThan(0);
-    }
-    await act(async()=>tree.unmount());
-  });
-  it('finds and deduplicates linked pull requests without making external requests', () => {
-    expect(pullRequests(task('t-1',{description:'sleepunit-agents/loom#831',comments:[{actor:'art',at:'',text:'https://github.com/sleepunit-agents/loom/pull/831'}]}))).toEqual([['sleepunit-agents/loom#831','https://github.com/sleepunit-agents/loom/pull/831']]);
-  });
-  it.each([
-    ['claim',{},'claim',{}],['unclaim',{},'unclaim',{}],['close',{reason:'Done'},'close',{reason:'Done'}],['reopen',{},'reopen',{}],['comment',{text:'Hello'},'comment',{text:'Hello'}],
-    ['edit',{title:'Updated',goal:'Result'},'update',{set:{title:'Updated',goal:'Result'}}],['priority',{priority:'1'},'update',{set:{priority:1}}],['project',{project:'pond'},'update',{set:{project:'pond'}}],
-    ['create',{title:'New task',goal:'Useful',why:'Needed',priority:'2',project:''},'create',{title:'New task',goal:'Useful',why:'Needed',priority:2}],
-  ] as const)('%s retains one pending call and shows plain transport and domain errors',async(action,fields,verb,expected)=>{
-    let state: CallState<TaskAnswer>={pending:true,status:'pending'};
-    const listeners=new Set<()=>void>();
-    const request={id:'same-id',result:new Promise(()=>{}),subscribe:(fn:()=>void)=>{listeners.add(fn);return()=>listeners.delete(fn);},getSnapshot:()=>state};
-    f.call.mockReturnValue(request);
-    await draw(h(ActionForm,{action,task:action==='create'?undefined:task('t-1'),enabled:true,onCancel:()=>{}}));
-    const original=globalThis.FormData;
-    globalThis.FormData=class { *[Symbol.iterator](){yield* Object.entries(fields);} } as any;
-    try { await act(async()=>tree.root.findByType('form').props.onSubmit({preventDefault(){},currentTarget:{}})); } finally { globalThis.FormData=original; }
-    expect(f.call).toHaveBeenCalledExactlyOnceWith(`tasks.${verb}`,{cli:true,...(action==='create'?{}:{id:'t-1'}),...expected});
-    expect(tree.root.findByType('fieldset').props.disabled).toBe(true); expect(text()).toContain('Saving');
-    const publish=async(result:Result<TaskAnswer>)=>act(async()=>{state={pending:false,status:'done',result};listeners.forEach(fn=>fn());});
-    await publish({ok:false,code:'denied',message:'Project moved'}); expect(text()).toContain('denied: Project moved');
-    expect(tree.root.findByType('fieldset').props.disabled).toBe(false);
-    await publish({ok:true,value:{result:{ok:false,errors:['E_BAD_TRANSITION']}}}); expect(text()).toContain('E_BAD_TRANSITION');
-    await publish({ok:true,value:{result:{ok:true}}}); expect(text()).toContain('Saved');
-    await act(async()=>tree.unmount());
-  });
+afterEach(async () => { await act(async () => tree?.unmount()); f.read.mockClear(); });
+const task = (id: string, isReady: boolean): TaskSelection => ({id,title:id,type:'task',status:'open',priority:2,position:1,ownerKind:'member',owner:'sam',project:'pond',assigneeKind:null,assignee:null,goal:'Goal',why:'Why',doneWhen:'',description:'',ask:null,ifYes:null,ifNo:null,closeReason:null,sourceKind:null,sourceId:null,commentCount:1,isReady,changeTasksByTask:[],taskLinksByTask:[],taskCommentsByTask:[{task:id,seq:1,actorKind:'member',actor:'sam',at:'2026-11-14T00:00:00Z',text:'Comment'}]});
+it('mounts the generated selection, authoritative readiness, comments and shell navigation without a record feed', async () => {
+  f.snapshot = {status:'live',data:{tasks:[task('a',false),task('b',true)]}};
+  const go = vi.fn();
+  await act(async () => {tree = create(h(TasksApp,{path:'/p/tasks-preview/task/~a',go,questionFor:'sam'}));});
+  expect(f.read).toHaveBeenCalledWith(tasksQuery);
+  const props = tree.root.findByType('Tasks').props;
+  expect(props.ready).toEqual(['b']); expect(props.selected).toBe('a'); expect(props.questionFor).toBe('sam');
+  expect(props.comments).toHaveLength(2); expect(props.act).toBeUndefined();
+  await act(async () => props.select('b'));
+  expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/~b');
 });
-
-it('opens imported task ids from encoded links and refuses malformed escapes',async()=>{
- const id='legacy/task %';f.snapshot={records:[task(id,{description:'Imported task detail'})],status:'live'};
- await draw(h(TasksApp,{path:`/p/tasks-preview/task/${encodeURIComponent(id)}`}));
- expect(text()).toContain('Imported task detail');await act(async()=>tree.unmount());
- await draw(h(TasksApp,{path:'/p/tasks-preview/task/%zz'}));expect(text()).not.toContain('Imported task detail');await act(async()=>tree.unmount());
+it('clears all projections on lost feed and discards open forms before reconnect', async () => {
+  f.snapshot = {status:'live',data:{tasks:[task('a',true)]}};
+  const submit=vi.fn();
+  await act(async () => {tree=create(h(TasksApp,{submit}));});
+  await act(async () => tree.root.findByType('Tasks').props.act('comment',f.snapshot.data!.tasks[0]));
+  expect(tree.root.findByType('Form').props.submit).toBe(submit);
+  for (const status of ['offline','loading','denied'] as const) {
+    f.snapshot={status,data:{tasks:[task('a',true)]}};
+    await act(async () => tree.update(h(TasksApp,{submit})));
+    const props=tree.root.findByType('Tasks').props;
+    expect(props.tasks).toEqual([]);expect(props.comments).toEqual([]);expect(props.links).toEqual([]);expect(props.ready).toEqual([]);
+    expect(tree.root.findAllByType('Form')).toHaveLength(0);
+  }
+  f.snapshot={status:'live',data:{tasks:[task('a',true)]}};
+  await act(async () => tree.update(h(TasksApp,{submit})));
+  expect(tree.root.findAllByType('Form')).toHaveLength(0);
 });
-
-import { taskId, taskSegment } from '../../web/src/pieces/tasks/route';
-it.each(['.','..','legacy/task %','~id','t-1','','\ud800','\ud801'])('opens imported %s after browser URL normalization',async id=>{
- const path=new URL(`/p/tasks-preview/task/${taskSegment(id)}`,'https://fixture.invalid').pathname;
- expect(taskId(path)).toBe(id);if(id==='t-1')expect(path).toBe('/p/tasks-preview/task/t-1');f.snapshot={records:[task(id,{description:'Exact imported reader'})],status:'live'};
- await draw(h(TasksApp,{path}));expect(text()).toContain('Exact imported reader');await act(async()=>tree.unmount());
-});
-it.each(['..','','\ud800'])('fetches an aged-out task %j selected by URL and hides details after the live snapshot changes',async id=>{
- const loaded=task(id,{status:'closed',description:'Older private detail'});
- f.snapshot={records:[],status:'live'};
- const state:CallState<TaskAnswer>={pending:false,status:'done',result:{ok:true,value:{result:{ok:true,task:loaded}}}};
- f.call.mockReturnValue({subscribe:()=>()=>{},getSnapshot:()=>state});
- await draw(h(TasksApp,{path:`/p/tasks-preview/task/${taskSegment(id)}`}));
- expect(f.call).toHaveBeenCalledWith('tasks.show',{id});expect(text()).toContain('Older private detail');
- f.call.mockReturnValue({subscribe:()=>()=>{},getSnapshot:()=>({pending:false,status:'done',result:{ok:false,code:'denied',message:'Changed access'}})});
- await act(async()=>{f.snapshot={records:[],status:'denied'};f.listeners.forEach(fn=>fn());});
- expect(text()).not.toContain('Older private detail');await act(async()=>tree.unmount());
-});
-
-it('navigates an empty legacy task row using the explicit canonical marker',async()=>{const go=vi.fn();f.snapshot={records:[task('',{title:'Empty legacy id'})],status:'live'};await draw(h(TasksApp,{path:'/p/tasks-preview',go}));await act(async()=>tree.root.findAllByProps({'data-split-row':''})[0].props.onClick());expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/~:');await act(async()=>tree.unmount());});
