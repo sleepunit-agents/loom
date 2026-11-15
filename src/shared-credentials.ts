@@ -11,7 +11,7 @@ import type { Authentication } from './core/live/index.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const active = new Set(['starting', 'running', 'waiting']);
-export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => void) => void) {
+export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void) {
   const resolve = dataAuthentication(db, () => clock.now());
   const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
   type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;
@@ -68,9 +68,10 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
         const last = db.select({ at: tokens.lastUsedAt }).from(tokens).where(eq(tokens.fingerprint, tokenId)).get()?.at;
         const seen = session ? db.select({ at: sessions.seenAt }).from(sessions).where(eq(sessions.id, session)).get()?.at : undefined;
         if ((!last || last < at) || (session && (!seen || seen < at))) write(() => {
-          if (!valid()) return;
+          if (!valid()) return false;
           if (!last || last < at) db.update(tokens).set({ lastUsedAt: at }).where(eq(tokens.fingerprint, tokenId)).run();
           if (session && (!seen || seen < at)) db.update(sessions).set({ seenAt: at }).where(eq(sessions.id, session)).run();
+          return true;
         });
       };
       presented();

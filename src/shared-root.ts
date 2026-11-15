@@ -128,8 +128,8 @@ export function sharedRoot(options: {
     // Synchronous outer writes have committed or rolled back before this runs.
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
-  let credentialWrite: (action:()=>void)=>void = () => { throw Error("Credential writes unavailable during startup"); };
-  const credentials = sharedCredentials(db, clock, () => !closing, action => credentialWrite(action));
+  let credentialWrite: ((action:()=>boolean)=>void) | undefined;
+  const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action));
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const householdQueries=householdAccessQueries(db,householdAccess);
   const authenticateOutside=(request:Request)=>{const auth=credentials.authenticate(request);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)};};
@@ -145,7 +145,7 @@ export function sharedRoot(options: {
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...householdQueries.fields, ...sharedAccountFields(db, clock, member=>pushes?.read(member)??{publicKey:null,devices:[]}), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, authenticateOutside, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
-  credentialWrite=action=>{db.transaction(action);data.credentialUsageChanged();};
+  credentialWrite=action=>{if(db.$client.inTransaction)throw Error('Credential usage must own its transaction');if(db.transaction(action))data.credentialUsageChanged();};
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
     receipts: new OperationResults(db), writes: data.writes, currentOutside: credentials.current,

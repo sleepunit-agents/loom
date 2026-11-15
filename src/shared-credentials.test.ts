@@ -260,3 +260,16 @@ it('delivers live rows without treating outgoing changes as credential use or in
  const pending=second.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({query:'{ hold }'})});await began;
  f.clock.advance(1);second.credentials.authenticate(request({authorization:'Bearer '+raw.agent}));release();expect(await (await pending).json()).toEqual({data:{hold:'kept'}});
 });
+it('wakes safe live credential metadata after incoming use without publishing bearer bytes',async()=>{
+ const f=fixture(),server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(async()=>{detach();await f.root.close();await new Promise<void>(r=>server.close(()=>r()));});
+ const address=server.address();if(!address||typeof address==='string')throw Error('No port');
+ const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.member}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ const frames:string[]=[];ws.on('message',frame=>frames.push(String(frame)));
+ next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'usage',payload:{query:'subscription { observe(query:"{ householdSetup { tokens { label lastUsedAt } sessions { device seenAt } } }") { patches { path value } } }'}}));await next;
+ f.clock.advance(1000);next=once(ws,'message');f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));
+ expect(String((await next)[0])).toContain(new Date(f.clock.now()).toISOString());
+ const stored=JSON.stringify({tokens:f.db.select().from(tokens).all(),sessions:f.db.select().from(sessions).all()});
+ for(const secret of Object.values(raw)){expect(stored).not.toContain(secret);expect(frames.join(' ')).not.toContain(secret);}
+});
