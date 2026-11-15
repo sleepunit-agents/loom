@@ -15,7 +15,7 @@ export async function taskStructure({page,tile,app,example,out}){
   check(titles.length===2&&titles[0].includes(urgent.title)&&titles[1].includes(later.title),'Ready is not urgent-first or includes epic/blocked work');
   await tile.getByText(urgent.title,{exact:true}).click();
   const reader=tile.getByRole('region',{name:'Tasks: the open item',exact:true});
-  await reader.getByText(epic.title,{exact:true}).waitFor();await reader.getByRole('button',{name:'From conversation',exact:true}).waitFor();
+  await reader.getByText(epic.title,{exact:true}).waitFor();await reader.getByText(example.conversation,{exact:true}).waitFor();
   let refused=false;try{write(()=>s.link(urgent.id,later.id,'parent-child'));}catch{refused=true;}
   check(refused&&s.get(urgent.id).links.filter(l=>l.type==='parent-child').length===1,'A second parent was accepted');
   write(()=>{s.close(urgent.id,'Inspected.');});
@@ -27,7 +27,7 @@ export async function taskStructure({page,tile,app,example,out}){
   await reader.getByText(epic.title,{exact:true}).waitFor();
  });
  await attempt('taskComments',async()=>{
-  check(!!blocked,'Structure fixture missing');
+  check(evidence.taskStructure?.ok,'Structure action did not complete');
   write(()=>{s.claim(blocked.id,actor);s.comment(blocked.id,'Fern checked the hose.',actor);s.comment(blocked.id,'Alex confirmed the hose.',{kind:'member',id:'alex'});});
   const reader=tile.getByRole('region',{name:'Tasks: the open item',exact:true});
   await reader.getByText('Alex confirmed the hose.',{exact:true}).waitFor();
