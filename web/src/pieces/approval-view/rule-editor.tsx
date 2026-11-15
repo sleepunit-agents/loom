@@ -31,7 +31,7 @@ export function RuleEditor({rules,save}:{rules:readonly Rule[];save:SaveRule}){
    <label>Scope<Input aria-label="Scope" required value={scope} onChange={event=>{change();setScope(event.target.value);}} /></label>
    <p>A repository pattern such as github:acme/*, a project such as project:pond, or * for every target.</p>
    <label>Person (optional)<Input aria-label="Person (optional)" value={person} onChange={event=>{change();setPerson(event.target.value);}} /></label>
-   <p>Leave the person blank for a household rule. A named person gets a grant only for them.</p>
+   <p>Leave the person blank for work for a household owner. Naming a person grants only their work.</p>
    <label>Answer<select aria-label="Answer" className="w-full" value={tier} onChange={event=>{change();setTier(event.target.value as Rule['tier']);}}><option value="ask">Ask me</option><option value="tell">Tell me after</option><option value="do">Just do it</option></select></label>
    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy||!scope.trim()}>Save rule</Button>{existing&&<Button type="button" variant="outline" disabled={busy} onClick={()=>void send(true)}>Remove rule</Button>}</div>
   </fieldset>
