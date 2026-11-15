@@ -7,6 +7,8 @@ import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
 import {members,tokens} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
+import {z} from 'zod';
+import {sharedQueryTables} from './next-data.js';
 import type {ProgramGrants} from './shared-program-access.js';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
@@ -93,4 +95,10 @@ it('withholds a program credential when publication closes admission',async()=>{
 it('withholds a program credential after publication revokes its issuer',async()=>{
  const f=fixture();let changed=false;const stop=f.root.writes.observe(()=>{if(changed||!f.db.select().from(tokens).where(eq(tokens.label,'Revoked issuer')).get())return;changed=true;f.db.update(tokens).set({revokedAt:f.at}).where(eq(tokens.fingerprint,hash(raw.owner))).run();});clean.push(stop);
  const response=await f.request('/api/signin/program',{member:'sam',label:'Revoked issuer',records:[],operations:[]});expect(changed).toBe(true);expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Household owner required'});
+});
+
+it('builds the public catalogue from current generated records and HTTP operations',async()=>{
+ const f=fixture(),service=f.root.services.programSetup!;expect(service.catalogue().records).toEqual([...sharedQueryTables].sort());
+ for(const name of ['sessions','signinLinks','tokens'])expect((await f.request('/api/signin/program',{member:'sam',label:'Private record attempt',records:[name],operations:[]})).status).toBe(400);
+ const operation={name:'tasks.lateRegistered',input:z.object({}),output:z.boolean(),may:()=>true,run:()=>true};expect(service.catalogue().operations).not.toContain(operation.name);f.root.operations.register(operation);expect(service.catalogue().operations).toContain(operation.name);
 });

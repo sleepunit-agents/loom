@@ -27,6 +27,7 @@ import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
 import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
+// One explicit public read projection, shared by the outside doors and programme catalogue.
 export const sharedQueryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
@@ -55,9 +56,6 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     if (at !== undefined) cancelDeadline = clock.at(at, () => { live.changed(); schedule(); });
   };
   // Start deadline scans only after an actual activity selection succeeds.
-
-  // One explicit read projection for both outside doors. Credentials, receipt
-  // plumbing and unrelated domains stay outside the generated schema.
 
   const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
   const schema = (viewer: Viewer) => {

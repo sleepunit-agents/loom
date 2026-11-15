@@ -99,7 +99,7 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
-  /** Canonical persistent program marker/grants, supplied by the schema owner. */
+  /** Read-only programme grant adapter. Writable setup must supply programStore. */
   programGrants?: ProgramGrantReader;
   /** Writable setup and outside enforcement share this exact reader; it
    * takes precedence over the read-only programGrants test/adapter port. */
