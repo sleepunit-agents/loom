@@ -101,3 +101,27 @@ it('renders actual source and mentioned task work and withdraws it on current vi
   await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go })); });
   expect(text()).not.toContain('UPDATED TASK'); expect(text()).not.toContain('MENTIONED TASK');
 });
+
+it('pages source work beyond fifty visible tasks', async () => {
+  setup(); f.data.sourceTasks = Array.from({ length: 51 }, (_, n) => ({ id: `t-${n}`, title: `SOURCE-${n}`, status: 'open' }));
+  await draw(); expect(text()).toContain('SOURCE-49'); expect(text()).not.toContain('SOURCE-50');
+  const next = tree.root.findAllByType('button').find((node: { props: { children: ReactNode } }) => node.props.children === 'Next work');
+  f.data.sourceTasks = [{ id: 't-50', title: 'SOURCE-50', status: 'open' }];
+  await act(async () => { next.props.onClick(); });
+  expect(f.requests.findLast(row => row.query.includes('ConversationWork('))?.variables.offset).toBe(50);
+  expect(text()).toContain('SOURCE-50'); expect(text()).not.toContain('SOURCE-49');
+});
+it('archives, restores and confirms deletion through shared operations', async () => {
+  setup(); const go = await draw();
+  await act(async () => { named('Archive').props.onClick(); });
+  expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'archive', archived: true });
+  f.data.commsThread = thread({ archivedAt: '2026-11-14T18:00:01Z' });
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go })); });
+  expect(named('Send')).toBeUndefined();
+  await act(async () => { named('Restore').props.onClick(); });
+  expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'archive', archived: false });
+  await act(async () => { named('Delete').props.onClick(); });
+  expect(f.call).not.toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'delete' });
+  await act(async () => { named('Delete thread').props.onClick(); });
+  expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'delete' }); expect(go).toHaveBeenCalledWith('/p/comms-preview');
+});

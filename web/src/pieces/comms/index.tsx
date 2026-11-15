@@ -1,3 +1,4 @@
+import { useDeadline } from './use-deadline';
 import { useEffect, useMemo, useState } from 'react';
 import { conversationOperation as mutate } from './operations';
 import { useSelection } from '../../data/graphql/selection';
@@ -10,7 +11,7 @@ const base = '/p/comms-preview';
 export default function CommsApp({ path: shellPath, go }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   const [archived, setArchived] = useState(false), [search, setSearch] = useState(''), [offset, setOffset] = useState(0);
-  const [before, setBefore] = useState<number>(), [now, setNow] = useState(Date.now);
+  const [before, setBefore] = useState<number>();
   const path = (shellPath ?? localPath).split('?')[0];
   let selected: string | undefined;
   try { selected = path.includes('/thread/') ? `th:${decodeURIComponent(path.slice(path.indexOf('/thread/') + 8))}` : undefined; } catch { /* Invalid route selects nothing. */ }
@@ -24,13 +25,7 @@ export default function CommsApp({ path: shellPath, go }: { path?: string; go?(p
     if (go || typeof window === 'undefined') return;
     const pop = () => setLocalPath(location.pathname); window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop);
   }, [go]);
-  useEffect(() => {
-    if (!live) return;
-    const deadlines = data.messages.map(row => Date.parse(row.wordsKeepUntil ?? '')).filter(at => Number.isFinite(at) && at > now);
-    if (!deadlines.length) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.min(2147483647, Math.max(1, Math.min(...deadlines) - Date.now())));
-    return () => clearTimeout(timer);
-  }, [data, live, now]);
+  const now = useDeadline(live ? data.messages.map(row => row.wordsKeepUntil) : []);
 
   const actions: CommsActions | undefined = live ? {
     open: (agent, thread) => mutate('comms.open', { agent, thread }, true),
@@ -38,7 +33,7 @@ export default function CommsApp({ path: shellPath, go }: { path?: string; go?(p
     read: (thread, seq) => mutate('comms.change', { thread, change: 'read', seq }, true),
     change: async (thread, change) => { await mutate('comms.change', { thread, ...change }); if (change.change === 'delete') select(); },
   } : undefined;
-  const messages = live ? data.messages.slice(-50).map(row => retainedCommsMessage(row, Math.max(now, Date.now()))) : [];
+  const messages = live ? data.messages.slice(-50).map(row => retainedCommsMessage(row, now)) : [];
   return <CommsView snapshot={{ status, member: data?.home?.member ?? '', threads: live ? data.threads.slice(0,50) : [],
     agents: live ? data.home!.agents.map(id => ({ id, name: id })) : [], folders: live ? data.folders : undefined }}
     detail={{ status, thread: live ? data.thread : null, messages, refs: live ? data.refs : [] }} selected={selected} select={select} actions={actions}
