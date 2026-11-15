@@ -1,3 +1,4 @@
+import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
@@ -39,6 +40,9 @@ import { approvalRulesService } from './apps/approval-rules.js';
 import { registerSharedApprovalRules } from './shared-approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
+import { mayRunPrivateWork } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
+import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
@@ -159,6 +163,7 @@ export function sharedRoot(options: {
   });
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,viewer=>credentials.body(viewer),options.bridges!.effectsAllowed);
   comms?.install(operations);
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const services = {
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
@@ -180,6 +185,7 @@ export function sharedRoot(options: {
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
+  registerTempoSettingsAnswer(operations, db, services.approvals);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,

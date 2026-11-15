@@ -161,6 +161,7 @@ export class Conversations {
       if (old?.inboxItem && old.inboxItem !== raised?.id) this.db.update(inbox).set({ state: 'resolved', resolution: 'Digest rewritten', changedAt: this.now() }).where(and(eq(inbox.id, old.inboxItem), eq(inbox.state, 'waiting'))).run();
       const revision = (old?.revision ?? 0) + 1;
       const question = input.question ? this.send({ ...input.question, toKind: 'person', conversation: conversation.id, source: 'thread', sourceId: `digest:${input.run}:${conversation.id}:${revision}`, fromKind: 'agent', fromId: conversation.agent }) : undefined;
+      if (question) this.turn({conversation:conversation.id,kind:'note',fromKind:'agent',fromId:conversation.agent,run:input.run});
       const values = { at: this.now(), summary: input.summary, revision, inboxItem: question?.id ?? raised?.id ?? null };
       const digest = old ? this.db.update(digests).set(values).where(eq(digests.id, old.id)).returning().get()!
         : this.db.insert(digests).values({ ...values, id: `dg-${randomUUID()}`, conversation: conversation.id, run: input.run }).returning().get();

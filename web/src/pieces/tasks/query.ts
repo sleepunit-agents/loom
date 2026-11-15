@@ -20,3 +20,6 @@ export interface TaskSelection extends SharedTask {
   taskCommentsByTask: SharedTaskComment[];
 }
 export interface TasksSelection { tasks: TaskSelection[] }
+
+/** Choices inherit each generated table's current outside-door visibility. */
+export const taskChoicesQuery = `query TaskChoices { projects { id name } agents { id } members { id } }`;
