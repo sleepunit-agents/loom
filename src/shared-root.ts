@@ -52,7 +52,7 @@ export function sharedRoot(options: {
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   let tempo: ReturnType<typeof installSharedTempo>;
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
   catch (error) { operations.close(); void data.close(); throw error; }

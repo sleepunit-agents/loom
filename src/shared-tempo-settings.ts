@@ -27,7 +27,8 @@ export function sharedTempoSettings(db: DataDatabase, clock: Clock,
       project: conversation.project, member: conversation.member, why: 'Requested in this conversation' };
   };
   return {
-    allowed(viewer: Viewer) { return !!context(viewer); },
+    chatMember(viewer: Viewer) { return context(viewer)?.member ?? undefined; },
+    allowed(viewer: Viewer, who: Recipient) { const source=context(viewer); return !!source && (who.kind === 'agent' || source.member === who.id); },
     request(viewer: Viewer, who: Recipient, patch: Partial<Timings>) {
       const source = context(viewer);
       if (!source) throw new Error('Settings proposal needs the current authenticated body conversation');

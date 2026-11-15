@@ -20,6 +20,7 @@ export interface SharedTempoOptions {
   instructions?: TempoOptions['instructions'];
   changeRevision?: TempoOptions['changeRevision'];
   settings?: TempoOperationOptions['settings'];
+  chatMember?(viewer: Viewer): string | undefined;
   settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
   contributors?: readonly SweepPart[];
 }
@@ -39,8 +40,15 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       }),
       operation: options.operation ?? (() => { throw new Error('Unknown Tempo operation'); }),
     },
-    commands: { authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access) &&
-      (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who)),
+    commands: { authorize: (viewer, access) => {
+      // Chat is the control surface. A current body may carry out its recorded
+      // member's ordinary mailbox preference, without becoming that member.
+      const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
+      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person
+        : access.action === 'settings' && access.who.kind === 'person' && access.who.id === person);
+      return (tempoCommandAllowed(db, viewer, access) || delegated) &&
+        (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who));
+    },
       settings: options.settings ?? (() => { throw new Error('Settings proposal needs authenticated chat context'); }),
     },
   });
