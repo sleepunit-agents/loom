@@ -5,10 +5,10 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {chromium,type Browser} from 'playwright-core';
-import {startSharedHome} from '../shared-startup.js';
+import type {startSharedHome} from '../shared-startup.js';
 import {maskCredentialScreenshots} from '../../scripts/rebuild-credential-evidence.mjs';
 const enabled=process.env.LOOM_PROGRAM_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
-if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Programme evidence requires Chrome and the built app');
+if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))||!existsSync(resolve('dist/shared-startup.js'))))throw Error('Programme evidence requires Chrome and the built app');
 it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow programme through the real browser',{timeout:20_000},async()=>{
  const home=mkdtempSync(join(tmpdir(),'loom-programme-home-')),out=join(process.env.LOOM_TEST_SHOTS??resolve('artifacts'),'programme-access');
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined,browser:Browser|undefined,link='';const errors:unknown[]=[],diagnostics:string[]=[],expiry=new Date(Date.now()+3600_000).toISOString();let failed=false;
@@ -16,6 +16,9 @@ it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow 
  const check=(value:unknown,message:string)=>{if(!value)throw Error(message);};
  try{
   mkdirSync(out,{recursive:true});vi.stubEnv('LOOM_WORKER_SOCKET',undefined);vi.stubEnv('LOOM_PUBLIC_URL',undefined);
+  // The production holder forks an adjacent .js entry with no loader flags.
+  // Use the built backend so this proof exercises that actual child process.
+  const {startSharedHome}=await import('../../dist/shared-startup.js');
   app=await startSharedHome({home,webRoot,host:'127.0.0.1',port:0,stdout:text=>{link=text.trim();},reportError:error=>errors.push(error)});
   const current=app,db=current.services.comms!.db.$client,owner=(db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
