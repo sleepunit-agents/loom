@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents,members,memberAgents,projects,projectMembers,projectAgents,jobs,conversations,tokens,inbox,approvals } from './core/data/schema.js';
+import { agents,members,memberAgents,projects,projectMembers,projectAgents,boxes,jobs,conversations,tokens,inbox,approvals } from './core/data/schema.js';
 import type { SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
@@ -13,11 +13,12 @@ function fixture(tempo?:SharedTempoOptions){
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values(['owner','sam','other'].map(id=>({id,role:id==='owner'?'owner' as const:'member' as const,joinedAt:now()}))).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+ db.insert(boxes).values({id:'box',name:'Box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
  db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();db.insert(projectMembers).values([{project:'pond',member:'sam'},{project:'pond',member:'other'}]).run();db.insert(projectAgents).values({project:'pond',agent:'art'}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,reportError(error){throw error;}});
  const source=root.services.conversations.open({agent:'art',venue:'loom',place:'chat',label:'Sam chat',member:'sam',project:'pond'});
- db.insert(jobs).values({id:'body',agent:'art',conversation:source.id,project:'pond',member:'sam',title:'Chat',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+ db.insert(jobs).values({id:'body',box:'box',agent:'art',conversation:source.id,project:'pond',member:'sam',title:'Chat',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  db.update(conversations).set({job:'body'}).where(eq(conversations.id,source.id)).run();
  db.insert(tokens).values([{fingerprint:hash(body),label:'Body',kind:'agent',agent:'art',job:'body',createdAt:now()},{fingerprint:hash(unbound),label:'Agent',kind:'agent',agent:'art',createdAt:now()}]).run();
  const item=root.services.conversations.send({toKind:'person',to:'sam',source:'notice',fromKind:'agent',project:'pond',words:'Work to read'});
@@ -59,7 +60,7 @@ it('refuses another recipient, an unbound agent, and stale source authority even
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(403);
  f.db.update(conversations).set({job:'body'}).where(eq(conversations.id,f.source.id)).run();
  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
- expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(403);
+ expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(401);
  expect(f.root.services.conversations.item(f.other.id).volume).toBe('full');
 });
 it('proposes timing changes for the actual chat member through the same approval boundary',async()=>{
