@@ -104,8 +104,17 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ${opaque?'(ref=? OR uuid=?)':'ref=?'} AND ${activeMemory}`).get(...(opaque?[ref,ref]:[ref]),new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
  };
+ const memoryHistory=(id:string,v:Viewer)=>{
+  const colon=id.indexOf(':');if(colon<1)return [];const agent=id.slice(0,colon),ref=id.slice(colon+1),db=sources.get(agent);
+  if(!db||!maySee(v,{type:'memory',agent},options.sharing())||!has(db,'memories')||!has(db,'memory_revisions'))return [];
+  const opaque=(db.pragma('table_info(memories)') as {name:string}[]).some(column=>column.name==='uuid');
+  const row=db.prepare(`SELECT id FROM memories WHERE ${opaque?'ref=? OR uuid=?':'ref=?'}`).get(...(opaque?[ref,ref]:[ref])) as {id:number}|undefined;
+  // History is an explicit retained-version read, including archived/expired
+  // rows, under the same current private Memory visibility as the source.
+  return row?db.prepare('SELECT id,op,replaced_at AS replacedAt,content FROM memory_revisions WHERE memory_id=? ORDER BY id DESC LIMIT 10').all(row.id) as {id:number;op:string;replacedAt:string;content:string}[]:[];
+ };
  const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }

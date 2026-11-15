@@ -3,7 +3,7 @@ import {keepReadUntil} from '../../core/data/read-lease.js';
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type {ProjectsReader} from './projects.js';
-export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'access'>;
+export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'memoryHistory'|'access'>;
 import {projectDeadline} from './project-deadlines.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
@@ -51,6 +51,7 @@ const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  id: requiredText, agent: requiredText, ref: requiredText, title: requiredText, content: requiredText,
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
 } });
+const revision=new GraphQLObjectType({name:'MemoryRevision',fields:{id:{type:new GraphQLNonNull(GraphQLInt)},op:requiredText,replacedAt:requiredText,content:requiredText}});
 
 const access=new GraphQLObjectType({name:'MemoryProjectsAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
 export function projectsQueryFields(source: ProjectQueryReader, deadlines?:QueryDeadlines, now:()=>number=Date.now): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
@@ -73,6 +74,10 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
+  memoryHistory:{type:list(revision),args:{id},resolve:(_source,args,context)=>{
+   if(!context?.viewer||typeof args.id!=='string'||args.id.length<3||args.id.length>300)return [];
+   try{return source.memoryHistory(args.id,context.viewer);}catch{throw new GraphQLError('Memory history is unavailable');}
+  }},
   memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?source.access(context.viewer):null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
   memoryProject: { type: projectDetail, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
