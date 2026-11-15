@@ -1,0 +1,244 @@
+import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+import { afterEach, expect, it } from 'vitest';
+import { GraphQLString, GraphQLScalarType } from 'graphql/index.js';
+import { eq } from 'drizzle-orm';
+import { FakeClock } from '../core/clock.js';
+import { createDataSchema } from '../core/data/database.js';
+import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens } from '../core/data/schema.js';
+import { nextData } from '../next-data.js';
+import { modelAccountQueries } from './account-query.js';
+import type { Viewer } from '../policy.js';
+import { GraphQLNonNull, GraphQLList, GraphQLUnionType } from 'graphql/index.js';
+const clean: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
+const keys = { alice: 'a'.repeat(64), bob: 'b'.repeat(64), guest: 'g'.repeat(64), house: 'h'.repeat(64), agent: 'x'.repeat(64) };
+const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+const selection = `modelAccounts { ... on RuntimeAccount { label level }
+  ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } } }`;
+function fixture(fields?: Parameters<typeof nextData>[4]) {
+  const client = new Database(':memory:'); clean.push(() => { if (client.open) client.close(); });
+  const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
+  for (const id of ['alice', 'bob', 'guest', 'house']) db.insert(members).values({ id, role: id === 'house' ? 'owner' : 'member', joinedAt: now() }).run();
+  db.insert(agents).values({ id: 'agent', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(memberAgents).values({ member: 'house', agent: 'agent' }).run();
+  for (const [id, key] of Object.entries(keys)) db.insert(tokens).values({ fingerprint: hash(key), label: id, kind: id === 'agent' ? 'agent' : 'owner', agent: id === 'agent' ? id : null, member: id === 'agent' ? null : id, createdAt: now() }).run();
+  db.insert(boxes).values({ id: 'private-box-id', name: 'Private worker name', owner: 'house', sameMachineAsLoom: false, hostsAny: false, reportOnly: false, alwaysOn: false, enrolledAt: now() }).run();
+  const reset = new Date(clock.now() + 3.5 * 86400_000).toISOString();
+  for (const [id, owner, usage] of [['private-a', 'alice', 0.2], ['private-b', 'bob', 0.58]] as const) {
+    db.insert(modelAccounts).values({ id, owner, label: id === 'private-a' ? 'Main subscription' : 'Other subscription', provider: 'private-provider', usage, usageReadAt: now(), resetsAt: reset, hasRoom: true }).run();
+    db.insert(modelAccountWindows).values({ account: id, window: 'week', usage, usageReadAt: now(), resetsAt: reset, durationMs: 7 * 86400_000 }).run();
+    db.insert(modelAccountBoxes).values({ account: id, box: 'private-box-id' }).run();
+  }
+  const data = nextData(db, clock, () => true, undefined, fields); clean.push(() => data.close());
+  const post = (who: keyof typeof keys, query = `{ ${selection} }`, variables?: unknown) => data.http.request('/graphql', {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys[who] }, body: JSON.stringify({ query, variables }),
+  });
+  return { client, clock, now, db, data, post };
+}
+const coarse = [{ label: 'Main subscription', level: 'plenty' }, { label: 'Other subscription', level: 'getting full' }];
+it('projects only label and coarse level for unrelated members and agents, even agents owned by household owners', async () => {
+  const f = fixture();
+  for (const who of ['guest', 'agent'] as const) {
+    const response = await f.post(who); expect(response.status).toBe(200);
+    const body = await response.json(); expect(body).toEqual({ data: { modelAccounts: coarse } });
+    expect(JSON.stringify(body)).not.toMatch(/private-provider|private-box|Private worker|usageReadAt|hasRoom|owner/);
+  }
+});
+it('shows full account data only to its actual member owner or a household owner', async () => {
+  const f = fixture();
+  const alice = await (await f.post('alice')).json();
+  expect(alice.data.modelAccounts[0]).toEqual({ ...coarse[0], id: 'private-a', owner: 'alice', provider: 'private-provider', usage: 0.2,
+    usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 3.5 * 86400_000).toISOString(), hasRoom: true, signedInOn: [{ id: 'private-box-id', name: 'Private worker name' }] });
+  expect(alice.data.modelAccounts[1]).toEqual(coarse[1]);
+  const house = await (await f.post('house')).json(); expect(house.data.modelAccounts.map((row: { id: string }) => row.id)).toEqual(['private-a', 'private-b']);
+  expect(house.data.modelAccounts[1]).toMatchObject({ owner: 'bob', provider: 'private-provider', usage: 0.58 });
+  const bob = await (await f.post('bob')).json(); expect(bob.data.modelAccounts[0]).toEqual(coarse[0]); expect(bob.data.modelAccounts[1].owner).toBe('bob');
+});
+it('uses current shared capacity for coarse levels without fabricating a fresh reading at reset', async () => {
+  const f = fixture();
+  f.data.writes.run(() => f.db.update(modelAccountWindows).set({ usage: 0.9 }).where(eq(modelAccountWindows.account, 'private-a')).run());
+  expect((await (await f.post('guest')).json()).data.modelAccounts[0].level).toBe('almost full');
+  f.data.writes.run(() => f.db.update(modelAccounts).set({ hasRoom: false }).where(eq(modelAccounts.id, 'private-b')).run());
+  expect((await (await f.post('guest')).json()).data.modelAccounts[1].level).toBe('almost full');
+  const readAt = f.now(), resetAt = new Date(f.clock.now() + 3.5 * 86400_000).toISOString(); f.clock.advance(3.5 * 86400_000);
+  const detail = (await (await f.post('alice')).json()).data.modelAccounts[0];
+  expect(detail).toMatchObject({ level: 'almost full', usage: 0.2, usageReadAt: readAt, resetsAt: resetAt, hasRoom: false });
+});
+it('does not accept caller-selected authority or private-column filter arguments', async () => {
+  const f = fixture();
+  expect(await (await f.post('guest', `{ ${selection} }`, { viewer: { kind: 'member', id: 'house' }, owner: 'alice' })).json()).toEqual({ data: { modelAccounts: coarse } });
+  const filtered = await (await f.post('guest', '{ modelAccounts(owner:"alice") { ... on RuntimeAccount { label level } } }')).json();
+  expect(filtered.errors).toHaveLength(1); expect(filtered.data).toBeUndefined();
+});
+for (const revoke of ['household-role', 'account-owner'] as const) it(`fences buffered private fields after ${revoke} changes during an async sibling`, async () => {
+  let begin!: () => void, release!: () => void;
+  const started = new Promise<void>(yes => { begin = yes; }), held = new Promise<void>(yes => { release = yes; });
+  const f = fixture({ hold: { type: GraphQLString, resolve: async () => { begin(); await held; return 'ready'; } } });
+  const who = revoke === 'household-role' ? 'house' : 'alice';
+  const pending = f.post(who, `{ ${selection} hold }`); await started;
+  f.data.writes.run(() => revoke === 'household-role'
+    ? f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'house')).run()
+    : f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run());
+  release(); const response = await pending; expect(response.status).toBe(401);
+  expect(await response.text()).not.toMatch(/private-provider|private-box|Private worker|0\.58/);
+  expect(await (await f.post(who)).json()).toEqual({ data: { modelAccounts: coarse } });
+});
+it('rechecks account authority before live socket delivery and clears the authenticated read on revocation', async () => {
+  const f = fixture(), ws = await openSocket(f, 'alice'); let next: ReturnType<typeof once>;
+  next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'subscribe', id: 'accounts', payload: { query: `subscription { observe(query:${JSON.stringify(`{ ${selection} }`)}) { revision patches { path value removed } } }` } }));
+  expect(String((await next)[0])).toContain('private-provider');
+  const after: string[] = []; ws.on('message', raw => after.push(String(raw))); const closed = once(ws, 'close');
+  f.data.writes.run(() => f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run());
+  expect((await closed)[0]).toBe(4403); expect(after.join('\n')).not.toContain('private-provider');
+});
+
+it('orders public views by the visible label instead of hidden account identifiers', async () => {
+  const f = fixture();
+  f.data.writes.run(() => {
+    f.db.update(modelAccounts).set({ label: 'Zulu' }).where(eq(modelAccounts.id, 'private-a')).run();
+    f.db.update(modelAccounts).set({ label: 'Alpha' }).where(eq(modelAccounts.id, 'private-b')).run();
+  });
+  expect((await (await f.post('guest')).json()).data.modelAccounts).toEqual([{ label: 'Alpha', level: 'getting full' }, { label: 'Zulu', level: 'plenty' }]);
+});
+
+async function openSocket(f: ReturnType<typeof fixture>, who: keyof typeof keys) {
+  const server = createServer(), detach = f.data.attach(server); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  clean.push(async () => { detach(); await f.data.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
+  const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + keys[who] } }); clean.push(() => ws.terminate());
+  await once(ws, 'open'); const ack = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await ack; return ws;
+}
+function nextPayload(ws: WebSocket, id: string) {
+  return new Promise<{ data: Record<string, unknown> }>((resolve, reject) => {
+    const message = (raw: unknown) => { const value = JSON.parse(String(raw)); if (value.id === id && value.type === 'next') { ws.off('message', message); ws.off('close', close); resolve(value.payload); } };
+    const close = () => { ws.off('message', message); reject(new Error('Unexpected selection close')); };
+    ws.on('message', message); ws.once('close', close);
+  });
+}
+const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(yes => { resolve = yes; }); return { promise, resolve }; };
+it('rejects a held socket response after direct ownership transfer without a refresh notification', async () => {
+  const began = deferred(), gate = deferred();
+  const f = fixture({ hold: { type: GraphQLString, resolve: async () => { began.resolve(); await gate.promise; return 'ready'; } } });
+  const ws = await openSocket(f, 'alice'), closed = once(ws, 'close'), frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'held', payload: { query: `{ ${selection} hold }` } })); await began.promise;
+  f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); gate.resolve();
+  expect((await closed)[0]).toBe(4403); expect(frames.join('\n')).not.toContain('private-provider');
+});
+it('keeps concurrent public requests and a second root independent of one private read witness', async () => {
+  const privateBegan = deferred(), publicBegan = deferred(), privateGate = deferred(), publicGate = deferred(), otherBegan = deferred(), otherGate = deferred();
+  const f = fixture({ hold: { type: GraphQLString, args: { slot: { type: GraphQLString } }, resolve: async (_source, args) => {
+    const privateRead = args.slot === 'private'; (privateRead ? privateBegan : publicBegan).resolve(); await (privateRead ? privateGate : publicGate).promise; return 'ready';
+  } } });
+  const g = fixture({ hold: { type: GraphQLString, resolve: async () => { otherBegan.resolve(); await otherGate.promise; return 'ready'; } } });
+  g.db.update(modelAccounts).set({ provider: 'other-root-provider' }).where(eq(modelAccounts.id, 'private-a')).run();
+  const privateRead = f.post('alice', `{ ${selection} hold(slot:"private") }`), publicRead = f.post('alice', '{ __typename hold(slot:"public") }'), otherRead = g.post('alice', `{ ${selection} hold }`);
+  await Promise.all([privateBegan.promise, publicBegan.promise, otherBegan.promise]);
+  f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run();
+  privateGate.resolve(); publicGate.resolve(); otherGate.resolve();
+  expect((await privateRead).status).toBe(401); expect((await publicRead).status).toBe(200);
+  const other = await otherRead; expect(other.status).toBe(200); expect((await other.json()).data.modelAccounts[0].provider).toBe('other-root-provider');
+});
+it('keeps unrelated sockets for the same member valid when one account selection loses access', async () => {
+  const f = fixture(), privateWS = await openSocket(f, 'alice'), publicWS = await openSocket(f, 'alice');
+  let first = nextPayload(privateWS, 'private'); privateWS.send(JSON.stringify({ type: 'subscribe', id: 'private', payload: { query: `{ ${selection} }` } })); expect(JSON.stringify(await first)).toContain('private-provider');
+  first = nextPayload(publicWS, 'public'); publicWS.send(JSON.stringify({ type: 'subscribe', id: 'public', payload: { query: '{ __typename }' } })); expect((await first).data.__typename).toBeTruthy();
+  const closed = once(privateWS, 'close'); f.data.writes.run(() => f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run());
+  expect((await closed)[0]).toBe(4403); expect(publicWS.readyState).toBe(WebSocket.OPEN);
+  first = nextPayload(publicWS, 'still-public'); publicWS.send(JSON.stringify({ type: 'subscribe', id: 'still-public', payload: { query: '{ __typename }' } })); expect((await first).data.__typename).toBeTruthy();
+});
+it('honors delegate credential revocation during a pending private response', async () => {
+  const began = deferred(), gate = deferred();
+  const f = fixture({ hold: { type: GraphQLString, resolve: async () => { began.resolve(); await gate.promise; return 'ready'; } } });
+  const pending = f.post('alice', `{ ${selection} hold }`); await began.promise;
+  f.db.update(tokens).set({ revokedAt: f.now() }).where(eq(tokens.fingerprint, hash(keys.alice))).run(); gate.resolve();
+  const response = await pending; expect(response.status).toBe(401); expect(await response.text()).not.toContain('private-provider'); expect((await f.post('alice')).status).toBe(401);
+});
+it('preserves socket credential expiry metadata without requiring another request or write', async () => {
+  const f = fixture(); f.db.update(tokens).set({ expiresAt: new Date(f.clock.now() + 1000).toISOString() }).where(eq(tokens.fingerprint, hash(keys.alice))).run();
+  const ws = await openSocket(f, 'alice'), first = nextPayload(ws, 'accounts'); ws.send(JSON.stringify({ type: 'subscribe', id: 'accounts', payload: { query: `{ ${selection} }` } })); expect(JSON.stringify(await first)).toContain('private-provider');
+  const closed = once(ws, 'close'); f.clock.advance(1000); expect((await closed)[0]).toBe(4403);
+});
+
+it('rechecks authority after frame serialization immediately before socket send', async () => {
+  const serialized = deferred();
+  const trigger = new GraphQLScalarType({ name: 'AccountFrameProbe', serialize: value => ({ toJSON() {
+    // Fictional trusted serializer changes authority after execute's check,
+    // with no refresh notification; only the final send fence can catch it.
+    f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); serialized.resolve(); return value;
+  } }) });
+  const f = fixture({ probe: { type: trigger, resolve: () => 'probe' } }), ws = await openSocket(f, 'alice');
+  const closed = once(ws, 'close'), frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'serialized', payload: { query: `{ ${selection} probe }` } }));
+  await serialized.promise; expect((await closed)[0]).toBe(4403); expect(frames.join('\n')).not.toContain('private-provider');
+});
+
+it('keeps public-only account selections valid across ownership transfer without a private witness', async () => {
+  const began = deferred(), gate = deferred(), publicSelection = 'modelAccounts { ... on RuntimeAccount { label level } }';
+  const f = fixture({ hold: { type: GraphQLString, resolve: async () => { began.resolve(); await gate.promise; return 'ready'; } } });
+  const pending = f.post('alice', `{ ${publicSelection} hold }`); await began.promise;
+  f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); gate.resolve();
+  const response = await pending; expect(response.status).toBe(200); expect((await response.json()).data.modelAccounts).toEqual(coarse);
+  f.db.update(modelAccounts).set({ owner: 'alice' }).where(eq(modelAccounts.id, 'private-a')).run();
+  const ws = await openSocket(f, 'alice'); let next = nextPayload(ws, 'public-only'); ws.send(JSON.stringify({ type: 'subscribe', id: 'public-only', payload: { query: `{ ${publicSelection} }` } })); expect((await next).data.modelAccounts).toEqual(coarse);
+  f.data.writes.run(() => f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run());
+  await new Promise<void>(resolve => setImmediate(resolve)); expect(ws.readyState).toBe(WebSocket.OPEN);
+  next = nextPayload(ws, 'public-again'); ws.send(JSON.stringify({ type: 'subscribe', id: 'public-again', payload: { query: `{ ${publicSelection} }` } })); expect((await next).data.modelAccounts).toEqual(coarse);
+});
+it('declares exactly the permitted summary columns and rejects private fields on its fragment', async () => {
+  const f = fixture(), shape = await (await f.post('guest', '{ __type(name:"RuntimeAccountSummary") { fields { name } } }')).json();
+  expect(shape.data.__type.fields.map((field: { name: string }) => field.name).sort()).toEqual(['label', 'level']);
+  const result = await (await f.post('guest', '{ modelAccounts { ... on RuntimeAccountSummary { provider } } }')).json();
+  expect(result.errors).toHaveLength(1); expect(result.data).toBeUndefined();
+});
+it('refuses buffered private data when a selected account disappears without a refresh', async () => {
+  const began = deferred(), gate = deferred();
+  const f = fixture({ hold: { type: GraphQLString, resolve: async () => { began.resolve(); await gate.promise; return 'ready'; } } });
+  const pending = f.post('house', `{ ${selection} hold }`); await began.promise;
+  f.db.transaction(() => {
+    f.db.delete(modelAccountBoxes).where(eq(modelAccountBoxes.account, 'private-a')).run();
+    f.db.delete(modelAccountWindows).where(eq(modelAccountWindows.account, 'private-a')).run();
+    f.db.delete(modelAccounts).where(eq(modelAccounts.id, 'private-a')).run();
+  }); gate.resolve();
+  const response = await pending; expect(response.status).toBe(401); expect(await response.text()).not.toContain('private-provider');
+});
+for (const args of ['viewer:"house"', 'orderBy:"provider"', 'caller:{kind:"member",id:"house"}']) it(`refuses untrusted authority or private ordering arguments: ${args}`, async () => {
+  const f = fixture(), result = await (await f.post('guest', `{ modelAccounts(${args}) { ... on RuntimeAccount { label level } } }`)).json();
+  expect(result.errors).toHaveLength(1); expect(result.data).toBeUndefined();
+});
+
+it('checks current permission and exact Viewer independently at private column access', async () => {
+  const f = fixture(), viewer: Viewer = { kind: 'member', id: 'alice' };
+  const projection = modelAccountQueries(f.db, f.now), field = projection.fields.modelAccounts;
+  const rows = await field.resolve!({}, {}, { viewer }, {} as never) as unknown[];
+  const union = (field.type as GraphQLNonNull<GraphQLList<GraphQLNonNull<GraphQLUnionType>>>).ofType.ofType.ofType;
+  const privateField = union.getTypes().find(type => type.name === 'RuntimeAccountDetail')!.getFields().provider;
+  const read = (actor: Viewer) => privateField.resolve!(rows[0], {}, { viewer: actor }, {} as never);
+  expect(read(viewer)).toBe('private-provider');
+  expect(() => read({ kind: 'member', id: 'alice' })).toThrow('Account access ended');
+  f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run();
+  expect(() => read(viewer)).toThrow('Account access ended');
+});
+it('does not establish ownership for a retained Viewer whose member no longer exists', async () => {
+  const f = fixture(), viewer: Viewer = { kind: 'member', id: 'alice' };
+  // Deliberately bypass credential admission to isolate the projection's own check.
+  f.client.pragma('foreign_keys = OFF');
+  f.db.delete(members).where(eq(members.id, 'alice')).run();
+  const projection = modelAccountQueries(f.db, f.now);
+  const rows = await projection.fields.modelAccounts.resolve!({}, {}, { viewer }, {} as never) as unknown[];
+  expect(rows[0]).toEqual({ __typename: 'RuntimeAccountSummary', ...coarse[0] });
+});
+it('registers a private witness when only account locations are selected', async () => {
+  let begin!: () => void, release!: () => void;
+  const started = new Promise<void>(yes => { begin = yes; }), held = new Promise<void>(yes => { release = yes; });
+  const f = fixture({ hold: { type: GraphQLString, resolve: async () => { begin(); await held; return 'ready'; } } });
+  const pending = f.post('alice', '{ modelAccounts { ... on RuntimeAccountDetail { signedInOn { id name } } } hold }');
+  await started;
+  f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run();
+  release(); const response = await pending;
+  expect(response.status).toBe(401);
+  expect(await response.text()).not.toMatch(/private-box|Private worker/);
+});

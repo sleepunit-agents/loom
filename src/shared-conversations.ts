@@ -33,7 +33,8 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
           const record = scope(access);
           return access.member === viewer.id && mayCreate(viewer, record, sharing) && mayAct(viewer, record, sharing, 'give-work');
         }
-        if ('item' in access) return access.item.toKind === 'person' && access.item.to === viewer.id && maySee(viewer, scope(access.item), sharing);
+        if ('item' in access) return maySee(viewer, scope(access.item), sharing)
+          && (access.action === 'read' || access.item.toKind === 'person' && access.item.to === viewer.id);
         // Household owners can read another person's private thread; its member
         // remains the only person who can send or manage it.
         return access.conversation.member === viewer.id && mayAct(viewer, scope(access.conversation), sharing, access.action === 'send' ? 'give-work' : 'act');
