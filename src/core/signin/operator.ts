@@ -30,6 +30,10 @@ export function prepareOperatorHome(home: string) {
 function checkSocket(home: string) { checkOperatorHome(home); owned(join(home, 'operator.sock'), 0o600, false); }
 /** The home lifetime lock has already excluded any other daemon before stale cleanup. */
 export async function listenOperator(app: Foundation, home: string, url: string) {
+  return listenOperatorLinks(home, url, input => localLink(app, input));
+}
+/** The OS-owned transport is shared by both compositions; the issuer owns data. */
+export async function listenOperatorLinks(home: string, url: string, issue: (input: z.infer<typeof operatorRequest>) => string) {
   const dir = resolve(home), path = join(dir, 'operator.sock');
   checkOperatorHome(dir);
   try { owned(path, undefined, false); unlinkSync(path); }
@@ -49,7 +53,7 @@ export async function listenOperator(app: Foundation, home: string, url: string)
         checkSocket(dir);
         if (end !== data.length - 1) throw new Error('One request only');
         const input = operatorRequest.parse(JSON.parse(data.subarray(0, end).toString('utf8')));
-        const path = localLink(app, input);
+        const path = issue(input);
         socket.end(JSON.stringify({ ok: true, path, url }) + '\n');
       } catch { socket.end('{"ok":false}\n'); }
     });
