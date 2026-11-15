@@ -92,7 +92,7 @@ it('keeps recent action outcomes and agent mailbox reads addressed to the authen
   expect(f.service.results(alice).map(r => r.id)).toEqual(['r1']);
   expect(f.service.results({ kind: 'agent', id: 'art' })).toEqual([]);
   expect(() => f.service.results(alice, 51)).toThrow('Invalid action result limit');
-  const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'handoff', fromKind: 'agent', words: 'A brief' });
+  const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'notice', fromKind: 'agent', words: 'A brief' });
   const agentReads = new InboxQueries(f.db, f.key, () => sql`true`);
   expect(agentReads.list({ kind: 'agent', id: 'art' }).map(i => i.id)).toEqual([agentMail.id]);
 });

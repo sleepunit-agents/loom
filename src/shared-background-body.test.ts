@@ -1,3 +1,4 @@
+import {sealHandoff} from './core/conversations/handoff-words.js';
 /** Real Root/body protocol, no provider or child process. */
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
@@ -16,7 +17,8 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
   f.db.delete(s.tokens).where(eq(s.tokens.fingerprint,old.fingerprint)).run();
   f.db.insert(s.tokens).values({...old,fingerprint:credentialHash(token),label:'Background body'}).run();
  });
- const mail=f.root.services.comms!.threads.conversations.send({conversation,toKind:'agent',to:'art',source:venue==='wake'?'trigger':'handoff',fromKind:venue==='wake'?'schedule':'agent',fromId:venue==='wake'?null:'mark',words:'Compare three fictitious pumps'});
+ const brief=venue==='handoff'?await sealHandoff(f.key,'Compare three fictitious pumps',new Date(f.clock.now()).toISOString(),14):'Compare three fictitious pumps';
+ const mail=f.root.services.comms!.threads.conversations.send({conversation,toKind:'agent',to:'art',source:venue==='wake'?'trigger':'handoff',fromKind:venue==='wake'?'schedule':'agent',fromId:venue==='wake'?null:'mark',words:brief});
  const job={id:'job',box:'box',agent:'art',conversation,thread:null,venue,model:'requested',account:'fixture-account',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
  const bytes=Buffer.from(JSON.stringify({job,build:'fixture-image',bootstrap:{origin:'https://loom.example',job:'job',token}}));
  const errors:string[]=[];

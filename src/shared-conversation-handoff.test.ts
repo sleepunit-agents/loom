@@ -4,6 +4,7 @@ import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {bodyFixture,bodyCredentials,credentialHash} from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
+import {bodyProgram} from './runtime/body-program.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
 import {handoffDeadline} from './core/conversations/handoff-words.js';
@@ -118,4 +119,30 @@ it('offers and executes the handoff through the actual default native model comm
  const result=await tools.call('loom_command',{operation:'conversation.handoff',input:brief,id:'native-handoff'});expect(result.isError).not.toBe(true);
  const row=z.object({ok:z.literal(true),value:z.object({conversation:z.string(),item:z.string()})}).parse(JSON.parse(result.content[0].text));
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,row.value.item)).get()).toMatchObject({source:'handoff',to:'mark',conversation:row.value.conversation});
+});
+
+it('runs the actual default receiving body on the produced handoff and finishes without private stdout or response copies',async()=>{
+ const f=await fixture(),created=await create(f);f.clock.advance(60_000);const {token,job}=receive(f,created.conversation);
+ const assignment={id:job,box:'box',agent:'mark',conversation:created.conversation,thread:null,venue:'handoff',model:'fixture',account:'fixture',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
+ const bytes=Buffer.from(JSON.stringify({job:assignment,build:'fixture',bootstrap:{origin:'https://loom.invalid',job,token}}));const errors:string[]=[];
+ const native=vi.fn(async(_job:unknown,input:string)=>{expect(input).toContain(brief.words);return{text:'PRIVATE CHILD RESULT',model:'fictional-observed',actions:[]};});
+ expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fictional/claude',cwd:'/fictional'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(String(url),init)),schedule:{every:()=>()=>{}},startup:async()=>{},loadMemory:async()=>null,native,error:text=>errors.push(text)})).toBe(0);
+ expect(native).toHaveBeenCalledOnce();expect(errors).toEqual([]);expect(bytes.every(value=>value===0)).toBe(true);
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()?.state).toBe('done');
+ expect(f.db.select().from(s.digests).where(eq(s.digests.conversation,created.conversation)).get()).toMatchObject({run:job,summary:'Completed this stretch of work.'});
+ const response=await f.root.http.request('/api/runtime/finish',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+bodyCredentials.runner},body:JSON.stringify({id:'handoff-finish',input:{job,exitCode:0,logTail:'PRIVATE CHILD STDOUT'}})});expect(response.status).toBe(200);
+ expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({state:'done',brief:'',logTail:null});
+ const durable=f.db.$client.serialize();for(const words of [brief.words,'PRIVATE CHILD RESULT','PRIVATE CHILD STDOUT'])expect(durable.includes(Buffer.from(words))).toBe(false);
+});
+
+it('refuses an internal plaintext handoff producer instead of saving a parallel word copy',async()=>{
+ const f=await fixture();expect(()=>f.root.services.conversations.send({toKind:'agent',to:'art',conversation:f.thread.conversation,source:'handoff',fromKind:'agent',fromId:'mark',words:brief.words})).toThrow('Handoff briefs must be encrypted');
+ expect(f.db.select().from(s.inbox).all()).toEqual([]);
+});
+
+it.each([false,true])('rechecks the sending project assignment after sealing (public %s)',async publicSource=>{
+ const f=await fixture();if(publicSource)f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null}).where(eq(s.jobs.id,'job')).run();});
+ let release!:()=>void,enter!:()=>void;const held=new Promise<void>(yes=>{release=yes;}),started=new Promise<void>(yes=>{enter=yes;});f.gate(async()=>{enter();await held;});
+ const pending=f.call('handoff',brief,'source-assignment');await started;f.root.writes.run(()=>f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'art')).run());release();expect((await pending).status).toBe(403);
+ expect(f.db.select().from(s.inbox).all()).toEqual([]);
 });

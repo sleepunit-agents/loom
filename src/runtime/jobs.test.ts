@@ -20,7 +20,7 @@ function fixture(venue: 'loom' | 'handoff' | 'wake' = 'wake') {
   db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'https://example.org/house', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: true }).run();
   const comms = new Conversations(db, now), runtime = new Jobs(db, now);
   const conversation = comms.open({ agent: 'art', venue, place: 'thread', label: 'Reply', project: 'pond', member: venue === 'wake' ? null : 'owner' });
-  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'loom' ? 'thread' : 'handoff', fromKind: venue === 'loom' ? 'person' : 'agent', fromId: venue === 'loom' ? 'owner' : 'art', words: 'Hello' });
+  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'loom' ? 'thread' : venue === 'wake' ? 'trigger' : 'handoff', fromKind: venue === 'loom' ? 'person' : 'agent', fromId: venue === 'loom' ? 'owner' : 'art', words: venue === 'handoff' ? null : 'Hello' });
   const tick = (ms: number) => { at = new Date(Date.parse(at) + ms).toISOString(); };
   return { db, comms, runtime, conversation, send, tick, now };
 }

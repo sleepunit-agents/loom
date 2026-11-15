@@ -17,7 +17,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   may(viewer,input){
    const found=current(viewer);if(!found||input.agent===found.cv.agent||!db.select({id:agents.id}).from(agents).where(eq(agents.id,input.agent)).get())return false;
    if(found.cv.member&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
-   return !found.cv.project||!!db.select().from(projectAgents).where(and(eq(projectAgents.project,found.cv.project),eq(projectAgents.agent,input.agent))).get();
+   return !found.cv.project||[found.cv.agent,input.agent].every(agent=>!!db.select().from(projectAgents).where(and(eq(projectAgents.project,found.cv.project!),eq(projectAgents.agent,agent))).get());
   },
   async prepare(input){return sealHandoff(service.key,input.words,service.now(),db.select({days:household.commsDays}).from(household).get()?.days??14);},
   run(ctx,input,prepared){

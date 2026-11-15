@@ -11,7 +11,7 @@ export function handoffEnvelope(words:string|null){
 export function handoffDeadline(item:{words:string|null;at:string},days:number):number{
  if(!Number.isInteger(days)||days<1||days>14)return -Infinity;
  let value:ReturnType<typeof handoffEnvelope>;try{value=handoffEnvelope(item.words);}catch{return -Infinity;}
- return value?wordsDeadline({at:item.at,keepUntil:value.keepUntil},days):Infinity;
+ return value?wordsDeadline({at:item.at,keepUntil:value.keepUntil},days):-Infinity;
 }
 export async function sealHandoff(key:WordsKey,words:string,at:string,days:number):Promise<string>{
  if(!Number.isInteger(days)||days<1||days>14)throw Error('Invalid keep time');

@@ -47,7 +47,7 @@ export class ConversationMail {
     for (const item of items) {
       if (!item.thread) {
         const envelope=item.source==='handoff'?handoffEnvelope(item.words):undefined;
-        prepared.set(item.id,envelope?(handoffDeadline(item,keepDays())>Date.parse(now())?await key.open(Buffer.from(envelope.cipher,'base64')):null):item.words);continue;
+        prepared.set(item.id,envelope?(handoffDeadline(item,keepDays())>Date.parse(now())?await key.open(Buffer.from(envelope.cipher,'base64')):null):item.source==='handoff'?null:item.words);continue;
       }
       const row = privateRows.get(item.id);
       if (!row || row.conversation !== conversation || row.message.thread !== item.thread || row.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');

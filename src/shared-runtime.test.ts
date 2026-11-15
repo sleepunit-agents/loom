@@ -1,3 +1,4 @@
+import {sealHandoff} from './core/conversations/handoff-words.js';
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
@@ -43,9 +44,9 @@ function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo'], commsKey?: P
   const errors = vi.fn(); let roles = [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }];
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: errors, tempo, commsKey, modelRoles: () => roles, runtimeJobEnded: ended });
   cleanup.push(() => root.close());
-  const send = (venue: 'loom' | 'handoff' | 'wake' = 'loom', place = 'thread') => {
+  const send = (venue: 'loom' | 'handoff' | 'wake' = 'loom', place = 'thread', words = 'Private work instructions') => {
     const conversation = root.services.conversations.open({ agent: 'art', venue, place, label: place });
-    const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private work instructions' });
+    const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'handoff' ? 'handoff' : venue === 'wake' ? 'trigger' : 'thread', fromKind: 'person', fromId: 'owner', words });
     expect(root.services.runtime.admit({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
     return db.select().from(jobs).where(eq(jobs.conversation, conversation.id)).get()!;
   };
@@ -163,7 +164,7 @@ it('competing real polls cannot both receive one queued job', async () => {
   expect(f.db.select().from(jobs).all()).toHaveLength(1);
 });
 it('all queued jobs respect the same current account capacity rather than a per-job copy', async () => {
-  const f = fixture(); f.send('handoff', 'one'); f.send('handoff', 'two'); f.send('handoff', 'three');
+  const f = fixture(); f.send('wake', 'one'); f.send('wake', 'two'); f.send('wake', 'three');
   const observed = { accounts: f.db.select().from(modelAccounts).all(), windows: f.db.select().from(modelAccountWindows).all() };
   const first = await f.control.next(), second = await f.control.next();
   expect(first).toBeDefined(); expect(second).toBeDefined(); expect(second?.id).not.toBe(first?.id);
@@ -236,7 +237,7 @@ it('requires the current bearer runner proof rather than a runner-labelled cooki
 });
 
 it('reports local worker facts through default HTTP and uses them in the same poll placement', async () => {
-  const f = fixture(), job = f.send('handoff');
+  const f = fixture(), job = f.send('wake');
   f.db.insert(jobNeeds).values({ job: job.id, need: 'gpu:5090' }).run();
   f.db.insert(boxFacts).values([{ box: 'worker', fact: 'rack:attic', fromOwner: true }, { box: 'worker', fact: 'gpu:old', fromOwner: false }, { box: 'other', fact: 'gpu:other', fromOwner: false }]).run();
   expect(await f.control.next()).toBeUndefined(); expect(f.db.select().from(jobs).get()?.state).toBe('queued');
@@ -337,7 +338,7 @@ for (const change of ['delete', 'rebind']) it(`refuses retained health authentic
 it('enrolls through the canonical Root then uses the private child credential for accepted mail and observed turns', async () => {
   // Public fictitious identity shared with test/fixtures/conversation-body.ts.
   const key = wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR');
-  const f = fixture(undefined, key), queued = f.send('handoff'), accepted: string[] = [];
+  const f = fixture(undefined, key), queued = f.send('handoff','thread',await sealHandoff(key,'Private work instructions',f.now(),14)), accepted: string[] = [];
   const requests: { path: string; body: string; status?: number }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input, init), record = { path: new URL(request.url).pathname, body: await request.clone().text(), status: 0 }; requests.push(record);
@@ -442,7 +443,7 @@ it('rejects ambiguous current model configuration without claiming a job or keep
 it('enrolls and completes a handoff body without manufacturing a Comms reply surface',async()=>{
  const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR'),f=fixture(undefined,key);
  f.setRoles([{model:'model',provider:'provider',harness:'claude',series:'series'}]);
- const queued=f.send('handoff'),signal=new AbortController().signal;
+ const queued=f.send('handoff','thread',await sealHandoff(key,'Private work instructions',f.now(),14)),signal=new AbortController().signal;
  const assigned=(await f.control.next())!;expect(assigned.thread).toBeNull();const bootstrap=await f.control.enrollBody!(queued.id,signal);await f.control.started(queued.id,'image');
  const native=vi.fn(async()=>({text:'Handoff completed',model:'observed',actions:[]})),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.fetch(new Request(url,init))),error=vi.fn();
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),
