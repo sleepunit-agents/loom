@@ -28,7 +28,7 @@ it('reads committed shared digests, lists and turn metadata, replacing moved con
  f.service.turn({conversation:cv.id,kind:'message',fromKind:'person',fromId:'teammate'});
  f.service.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:'fiction'});
  const dg=f.service.digest({conversation:cv.id,run:'run-1',summary:'Shipped t-42 and sleepunit-agents/loom#42',items:[{kind:'ask',text:'Which hose?'},{kind:'decision',text:'Use 25 mm'},{kind:'task',text:'t-42'},{kind:'project',text:'Pond: t-44 sleepunit-agents/loom#44'}],question:{to:'teammate',words:'Order it?',answers:'yes-no',link:'/inbox'}});
- expect(f.reader.list(teammate,f.query).rows).toMatchObject([{kind:'digest',key:dg.id,turns:2,replies:1,asked:['Which hose?'],decided:['Use 25 mm'],tasks:['t-42'],needs:'Order it?',conversation:{id:cv.id,project:'pond',people:['fiction','teammate']}}]);
+ expect(f.reader.list(teammate,f.query).rows).toMatchObject([{kind:'digest',key:dg.id,turns:3,replies:1,asked:['Which hose?'],decided:['Use 25 mm'],tasks:['t-42'],needs:'Order it?',conversation:{id:cv.id,project:'pond',people:['fiction','teammate']}}]);
  expect(f.reader.read(owner,'fiction','digest',dg.id)).not.toHaveProperty('needs');
  expect(f.reader.read(owner,'fiction','digest',dg.id)?.references).toContain('Pond: t-44 sleepunit-agents/loom#44');
  expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({links:[{href:`/conversation/${cv.id}`}]});

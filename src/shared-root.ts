@@ -1,6 +1,7 @@
 import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
 import {installMemoryTempo} from './transport/memory-tempo.js';
 import {installMemorySignals} from './transport/memory-signals.js';
+import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
@@ -10,8 +11,6 @@ import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
-import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
-import { SecretStartup } from './pieces/secrets/shared-startup.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
@@ -37,6 +36,9 @@ import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
+import { mayRunPrivateWork } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
+import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
@@ -69,8 +71,7 @@ export function sharedRoot(options: {
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
   /** Trusted startup loads the household key, never an outside request. */
   commsKey?: WordsKey;
-  /** Authenticated private holder-to-worker sink; values never enter this root. */
-  secretDelivery?: SecretDeliveryHolder;
+  /** Explicit authenticated holder source for the private recipient channel. */
   secretInputs?: {source:SecretValueSource};
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
@@ -145,9 +146,7 @@ export function sharedRoot(options: {
     options.secretWrites.fingerprintKey, secretCommit);
   const privateInputs=new SecretPrivateInputs(db,clock,options.secretInputs?.source,secretCommit);
   startupCleanups.push(()=>{void Promise.resolve(privateInputs.close()).catch(report);});
-  const delivery = options.secretDelivery && new SecretDelivery(db, now, options.secretDelivery, secretCommit);
-  const startup = delivery && new SecretStartup(db, requests, delivery, secretCommit);
-  registerSharedSecretAgentCommands(operations, db, requests, delivery, viewer => credentials.body(viewer));
+  registerSharedSecretAgentCommands(operations, db, requests, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
   });
@@ -163,7 +162,7 @@ export function sharedRoot(options: {
     return secretRecovery;
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
-  startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();startup?.close();void delivery?.close().catch(()=>report(new Error('Secret startup cleanup failed')));});
+  startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
     reportError:()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}}});
@@ -176,6 +175,7 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,viewer=>credentials.body(viewer),options.bridges!.effectsAllowed);
   comms?.install(operations);
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const services = {
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks,
@@ -184,7 +184,7 @@ export function sharedRoot(options: {
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
     runtime,
-    secrets: {requests,values,delivery,startup,inputs:privateInputs,reconcile:recoverSecrets},
+    secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
@@ -192,6 +192,7 @@ export function sharedRoot(options: {
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
   startupCleanups.push(()=>commsLifetime?.close());
+  registerTempoSettingsAnswer(operations, db, services.approvals);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
@@ -285,15 +286,14 @@ export function sharedRoot(options: {
       stopDeskTime();
       tempo.close();
       notices.close();
-      cancelSecretRecovery?.(); values?.close(); startup?.close();
-      const deliveryStopped = delivery?.close();
+      cancelSecretRecovery?.(); values?.close();
       const inputsStopped = privateInputs.close();
       const stopped = data.close();
       for (const stop of stops.splice(0).reverse()) stop();
       const measured = measuringReady!.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, bridgesStopped, inputsStopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, bridgesStopped, inputsStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
