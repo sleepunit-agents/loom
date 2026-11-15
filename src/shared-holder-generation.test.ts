@@ -20,11 +20,13 @@ it('reads the persisted generation through the real entry and changes it only wi
  await owner.holder.set(who,'TOKEN',Buffer.from('FICTITIOUS_GENERATION_VALUE'),'add');
  const changed=await owner.source.generation();expect(changed).not.toBe(before);
  await owner.holder.set(who,'TOKEN',Buffer.from('FICTITIOUS_GENERATION_VALUE'),'add');expect(await owner.source.generation()).toBe(changed);
+ await owner.holder.set({member:'owner',writeId:randomUUID()},'TOKEN',Buffer.from('FICTITIOUS_REPLACEMENT'),'replace');
+ const replaced=await owner.source.generation();expect(replaced).not.toBe(changed);
  await owner.close();await expect(owner.source.generation()).rejects.toThrow('unavailable');
- owner=await inProcessSharedHolder(directory,clock);expect(await owner.source.generation()).toBe(changed);
- await owner.holder.remove({member:'owner',writeId:randomUUID()},'TOKEN');expect(await owner.source.generation()).not.toBe(changed);
+ owner=await inProcessSharedHolder(directory,clock);expect(await owner.source.generation()).toBe(replaced);
+ await owner.holder.remove({member:'owner',writeId:randomUUID()},'TOKEN');expect(await owner.source.generation()).not.toBe(replaced);
 });
-it.each(['not-a-generation','00000000-0000-1000-8000-000000000000','committed',true,Buffer.from('private malformed metadata')])('rejects malformed generation metadata and retires the channel (%#)',async value=>{
+it.each(['not-a-generation','00000000-0000-1000-8000-000000000000','committed',true,null,Buffer.from('private malformed metadata')])('rejects malformed generation metadata and retires the channel (%#)',async value=>{
  const {parent,child}=holderChannelPair(),client=sharedHolderClient(parent,new FakeClock());
  child.send({op:'ready',key:Buffer.alloc(32,1)},()=>{});(await client.ready).fill(0);clean.push(()=>client.close());
  const pending=client.source.generation(),failure=expect(pending).rejects.toThrow('unavailable');

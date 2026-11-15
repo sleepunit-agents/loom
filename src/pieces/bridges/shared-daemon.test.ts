@@ -156,3 +156,18 @@ it('keeps the authenticated connection state when only channel filters change',a
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({state:'connected',stateAt:before.stateAt});expect(f.transports).toHaveLength(1);expect(f.closed).not.toHaveBeenCalled();
  await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('delivered');expect(f.errors).toEqual([]);
 });
+
+it('does not retry failed authentication from its own backoff publication',async()=>{
+ const f=fixture();f.source.read.mockRejectedValueOnce(Error('Fictitious unavailable value'));
+ let publications=0;
+ // Root observes committed writes, including daemon state. Bound reentry so a
+ // broken daemon fails the count assertion instead of starving the test runner.
+ const stop=f.writes.observe(()=>{publications++;if(publications<=4)f.daemon.changed();});
+ try{
+  await f.daemon.ready();await f.daemon.idle();
+  expect(f.source.read).toHaveBeenCalledOnce();expect(publications).toBe(2);
+  expect(f.transports).toHaveLength(0);expect(f.db.select().from(bridgeConnections).get()?.state).toBe('backoff');
+ }finally{stop();}
+ f.clock.advance(5000);await f.daemon.idle();
+ expect(f.transports).toHaveLength(1);expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+});
