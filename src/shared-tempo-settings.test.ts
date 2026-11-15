@@ -130,6 +130,10 @@ it('answers through the actual owner door and rechecks role, credentials and car
  for(const token of [body,unbound,otherToken])expect((await f.answer(card.id,true,'denied-'+token[0],token)).status).toBe(403);
  f.db.insert(approvals).values({...card,id:'different-operation',operation:'other.operation'}).run();
  expect((await f.answer('different-operation')).status).toBe(403);expect((await f.answer('missing')).status).toBe(403);
+ f.db.insert(approvals).values({...card,id:'wrong-kind',kind:'command'}).run();
+ const untouched={cards:f.db.select().from(approvals).all(),mail:f.db.select().from(inbox).all(),history:f.db.select().from(approvalRecord).all()};
+ expect((await f.answer('wrong-kind',false,'deny-wrong-kind')).status).toBe(403);
+ expect({cards:f.db.select().from(approvals).all(),mail:f.db.select().from(inbox).all(),history:f.db.select().from(approvalRecord).all()}).toEqual(untouched);
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
  expect((await f.answer(card.id)).status).toBe(200);const after=f.db.select().from(inbox).all();
  const question=after.find(item=>item.toKind==='person'&&item.source==='approval'&&item.sourceId===card.id)!;
