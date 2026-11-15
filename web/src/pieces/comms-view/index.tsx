@@ -6,7 +6,7 @@ export type { CommsActions, CommsDetail, CommsSnapshot } from './model';
 const time = (at: string) => `${new Date(at).toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT`;
 type MessageNavigation = { earlier(): void; latest(): void; hasEarlier: boolean; before?: number };
 type Navigation = { archived: boolean; search: string; offset: number; hasNext: boolean; folder(value: boolean): void; query(value: string): void; previous(): void; next(): void };
-type Cards = { question?(id: string): ReactNode; work?(refs: CommsDetail['refs'], conversation: string): ReactNode };
+type Cards = { screen?: ReactNode; question?(id: string): ReactNode; work?(refs: CommsDetail['refs'], conversation: string): ReactNode };
 function ThreadReader({ detail, actions, cards, navigation, readVisible = true }: { readVisible?: boolean; detail: CommsDetail; actions?: CommsActions; cards?: Cards; navigation?: MessageNavigation }) {
   const thread = detail.thread!;
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
@@ -35,6 +35,7 @@ function ThreadReader({ detail, actions, cards, navigation, readVisible = true }
     void run(async () => { await actions.send(thread.id, words, message.id); if (mounted.current) { setDraft(''); retry.current = undefined; } });
   };
   return <article ref={node => { scroller.current = node?.closest<HTMLDivElement>('.loom-split__reader') ?? null; }} className="grid gap-4 p-4" aria-label="Conversation">
+    {cards?.screen}
     <header><h2>{thread.title}</h2><p>with {thread.agent}{thread.project && ` · ${thread.project}`}{thread.working && ' · working'}</p></header>
     {actions && <div><Button disabled={busy} onClick={() => change({ change: 'pin', pinned: !thread.pinned })}>{thread.pinned ? 'Unpin' : 'Pin'}</Button><Button disabled={busy} onClick={() => change({ change: 'archive', archived: !thread.archivedAt })}>{thread.archivedAt ? 'Restore' : 'Archive'}</Button><Button disabled={busy} onClick={() => { setTitle(thread.title); setRenaming(true); }}>Rename</Button>{thread.working && <Button disabled={busy || thread.stopRequested} onClick={() => change({ change: 'stop' })}>{thread.stopRequested ? 'Stopping…' : 'Stop'}</Button>}</div>}
     {renaming && <div><Input aria-label="Conversation title" value={title} maxLength={120} onChange={event => setTitle(event.target.value)} /><Button disabled={busy || !title.trim() || [...title.trim()].length > 60} onClick={() => void run(async () => { await actions!.change(thread.id, { change: 'rename', title: title.trim() }); if (mounted.current) setRenaming(false); })}>Save title</Button><Button disabled={busy} onClick={() => setRenaming(false)}>Cancel</Button></div>}

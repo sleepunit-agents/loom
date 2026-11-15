@@ -137,3 +137,11 @@ it('connects Discord through its owned live cursor and durably retains raw befor
  const f=fixture({discord:options=>{gateway=options;expect(options.load()).toBeUndefined();return {close:async()=>{}};}});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();expect(gateway).toBeDefined();
  const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateway!.commit({type:'READY',data:{},seq:1},checkpoint,raw);expect(f.db.select().from(bridgeRawEvents).get()?.event).toEqual(raw);expect(gateway!.load()).toEqual(checkpoint);await gateway!.reset();expect(gateway!.load()).toBeUndefined();
 });
+it('publishes an earlier committed intake when a later receipt in the drain fails',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();const first=JSON.parse(f.raw('first','one').toString()),bad=JSON.parse(f.raw('bad','two').toString());first.payload.event.channel_type='channel';bad.payload.event.channel_type='channel';bad.payload.event.text=123;bad.payload.event.ts='1794432000.000002';
+ await f.transports[0].receive({},Buffer.from(JSON.stringify(first)));await f.transports[0].receive({},Buffer.from(JSON.stringify(bad)));f.published.length=0;f.clock.advance(0);await f.daemon.idle();
+ expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);expect(f.published).toContainEqual(['delivered']);expect(f.signal).toHaveBeenCalledOnce();expect(f.errors.length).toBeGreaterThan(0);
+});
+it('does not publish an empty drain during ordinary reconciliation',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();f.published.length=0;f.daemon.changed();await f.daemon.idle();expect(f.published).toEqual([]);
+});
