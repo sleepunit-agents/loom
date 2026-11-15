@@ -37,7 +37,7 @@ function command(plan: WorkerCommand): WorkerCommand {
 function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntime) {
   if (signal.aborted) throw new Error('Worker attempt cancelled');
   const child = runtime.spawn(plan);
-  let spawned = false, closed = false, logTail = '', stdout = '', overflow = false;
+  let spawned = false, closed = false, stopRequested = false, logTail = '', stdout = '', overflow = false;
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
   let exitResolve!: (result: { exitCode: number; logTail: string }) => void;
   const ready = new Promise<void>((yes, no) => { spawnResolve = yes; spawnReject = no; });
@@ -73,7 +73,7 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   child.stdin.on('error', () => {});
   child.once('spawn', () => {
     spawned = true;
-    if (signal.aborted) kill();
+    if (signal.aborted || stopRequested) kill();
     spawnResolve();
   });
   child.once('error', () => { spawnReject(new Error('Worker command could not start')); });
@@ -96,11 +96,16 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     spawned: ready, exited,
     output: () => { if (overflow) throw new Error('Build output exceeded limit'); return stdout; },
     release: async (input: unknown) => {
-      if (released || signal.aborted || closed) throw new Error('Worker input unavailable');
+      if (released || signal.aborted || stopRequested || closed) throw new Error('Worker input unavailable');
       released = true;
       await new Promise<void>((yes, no) => child.stdin.end(JSON.stringify(input) + '\n', (error?: Error | null) => error ? no(error) : yes()));
     },
-    stop: () => stopping ??= (async () => { kill(); await exited; })(),
+    stop: () => {
+      // A pending spawn may not have a PID yet. Retain the stop request so its
+      // spawn listener kills it, and no caller can release input while reaping.
+      stopRequested = true;
+      return stopping ??= (async () => { kill(); await exited; })();
+    },
   };
 }
 export function commandWorkerExecutor(config: {
