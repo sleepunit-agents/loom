@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -30,7 +31,7 @@ function fixture(read: PullRequestReader, fields?: Parameters<typeof sharedRoot>
   const root = sharedRoot({ db, clock, originAllowed: () => true, changes: { read, rule: () => undefined }, fields, reportError: error => errors.push(error) });
   cleanup.push(() => root.close());
   const row: Change = { id: 'github:house/pond#1', repo: 'github:house/pond', number: 1, page: '', title: 'Pump', body: '', url: 'https://github.com/house/pond/pull/1', state: 'open', draft: false, author: { login: 'sam' }, created: at, updated: at, closed: null, head: { ref: 'pump', id: 'a'.repeat(40) }, base: { ref: 'next' }, checks: { state: 'passing', failing: [], running: [], total: 1 }, review: { state: 'approved', by: [] }, mergeable: 'yes', conflicts: false, people: [] };
-  return { root, clock, client, row, errors };
+  return { root, clock, client, db, row, errors };
 }
 
 it('publishes scheduled Changes source commits and failures through the actual shared socket and HTTP query', async () => {
@@ -129,4 +130,35 @@ it('commits a source failure during shutdown without waking a stopped real subsc
     expect(probes).toBe(1); expect(f.errors).toEqual([]);
     f.clock.advance(120_000); expect(reads).toBe(1);
   } finally { rejectSource(new Error('cleanup')); await pending.catch(() => {}); await closing; }
+});
+
+
+it('owner Refresh coalesces source reads and returns no cached household facts; failures preserve the copy', async () => {
+  let resolve!: (rows:Change[])=>void, began!:()=>void, reads=0, fail=false;
+  const started=new Promise<void>(done=>{began=done;});
+  const f=fixture(async()=>{reads++;if(fail)throw new Error('private upstream detail');began();return new Promise(done=>{resolve=done;});});
+  const post=(input:unknown={}, authenticated=true)=>f.root.http.request('http://loom/api/changes/refresh',{method:'POST',headers:{'content-type':'application/json',...(authenticated?{cookie:'loom_ui='+cookie}:{})},body:JSON.stringify({input})});
+  expect((await post({},false)).status).toBe(401);
+  expect((await post({actor:'sam'})).status).toBe(400);
+  expect(reads).toBe(0);
+  const a=post(), b=post();await started;
+  resolve([f.row]);
+  for(const response of await Promise.all([a,b])) {expect(response.status).toBe(200);expect(await response.json()).toEqual({ok:true,value:{refreshed:true}});}
+  expect(reads).toBe(1);expect(f.root.services.changes.list()).toHaveLength(1);
+  fail=true;const failure=await post();expect(failure.status).toBe(503);expect(JSON.stringify(await failure.json())).not.toContain('private upstream');
+  expect(f.root.services.changes.list()).toHaveLength(1);expect(f.root.services.changes.syncStatus()?.failed).toBe(true);
+  f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run();
+  expect((await post()).status).toBe(403);expect(reads).toBe(2);
+});
+
+it('rechecks owner and session after a configured source read before acknowledging Refresh', async () => {
+  let finish!: (rows:Change[])=>void, began!:()=>void;
+  let started=new Promise<void>(done=>{began=done;});
+  const f=fixture(async()=>{began();return new Promise(done=>{finish=done;});});
+  const post=()=>f.root.http.request('http://loom/api/changes/refresh',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({input:{}})});
+  const a=post();await started;
+  f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run();finish([f.row]);expect((await a).status).toBe(403);
+  f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
+  started=new Promise<void>(done=>{began=done;});const b=post();await started;
+  f.db.delete(sessions).run();finish([f.row]);expect((await b).status).toBe(403);
 });

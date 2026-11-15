@@ -4,15 +4,17 @@ import { useEffect, useState } from 'react';
 import Approvals, { ApprovalCard, type ApprovalActions } from '../pieces/approval-view';
 import Changes, { ChangeCard, type ChangeActions } from '../pieces/change-view';
 import { useDataQuery } from './graphql';
+import { refreshChanges } from './work-refresh';
 import { sendWorkAnswer } from './work-answer';
 import { approvalsQuery, changesQuery, approvalSnapshot, changeSnapshot, type ApprovalsResult, type ChangesResult } from './work-query';
 
-const ownerQuery = 'query WorkAnswerOwner { workAnswerOwner }';
+const ownerQuery = 'query WorkAnswerOwner { workAnswerOwner workChangesRefresh }';
 const mergeRequestsQuery = 'query WorkMergeRequests { approvals { id kind target state agent project operation } }';
 interface MergeRequest { id:string;kind:string;target:string;state:string;agent:string;project:string|null;operation:string|null }
-function useWorkOwner() {
-  const snapshot = useDataQuery<{workAnswerOwner:boolean}>(ownerQuery);
-  return snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true;
+function useWorkAccess() {
+  const snapshot = useDataQuery<{workAnswerOwner:boolean;workChangesRefresh:boolean}>(ownerQuery);
+  return {owner:snapshot.status === 'live' && snapshot.data?.workAnswerOwner === true,
+    refresh:snapshot.status === 'live' && snapshot.data?.workChangesRefresh === true};
 }
 function ownerApprovalActions(owner: boolean): ApprovalActions | undefined {
   return owner ? {allow:id=>sendWorkAnswer({piece:'approvals',id,answer:'allow'}),deny:id=>sendWorkAnswer({piece:'approvals',id,answer:'deny'})} : undefined;
@@ -30,7 +32,7 @@ export function useChangeSnapshot(timezone = localTimezone()) {
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
 export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ApprovalActions; go?(path: string): void } = {}) {
-  const defaultActions = ownerApprovalActions(useWorkOwner());
+  const defaultActions = ownerApprovalActions(useWorkAccess().owner);
   const base = '/p/approvals-preview';
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   useEffect(() => {
@@ -60,7 +62,7 @@ export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; t
       openFolder: id => visit(id === 'pending' ? base : `${base}/${id}`) }} />;
 }
 export function ChangesApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
-  const snapshot = useChangeSnapshot(timezone), owner = useWorkOwner();
+  const snapshot = useChangeSnapshot(timezone), access = useWorkAccess(), owner = access.owner;
   const requests = useDataQuery<{approvals:MergeRequest[]}>(mergeRequestsQuery);
   const findRequest = (id:string,head:string) => {
     const row = snapshot.changes.find(row => row.id === id && row.headCommit === head);
@@ -68,6 +70,7 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
       && request.target === `${id}@${head}` && request.agent === row.agent && request.project === row.project && request.operation === null) : undefined;
   };
   const defaultActions: ChangeActions | undefined = owner && requests.status === 'live' ? {
+    ...(access.refresh ? {refresh:refreshChanges} : {}),
     canAnswer:(id,head)=>!!findRequest(id,head),
     async answer(id,head,answer) {
       const request = findRequest(id,head); if (!request) throw new Error('No approval is waiting for this commit.');
@@ -110,7 +113,7 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
 }
 /** Cards read the same current entities as the tiles, never copied payloads. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {
-  const defaultActions = ownerApprovalActions(useWorkOwner());
+  const defaultActions = ownerApprovalActions(useWorkAccess().owner);
   return <ApprovalCard id={id} snapshot={useApprovalSnapshot(timezone)} actions={actions ?? defaultActions} renderChange={approval=>renderTempoChange(approval) ?? renderMeasuringChange(approval)} />;
 }
 export function LiveChangeCard({ id, timezone, open }: { id: string; timezone?: string; open(id: string): void }) {

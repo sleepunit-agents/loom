@@ -29,6 +29,7 @@ import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { pollChanges } from './apps/changes-polling.js';
+import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
@@ -93,7 +94,7 @@ export function sharedRoot(options: {
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db) }, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes) }, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
@@ -238,6 +239,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
+  if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {

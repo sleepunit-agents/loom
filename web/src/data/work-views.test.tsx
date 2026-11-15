@@ -3,15 +3,15 @@ import { createElement as h, Suspense, type ReactNode } from 'react';
 // @ts-expect-error The renderer dependency has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
-const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
-vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
+const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
+vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
 vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listTop, props.list, props.reader] : []))])));
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.refresh=false; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
 function fixture() {
   const before = { on: true, send_outside: false, outside_address: '', keep_days: 7 };
   const after = { ...before, keep_days: 1 };
@@ -248,4 +248,16 @@ it('hides default controls when only owner metadata loses liveness while record 
     expect(tree.root.findAllByType('Button')).toHaveLength(0);
     await act(async()=>tree.unmount());
   }
+});
+
+it('offers configured Refresh only to a live owner and sends one explicit native request',async()=>{
+  fixture();feed.owner=true;feed.refresh=true;
+  const request=vi.fn(async()=>Response.json({ok:true,value:{refreshed:true}}));vi.stubGlobal('fetch',request);
+  await draw(h(ChangesApp,{}));
+  const refresh=()=>tree.root.findAllByType('Button').find((button:{props:{children:string}})=>button.props.children==='Refresh');
+  expect(refresh()).toBeDefined();await act(async()=>refresh()!.props.onClick());
+  expect(request).toHaveBeenCalledExactlyOnceWith('/api/changes/refresh',expect.objectContaining({body:JSON.stringify({input:{}}),credentials:'same-origin'}));
+  feed.refresh=false;await act(async()=>tree.update(h(ChangesApp,{})));expect(refresh()).toBeUndefined();
+  feed.refresh=true;feed.owner=false;await act(async()=>tree.update(h(ChangesApp,{})));expect(refresh()).toBeUndefined();
+  feed.owner=true;feed.ownerStatus='offline';await act(async()=>tree.update(h(ChangesApp,{})));expect(refresh()).toBeUndefined();
 });
