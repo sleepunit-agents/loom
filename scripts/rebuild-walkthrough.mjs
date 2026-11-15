@@ -129,6 +129,8 @@ export async function* walkthroughSteps(output) {
      await tempoWalkthrough({page,tile,url:app.url,clock,example:report.example,checks:row.actions,capture:async name=>{const file=row.screenshot.replace('.png','-'+name+'.png');await page.screenshot({path:join(out,file),fullPage:true});return file;}});
     }
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());const failureScreenshot=row.actions?row.screenshot.replace('.png','-error.png'):row.screenshot;row.failureScreenshot=failureScreenshot;await page.screenshot({path:join(out,failureScreenshot),fullPage:true}).catch(()=>{});}
+   // Measure the viewed selection before action helpers navigate to other selections.
+   row.dataDoor=await auditDataDoor(page,title);
    if(row.actions)report.actions={...report.actions,...Object.fromEntries(Object.entries(row.actions).map(([name,value])=>['tempo'+name[0].toUpperCase()+name.slice(1),value]))};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
    if(title==='Activity'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSend'],previous:report.actions});
@@ -143,7 +145,6 @@ export async function* walkthroughSteps(output) {
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
-   row.dataDoor=await auditDataDoor(page,title);
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
