@@ -1,5 +1,12 @@
 /** Read-only projection of the existing commons knowledge store. No schema writes. */
 import type { Database } from 'better-sqlite3';
+import {maySee,mayAct,type Viewer,type Sharing} from '../../core/index.js';
+/** The same current capability projection for GraphQL and legacy clients. */
+export function knowledgeAccess(viewer:Viewer,sharing:Sharing){return {id:'knowledge',allowed:maySee(viewer,{type:'knowledge'},sharing),
+ canAdd:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeAdd'),
+ canVerify:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeVerify'),
+ canRecheck:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeRecheck')};}
+
 interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null }
 const CHECK_DAYS = 30;
 export type Freshness = 'fresh' | 'aging' | 'due';
@@ -18,8 +25,6 @@ export interface KnowledgeView { total: number; checkDays: number; recentDays: n
 
 /** How many days back "Recently verified" reaches. */
 const RECENT_DAYS = 7;
-/** The most pages the reader lists (the whole commons, today 188). */
-const READER_MAX = 2000;
 
 /** Every active page's line (title, domain, freshness), and the one asked for whole: Knowledge's own view. */
 export function knowledgeView(db: Database | undefined, nowMs: number, open?: string, detailOnly = false): KnowledgeView {
@@ -32,7 +37,7 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
       last = new Map((db.prepare('SELECT v.page_id AS id, v.verified_at AS at, v.outcome AS outcome, v.verifier AS by FROM verifications v JOIN (SELECT page_id, MAX(id) AS m FROM verifications GROUP BY page_id) x ON x.m = v.id WHERE (? IS NULL OR v.page_id = (SELECT id FROM pages WHERE slug = ?))').all(detailOnly ? open : null, detailOnly ? open : null) as Array<{ id: number; at: string; outcome: string; by: string | null }>)
         .map((r) => [r.id, { at: r.at, outcome: r.outcome, ...(r.by ? { by: r.by } : {}) }]));
     } catch { /* an older store: no verifications table */ }
-    const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, created_by, author FROM pages WHERE status = 'active' AND (? IS NULL OR slug = ?) ORDER BY updated DESC LIMIT ${READER_MAX}`)
+    const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, created_by, author FROM pages WHERE status = 'active' AND (? IS NULL OR slug = ?) ORDER BY updated DESC, slug`)
       .all(detailOnly ? open : null, detailOnly ? open : null) as Array<PageRow & { id: number }>;
     const day = 86_400_000;
     const fresh = (r: { id: number; updated: string; verified_at?: string | null }): Freshness => {

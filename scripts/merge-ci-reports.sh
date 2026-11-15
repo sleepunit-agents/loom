@@ -9,7 +9,9 @@ for version in 22.x 24.x; do
     cp "$shard/shard.blob.json" "merged/$version/blobs/$(basename "$shard").json" || result=1
   done
   if [ -n "$(ls -A "merged/$version/blobs")" ]; then
-    npx vitest --merge-reports="merged/$version/blobs" --reporter=json --outputFile="merged/$version/vitest.json" || result=1
+    # Affected-only shards can legitimately have no tests. The workflow still
+    # requires every shard and the deploy build to succeed.
+    npx vitest --passWithNoTests --merge-reports="merged/$version/blobs" --reporter=json --outputFile="merged/$version/vitest.json" || result=1
   fi
 done
 exit "$result"

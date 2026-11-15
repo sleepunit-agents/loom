@@ -7,7 +7,7 @@ const CHECK_INTERVAL = 30 * 86_400_000;
 /** Trusted sweep contribution, routed to the explicitly configured checking agent.
  * Reads metadata only; delivering a reminder never counts as checking a page.
  */
-export function knowledgeSweep(db: Database | undefined, clock: Clock, agent: string): SweepPart {
+export function knowledgeSweep(db: Database | undefined, clock: Pick<Clock,'now'>, agent: string): SweepPart {
   if (!agent.trim()) throw new Error('Knowledge sweep needs a checking agent');
   return { name: 'Knowledge', open(who) {
     if (!db || who.kind !== 'agent' || who.id !== agent) return [];

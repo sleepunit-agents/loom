@@ -8,7 +8,6 @@ import { startLoom } from '../../foundation.js';
 import { fixture, fixtureSharing } from '../../fixture.js';
 import { FakeClock } from '../../core/index.js';
 import { installSecrets } from '../secrets/index.js';
-import { installSecretServices } from '../secrets/service.js';
 import { installBridges } from './index.js';
 import { venueSchema } from './model.js';
 import { put } from './store.js';
@@ -29,7 +28,7 @@ const payload={type:'event_callback',team_id:'T123',api_app_id:'A123',event_id:'
 async function until(fn:()=>boolean){for(let i=0;i<2000;i++){if(fn())return;await Promise.resolve();}throw Error('condition not reached');}
 async function settle(){for(let i=0;i<150;i++)await Promise.resolve();}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
-async function setup({staging=false,grant=true,pending=false,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
+async function setup({staging=false,describe=true,pending=false,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;describe?:boolean;pending?:boolean;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
   const home=mkdtempSync(join(tmpdir(),'slack-root-'));fixture(home);
   const clock=new FakeClock();let epoch='00000000-0000-4000-8000-000000000000';
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
@@ -46,10 +45,9 @@ async function setup({staging=false,grant=true,pending=false,generation,receive=
   const startOptions: Parameters<typeof startLoom>[0]={home,next:true,staging,clock,sharing,stdout:()=>{},
     bridges:{source,name:()=> 'Jonathan',receive,request,socket:()=>{const s=new FakeSocket();sockets.push(s);return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>;}},
     install(a){
-      installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
+      installSecrets(a.db,a.operations,a.live,sharing);installBridges(a,sharing);
       let n=0;for(const name of ['bot','app']){
-        expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`d${n++}`).ok).toBe(true);
-        if(grant)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name},`g${n++}`).ok).toBe(true);
+        if(describe)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`d${n++}`).ok).toBe(true);
       }
       put(a.db,'venues',venue);
       if(pending)void slackInbox(a.db,clock,{venue,app:'A123'}).receive(payload);
@@ -58,15 +56,18 @@ async function setup({staging=false,grant=true,pending=false,generation,receive=
   cleanups.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
   return {app,clock,sockets,source,buffers,request,receive,rotate(){epoch=randomUUID();},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
 }
-it('root uses real service grants, authenticates before socket startup, drains saved receipts without new input',async()=>{
-  const f=await setup({pending:true});await until(()=>f.receive.mock.calls.length===1 && f.sockets.length===1);await settle();
+it('root uses installed credentials without service grants, authenticates before socket startup, drains saved receipts without new input',async()=>{
+  const f=await setup({pending:true});
+  expect(f.app.operations.has('secrets.grantService')).toBe(false);
+  expect(f.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  await until(()=>f.receive.mock.calls.length===1 && f.sockets.length===1);await settle();
   expect(f.request.mock.calls.slice(0,2).map(c=>String(c[0]).split('/').pop())).toEqual(['auth.test','bots.info']);
   expect(f.app.db.prepare('SELECT state,event FROM bridges_slack_receipts').get()).toEqual({state:'consumed',event:null});
   expect(f.source.read.mock.calls.map(c=>c[0])).toContain('app');expect(f.buffers.every(b=>b.every(x=>x===0))).toBe(true);
 });
-it('missing service grants cause no holder or network IO and recover after the owner grants',async()=>{
-  const f=await setup({grant:false});await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
-  for(const name of ['bot','app'])expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name},`allow-${name}`).ok).toBe(true);
+it('missing secret names cause no holder or network IO and recover after the owner describes them',async()=>{
+  const f=await setup({describe:false});await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
+  for(const name of ['bot','app'])expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`describe-${name}`).ok).toBe(true);
   f.clock.advance(5000);await until(()=>f.sockets.length===1);
 });
 it('staging holds authentication and dial, then releases one stable connection attempt',async()=>{
@@ -143,9 +144,8 @@ it('startup failure awaits pending authentication before SQLite closes',async()=
   let db!:Parameters<typeof installBridges>[0]['db'];
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
   const starting=startLoom({home,next:true,host:[],clock,sharing,stdout:()=>{},bridges:{source,name:()=>undefined,receive:async()=>{},request},
-    install(a){db=a.db;installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);put(a.db,'venues',venue);
+    install(a){db=a.db;installSecrets(a.db,a.operations,a.live,sharing);installBridges(a,sharing);put(a.db,'venues',venue);
       a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name:'bot',description:'bot'},'describe');
-      a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name:'bot'},'grant');
     }});
   let ended=false;const outcome=starting.then(()=> 'unexpected success',e=>{ended=true;return (e as Error).message;});
   try {

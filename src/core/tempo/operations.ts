@@ -1,0 +1,83 @@
+/** Commands over the shared Tempo service. Current caller policy and proposal
+ * provenance come from composition; no service name or request field grants
+ * authority here. The shared writer must call tempo.committed() after commit.
+ */
+import { z } from 'zod';
+import { eq } from 'drizzle-orm';
+import type { Viewer } from '../../policy.js';
+import type { DataDatabase } from '../data/database.js';
+import { inbox, triggers } from '../data/schema.js';
+import { Operations, operation } from '../operations/index.js';
+import type { createTempo } from './tempo.js';
+import { triggerInput, type NewTrigger, type Trigger } from './triggers.js';
+import type { Recipient, Timings } from './volume.js';
+
+export type TempoAccess =
+  | { action: 'set'; trigger: NewTrigger }
+  | { action: 'stop' | 'runNow'; trigger: Trigger }
+  | { action: 'pause' | 'resume'; agent: string }
+  | { action: 'volume'; item: typeof inbox.$inferSelect }
+  | { action: 'settings'; who: Recipient };
+export interface TempoOperationOptions {
+  authorize(viewer: Viewer, access: TempoAccess): boolean;
+  /** File a proposal using the authenticated caller's conversation/provenance
+   * and the shared Approvals service with tempoSettingsProposals.operation
+   * installed. Never apply timings in this callback.
+   */
+  settings(viewer: Viewer, who: Recipient, patch: Partial<Timings>): { id: string };
+}
+const recipient = z.object({ kind: z.enum(['person', 'agent']), id: z.string().min(1) }).strict();
+const id = z.object({ id: z.string().min(1) }).strict();
+const saved = z.object({ saved: z.literal(true) }).strict();
+
+export function registerTempoOperations(operations: Operations, db: DataDatabase,
+  tempo: ReturnType<typeof createTempo>, options: TempoOperationOptions): void {
+  if (operations.db !== db.$client) throw new Error('Tempo operations need the shared connection');
+  const common = { write: true, recheckPolicy: true };
+  const triggerAccess = (viewer: Viewer, target: string, action: 'stop' | 'runNow') => {
+    const trigger = db.select().from(triggers).where(eq(triggers.id, target)).get();
+    return !!trigger && options.authorize(viewer, { action, trigger });
+  };
+  operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string() }),
+    may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
+    run(ctx, trigger) { const row = tempo.triggers.set(trigger); ctx.changed('triggers', row.id); return { id: row.id }; },
+  }));
+  for (const action of ['stop', 'runNow'] as const) operations.register(operation({ ...common,
+    name: `tempo.${action}`, input: id, output: saved,
+    may: (viewer, input) => triggerAccess(viewer, input.id, action),
+    run(ctx, input) {
+      tempo.triggers[action](input.id); ctx.changed('triggers', input.id); return { saved: true };
+    },
+  }));
+  for (const action of ['pause', 'resume'] as const) operations.register(operation({ ...common,
+    name: `tempo.${action}`, input: z.object({ agent: z.string().min(1) }).strict(), output: saved,
+    may: (viewer, input) => options.authorize(viewer, { action, agent: input.agent }),
+    run(ctx, input) {
+      tempo.triggers[action](input.agent); ctx.changed('agentPauses', input.agent); ctx.changed('triggers', input.agent);
+      return { saved: true };
+    },
+  }));
+  operations.register(operation({ ...common, name: 'inbox.volume',
+    input: z.object({ item: z.string().min(1), volume: z.enum(['full', 'dim', 'mute']), until: z.string().optional() }).strict(), output: saved,
+    may(viewer, input) {
+      const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get();
+      return !!item && options.authorize(viewer, { action: 'volume', item });
+    },
+    run(ctx, input) {
+      const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get()!;
+      tempo.volume.set({ kind: item.toKind, id: item.to }, item.id, input.volume, input.until);
+      ctx.changed('inbox', item.id); return { saved: true };
+    },
+  }));
+  operations.register(operation({ ...common, name: 'tempo.proposeSettings',
+    input: z.object({ who: recipient, patch: z.object({
+      settleSeconds: z.number().int().nonnegative().optional(), dimDays: z.number().int().positive().optional(),
+      muteDays: z.number().int().positive().optional(),
+    }).strict() }).strict(), output: z.object({ id: z.string() }),
+    may: (viewer, input) => options.authorize(viewer, { action: 'settings', who: input.who }),
+    run(ctx, input) {
+      const proposal = options.settings(ctx.viewer, input.who, input.patch);
+      ctx.changed('approvals', proposal.id); ctx.changed('inbox', proposal.id); return { id: proposal.id };
+    },
+  }));
+}
