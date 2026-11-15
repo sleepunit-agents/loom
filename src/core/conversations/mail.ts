@@ -2,8 +2,8 @@
  * never save them in jobs.brief, generic operation receipts or Inbox columns.
  * External runner doors must recheck their current authentication after await
  * and before committing. This service does not authenticate a machine. */
-import { and, eq, inArray } from 'drizzle-orm';
-import { household, inbox, messages, threads } from '../data/schema.js';
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import { household, inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 
 type Item = typeof inbox.$inferSelect;
@@ -33,9 +33,12 @@ export class ConversationMail {
     const retained = (message: typeof messages.$inferSelect) => {
       const days = keepDays();
       return !!message.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
-        && message.keepUntil > now() && Date.parse(message.at) + days * 86400000 > Date.parse(now());
+        && Date.parse(message.keepUntil) > Date.parse(now()) && Date.parse(message.at) + days * 86400000 > Date.parse(now());
     };
     const items = conversations.pending(conversation, job), privateRows = this.privateMessages(items);
+    const refs = () => items.length ? db.select().from(inboxRefs).where(inArray(inboxRefs.item, items.map(item => item.id)))
+      .orderBy(asc(inboxRefs.item), asc(inboxRefs.ref)).all() : [];
+    const beforeRefs = refs();
     const prepared = new Map<string, string | null>();
     for (const item of items) {
       if (!item.thread) { prepared.set(item.id, item.words); continue; }
@@ -44,6 +47,7 @@ export class ConversationMail {
       prepared.set(item.id, retained(row.message) && row.message.words ? await key.open(row.message.words) : null);
     }
     return () => db.transaction(() => {
+      if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
       const currentRows = this.privateMessages(items);
       const words = new Map(prepared);
