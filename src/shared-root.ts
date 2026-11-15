@@ -27,7 +27,8 @@ export function sharedRoot(options: {
 }) {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
-  const data = nextData(db, clock, options.originAllowed, options.publicOrigin, options.fields);
+  let closing: Promise<void> | undefined;
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
@@ -37,7 +38,6 @@ export function sharedRoot(options: {
     conversations: new Conversations(db, now),
   };
   const authenticate = dataAuthentication(db, () => clock.now());
-  let closing: Promise<void> | undefined;
   const http = new Hono();
   http.use('*', async (c, next) => {
     c.header('cache-control', 'no-store');
@@ -61,10 +61,13 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
       parsed.data.input, parsed.data.id, false, () => !closing && auth.valid());
+    // Execution and its final await can yield. A committed receipt remains
+    // durable, but its response must not outlive the admitted credential.
+    if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services, writes: data.writes,
+    http, operations, services, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -72,7 +75,10 @@ export function sharedRoot(options: {
     /** Stop admission synchronously; the caller closes SQLite only after this. */
     close() {
       if (closing) return closing;
-      closing = Promise.resolve().then(async () => { try { await data.close(); } finally { operations.close(); } });
+      let resolve!: () => void, reject!: (error: unknown) => void;
+      closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      // Install shared completion before synchronous detach/abort callbacks.
+      void data.close().then(() => { operations.close(); resolve(); }, error => { operations.close(); reject(error); });
       return closing;
     },
   };
