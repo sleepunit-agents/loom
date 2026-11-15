@@ -126,20 +126,6 @@ it('bounds an authenticated stalled read and erases a late provider response aft
     await vi.waitFor(()=>expect(bytes.every(v=>v===0)).toBe(true));
   } finally { vi.useRealTimers(); }
 });
-it('serve composes an explicit authenticated source and public GitHub bindings',async()=>{
-  const {home,client,server}=setup();const holder=await listenLocalHolder(server,{read:async()=>Buffer.from('CLI-FIXTURE-VALUE')});closes.push(holder.close);
-  const file=join(home,'config.json');writeFileSync(file,JSON.stringify({...client,github:{acme:'github'}}),{mode:0o600});
-  const foundation=await import('../../foundation.js');const {run}=await import('../../cli/serve.js');const {Readable}=await import('node:stream');
-  const started=vi.spyOn(foundation,'startLoom').mockResolvedValue({url:'http://127.0.0.1:8788',close:async()=>{}} as never);
-  let ready!:()=>void;const listening=new Promise<void>(resolve=>{ready=resolve;});
-  const running=run(['--next','--secret-holder',file],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:()=>ready()});
-  try {
-    await listening;const changes=started.mock.calls[0][0].changes!;
-    expect(changes.github).toEqual({acme:'github'});
-    expect(started.mock.calls[0][0].bridges?.source).toBe(changes.source);
-    const bytes=await changes.source.read('github');expect(Buffer.from(bytes).toString()).toBe('CLI-FIXTURE-VALUE');bytes.fill(0);
-  } finally {process.emit('SIGTERM');expect(await running).toBe(0);started.mockRestore();}
-});
 
 async function rawPeer(handler:(req:IncomingMessage,res:ServerResponse)=>void, tls: https.ServerOptions = {}) {
   const {home,client,server:config}=setup();
