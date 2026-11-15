@@ -17,6 +17,7 @@ import {sharedRoot} from '../shared-root.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
+type QueryRead={operation:string;sent:number;received?:number;error?:boolean};
 describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
  let browser:Browser;
  beforeAll(async()=>{
@@ -54,6 +55,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
  const sockets=new Set<Socket>();server.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
  const mark=(phase:string)=>console.info('[Tempo browser]',phase);
  const detach=app.attach(server);server.on('upgrade',(request,socket)=>{if(new URL(request.url??'/','http://loom').pathname!=='/graphql')socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');});let context:BrowserContext|undefined;
+ const readTimelines:QueryRead[][]=[];
  try {
   await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));const address=server.address();if(!address||typeof address==='string')throw Error('No address');
   const url=`http://127.0.0.1:${address.port}`;
@@ -63,15 +65,17 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   await context.addCookies([{name:'loom_ui',value:cookie,url}]);
   const [a,b]=await Promise.all([context.newPage(),context.newPage()]);
   for(const page of [a,b]){
+   const reads:QueryRead[]=[],started=performance.now();readTimelines.push(reads);
    // Numeric, bounded diagnostics for a hosted click that failed stability.
    // Never retain DOM words, query variables, credentials or navigation URLs.
    await page.addInitScript(()=>{
-    const trace={active:true,samples:[] as unknown[],last:undefined as unknown};
+    const trace={active:true,frames:0,at:0,maxGap:0,samples:[] as unknown[],last:undefined as unknown};
     (window as typeof window&{__tempoGeometry:typeof trace}).__tempoGeometry=trace;
-    const start=performance.now();let previous='',generation=0,lastButton:Element|undefined;
+    const start=performance.now();let lastAt=start,previous='',generation=0,lastButton:Element|undefined;
     const rect=(element:Element|null)=>{const r=element?.getBoundingClientRect();return r?[r.x,r.y,r.width,r.height].map(n=>Math.round(n*100)/100):null;};
     const sample=()=>{
      if(!trace.active)return;
+     const at=performance.now();trace.frames++;trace.at=Math.round(at-start);trace.maxGap=Math.max(trace.maxGap,Math.round(at-lastAt));lastAt=at;
      const button=[...document.querySelectorAll('button[data-split-row]')].find(el=>el.textContent?.includes('Check pump delivery'));
      if(button!==lastButton){generation++;lastButton=button;}
      const box=button?.getBoundingClientRect(),style=button?getComputedStyle(button):undefined;
@@ -80,16 +84,17 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
       display:style?.display,visibility:style?.visibility,opacity:style?.opacity,hit:!!button&&!!hit&&button.contains(hit),
       fonts:document.fonts.status,motion:document.documentElement.dataset.motion,hidden:document.hidden};
      const signature=JSON.stringify(value);
-     if(signature!==previous){const entry={at:Math.round(performance.now()-start),...value};if(trace.samples.length<24)trace.samples.push(entry);trace.last=entry;previous=signature;}
+     const entry={at:trace.at,...value};trace.last=entry;
+     if(signature!==previous){if(trace.samples.length<24)trace.samples.push(entry);previous=signature;}
      requestAnimationFrame(sample);
     };requestAnimationFrame(sample);
    });
    page.on('pageerror',error=>console.error('[Tempo page error]',error.message));
    page.on('console',message=>{if(message.type()==='error')console.error('[Tempo console]',message.text());});
    page.on('websocket',socket=>{
-    const names=new Map<string,string>();
-    socket.on('framesent',frame=>{try{const value=JSON.parse(String(frame.payload)),query=value.payload?.variables?.query;if(value.type==='subscribe'&&typeof query==='string'&&names.size<64)names.set(value.id,query.match(/^\s*(?:query|subscription)\s+([A-Za-z_]\w*)/)?.[1]??'unnamed');}catch{}});
-    socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload));if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify({operation:names.get(value.id),...value}));}catch{}});
+    const names=new Map<string,QueryRead>();
+    socket.on('framesent',frame=>{try{const value=JSON.parse(String(frame.payload)),query=value.payload?.variables?.query;if(value.type==='subscribe'&&typeof query==='string'&&names.size<64){const reading={operation:query.match(/^\s*(?:query|subscription)\s+([A-Za-z_]\w*)/)?.[1]??'unnamed',sent:Math.round(performance.now()-started)};names.set(value.id,reading);if(reads.length<32)reads.push(reading);}}catch{}});
+    socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload)),reading=names.get(value.id);if(reading&&reading.received===undefined){reading.received=Math.round(performance.now()-started);reading.error=value.type==='error'||!!value.payload?.errors;}if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify({operation:reading?.operation,...value}));}catch{}});
    });
   }
   mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
@@ -181,6 +186,7 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
    await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   }
  } finally {
+  console.info('[Tempo reads]',JSON.stringify(readTimelines));
   mark('cleanup context');await context?.close();detach();mark('cleanup root');await app.close();for(const socket of sockets)socket.destroy();server.closeAllConnections();mark('cleanup server');await new Promise<void>(ok=>server.close(()=>ok()));client.close();mark('closed');
  }
 });
