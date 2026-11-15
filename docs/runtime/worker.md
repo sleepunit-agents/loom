@@ -463,3 +463,10 @@ that call, while body close cancels every current and future call.
 Native model tools report only working/waiting while a turn is live. Idle/offline
 reports and Stop acknowledgement belong to the receiving runtime after execution
 ends, so a model cannot clear the working flag or remove the live Stop control.
+
+A member-private conversation reports its actual status state, but its progress
+words never enter the global agent status row. That row is shared with other
+owners of the agent: working and waiting use “Working privately” and “Waiting
+privately”; idle and offline use an empty work description. Public conversation
+progress keeps its reported words. Receipt rollback and replay preserve the same
+transaction boundary as other conversation output.

@@ -52,7 +52,9 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   output:z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),
   run(ctx,input){
    const found=requireCurrent(ctx.viewer),at=service.now();
-   db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work:input.work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work:input.work,changedAt:at}}).run();
+   // This row is shared across the agent's owners; private conversation words stay private.
+   const work=found.cv.member!==null?(input.state==='working'?'Working privately':input.state==='waiting'?'Waiting privately':''):input.work;
+   db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work,changedAt:at}}).run();
    const thread=found.cv.venue==='loom'?db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get():undefined;
    let stopRequested=false;
    // Waiting still owns a live body: the thread must keep its Stop control.
