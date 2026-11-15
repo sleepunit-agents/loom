@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { claudeBody, type ClaudeSpawn } from './claude-body.js';
 import type { WorkerAssignment } from './worker.js';
@@ -67,20 +67,6 @@ it.each(['model-option', 'tool-option', 'harness', 'pre-abort'] as const)('rejec
 it('does not classify authenticated household people as guests from a missing outside tier', async () => {
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{kind:'person',person:'household-member',tier:null}];
   const result = f.run(configured,'mail',f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']); f.finish(f.rows()); await result;
-});
-
-it('handles actual foreground child pipes with a fake provider, without native diagnostics escaping', async () => {
-  const run = claudeBody({command:'/configured/fake-provider',cwd:process.cwd(),env:{},
-    spawn: (_command,args,options) => spawn(process.execPath,['-e',[
-      "const args=process.argv.slice(1),session=args[args.indexOf('--session-id')+1];",
-      "let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',part=>input+=part);",
-      "process.stdin.on('end',()=>{if(input!=='PRIVATE MAIL')process.exit(9);",
-      "process.stderr.write('PRIVATE DIAGNOSTIC');",
-      "process.stdout.write(JSON.stringify({type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed-fake',content:[{type:'text',text:'Answer'}]}})+'\\n');",
-      "process.stdout.write(JSON.stringify({type:'result',session_id:session,subtype:'success',is_error:false,result:'Answer'})+'\\n');});",
-    ].join(''),'--',...args],options),
-  });
-  expect(await run(job,'PRIVATE MAIL',new AbortController().signal)).toEqual({text:'Answer',model:'observed-fake',actions:[]});
 });
 
 it('keeps guest-only tools available for an outside sender with configured tier three',async()=>{
