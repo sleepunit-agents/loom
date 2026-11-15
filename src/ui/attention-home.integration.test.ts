@@ -155,7 +155,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);
     await expect.poll(()=>b.getByRole('region',{name:'Art E Fish last answer'}).count()).toBe(1);
-    expect(await b.getByText(/yes · jonathan/).count()).toBe(1);
+    // Human approval receipts belong in Inbox, never in the agent reply summary.
+    expect(await b.getByText(/yes · jonathan/).count()).toBe(0);
     await b.getByRole('button',{name:'Inbox',exact:true}).click();await expect.poll(()=>b.locator('[data-split-row]').count()).toBe(3);
     await b.goto(`${loom.url}/p/home-preview`);await expect.poll(()=>cards(b).count()).toBe(2);
     await b.getByRole('button',{name:'Finish the shared Home',exact:true}).click();

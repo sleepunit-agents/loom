@@ -10,6 +10,12 @@ vi.mock('../../data', () => ({
   call: f.call,
   callOnce: () => ({ result: Promise.resolve({ ok: true, value: { member: 'owner', agents: [], summaries: [] } }) }),
 }));
+// Retention lifecycle follows the legacy ask feed; generated Home facts share
+// its status in this fixture without starting a browser WebSocket.
+vi.mock('../../data/graphql', () => ({ useDataQuery: () => {
+  const snapshot = useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshot);
+  return { status: snapshot.status, data: { agents: [], agentStatus: [], homeComms: { member: 'owner', agents: [], summaries: [] } } };
+} }));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion', () => ({ useReducedMotion: () => true }));
 import Home from './home';
 import Inbox from './index';
