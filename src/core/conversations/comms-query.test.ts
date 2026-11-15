@@ -162,3 +162,17 @@ it('projects a current effective word deadline without decrypting and fails clos
   expect(f.opens()).toBe(0);
   f.revoke(); expect(f.service.wordsKeepUntil(alice, latest)).toBeNull();
 });
+it('executes the shipped Work queries against the generated current-policy task projection', async () => {
+  const f = await fixture();
+  const { tasks } = await import('../data/schema.js');
+  const { dataQueries } = await import('../data/queries.js');
+  const { sourceQuery, taskQuery } = await import('../../../web/src/pieces/comms/shared-work.js');
+  for (const [id, owner, sourceId] of [['t-10','alice',f.thread.conversation], ['t-11','bob',f.thread.conversation], ['t-12','alice','elsewhere']]) {
+    f.db.insert(tasks).values({ id, title: id, ownerKind: 'member', owner, createdByKind: 'member', createdBy: owner, createdAt: '2026-11-14T18:00:00Z', changedAt: '2026-11-14T18:00:00Z', sourceKind: 'conversation', sourceId }).run();
+  }
+  const schema = dataQueries(f.db.$client, { tables: ['tasks'], visibility: { tasks: fields => eq(fields.owner, 'alice') } });
+  const source = await graphql({ schema, source: sourceQuery, variableValues: { conversation: f.thread.conversation } });
+  expect(source.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(source.data))).toEqual({ tasks: [{ id:'t-10', title:'t-10', status:'open' }] });
+  const mentioned = await graphql({ schema, source: taskQuery, variableValues: { id: 't-11' } });
+  expect(mentioned.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(mentioned.data))).toEqual({ tasks: [] });
+});
