@@ -1,3 +1,4 @@
+import { threadTitle } from './title.js';
 /** Private Comms thread metadata over the same conversation and message tables.
  * This trusted service takes already authenticated inputs from its caller. */
 import { randomUUID } from 'node:crypto';
@@ -39,9 +40,9 @@ export class Threads {
   }
 
   private title(value: string): string {
-    const title = value.trim();
-    if (!title || [...title].length > 60) throw new Error('Thread title must be 1–60 characters');
-    return title;
+    const title=threadTitle.safeParse(value);
+    if(!title.success)throw new Error('Thread title must be 1–60 characters');
+    return title.data;
   }
 
   rename(id: string, value: string, by: Thread['titledBy']): Thread {

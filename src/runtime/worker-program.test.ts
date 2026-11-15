@@ -161,3 +161,25 @@ for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\0fact'], ['bad\nlin
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, facts }));
   expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
+
+it('accepts explicit private bootstrap only in a configured runner, without putting it in argv or environment', async () => {
+  const f = fixture(), selected = { ...config, runners: { claude: { ...plan, bodyBootstrap: true } } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'machine-token'); expect(await workerProgram(f)).toBe(0); expect(f.executor).toHaveBeenCalledWith(selected);
+});
+for (const bodyBootstrap of ['true', 1, null, {}]) it('refuses an invalid private runner bootstrap option before token reads', async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, runners: { claude: { ...plan, bodyBootstrap } } }));
+  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+});
+
+it('accepts private bootstrap in exact account/harness bindings', async () => {
+  const f = fixture(), selected = { ...config, accountRunners: { sub: { claude: { ...plan, bodyBootstrap: true } } } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'machine-token'); expect(await workerProgram(f)).toBe(0); expect(f.executor).toHaveBeenCalledWith(selected);
+});
+it('refuses a private bootstrap flag on a builder before reading its token', async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, build: { ...plan, bodyBootstrap: true } }));
+  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+});
+for (const mode of ['--account-signin', '--account-usage']) it(`refuses private bootstrap on the ${mode} command before private execution`, async () => {
+  const f = accountFixture(mode, { command: { ...plan, bodyBootstrap: true }, account, ...(mode === '--account-signin' ? { box: 'box' } : {}) });
+  expect(await workerProgram(f)).toBe(1); expect(f.signIn).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled(); expect(f.read).toHaveBeenCalledOnce();
+});

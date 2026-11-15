@@ -127,3 +127,16 @@ it('hides retained private words when a canonical result cannot be decoded',asyn
   expect(text()).not.toContain('Private fictional question');
   expect(f.records).not.toHaveBeenCalled();
 });
+
+it('offers recipient volume independently of managed answers through the current cookie door',async()=>{
+ setup(row({source:'approval',canAnswer:false,canSetVolume:true,read:true}));
+ const props={path:'/p/inbox-preview/ask/in-1',go:vi.fn()};
+ await act(async()=>{tree=create(h(InboxApp,props));});
+ expect(button('Yes')).toBeUndefined();
+ await act(async()=>{button('Mute').props.onClick();});
+ expect(fetch).toHaveBeenCalledWith('/api/inbox/volume',expect.objectContaining({method:'POST',credentials:'same-origin'}));
+ expect(f.call).toHaveBeenCalledWith('inbox.volume',{item:'in-1',volume:'mute'});
+ f.data.inboxItem=row({canAnswer:false,canSetVolume:false,read:true});
+ await act(async()=>{tree.update(h(InboxApp,props));});
+ expect(button('Mute')).toBeUndefined();
+});

@@ -9,7 +9,8 @@ import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
-const containerCommand = command.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
+const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional() });
+const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
 const containerDeadline = z.number().int().min(1).max(300_000);
 const accountCommand = z.object({
   command,
@@ -21,8 +22,8 @@ const signInCommand = accountCommand.extend({ box: z.string().trim().min(1) });
 const configSchema = z.object({
   facts: machineFacts.optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
-  build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), command),
-  accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), command)).optional(),
+  build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), runnerCommand),
+  accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
     setupTimeoutMs: containerDeadline.optional(),

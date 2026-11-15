@@ -17,6 +17,7 @@ import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 import {conversationActivityQuery} from '../web/src/pieces/comms/conversation-query.js';
+import {tempoQuery} from '../web/src/pieces/tempo/query.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
 it('follows Memory conversation links through current shared history while private chat stays private',async()=>{
@@ -45,6 +46,7 @@ it('follows Memory conversation links through current shared history while priva
  expect(await post('comms.send',{thread:'th:program',clientId:'message',words:'PRIVATE ENCRYPTED PROGRAM WORDS'},'send')).toMatchObject({ok:true});
  const query=async(source:string,variables:Record<string,unknown>={},member:'owner'|'peer'='owner')=>{const response=await request('/graphql',{query:source,variables},{cookie:cookies[member]});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  const combined=`{ homeComms { member agents } commsMessages(thread:"th:program") { words } memoryKnowledge { pages { title } } memoryPerson(id:"art:friend") { name conversations { rows { id href } } } memoryProject(id:"art:pond") { name } memoryActivity { entries { id title } } recentConversations(agent:"art") { id } }`;
+ const tempo=await query(tempoQuery);expect(tempo.tempoTimezone).toBe('America/Chicago');expect(tempo.triggers.some((row:{id:string})=>row.id==='knowledge-sweep:art')).toBe(true);
  const initial=await query(combined),conversation=initial.recentConversations[0].id as string;
  app.writes.run(()=>{db.insert(conversationPeople).values({conversation,whoKind:'person',who:'friend'}).run();for(let i=0;i<55;i++)app.services.conversations.turn({conversation,kind:'action',fromKind:'agent',fromId:'art',outcome:'progressed'});});
  const owner=await query(combined);

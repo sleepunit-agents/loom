@@ -1,5 +1,7 @@
+import { createHash, randomBytes } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
+vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn((size: number) => actual.randomBytes(size)) }; });
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
 function client(fetcher: typeof fetch, signal = new AbortController().signal) {
@@ -151,4 +153,66 @@ it('uses the existing bounded authenticated operation door for health without cl
   expect(String(fetcher.mock.calls[0][0])).toBe('https://loom.example/api/runtime/health');
   expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).input).toEqual({ facts: ['os:linux'] });
   expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: 'error', headers: { authorization: 'Bearer machine-token' } });
+});
+
+it('generates body bytes locally and registers only their fingerprint once on the runner door', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ registered: true }));
+  const bootstrap = await client(fetcher).enrollBody!('job', new AbortController().signal);
+  const raw = Buffer.from(bootstrap.token).toString(); expect(raw).toMatch(/^body_[a-f0-9]{64}$/); expect(bootstrap).toMatchObject({ origin: 'https://loom.example', job: 'job' });
+  const input = JSON.parse(String(fetcher.mock.calls[0][1]?.body)).input;
+  expect(input).toEqual({ job: 'job', fingerprint: createHash('sha256').update(raw).digest('hex') });
+  expect(String(fetcher.mock.calls[0][0])).toBe('https://loom.example/api/runtime/enrollBody');
+  expect(JSON.stringify(fetcher.mock.calls)).not.toContain(raw); expect(fetcher).toHaveBeenCalledOnce(); bootstrap.token.fill(0);
+});
+it('does not retry a lost enrollment ACK or return a credential after a late canceled ACK', async () => {
+  const lost = vi.fn<typeof fetch>().mockRejectedValue(Error('private diagnostics'));
+  await expect(client(lost).enrollBody!('job', new AbortController().signal)).rejects.toThrow(/^Worker body enrollment failed; outcome may be uncertain$/); expect(lost).toHaveBeenCalledOnce();
+  const abort = new AbortController(), late = vi.fn<typeof fetch>().mockImplementation(async () => { abort.abort(); return response({ registered: true }); });
+  await expect(client(late).enrollBody!('job', abort.signal)).rejects.toThrow(/^Worker body enrollment failed; outcome may be uncertain$/); expect(late).toHaveBeenCalledOnce();
+});
+
+for (const value of [{}, { registered: false }, { registered: 'true' }, { registered: true, token: 'must-not-be-returned' }]) it('requires the exact metadata-only body enrollment acknowledgement', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(value));
+  await expect(client(fetcher).enrollBody!('job', new AbortController().signal)).rejects.toThrow(/^Worker body enrollment failed; outcome may be uncertain$/); expect(fetcher).toHaveBeenCalledOnce();
+});
+for (const source of ['worker', 'attempt']) it(`cancels the actual enrollment request on ${source} abort`, async () => {
+  const worker = new AbortController(), attempt = new AbortController(); let began!: () => void; const ready = new Promise<void>(resolve => { began = resolve; }); let signal!: AbortSignal;
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_input, init) => new Promise<Response>((_resolve, reject) => { signal = init!.signal!; signal.addEventListener('abort', () => reject(Error('private network abort')), { once: true }); began(); }));
+  const pending = client(fetcher, worker.signal).enrollBody!('job', attempt.signal); const rejected = expect(pending).rejects.toThrow(/^Worker body enrollment failed; outcome may be uncertain$/); await ready;
+  try { (source === 'worker' ? worker : attempt).abort(); expect(signal.aborted).toBe(true); await rejected; expect(fetcher).toHaveBeenCalledOnce(); }
+  finally { worker.abort(); attempt.abort(); await pending.catch(() => {}); }
+});
+
+it('erases client-owned bytes on abort even while an ignoring transport still holds the enrollment ACK', async () => {
+  const original = Buffer.from, owned: Buffer[] = [];
+  const from = vi.spyOn(Buffer, 'from').mockImplementation(((...args: unknown[]) => { const result = Reflect.apply(original, Buffer, args) as Buffer; if (typeof args[0] === 'string' && /^body_[a-f0-9]{64}$/.test(args[0])) owned.push(result); return result; }) as typeof Buffer.from);
+  let release!: (value: Response) => void, began!: () => void; const ready = new Promise<void>(resolve => { began = resolve; });
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Promise<Response>(resolve => { release = resolve; began(); })), abort = new AbortController();
+  const pending = client(fetcher).enrollBody!('job', abort.signal); const rejected = expect(pending).rejects.toThrow('Worker body enrollment failed');
+  try { await ready; expect(owned).toHaveLength(1); expect(owned[0][0]).not.toBe(0); abort.abort(); expect(owned[0].every(byte => byte === 0)).toBe(true); }
+  finally { release(response({ registered: true })); await rejected; from.mockRestore(); }
+});
+it('keeps an abort eraser across successful ownership handoff until the parent erases the token', async () => {
+  const abort = new AbortController(), fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ registered: true }));
+  const bootstrap = await client(fetcher).enrollBody!('job', abort.signal); expect(bootstrap.token[0]).not.toBe(0); abort.abort(); expect(bootstrap.token.every(byte => byte === 0)).toBe(true); bootstrap.erase?.();
+});
+
+it('erases enrollment bytes on its request deadline before an ignoring transport returns, and rejects its late ACK', async () => {
+  vi.useFakeTimers(); const original = Buffer.from, owned: Buffer[] = [];
+  const from = vi.spyOn(Buffer, 'from').mockImplementation(((...args: unknown[]) => { const result = Reflect.apply(original, Buffer, args) as Buffer; if (typeof args[0] === 'string' && /^body_[a-f0-9]{64}$/.test(args[0])) owned.push(result); return result; }) as typeof Buffer.from);
+  let release!: (response: Response) => void;
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => new Promise<Response>(resolve => { release = resolve; }));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, timeoutMs: 10, fetch: fetcher });
+  const pending = control.enrollBody!('job', new AbortController().signal), rejected = expect(pending).rejects.toThrow('Worker body enrollment failed');
+  try { expect(owned).toHaveLength(1); expect(owned[0][0]).not.toBe(0); await vi.advanceTimersByTimeAsync(10); expect(owned[0].every(byte => byte === 0)).toBe(true); }
+  finally { release(response({ registered: true })); await rejected; from.mockRestore(); vi.useRealTimers(); }
+});
+
+it('uses32randombytes per locally generated token and never reuses a constant credential', async () => {
+  const source = vi.mocked(randomBytes as (size: number) => Buffer), before = source.mock.calls.length;
+  source.mockReturnValueOnce(Buffer.alloc(32, 0x11)).mockReturnValueOnce(Buffer.alloc(32, 0x22));
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response({ registered: true })), control = client(fetcher);
+  const first = await control.enrollBody!('first', new AbortController().signal), second = await control.enrollBody!('second', new AbortController().signal);
+  expect(Buffer.from(first.token).toString()).toBe('body_'+'11'.repeat(32)); expect(Buffer.from(second.token).toString()).toBe('body_'+'22'.repeat(32));
+  expect(source.mock.calls.slice(before)).toEqual([[32], [32]]); first.erase?.(); second.erase?.();
 });

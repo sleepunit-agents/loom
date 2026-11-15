@@ -27,6 +27,13 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     catch { if (mounted.current) setError(true); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
   };
+  const volume = async (value: InboxItem['volume']) => {
+    if (lock.current || !item.canSetVolume || !actions?.volume) return;
+    lock.current = true; setBusy(true); setError(false);
+    try { await actions.volume(item.id, value); }
+    catch { if (mounted.current) setError(true); }
+    finally { lock.current = false; if (mounted.current) setBusy(false); }
+  };
   const waiting = item.state === 'waiting';
   return <article aria-label="Inbox item" className="grid gap-4 p-4">
     <p>{item.agent ?? item.fromId ?? 'Loom'} · {item.state} · <time dateTime={item.at}>{time(item.at)}</time>{item.project && ` · ${item.project}`}</p>
@@ -34,6 +41,10 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     {item.body?.why && <p>{item.body.why}</p>}
     {(item.body?.ifYes || item.body?.ifNo) && <dl>{item.body.ifYes && <><dt>If yes</dt><dd>{item.body.ifYes}</dd></>}{item.body.ifNo && <><dt>If no</dt><dd>{item.body.ifNo}</dd></>}</dl>}
     {safeLink(item.body?.link) && <a href={safeLink(item.body?.link)} target="_blank" rel="noreferrer">Open linked page</a>}
+    {item.canSetVolume && actions?.volume && <section aria-label="Item volume" className="grid gap-2">
+      <p>Volume: {item.volume}{item.volume !== 'full' && item.quietUntil && <> · returns to full <time dateTime={item.quietUntil}>{time(item.quietUntil)}</time></>}</p>
+      <div>{(['full', 'dim', 'mute'] as const).map(value => <Button key={value} disabled={busy || value === item.volume} onClick={() => void volume(value)}>{value === 'full' ? 'Full' : value === 'dim' ? 'Dim' : 'Mute'}</Button>)}</div>
+    </section>}
     {item.refs.length > 0 && <p>About: {item.refs.join(' · ')}</p>}
     {waiting && managed(item) && <p>Answer this at its source.</p>}
     {waiting && managed(item) && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}

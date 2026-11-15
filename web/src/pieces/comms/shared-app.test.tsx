@@ -46,7 +46,7 @@ it('creates conversations for owned agents without passing a member identity', a
   setup(); f.data.commsThread = null; delete f.data.commsMessages; delete f.data.commsRefs; const go = await draw('/p/comms-preview');
   expect(named('Chat with art')).toBeDefined(); expect(named('Chat with bob')).toBeUndefined();
   await act(async () => { named('Chat with art').props.onClick(); });
-  expect(f.call).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/), title: 'New conversation' });
+  expect(f.call).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/) });
   expect(go).toHaveBeenCalledWith(expect.stringMatching(/^\/p\/comms-preview\/thread\//));
 });
 it('uses server counts, search and thread/message pages without caching old private words', async () => {

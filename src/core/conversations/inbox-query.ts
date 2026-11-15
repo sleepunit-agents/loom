@@ -16,7 +16,8 @@ export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | '
 
 export class InboxQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
-    readonly now: () => string = () => new Date().toISOString()) {}
+    readonly now: () => string = () => new Date().toISOString(),
+    private readonly volumeAllowed: (viewer: Viewer, item: Item) => boolean = () => false) {}
 
   private allowed(viewer: Viewer) {
     const allowed = this.policy(viewer, getTableColumns(inbox));
@@ -32,6 +33,10 @@ export class InboxQueries {
     return this.db.select().from(inbox).where(and(eq(inbox.id, id), this.allowed(viewer))).get();
   }
   item(viewer: Viewer, id: string): Item | null { return this.current(viewer, id) ?? null; }
+  canSetVolume(viewer: Viewer, id: string): boolean {
+    const item = this.current(viewer, id);
+    return !!item && this.volumeAllowed(viewer, item);
+  }
   canAnswer(viewer: Viewer, id: string): boolean {
     const item = this.current(viewer, id);
     return viewer.kind === 'member' && !!item && item.toKind === 'person' && item.to === viewer.id
@@ -228,13 +233,14 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   } });
   const item = new GraphQLObjectType<Item, { viewer: Viewer }>({ name: 'InboxItemView', fields: {
     ...Object.fromEntries(['id', 'toKind', 'to', 'source', 'fromKind', 'at', 'state', 'volume', 'changedAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
-    ...Object.fromEntries(['conversation', 'sourceId', 'fromId', 'agent', 'project', 'member', 'answers', 'waitsOnKind', 'waitsOnId', 'thread', 'answer', 'answeredBy', 'answeredAt', 'resolution'].map(name => [name, { type: GraphQLString }])),
+    ...Object.fromEntries(['quietUntil', 'conversation', 'sourceId', 'fromId', 'agent', 'project', 'member', 'answers', 'waitsOnKind', 'waitsOnId', 'thread', 'answer', 'answeredBy', 'answeredAt', 'resolution'].map(name => [name, { type: GraphQLString }])),
     seq: { type: GraphQLInt },
     bodyKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.bodyKeepUntil(context.viewer, row.id) },
     answerKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.answerKeepUntil(context.viewer, row.id) },
     answerText: { type: GraphQLString, resolve: (row, _args, context) => service.answerText(context.viewer, row.id, until => keepReadUntil(context, until)) },
     body: { type: body, resolve: (row, _args, context) => service.body(context.viewer, row.id, until => keepReadUntil(context, until)) },
     refs: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))), resolve: (row, _args, context) => service.refs(context.viewer, row.id) },
+    canSetVolume: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.canSetVolume(context.viewer, row.id) },
     canAnswer: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.canAnswer(context.viewer, row.id) },
     read: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.read(context.viewer, row.id) },
   } });

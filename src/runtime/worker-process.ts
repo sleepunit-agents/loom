@@ -3,6 +3,7 @@
  * reads {job,house} JSON on stdin and emits {build:string} JSON on stdout. A
  * runner reads {job,build} JSON on stdin after the running acknowledgement.
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
+import { bodyInput } from './body-bootstrap.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { z } from 'zod';
 import { quotaWindows } from './account-observation.js';
@@ -10,6 +11,8 @@ import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 export interface WorkerCommand {
+  /** This configured child understands the private bootstrap stdin envelope. */
+  bodyBootstrap?: boolean;
   command: string;
   args: readonly string[];
   cwd: string;
@@ -56,10 +59,27 @@ export function workerRunner(config: WorkerRunnerConfig) {
     return selected;
   };
 }
+/** One retained-output boundary shared by command execution and private bodies. */
+export function commandOutput() {
+  let tail = '', stdout = '', bytes = 0, overflow = false, discarded = false;
+  const append = (text: string) => { if (!discarded) tail = (tail + text).slice(-16_384); };
+  return {
+    stdout(text: string, count: number) {
+      if (discarded) return;
+      append(text);
+      if (!overflow) { bytes += count; if (bytes > 65_536) { stdout = ''; overflow = true; } else stdout += text; }
+    },
+    stderr: append,
+    tail: () => tail,
+    value: () => { if (overflow) throw new Error('Build output exceeded limit'); return stdout; },
+    discard: () => { discarded = true; tail = ''; stdout = ''; bytes = 0; overflow = false; },
+  };
+}
 function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntime, closePipesOnKill = false) {
   if (signal.aborted) throw new Error('Worker attempt cancelled');
   const child = runtime.spawn(plan);
-  let spawned = false, closed = false, stopRequested = false, logTail = '', stdout = '', overflow = false;
+  let spawned = false, closed = false, stopRequested = false;
+  const retained = commandOutput();
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
   let exitResolve!: (result: { exitCode: number; logTail: string }) => void;
   let exitReject!: (error: Error) => void;
@@ -83,22 +103,12 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   };
   signal.addEventListener('abort', kill, { once: true });
   const outDecoder = new StringDecoder('utf8'), errorDecoder = new StringDecoder('utf8');
-  let outputBytes = 0;
-  const append = (text: string) => { logTail = (logTail + text).slice(-16_384); };
-  const output = (text: string, bytes: number) => {
-    append(text);
-    if (!overflow) {
-      outputBytes += bytes;
-      if (outputBytes > 65_536) { stdout = ''; overflow = true; }
-      else stdout += text;
-    }
-  };
   child.stdout.on('data', (chunk: Buffer | string) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    output(outDecoder.write(bytes), bytes.length);
+    retained.stdout(outDecoder.write(bytes), bytes.length);
   });
   child.stderr.on('data', (chunk: Buffer | string) => {
-    append(errorDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    retained.stderr(errorDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
   });
   // An early child exit can close stdin before release. Never emit an unhandled
   // stream error or misclassify it as another launch attempt.
@@ -115,10 +125,10 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   child.once('exit', (code) => { leaderExit = code ?? 1; kill(); });
   child.once('close', (code, _signal) => {
     closed = true;
-    output(outDecoder.end(), 0); append(errorDecoder.end());
+    retained.stdout(outDecoder.end(), 0); retained.stderr(errorDecoder.end());
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
-    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail });
+    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail: retained.tail() });
   });
   // Covers cancellation during the injected spawn operation/listener setup.
   if (signal.aborted) kill();
@@ -126,7 +136,8 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   let stopping: Promise<void> | undefined;
   return {
     spawned: ready, exited,
-    output: () => { if (overflow) throw new Error('Build output exceeded limit'); return stdout; },
+    discardOutput: retained.discard,
+    output: retained.value,
     release: async (input: unknown) => {
       if (released || signal.aborted || stopRequested || closed) throw new Error('Worker input unavailable');
       released = true;
@@ -176,8 +187,12 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
       const plan = runner(job);
       const attempt = launch(plan, signal, runtime);
-      return { spawned: attempt.spawned, exited: attempt.exited,
-        release: () => attempt.release({ job, build }), stop: attempt.stop };
+      return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: attempt.spawned, exited: attempt.exited,
+        release: bootstrap => {
+          const payload = bodyInput(job, build, bootstrap, plan.bodyBootstrap === true);
+          if (bootstrap) attempt.discardOutput();
+          return attempt.release(payload);
+        }, stop: attempt.stop };
     },
   };
 }
