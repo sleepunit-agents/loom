@@ -128,3 +128,14 @@ it('replies to the last accepted matching bridge reference even when its words a
   const batch=await response.json(),first={...batch.value.items[0],source:'slack',refs:['bi:first']};batch.value.items=[first,{...first,id:'second',seq:2,words:null,refs:['bi:last']}];return Response.json(batch);
  }})).toBe(0);expect(f.native).toHaveBeenCalledWith(expect.anything(),'PRIVATE MAIL',expect.any(AbortSignal));expect(f.calls.find(row=>row.path==='reply')?.body.input).toMatchObject({incoming:'bi:last',model:'observed'});expect(f.calls.some(row=>row.path==='message')).toBe(false);
 });
+it('passes retained question context with a short answer to native execution',async()=>{
+ const f=fixture(),fetcher=f.options.fetch,question={words:'PRIVATE QUESTION',why:'PRIVATE WHY',ifYes:'PRIVATE YES',ifNo:'PRIVATE NO',link:null};
+ const fetchWithContext=async(url:Parameters<typeof fetcher>[0],init?:Parameters<typeof fetcher>[1])=>{
+  const response=await fetcher(url,init);
+  if(new URL(String(url)).pathname.endsWith('/take')){const value=await response.json();value.value.items[0]={...value.value.items[0],source:'answer',words:'yes',verdict:'yes',question,questionKeepUntil:'9999-01-01T00:00:00.000Z'};return Response.json(value);}
+  return response;
+ };
+ expect(await bodyProgram({...f.options,fetch:fetchWithContext})).toBe(0);
+ expect(f.native).toHaveBeenCalledWith(job,JSON.stringify({question,answer:'yes',verdict:'yes'}),expect.any(AbortSignal));
+ expect(JSON.stringify(f.calls)).not.toContain('PRIVATE QUESTION');
+});
