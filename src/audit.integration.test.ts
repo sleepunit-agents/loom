@@ -18,7 +18,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { createLoomServer } from './server.js';
 import { agentDir, commonsDir, createToken, loadHousehold, mintReviewToken, type Household } from './household.js';
 import { runtimePieces } from './cli/pieces-managed.js';
-import { createConversationTables, findingsOf, foldConversations, getConversation, recordTurn, turnsOf, type TurnInput } from './backends/conversations.js';
+import { createConversationTables, findingsOf, getConversation, recordTurn, turnsOf, type TurnInput } from './backends/conversations.js';
 import { writeTurn } from './conversations.js';
 import { PeopleStore } from './backends/people.js';
 import { HOUSEHOLD_DB, syncVenues, venueOf } from './household-store.js';
@@ -941,7 +941,7 @@ describe('a conversation with a non-owner stays one', () => {
     }
   });
 
-  it('a harness and model whose turns were all folded are still redacted', () => {
+  it('a harness and model whose old turns were already removed are still redacted', () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-vocab-fold-'));
     try {
       mkdirSync(join(home, 'agents', 'art'), { recursive: true });
@@ -949,7 +949,9 @@ describe('a conversation with a non-owner stays one', () => {
       const h = loadHousehold(home)!;
       const old = new Date(Date.now() - 100 * 86_400_000).toISOString();
       writeTurn(h, asArt, { venue: 'session', place: 'claude-code:old', at: old, from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'r-old', outcome: 'none', model: 'quokka-7b', harness: 'zebra-harness' });
-      expect(foldConversations(agentDir(h, 'art')).turns).toBe(1);
+      // Historical metadata must survive independently of the retired fold writer.
+      const archived=new BetterSqlite3(join(agentDir(h,'art'),'memories.db'));
+      try{expect(archived.prepare('DELETE FROM conversation_turns WHERE at = ?').run(old).changes).toBe(1);}finally{archived.close();}
       const v = vocabularyOf(h);
       expect(v.harnesses).toContain('zebra-harness');
       expect(v.models).toContain('quokka-7b');
@@ -959,7 +961,7 @@ describe('a conversation with a non-owner stays one', () => {
     }
   });
 
-  it('an unknown sender\'s turn, folded away after 90 days, still marks it', () => {
+  it('an unknown sender\'s old turn was removed but still marks it', () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-strangers-fold-'));
     try {
       mkdirSync(join(home, 'agents', 'art'), { recursive: true });
@@ -969,7 +971,9 @@ describe('a conversation with a non-owner stays one', () => {
       const { conversation } = writeTurn(h, asArt, msg('claude-code:fold', old, { kind: 'unknown' }));
       writeTurn(h, asArt, msg('claude-code:fold', new Date().toISOString(), { kind: 'person', slug: 'jonathan' }));
       expect(withNonOwner(h, 'art', conversation)).toBe(true);
-      expect(foldConversations(agentDir(h, 'art')).turns).toBe(1);
+      // Historical metadata must survive independently of the retired fold writer.
+      const archived=new BetterSqlite3(join(agentDir(h,'art'),'memories.db'));
+      try{expect(archived.prepare('DELETE FROM conversation_turns WHERE at = ?').run(old).changes).toBe(1);}finally{archived.close();}
       expect(turnsOf(agentDir(h, 'art'), conversation).some((t) => t.from.kind === 'unknown')).toBe(false);
       expect(withNonOwner(h, 'art', conversation)).toBe(true);
     } finally {
