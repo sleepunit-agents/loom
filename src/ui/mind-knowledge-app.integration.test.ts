@@ -24,7 +24,8 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{}})});
+  // Aging pages must not replay a month of denied maintenance sweeps.
+  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}})});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});

@@ -76,4 +76,6 @@ This module creates no endpoint and grants no settings writes. The root mounts b
 OpenTelemetry references: [JavaScript instrumentation](https://opentelemetry.io/docs/languages/js/instrumentation/)
 and [exporters](https://opentelemetry.io/docs/languages/js/exporters/).
 
+The browser uses the canonical generated GraphQL client shared by Tasks and every other tile, with one window socket and normalized cache; no compatibility shim owns another client.
+
 The fresh sharedRoot also installs Measuring and registers its handler in the common approval map. serveShared awaits readiness before listening. Generic approval services schedule a rollback-safe committed-settings refresh. ExecutionDrain retains resolver and validation work. Both HTTP listeners use the response finish/close helper. Close awaits enabled startup and exporter shutdown before SQLite closes. Register built-in operations before root readiness so the startup inventory includes them.
