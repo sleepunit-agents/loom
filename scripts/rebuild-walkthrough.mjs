@@ -32,7 +32,7 @@ import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
 import {prepareRetention} from './rebuild-retention.mjs';
-import {installDataProbe,auditDataDoor,dataActions,sharingGrowth} from './rebuild-data-actions.mjs';
+import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth} from './rebuild-data-actions.mjs';
 
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
@@ -218,6 +218,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await homeReadGrowth({page,app,subscriptions,out,sharing:report.actions.dataSharingSQL}));
+  save();yield {phase:'home-read-growth',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
   report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});

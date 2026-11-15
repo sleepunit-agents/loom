@@ -29,7 +29,7 @@
       "source": "docs/how-it-works/site/data.html",
       "probe": {
         "kind": "action",
-        "action": "dataSharingSQL"
+        "action": "dataReadBounds"
       }
     },
     {
@@ -79,7 +79,7 @@
       "source": "docs/how-it-works/site/data.html#how-h",
       "probe": {
         "kind": "action",
-        "action": "dataSharingSQL"
+        "action": "dataReadBounds"
       }
     },
     {
