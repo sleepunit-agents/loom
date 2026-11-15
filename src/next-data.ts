@@ -27,6 +27,10 @@ import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
 import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
+export const sharedQueryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus',
+      'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
+      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
@@ -54,13 +58,10 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
 
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
-  const queryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus',
-      'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
-      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
+
   const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
   const schema = (viewer: Viewer) => {
-    const records=programRecords?.(viewer),selected=records===undefined?queryTables:queryTables.filter(name=>records.includes(name));
+    const records=programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
     return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
     visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
