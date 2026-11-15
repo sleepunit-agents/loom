@@ -30,6 +30,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
   for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
+ it('measures encrypted private-word expiry on the program clock',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
+  const result=step.value.actions?.conversationRetention;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;
