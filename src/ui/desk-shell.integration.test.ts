@@ -164,6 +164,21 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await b.keyboard.press('Alt+Shift+Enter');await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe('tasks');
   await b.keyboard.press('Alt+h');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);
   await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  // Home's two-phase composer uses real shared cookie HTTP operations and
+  // returns to current query facts; navigation alone is not a successful send.
+  await b.goto(app.url);
+  const compose=b.getByRole('region',{name:'Message Art',exact:true}),draftWords='Disposable shared desk composer message';
+  await compose.getByRole('textbox',{name:'Message',exact:true}).fill(draftWords);
+  const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
+  const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
+  await compose.getByRole('button',{name:'Send',exact:true}).click();
+  const openResponse=await opened,sendResponse=await sent;expect(openResponse.status()).toBe(200);expect(sendResponse.status()).toBe(200);
+  const openResult=await openResponse.json(),sendResult=await sendResponse.json();expect(openResult.ok).toBe(true);expect(sendResult.ok).toBe(true);expect(sendResult.value.thread).toBe(openResult.value.thread);
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/comms-preview/thread/'+encodeURIComponent(openResult.value.thread));
+  const confirmed=await app.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{ commsMessages(thread:${JSON.stringify(openResult.value.thread)}) { words } }`})});
+  expect((await confirmed.json()).data.commsMessages.map((message:{words:string})=>message.words)).toEqual([draftWords]);
+  await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
+  await expect.poll(()=>b.getByRole('region',{name:'Art conversations',exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
   // Changing ownership must remove cards even though an owner's directory and
   // status rows remain visible. This is an actual same-root write + socket read.
   await b.goto(app.url);app.writes.run(()=>db.delete(memberAgents).run());
