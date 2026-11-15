@@ -69,5 +69,5 @@ export async function installMeasuring(app: Foundation, db: DataDatabase) {
   const close = () => { stopped = true; enabled = false; app.operations.measureWith(undefined); return runtime.close(); };
   app.onClose(() => { void close(); });
   return { ...runtime, reload, close, enabled: () => enabled,
-    async settled() { await Promise.resolve(); await pending; } }; 
+    async settled() { await Promise.resolve(); await pending; } };
 }
