@@ -1,11 +1,10 @@
+import {peopleReader} from './pieces/mind/people.js';
+import {mindSources} from './pieces/mind/sources.js';
 import { measureResponse } from './core/measuring/response.js';
 import { measuringHttp } from './core/measuring/http.js';
 import { installMeasuring } from './core/measuring/install.js';
 import { nextData } from './next-data.js';
 import type { Viewer } from './core/index.js';
-import {installMemorySignals} from './transport/memory-signals.js';
-import { memoryQueryFields } from './transport/memory-queries.js';
-import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
 import { dataDatabase } from './core/data/database.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
 import { discordApi } from './pieces/bridges/discord-api.js';
@@ -33,7 +32,6 @@ import { attentionRole } from './pieces/attention/role.js';
 import { conversationRuntime } from './pieces/runtime/conversations.js';
 import { spawnMetadata } from './pieces/runtime/spawn-metadata.js';
 import { MANIFEST, nextWorker } from './next-pwa.js';
-import { installMindActivity, installedMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
@@ -82,29 +80,12 @@ import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
 import { signin, installSignin, sameOrigin, relyingParty } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
-import { mindSources } from './pieces/mind/sources.js';
-import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
-import { installMindProjects, installedMindProjects } from './pieces/mind/projects.js';
-import { projectTasks, projectChanges } from './pieces/mind/projects-roles.js';
 import { tasksRole } from './pieces/tasks/role.js';
-import { mindRole } from './pieces/mind/role.js';
-import { installMindPeople } from './pieces/mind/people.js';
-import { installMindPeopleActions } from './pieces/mind/people-actions.js';
-import { createPersonHalf } from './backends/people-creation.js';
-import { installMindKnowledge } from './pieces/mind/index.js';
-import { installMindKnowledgeActions } from './pieces/mind/actions.js';
-import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verification.js';
-import { installTouched, type TouchSource } from './core/touched/index.js';
-import { listenForTouchSources } from './core/touched/group.js';
-import { prepareTouchSources } from './core/touched/prepare.js';
 import { installAttentionMaintenance } from './pieces/attention/daemon.js';
 import { attentionWaits } from './pieces/attention/wait-roles.js';
 import { approvalAnswers } from './pieces/approvals/role.js';
 import { attentionThreadProject } from './pieces/attention/comms.js';
-import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
-const memoryQueries = new WeakMap<Foundation, ReturnType<typeof memoryQueryFields>>();
-const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
 export function nextSessionResolver(app: Foundation): NextSessionResolver { return (req,transport) => signin(app).resolve(req,transport); }
@@ -160,7 +141,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('signin.link')) installSignin(app);
   if (!app.operations.has('household.createProject')) installSharing(app, options.home);
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
-  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { projects: attentionProjects(mindRole(app.operations)), threadProject: attentionThreadProject(app.operations) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations), () => new HouseholdDatabase(app.db).household(options.home)?.owner)) : installedAttentionSources(app.operations);
+  const attentionSources = !app.operations.has('attention.raise') ? installAttention(app.db, app.operations, app.live, sharing, { threadProject: attentionThreadProject(app.operations) }, attentionWaits(approvalAnswers(app.db, sharing, () => app.operations.clock.now()), tasksRole(app.operations), () => new HouseholdDatabase(app.db).household(options.home)?.owner)) : installedAttentionSources(app.operations);
   const secretAttention = (!app.operations.has('secrets.list') || options.secretWrites) && attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined;
   if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing, secretAttention);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
@@ -232,51 +213,6 @@ export async function installNext(app: Foundation, options: NextOptions) {
     installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
       staging: options.staging, interval: credentials?.interval, request: credentials?.request, measure: work => { const meter = measuring.get(app); return meter ? meter.runAsync('job', 'changes.read', work) : work(); }});
   }
-  const inventory = mindSources(app.db, options.home);
-  const sharedMemory = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-  const hasSharedConversations = !!app.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get();
-  const conversationHref = (id: string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
-  if (!app.operations.has('mind.knowledgeList')) {
-    const path = inventory?.commons.knowledge;
-    const reader = installMindKnowledge(app.operations, app.live, { path, sharing });
-    app.onClose(() => reader.close());
-    const actions = installMindKnowledgeActions(app.operations, { path, sharing, verify: verifyKnowledgePages, classify: domain => deriveSlaClass(null, domain) });
-    app.onClose(() => actions.close());
-  }
-
-  if (!app.operations.has('mind.peopleList')) {
-    const reader = installMindPeople(app.operations, app.live, { directory: inventory?.commons.people, agents: inventory?.agents ?? [], sharing,
-      projectHref: (agent, slug) => app.operations.has('mind.projectsList') ? `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}` : undefined });
-    app.onClose(() => reader.close());
-    const agent = new HouseholdDatabase(app.db).household(options.home)?.default;
-    const actions = installMindPeopleActions(app.operations, { directory: inventory?.commons.people,
-      relationship: inventory?.agents.find(a => a.agent === agent)?.memories, agent, sharing, create: createPersonHalf });
-    app.onClose(() => actions.close());
-  }
-  if (!app.operations.has('mind.projectsList')) {
-    const projects = installMindProjects(app.operations, app.live, { agents: inventory?.agents ?? [], sharing, people: mindRole(app.operations),
-      tasks: projectTasks(tasksRole(app.operations), v => v.kind === 'member' && maySee(v, {type:'task'}, sharing())), changes: projectChanges(app.operations) });
-    app.onClose(() => projects.close());
-  }
-  if (!app.operations.has('mind.activityList')) {
-    const household = new HouseholdDatabase(app.db).household(options.home);
-    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github,conversations:hasSharedConversations?sharedActivityConversations(sharedMemory,{sharing,conversationHref}):undefined});
-    app.onClose(() => activity.close());
-  }
-  if (!memoryQueries.has(app)) {
-    const activity = installedMindActivity(app.operations);
-    if (!activity) throw new Error('Memory queries require the installed Activity reader');
-    const projects=installedMindProjects(app.operations);
-    if(!projects)throw new Error('Memory queries require the installed Projects reader');
-    const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
-      mind: projects, activity, conversationHref,
-      projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
-    memoryQueries.set(app, queries);
-    app.onClose(() => { queries.close(); memoryQueries.delete(app); });
-  }
-  const sources = mindTouchSources(inventory);
-  if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
-  mindTransports.set(app, sources);
   const effects = installEffects(app, sharing, !!options.staging);
   const notifications=installNotificationSending(app,effects,options.notifications);
   notificationClosers.set(app,notifications.close);
@@ -313,10 +249,11 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??bridgeBodies.runtime,adapters,effects);
     bridgeBodies.connect(engine);
     const receive=options.bridges.receive??((venue,message)=>engine.receive(venue,message));
-    const name=options.bridges.name??((v,user)=>{
-      const person=personFor(app.db,v,user);if(!person)return;
-      const result=mindRole(app.operations).call({kind:'agent',id:v.agent},'personRead',{id:`${v.agent}:${person}`});
-      if(result.ok && result.value && typeof result.value==='object' && 'name' in result.value && typeof result.value.name==='string')return result.value.name;
+    const name=options.bridges.name??((venue,user)=>{
+      const person=personFor(app.db,venue,user),source=mindSources(app.db,options.home)?.agents.find(agent=>agent.agent===venue.agent);
+      if(!person||!source)return;
+      const reader=peopleReader({agents:[source],sharing,now:()=>app.operations.clock.now()});
+      try{return reader.read(`${venue.agent}:${person}`,{kind:'agent',id:venue.agent})?.name;}catch{return;}finally{reader.close();}
     });
     const slack=installSlackDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,name});
     const discord=installDiscordDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,socket:options.bridges.discordSocket});
@@ -360,23 +297,18 @@ export async function installNext(app: Foundation, options: NextOptions) {
   // No schema creation or migration here: only the approved shared home has
   // Measuring tables. The separate move owns existing homes.
   if (!measuring.has(app) && app.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='measuring_settings'").get()) {
-    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, sharedMemory));
+    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString())));
   }
   return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
-  const sources = mindTransports.get(app) ?? [];
-  await prepareTouchSources(sources);
-  const stopTouches = await listenForTouchSources(app.operations, sources);
   const servers: ReturnType<typeof createServer>[] = [];
   const detaches: (() => void)[] = [];
   const sockets = new Set<Socket>();
   let data: ReturnType<typeof nextData> | undefined;
   let stopDataChanges: (() => void) | undefined;
-  let memorySignals: ReturnType<typeof installMemorySignals> | undefined;
   const close = async () => {
     stopDataChanges?.();
-    memorySignals?.close();
     await data?.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
@@ -384,7 +316,6 @@ export async function listenNext(app: Foundation, options: NextOptions) {
       http.closeAllConnections();
       return new Promise<void>(ok => http.close(() => ok()));
     }));
-    await stopTouches();
   };
   try {
     const auth = options.authenticate ?? nextSessionResolver(app);
@@ -395,16 +326,12 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
     const measuringApi = measuringHttp(app, sharedData);
-    const memory=memoryQueries.get(app);
-    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields, undefined, undefined, work => {
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, undefined, undefined, undefined, work => {
       const meter = measuring.get(app);
       return meter?.enabled() ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work();
     });
     measuringSignals.set(app, () => data!.timingsChanged());
-    memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
-    // Legacy operation commits include private source touches until shared
-    // command composition takes over their committed-write signal.
-    stopDataChanges=app.live.observe(()=>memorySignals!.changed());
+    stopDataChanges=app.live.observe(()=>data!.changed());
     routes.all('/graphql', c => data!.http.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
     routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));

@@ -1,0 +1,93 @@
+{
+  "page": "models",
+  "title": "Models and accounts",
+  "ownerTask": "t-2241",
+  "sourceSha256": "410e78175b71f7ebfa8b8f9037f443a1aa61359ff28027c25c5972d3034f80be",
+  "promises": [
+    {
+      "id": "models-001",
+      "promise": "Which model a body runs on, and the accounts it draws from. The runtime handles model accounts, runners and which model a body uses.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-002",
+      "promise": "Gives each agent a primary conversational model.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-003",
+      "promise": "Shares each account's capacity across the agents that draw on it.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-004",
+      "promise": "Starts each body through a runner on a worker machine.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-005",
+      "promise": "Records the model each job asked for and each turn used.",
+      "source": "docs/how-it-works/site/models.html"
+    },
+    {
+      "id": "models-006",
+      "promise": "Each agent has a list of the models it may use, in order of preference. A member owns each account.",
+      "source": "docs/how-it-works/site/models.html#con-h"
+    },
+    {
+      "id": "models-007",
+      "promise": "An account is signed in on particular worker machines.",
+      "source": "docs/how-it-works/site/models.html#con-h"
+    },
+    {
+      "id": "models-008",
+      "promise": "A runner's token names its machine. It sees and reports only the jobs assigned to it.",
+      "source": "docs/how-it-works/site/models.html#con-h"
+    },
+    {
+      "id": "models-009",
+      "promise": "Each of an agent's turns records the model that produced it.",
+      "source": "docs/how-it-works/site/models.html#con-h"
+    },
+    {
+      "id": "models-010",
+      "promise": "The primary conversational model is per agent. Capacity is shared per actual subscription, account and window, so two agents on one account draw down the same allowance.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-011",
+      "promise": "An account's use is counted in windows that reset, such as five hours and seven days. A reserve of about five percent is the starting point. It can be lent near a reset when the forecast is safe, and is not a rigid floor.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-012",
+      "promise": "A runner is the program on a machine that starts bodies. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-013",
+      "promise": "Signing in to a model account is handled by a separate private program. The runtime handles which account, which runner and which model a body uses.",
+      "source": "docs/how-it-works/site/models.html#how-h"
+    },
+    {
+      "id": "models-014",
+      "promise": "a The owner and household owners. They see everything about an account: usage, when it resets, and where it is signed in.",
+      "source": "docs/how-it-works/site/models.html#see-h"
+    },
+    {
+      "id": "models-015",
+      "promise": "b Anyone else. They see only the account's label and a coarse level: plenty, getting full, or almost full.",
+      "source": "docs/how-it-works/site/models.html#see-h"
+    },
+    {
+      "id": "models-016",
+      "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/models.html#see-h"
+    }
+  ],
+  "modelTables": [
+    "model_accounts",
+    "model_account_boxes",
+    "agent_models"
+  ]
+}

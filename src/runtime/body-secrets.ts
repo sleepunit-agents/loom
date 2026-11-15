@@ -4,10 +4,10 @@ import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {bodyInput,type BodyBootstrap} from './body-bootstrap.js';
 import type {WorkerAssignment} from './worker.js';
 const unavailable=()=>new Error('Startup secret environment unavailable');
-const controls=new Set(['PATH','HOME','SHELL','ENV','BASH_ENV','XDG_CONFIG_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR']);
+const controls=new Set(['PATH','HOME','SHELL','ENV','BASH_ENV','XDG_CONFIG_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR','MAX_MCP_OUTPUT_TOKENS']);
 function reserved(name:string,env:NodeJS.ProcessEnv){
  const key=name.toUpperCase();
- return controls.has(key)||/^(?:CLAUDE_|ANTHROPIC_|CODEX_|OPENAI_|NODE_|LD_|DYLD_)/.test(key)
+ return controls.has(key)||/^(?:CLAUDE_|ANTHROPIC_|CODEX_|OPENAI_|NODE_|MCP_|LD_|DYLD_)/.test(key)
   ||!!env.CLAUDE_CODE_USE_BEDROCK&&/^AWS_/.test(key)
   ||!!env.CLAUDE_CODE_USE_VERTEX&&/^(?:GOOGLE_|GCLOUD_)/.test(key)
   ||!!env.CLAUDE_CODE_USE_FOUNDRY&&/^AZURE_/.test(key);
