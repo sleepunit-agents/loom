@@ -24,7 +24,7 @@ export class InboxQueries {
   private keepDays() { return this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14; }
   private retainedMessage(message: typeof messages.$inferSelect | undefined, days: number): boolean {
     return !!message?.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
-      && message.keepUntil > this.now() && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+      && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
   }
   private current(viewer: Viewer, id: string) {
     return this.db.select().from(inbox).where(and(eq(inbox.id, id), this.allowed(viewer))).get();
@@ -81,7 +81,7 @@ export class InboxQueries {
       const after = privateState(item), message = after.message;
       return JSON.stringify(after) === JSON.stringify(state) && !!message?.words && !!message.keepUntil
         && Number.isInteger(after.keep) && after.keep >= 1 && after.keep <= 14
-        && message.keepUntil > this.now() && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
+        && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
     });
     return current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50)).map(({ item }) => item);
   }

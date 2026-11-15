@@ -340,3 +340,13 @@ it('rejects initially mismatched answer bindings rather than returning another q
     expect(await f.service.answerText(alice, other.inboxItem!)).toBe('Other answer');
   }
 });
+
+it('withholds question, answer and search wording at a whole-second stored deadline', async () => {
+  const f = await fixture();
+  await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'Expired answer');
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  expect(await f.service.body(alice, f.ask.inboxItem!)).toBeNull();
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBeNull();
+  expect(await f.service.search(alice, { search: 'private pump' })).toEqual([]);
+  expect(f.opens()).toBe(0);
+});
