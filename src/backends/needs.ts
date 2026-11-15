@@ -13,7 +13,7 @@
 export type NeedsAnswers = 'yes-no' | 'words';
 export const NEEDS_ANSWERS: readonly NeedsAnswers[] = ['yes-no', 'words'];
 
-/** What an ask waits on: when that's resolved, the ask clears itself (src/needs-resolve.ts). */
+/** Legacy waiting-target parser, retained for historical data readers. */
 export type WaitsOn = { approval: string } | { task: string };
 
 export interface NeedsOwner {
