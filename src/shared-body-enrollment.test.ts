@@ -39,10 +39,11 @@ it('rotates prior job body tokens atomically and never revives a revoked fingerp
  expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);expect(proof.valid()).toBe(false);expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
  expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(403);expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(second))).get()?.revokedAt).toBeNull();
 });
-it('enrolls independent simultaneous and subsequent jobs without revoking another body',async()=>{
+it.each(['worker','foreign'])('enrolls independent concurrent and subsequent jobs on %s without revoking another body',async box=>{
  const f=fixture(),first=f.credential(),second=f.credential(),third=f.credential();
- expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(200);
- expect((await f.call({job:'other',fingerprint:hash(second)},raw.foreign)).status).toBe(200);
+ if(box==='worker')f.root.writes.run(()=>f.db.update(jobs).set({box}).where(eq(jobs.id,'other')).run());
+ const results=await Promise.all([f.call({job:'job',fingerprint:hash(first)}),f.call({job:'other',fingerprint:hash(second)},box==='worker'?raw.runner:raw.foreign)]);
+ expect(results.map(response=>response.status)).toEqual([200,200]);
  expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))?.valid()).toBe(true);
  expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+second}}))?.valid()).toBe(true);
  f.root.writes.run(()=>{
@@ -51,6 +52,8 @@ it('enrolls independent simultaneous and subsequent jobs without revoking anothe
  });
  expect((await f.call({job:'next-job',fingerprint:hash(third)})).status).toBe(200);
  expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(first))).get()?.revokedAt).toBeNull();
+ expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
+ for(const body of [second,third])expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.valid()).toBe(true);
  const bodies=f.db.select().from(tokens).all().filter(row=>row.job!==null);expect(new Set(bodies.map(row=>row.label)).size).toBe(3);
 });
 it('rejects other roles, foreign worker, cookie, forged labels and identity claims',async()=>{
