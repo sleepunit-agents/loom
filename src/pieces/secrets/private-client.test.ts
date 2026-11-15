@@ -53,3 +53,7 @@ it.each(['close','abort'] as const)('cancels consent polling on %s without anoth
  const clock=new FakeClock(),abort=new AbortController(),fetch=vi.fn<typeof globalThis.fetch>(async()=>Response.json({pending:true},{status:423}));const client=privateSecretClient({...options(fetch),clock,signal:abort.signal});
  try{const pending=client.repository('job'),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);for(let i=0;i<32;i++)await Promise.resolve();if(kind==='close')client.close();else abort.abort();await refused;clock.advance(10000);for(let i=0;i<8;i++)await Promise.resolve();expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
 });
+it.each(['abort','close'] as const)('cancels pending startup consent on %s without reading a value',async kind=>{
+ const clock=new FakeClock(),abort=new AbortController(),fetch=vi.fn<typeof globalThis.fetch>(async()=>Response.json({aliases:[{alias:'GRANTED'}],pending:true}));const client=privateSecretClient({...options(fetch),signal:abort.signal,clock,timeoutMs:100});
+ try{const pending=client.startup(),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);for(let i=0;i<32;i++)await Promise.resolve();clock.advance(999);expect(fetch).toHaveBeenCalledOnce();if(kind==='abort')abort.abort();else client.close();await refused;clock.advance(10000);for(let i=0;i<8;i++)await Promise.resolve();expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
+});

@@ -8,7 +8,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
-import {members,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal} from './core/data/schema.js';
+import {members,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal,secretRequests,inbox} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const raw={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64),runner:'d'.repeat(64),foreign:'e'.repeat(64),agent:'f'.repeat(64),cookie:'g'.repeat(64)};
@@ -152,6 +152,30 @@ it('bounds unconfirmed handoffs and frees capacity only after confirmation or ex
  engine.confirm('body',first,()=>true);await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'freed'},()=>true,id=>id)).resolves.toMatch(/^use-input-/);
 },30000);
 
+it.each([true,false])('startup waits for its configured pending consent before any value read (allow=%s)',async allow=>{
+ const f=fixture();f.rule();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'REPO_ALIAS',secret:'REPO'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
+ expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}],pending:true});
+ let entered!:()=>void;const waiting=new Promise<void>(resolve=>{entered=resolve;});const fetch=vi.fn<typeof globalThis.fetch>(async(url,options)=>{const response=await f.root.http.request(String(url),options);if(String(url).endsWith('/startup')&&(await response.clone().json()).pending)entered();return response;});const recipient=privateSecretClient({url:'https://loom.test',token:raw.body,signal:new AbortController().signal,clock:f.clock,fetch});
+ try{const pending=recipient.startup();await waiting;for(let i=0;i<32;i++)await Promise.resolve();expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);f.clock.advance(999);expect(fetch).toHaveBeenCalledOnce();
+ const id='q-start-'+createHash('sha256').update(JSON.stringify(['body','REPO'])).digest('hex');f.root.writes.run(()=>f.root.services.secrets.requests.answer(id,'owner',allow));f.clock.advance(1);const result=await pending;expect([...result.keys()].sort()).toEqual(allow?['API_TOKEN','REPO_ALIAS']:['API_TOKEN']);for(const bytes of result.values()){expect(bytes.toString()).toBe('PRIVATE_SOURCE_VALUE');bytes.fill(0);}expect(f.source.read).toHaveBeenCalledTimes(allow?2:1);
+ }finally{recipient.close();}
+});
+
+it('ignores pending startup rules for secrets absent from this house inputs',async()=>{
+ const f=fixture();f.rule();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect(f.db.select().from(secretRequests).all()).toHaveLength(1);expect(f.db.select().from(inbox).all()).toEqual([]);expect(f.source.read).not.toHaveBeenCalled();
+});
+it('refuses over128 configured startup aliases without issuing consent or reading values',async()=>{
+ const f=fixture();f.rule();for(let i=0;i<128;i++)f.db.insert(agentHouseSecrets).values({agent:'art',alias:'alias-'+i,secret:'TOKEN'}).run();expect((await f.post('startup',{})).status).toBe(503);expect(f.db.select().from(secretRequests).all()).toEqual([]);expect(f.db.select().from(secretGrants).all()).toEqual([]);expect(f.source.read).not.toHaveBeenCalled();
+});
+it.each(['ask','auto'] as const)('repository startup does not issue an unrelated %s rule',async answer=>{
+ const f=fixture();f.rule('REPO');f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer,minutes:5,agents:[{agent:'art',when:'at_start'}]}));expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(200);expect(f.db.select().from(secretRequests).all().map(row=>row.secret)).toEqual(['REPO']);expect(f.db.select().from(secretGrants).all().map(row=>row.secret)).toEqual(['REPO']);expect(f.db.select().from(inbox).all()).toEqual([]);expect(f.source.read).toHaveBeenCalledExactlyOnceWith('REPO');
+});
+it.each(['revoke','expiry'] as const)('refreshes grants after pending startup consent and omits %s before any read',async change=>{
+ const f=fixture();f.rule();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'REPO_ALIAS',secret:'REPO'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));let entered!:()=>void;const waiting=new Promise<void>(resolve=>{entered=resolve;});const fetch=vi.fn<typeof globalThis.fetch>(async(url,options)=>{const response=await f.root.http.request(String(url),options);if(String(url).endsWith('/startup')&&(await response.clone().json()).pending)entered();return response;});const recipient=privateSecretClient({url:'https://loom.test',token:raw.body,signal:new AbortController().signal,clock:f.clock,fetch});
+ try{const pending=recipient.startup();await waiting;for(let i=0;i<32;i++)await Promise.resolve();const grant=f.db.select().from(secretGrants).where(eq(secretGrants.secret,'TOKEN')).get()!;
+ f.root.writes.run(()=>{if(change==='revoke')f.root.services.secrets.requests.revoke(grant.request!);else f.db.update(secretGrants).set({expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(secretGrants.id,grant.id)).run();const id='q-start-'+createHash('sha256').update(JSON.stringify(['body','REPO'])).digest('hex');f.root.services.secrets.requests.answer(id,'owner',true);});f.clock.advance(1000);const result=await pending;expect([...result.keys()]).toEqual(['REPO_ALIAS']);for(const bytes of result.values())bytes.fill(0);expect(f.source.read).toHaveBeenCalledExactlyOnceWith('REPO');expect(f.db.select().from(secretUses).all().map(row=>row.secret)).toEqual(['REPO']);
+ }finally{recipient.close();}
+});
 it('reads private-handoff status only for its current body through the real metadata door',async()=>{
  const f=fixture();f.grant();const response=await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use')!;expect(response.status).toBe(200);
  const status=async(token:string)=>f.root.http.request('http://loom/api/secrets/useStatus',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:use}})});
