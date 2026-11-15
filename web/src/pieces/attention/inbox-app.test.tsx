@@ -106,3 +106,11 @@ it('records opening reads over the current cookie HTTP door without a separate w
   expect(fetch).toHaveBeenCalledWith('/api/inbox/read', expect.objectContaining({method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'}}));
   expect(f.read).not.toHaveBeenCalled();
 });
+
+it('marks an unread item only when its mounted tile becomes visible', async () => {
+  setup(); const go=vi.fn();
+  await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go,visible:false}));});
+  expect(f.call).not.toHaveBeenCalled();
+  await act(async()=>{tree.update(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go,visible:true}));});
+  expect(f.call).toHaveBeenCalledWith('inbox.read',{item:'in-1'});
+});

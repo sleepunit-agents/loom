@@ -1,3 +1,4 @@
+import { useReadingVisible } from '../../data/visibility';
 import { useDeadline } from './use-deadline';
 import { useEffect, useMemo, useState } from 'react';
 import { conversationOperation as mutate } from './operations';
@@ -8,7 +9,8 @@ import { CommsView } from '../comms-view';
 import type { CommsActions } from '../comms-view/model';
 import { commsSelection, commsThreadPath, retainedCommsMessage } from './shared-query';
 const base = '/p/comms-preview';
-export default function CommsApp({ path: shellPath, go }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
+export default function CommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
+  const readingVisible = useReadingVisible(visible);
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   const [archived, setArchived] = useState(false), [search, setSearch] = useState(''), [offset, setOffset] = useState(0);
   const [before, setBefore] = useState<number>();
@@ -37,10 +39,11 @@ export default function CommsApp({ path: shellPath, go }: { path?: string; go?(p
   return <CommsView snapshot={{ status, member: data?.home?.member ?? '', threads: live ? data.threads.slice(0,50) : [],
     agents: live ? data.home!.agents.map(id => ({ id, name: id })) : [], folders: live ? data.folders : undefined }}
     detail={{ status, thread: live ? data.thread : null, messages, refs: live ? data.refs : [] }} selected={selected} select={select} actions={actions}
+    readVisible={readingVisible}
     navigation={{ archived, search, offset, hasNext: (data?.threads.length ?? 0) > 50,
       folder(value) { setArchived(value); setOffset(0); }, query(value) { setSearch(value); setOffset(0); },
       previous() { setOffset(value => Math.max(0,value-50)); }, next() { setOffset(value => value+50); } }}
-    cards={{ question: id => <InlineQuestion key={id} id={id} go={navigate} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <SharedWork key={conversation} refs={refs} conversation={conversation} go={navigate} /> }}
+    cards={{ question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <SharedWork key={conversation} refs={refs} conversation={conversation} go={navigate} /> }}
     messageNavigation={{ earlier: () => setBefore(messages[0]?.seq), latest: () => setBefore(undefined), hasEarlier: (data?.messages.length ?? 0) > 50, before }} />;
 }
 export { CommsView } from '../comms-view';

@@ -166,7 +166,7 @@ it('executes the shipped Work queries against the generated current-policy task 
   const f = await fixture();
   const { tasks } = await import('../data/schema.js');
   const { dataQueries } = await import('../data/queries.js');
-  const { sourceQuery, taskQuery } = await import('../../../web/src/pieces/comms/shared-work.js');
+  const { sourceQuery, taskQuery } = await import('../../../web/src/pieces/comms/work-query.js');
   for (const [id, owner, sourceId] of [['t-10','alice',f.thread.conversation], ['t-11','bob',f.thread.conversation], ['t-12','alice','elsewhere']]) {
     f.db.insert(tasks).values({ id, title: id, ownerKind: 'member', owner, createdByKind: 'member', createdBy: owner, createdAt: '2026-11-14T18:00:00Z', changedAt: '2026-11-14T18:00:00Z', sourceKind: 'conversation', sourceId }).run();
   }
@@ -266,4 +266,28 @@ it('executes the actual shipped Comms selection over the shared read group', asy
   expect(value.messages.map(row => row.words)).toEqual(['Find t-1','Answer t-2','Search done']);
   expect(value.messages[0].wordsKeepUntil).toBe('2026-11-28T18:00:00.000Z');
   expect(value.folders).toEqual({ threads: 1, archived: 0 });
+});
+
+it('pages the actual source-work query past fifty rows after current visibility filtering', async () => {
+  const f = await fixture(), { tasks } = await import('../data/schema.js');
+  const { dataQueries } = await import('../data/queries.js');
+  const { sourceQuery } = await import('../../../web/src/pieces/comms/work-query.js');
+  for (let n=0;n<51;n++) f.db.insert(tasks).values({id:`t-${String(n).padStart(3,'0')}`,title:`Task ${n}`,ownerKind:'member',owner:'alice',createdByKind:'member',createdBy:'alice',createdAt:'2026-11-14T18:00:00Z',changedAt:'2026-11-14T18:00:00Z',sourceKind:'conversation',sourceId:f.thread.conversation}).run();
+  const schema=dataQueries(f.db.$client,{tables:['tasks'],visibility:{tasks:fields=>eq(fields.owner,'alice')}});
+  const first=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:0}});
+  expect(first.errors).toBeUndefined(); expect((first.data?.tasks as unknown[]).length).toBe(51);
+  const next=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:50}});
+  expect(next.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(next.data))).toEqual({tasks:[{id:'t-050',title:'Task 50',status:'open'}]});
+});
+it('loads the mentioned pull-request card through current generated Changes visibility', async () => {
+  const f=await fixture(), { changes, memberAgents }=await import('../data/schema.js');
+  const { dataQueries }=await import('../data/queries.js'), { workVisibility }=await import('../data/work-visibility.js');
+  const { changeQuery }=await import('../../../web/src/pieces/comms/work-query.js');
+  const id='github:house/loom#7';
+  f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
+  f.db.insert(changes).values({id,repository:'house/loom',number:7,title:'Current PR',body:'',url:'https://github.com/house/loom/pull/7',state:'open',draft:false,authorLogin:'art',agent:'art',branch:'fix',headCommit:'a'.repeat(40),baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:'2026-11-14T18:00:00Z',updatedAt:'2026-11-14T18:00:00Z'}).run();
+  const schema=dataQueries(f.db.$client,{tables:['changes'],visibility:workVisibility(alice)});
+  const read=()=>graphql({schema,source:changeQuery,variableValues:{id}});
+  const first=await read(); expect(first.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(first.data))).toEqual({changes:[{id,title:'Current PR',state:'open',draft:false,checks:'running',review:'required',waitingOn:'ci'}]});
+  f.db.delete(memberAgents).run(); const revoked=await read(); expect(revoked.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(revoked.data))).toEqual({changes:[]});
 });

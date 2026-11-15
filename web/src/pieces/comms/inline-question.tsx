@@ -11,13 +11,13 @@ export function inlineQuestionSelection(id: string): QuerySelection<InboxItem | 
   return { query, variables: { id }, decode: data => data.inboxItem as InboxItem | null };
 }
 /** Inline questions use the same Inbox item and authenticated operations. */
-export function InlineQuestion({ id, go, writable }: { id: string; go(path: string): void; writable: boolean }) {
+export function InlineQuestion({ id, go, writable, readVisible }: { id: string; go(path: string): void; writable: boolean; readVisible: boolean }) {
   const reading = useSelection(useMemo(() => inlineQuestionSelection(id), [id]));
   const item = reading.status === 'live' ? reading.data : null;
   const now = useDeadline(item ? [item.bodyKeepUntil, item.answerKeepUntil] : []);
 
   const actions: InboxActions | undefined = item && writable ? {
-    read: item => mutate('inbox.read', { item }),
+    read: readVisible ? item => mutate('inbox.read', { item }) : undefined,
     answer: (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }),
     openSource: inboxSourcePath(item) ? item => { const path = inboxSourcePath(item); if (path) go(path); } : undefined,
   } : undefined;

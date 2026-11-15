@@ -5,10 +5,10 @@ import { act, create } from 'react-test-renderer';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
   f.requests.push({ query, variables });
-  return { status: f.status, data: f.status === 'live' ? query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
+  return { status: f.status, data: f.status === 'live' ? query.includes('MentionedChange(') ? { changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
-vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
+vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
   (props: { children?: ReactNode; listTop?: ReactNode; list?: ReactNode; reader?: ReactNode; search?: ReactNode; folders?: unknown; onFolder?: unknown }) => name === 'Split'
     ? h(name, { folders: props.folders, onFolder: props.onFolder }, props.listTop, props.list, props.reader, props.search) : h(name, props, props.children)])));
 import CommsApp from './index';
@@ -131,4 +131,40 @@ it('archives, restores and confirms deletion through shared operations', async (
   expect(f.call).not.toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'delete' });
   await act(async () => { named('Delete thread').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'delete' }); expect(go).toHaveBeenCalledWith('/p/comms-preview');
+});
+
+it('keeps hidden-tile arrivals unread and marks the latest reply when the tile becomes visible', async () => {
+  setup(); const go = vi.fn();
+  await act(async () => { tree = create(h(CommsApp, { path: '/p/comms-preview/thread/pump', go, visible: false })); });
+  expect(f.call).not.toHaveBeenCalled();
+  f.data.commsMessages = [message(),message({seq:2,words:'UNSEEN REPLY'})];
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go, visible: false })); });
+  expect(f.call).not.toHaveBeenCalled();
+  await act(async () => { tree.update(h(CommsApp, { path: '/p/comms-preview/thread/pump', go, visible: true })); });
+  expect(f.call).toHaveBeenCalledWith('comms.change',{thread:'th:pump',change:'read',seq:2});
+});
+it('keeps replies unread while scrolled into earlier messages and reads them on following down', async () => {
+  setup(); const listeners = new Map<string,()=>void>();
+  const scroll = {scrollTop:800,scrollHeight:1000,clientHeight:200,querySelector:()=>({}),addEventListener:(name:string,fn:()=>void)=>listeners.set(name,fn),removeEventListener:(name:string)=>listeners.delete(name)};
+  vi.stubGlobal('ResizeObserver',class {observe() {} disconnect() {}});
+  const go = vi.fn();
+  await act(async () => { tree = create(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}),{createNodeMock:(node:{type:string})=>node.type==='article'?{closest:()=>scroll}:null}); });
+  f.call.mockClear(); f.data.commsThread = thread({readSeq:1});
+  await act(async () => { scroll.scrollTop=0; listeners.get('scroll')?.(); });
+  f.data.commsMessages = [message(),message({seq:2,words:'UNSEEN AT BOTTOM'})];
+  await act(async () => { tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go})); });
+  expect(f.call).not.toHaveBeenCalledWith('comms.change',{thread:'th:pump',change:'read',seq:2});
+  await act(async () => { named('1 new messages').props.onClick(); });
+  expect(f.call).toHaveBeenCalledWith('comms.change',{thread:'th:pump',change:'read',seq:2});
+});
+it('shows a current mentioned pull request card, updates it and withdraws denied metadata', async () => {
+  setup(); const id='github:house/loom#7'; f.data.commsRefs=[{ref:id,messageSeq:1}];
+  f.data.mentionedChanges = {[id]:[{id,title:'CURRENT PR TITLE',state:'open',checks:'running',review:'required',waitingOn:'ci',draft:false}]};
+  const go=await draw(); expect(text()).toContain('CURRENT PR TITLE'); expect(text()).toContain('CI running');
+  await act(async()=>{named('Open').props.onClick();}); expect(go).toHaveBeenCalledWith('/p/changes-preview/change/github%3Ahouse%2Floom%237');
+  f.data.mentionedChanges = {[id]:[{id,title:'UPDATED PR TITLE',state:'merged',checks:'passing',review:'approved',waitingOn:'done',draft:false}]};
+  await act(async()=>{tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}));});
+  expect(text()).toContain('UPDATED PR TITLE'); expect(text()).toContain('merged'); expect(text()).not.toContain('CURRENT PR TITLE');
+  f.data.mentionedChanges = {[id]:[]};
+  await act(async()=>{tree.update(h(CommsApp,{path:'/p/comms-preview/thread/pump',go}));}); expect(text()).not.toContain('UPDATED PR TITLE');
 });

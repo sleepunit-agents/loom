@@ -1,3 +1,4 @@
+import { useReadingVisible } from '../../data/visibility';
 import { memberOperation } from '../../data/operation';
 import { stamp } from './time';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -101,7 +102,8 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
   </article>;
 }
 const inboxBase = '/p/inbox-preview';
-export default function InboxApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void } = {}) {
+export default function InboxApp({ path: shellPath, go, visible = true }: { path?: string; go?: (path: string) => void; visible?: boolean } = {}) {
+  const readingVisible = useReadingVisible(visible);
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? inboxBase : location.pathname);
   const [folder, setFolder] = useState('needs'), [search, setSearch] = useState(''), [offset, setOffset] = useState(0);
   const [now, setNow] = useState(Date.now);
@@ -135,7 +137,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   const mutate = memberOperation;
 
   const actions: InboxActions | undefined = live ? {
-    read: id => mutate('inbox.read', { item: id }),
+    read: readingVisible ? id => mutate('inbox.read', { item: id }) : undefined,
     answer: (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }),
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
   } : undefined;

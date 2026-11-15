@@ -7,7 +7,7 @@ const time = (at: string) => `${new Date(at).toLocaleString('en-US', { timeZone:
 type MessageNavigation = { earlier(): void; latest(): void; hasEarlier: boolean; before?: number };
 type Navigation = { archived: boolean; search: string; offset: number; hasNext: boolean; folder(value: boolean): void; query(value: string): void; previous(): void; next(): void };
 type Cards = { question?(id: string): ReactNode; work?(refs: CommsDetail['refs'], conversation: string): ReactNode };
-function ThreadReader({ detail, actions, cards, navigation }: { detail: CommsDetail; actions?: CommsActions; cards?: Cards; navigation?: MessageNavigation }) {
+function ThreadReader({ detail, actions, cards, navigation, readVisible = true }: { readVisible?: boolean; detail: CommsDetail; actions?: CommsActions; cards?: Cards; navigation?: MessageNavigation }) {
   const thread = detail.thread!;
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -18,7 +18,7 @@ function ThreadReader({ detail, actions, cards, navigation }: { detail: CommsDet
   const follow = useReplyFollow(scroller, messages, true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const last = messages.at(-1)?.seq ?? 0;
-  useEffect(() => { if (actions && last > thread.readSeq) void actions.read(thread.id, last).catch(() => { if (mounted.current) setFailed(true); }); }, [thread.id, last]);
+  useEffect(() => { if (readVisible && follow.atLatest() && actions && last > thread.readSeq) void actions.read(thread.id, last).catch(() => { if (mounted.current) setFailed(true); }); }, [thread.id, last, readVisible, follow.unread]);
   const run = async (action: () => Promise<void>) => {
     if (lock.current || !actions) return;
     lock.current = true; setBusy(true); setFailed(false);
@@ -51,7 +51,8 @@ function ThreadReader({ detail, actions, cards, navigation }: { detail: CommsDet
     {failed && <Error text="Could not save. Try again." />}
   </article>;
 }
-export function CommsView({ snapshot, detail, selected, select, actions, cards, navigation, messageNavigation }: {
+export function CommsView({ snapshot, detail, selected, select, actions, cards, navigation, messageNavigation, readVisible = true }: {
+  readVisible?: boolean;
   navigation?: Navigation; messageNavigation?: MessageNavigation;
   snapshot: CommsSnapshot; detail?: CommsDetail; selected?: string; select(id?: string): void; actions?: CommsActions; cards?: Cards;
 }) {
@@ -83,6 +84,6 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
     search={<Input aria-label="Search conversations" value={live ? query : ''} disabled={!live} onChange={event => navigation ? navigation.query(event.target.value) : setQuery(event.target.value)} />}
     listTop={<>{navigation && <nav aria-label="Conversation pages"><Button disabled={!live || navigation.offset === 0} onClick={navigation.previous}>Previous page</Button><Button disabled={!live || !navigation.hasNext} onClick={navigation.next}>Next page</Button></nav>}{live && actions && <div><details><summary>New conversation</summary>{snapshot.agents.map(agent => <Button key={agent.id} disabled={opening} onClick={() => void open(agent.id)}>Chat with {agent.name}</Button>)}</details>{failed && <Error text="Could not start the conversation. Try again." />}</div>}</>}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Conversations are unavailable" /> : shown.length ? shown.map(thread => <Row key={thread.id} title={thread.title} meta={`${thread.agent}${thread.project ? ` · ${thread.project}` : ''}`} status={thread.working ? 'Working' : thread.pinned ? 'Pinned' : 'Ready'} selected={thread.id === selected} onClick={() => select(thread.id)} />) : <Empty title="No conversations here" />}
-    reader={current ? <ThreadReader key={current.thread!.id} detail={current} actions={current.thread!.member === snapshot.member ? actions : undefined} cards={cards} navigation={messageNavigation} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
+    reader={current ? <ThreadReader key={current.thread!.id} detail={current} actions={current.thread!.member === snapshot.member ? actions : undefined} cards={cards} navigation={messageNavigation} readVisible={readVisible} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to conversations" blank={<Empty title="Choose a conversation" />} />;
 }
