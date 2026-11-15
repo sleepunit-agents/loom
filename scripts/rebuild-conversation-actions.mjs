@@ -3,7 +3,7 @@
 import {join} from 'node:path';
 export async function conversationActions({page,app,example,out,open}){
  page.setDefaultTimeout(4000);
- const select=async tile=>{if(!await tile.getByRole('heading',{name:'Repair the garden pump',exact:true}).isVisible())await tile.getByText('Repair the garden pump',{exact:true}).first().click();};
+ const select=async tile=>{const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true}),row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'});await heading.or(row).first().waitFor({state:'visible'});if(!await heading.isVisible())await row.click();};
  const evidence={},question='Spend up to 180 example dollars on the pump?';
  const attempt=async(name,run)=>{try{evidence[name]=await run();}catch(error){const screenshot='action-'+name+'-failed.png';await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});evidence[name]={ok:false,error:String(error),screenshot};}};
  const response=path=>{const pending=page.waitForResponse(value=>new URL(value.url()).pathname===path&&value.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});return pending;};
