@@ -304,3 +304,30 @@ unchanged. Configuration does not execute a builder or model provider.
 Listening IP addresses are normalized before uniqueness checks and storage, so
 equivalent IPv6 spellings cannot configure duplicate endpoints. House reference
 text rejects control characters, including tabs that a URL parser would remove.
+
+## Owner machine settings
+
+An authenticated current machine owner (or current household owner) sends
+`POST /api/runtime/boxSettingsSet` with the ordinary `{id,input}` envelope:
+
+```json
+{"box":"workshop","name":"Workshop","hostsAny":false,"reportOnly":false,"alwaysOn":true,"agents":[{"agent":"art","lent":true}],"facts":["rack:attic"]}
+```
+
+This replaces hosting flags, explicit agent permissions and owner-supplied facts
+atomically with the command receipt. Machine ownership, enrollment, heartbeat and
+revocation are not writable fields of this command. Missing/revoked machines,
+unknown agents, duplicate entries and another live machine's name are refused.
+Runners, agents and services cannot change this setup. A committed change notifies
+the existing capacity lifecycle; receipt replay and rollback do not notify again.
+
+Worker-reported facts remain separate from owner labels. Adding an owner label
+promotes an overlapping report to owner authority, so subsequent worker reports
+cannot erase it. Report-only workers continue health reporting and always-on
+outage detection but never claim agent work. Lending an explicit agent does not
+grant its owner access to the machine registry or machine settings.
+
+The lent flag is true for another member's agent and false for the machine owner's
+agent. The command checks this against current ownership. An existing explicit
+non-lending row cannot authorize a foreign agent after ownership changes. Remove
+an agent from the explicit list to withdraw that permission.

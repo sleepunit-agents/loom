@@ -1,4 +1,8 @@
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
+
+import { registerBoxSettings } from './shared-box-settings.js';
+import { registerAgentModels } from './shared-agent-models.js';
+
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
@@ -37,6 +41,7 @@ import { changeService, type PullRequestReader, type MergeRuleReader } from './a
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
+import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
@@ -123,6 +128,9 @@ export function sharedRoot(options: {
   registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
   registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
+
+  registerBoxSettings(operations, db, () => tempo?.capacityChanged());
+  registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {
       tempo?.sources.job(id);
@@ -264,6 +272,7 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),options.workAnswerAuthority);
   registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
   registerSharedApprovalRules(operations,db,services.approvalRules);
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules,options.workAnswerAuthority);
