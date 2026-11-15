@@ -1,3 +1,6 @@
+import { InboxActionNotices, type InboxResultsSnapshot } from './outcomes';
+export { InboxActionNotices } from './outcomes';
+export type { InboxActionResult, InboxResultsSnapshot } from './outcomes';
 import { useEffect, useRef, useState } from 'react';
 import { Split, Row, Empty, Error, Loading, Button, Input, Textarea, type SplitFolder } from '../../kit';
 import { managed, rows, type InboxActions, type InboxAnswer, type InboxItem, type InboxSnapshot } from './model';
@@ -48,23 +51,27 @@ export function InboxQuestionCard({ id, snapshot, actions, inline }: { id: strin
   return item ? <QuestionReader key={item.id} item={item} actions={actions} inline={inline} /> : <Empty title="Item is unavailable" />;
 }
 
-export function InboxView({ snapshot, selected, select, detail, actions }: {
+export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult }: {
+  results?: InboxResultsSnapshot; dismissResult?(id: string): Promise<void>;
   snapshot: InboxSnapshot; selected?: string; select(id?: string): void;
   detail?: { status: InboxSnapshot['status']; item: InboxItem | null }; actions?: InboxActions;
 }) {
   const [folder, setFolder] = useState('needs'), [query, setQuery] = useState('');
   const display = selected && detail && detail.status !== 'live'
     ? { ...snapshot, items: snapshot.items.filter(row => row.id !== selected) } : snapshot;
-  const shown = rows(display, folder, query);
+  const shown = folder === 'errors' ? [] : rows(display, folder, query);
+  const currentResults = snapshot.status === 'live' && results?.status === 'live' ? results : undefined;
   const live = snapshot.status === 'live';
   const item = live ? (detail ? detail.status === 'live' && detail.item?.id === selected ? detail.item : undefined : snapshot.items.find(row => row.id === selected)) : undefined;
   const folders: SplitFolder[] = [
     ...[['needs', 'Needs you'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']].map(([id, label]) => ({ id, label, count: rows(display, id, '').length })),
+    { id: 'errors', label: 'Errors', count: currentResults?.results.filter(row => !row.ok && !row.readAt).length ?? 0 },
     { heading: 'By agent' }, ...[...new Set(live ? display.items.flatMap(row => row.agent ? [row.agent] : []) : [])].sort().map(agent => ({ id: `agent:${agent}`, label: agent, count: rows(display, `agent:${agent}`, '').length })),
   ];
   return <Split label="Inbox" folders={folders} folder={folder} onFolder={setFolder} listTitle="Inbox"
+    listTop={currentResults && (folder === 'fyi' || folder === 'errors' || folder === 'all') ? <InboxActionNotices snapshot={currentResults} errorsOnly={folder === 'errors'} dismiss={dismissResult} /> : undefined}
     search={<Input aria-label="Search asks" value={live ? query : ''} disabled={!live} onChange={event => setQuery(event.target.value)} />}
-    list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : shown.length ? shown.map(row => <Row key={row.id} title={row.body?.words ?? `Item from ${row.agent ?? row.fromId ?? 'Loom'}`} meta={row.body?.why ?? row.source} status={`${row.agent ?? 'Loom'} · ${row.state} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : <Empty title="No items here" />}
+    list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : shown.length ? shown.map(row => <Row key={row.id} title={row.body?.words ?? `Item from ${row.agent ?? row.fromId ?? 'Loom'}`} meta={row.body?.why ?? row.source} status={`${row.agent ?? 'Loom'} · ${row.state} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : folder === 'errors' && currentResults?.results.some(row => !row.ok && !row.readAt) ? null : <Empty title="No items here" />}
     reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
 }
