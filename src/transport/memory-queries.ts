@@ -7,13 +7,13 @@ import type { installMindActivity } from '../pieces/mind/activity.js';
 import { knowledgeQueryFields } from '../pieces/mind/knowledge-query.js';
 import { peopleQueryFields } from '../pieces/mind/people-query.js';
 import {QueryDeadlines} from '../pieces/mind/query-deadlines.js';
-import { projectsQueryFields } from '../pieces/mind/projects-query.js';
+import { projectsQueryFields, type ProjectQueryReader } from '../pieces/mind/projects-query.js';
 import { activityQueryFields } from '../pieces/mind/activity-query.js';
 import { sharedPeopleConversations } from '../pieces/mind/people-conversations.js';
 
 export function memoryQueryFields(db: DataDatabase, options: {
   sources?: MindSources; sharing(): Sharing; now(): number;
-  mind: Mind; activity: Pick<ReturnType<typeof installMindActivity>, 'window' | 'read'> & Partial<Pick<ReturnType<typeof installMindActivity>,'access'>> & {nextDeadline?():number|undefined};
+  mind: Mind|ProjectQueryReader; activity: Pick<ReturnType<typeof installMindActivity>, 'window' | 'read'> & Partial<Pick<ReturnType<typeof installMindActivity>,'access'>> & {nextDeadline?():number|undefined};
   projectAccess?(viewer:Viewer):{allowed:boolean;agents:string[]};
   conversationHref(id: string): string; projectHref(agent: string, slug: string): string;
 }) {

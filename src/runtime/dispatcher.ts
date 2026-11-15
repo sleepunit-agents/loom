@@ -39,7 +39,7 @@ export class Dispatcher {
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
         return { run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, harness: placement.harness,
-          brief: claimed.brief ?? '', house: { repository: claimed.houseRepository ?? '',
+          brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
     }, { behavior: 'immediate' });

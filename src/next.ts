@@ -267,8 +267,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!memoryQueries.has(app)) {
     const activity = installedMindActivity(app.operations);
     if (!activity) throw new Error('Memory queries require the installed Activity reader');
+    const projects=installedMindProjects(app.operations);
+    if(!projects)throw new Error('Memory queries require the installed Projects reader');
     const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
-      mind: mindRole(app.operations), activity, projectAccess:installedMindProjects(app.operations)?.access, conversationHref,
+      mind: projects, activity, conversationHref,
       projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
     memoryQueries.set(app, queries);
     app.onClose(() => { queries.close(); memoryQueries.delete(app); });

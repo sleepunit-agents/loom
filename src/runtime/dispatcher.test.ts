@@ -36,7 +36,7 @@ it('claims only on the selected worker and delivers an execution-ready snapshot 
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
-    model: 'primary', account: 'account', harness: 'codex', brief: 'Private brief', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
+    model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.jobs.get(f.job.id).state).toBe('starting');
@@ -98,7 +98,7 @@ it('keeps machine health when a report rejects, without changing the foreign or 
   f.runtime.started('first', f.job.id, 'image'); f.runtime.finish('first', f.job.id, 0, 'done'); f.tick(10_000);
   expect(() => f.runtime.finish('first', f.job.id, 0, 'duplicate')).toThrow();
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
-  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: 'done' });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: null });
 });
 it('refreshes health on every successful phase report', () => {
   const f = fixture(); f.runtime.next('first');
@@ -206,4 +206,23 @@ it('reads tool and person policy within the same placement and claim transaction
   });
   expect(f.runtime.next('first')?.id).toBe(f.job.id);
   expect(policyReads).toBeGreaterThanOrEqual(2);
+});
+
+it('never hands a legacy private brief to the worker while preserving the old record', () => {
+  const f = fixture(); f.db.update(jobs).set({ brief: 'LEGACY_PRIVATE_WORDS' }).where(eq(jobs.id, f.job.id)).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.id).toBe(f.job.id); expect(assignment.brief).toBe('');
+  expect(f.runtime.jobs.get(f.job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
+});
+
+it('passes ordinary handoff instructions through the worker assignment', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
+  const conversation = f.comms.open({ agent: 'art', venue: 'handoff', place: f.job.id, label: 'Handoff' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'handoff', fromKind: 'agent', fromId: 'art', words: 'Public handoff instructions' });
+  const job = f.runtime.jobs.admit(conversation.id)!;
+  expect(f.runtime.next('first')).toMatchObject({ id: job.id, brief: 'Public handoff instructions' });
+});
+it('passes unbound instructions through the worker assignment', () => {
+  const f = fixture(); f.db.update(jobs).set({ conversation: null, brief: 'Unbound instructions' }).where(eq(jobs.id, f.job.id)).run();
+  expect(f.runtime.next('first')).toMatchObject({ id: f.job.id, conversation: null, brief: 'Unbound instructions' });
 });
