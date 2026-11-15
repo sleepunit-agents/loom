@@ -1,94 +1,144 @@
-/** New Changes data path only. Run browsers in CI; never on loom's machine. */
+/** Shared Changes reader proof. Browsers run in CI, never on loom's machine. */
 import { it, expect } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
-import { chromium, type Route } from 'playwright-core';
-import { startLoom } from '../foundation.js';
+import { getRequestListener } from '@hono/node-server';
+import { eq } from 'drizzle-orm';
+import { chromium } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
-import { fixture, installFixture, fixtureSharing } from '../fixture.js';
-import { installChanges } from '../pieces/changes/index.js';
-import { change } from '../pieces/changes/fixture.js';
-import { replaceChanges } from '../pieces/changes/store.js';
+import { createDataSchema } from '../core/data/database.js';
+import { nextData } from '../next-data.js';
+import * as s from '../core/data/schema.js';
+import { changesQuery } from '../../web/src/data/work-query.js';
+
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
-it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares checks, citations and answers between windows, scopes projects, and expires merged rows', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'loom-changes-browser-'));
-  fixture(home);
-  const clock = new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  let allowed = false;
-  const loom = await startLoom({ home, clock, install: app => {
-    installChanges(app.db, app.operations, app.live, fixtureSharing, {
-      attribution: () => ({ agents: { art: { logins: ['art-bot'], branches: [] } }, ownerLogins: [] }),
-      approvals: { rule: () => ({ tier: allowed ? 'do' : 'ask' }), answer: () => { allowed = true; return { ok: true, value: {} }; } },
-    });
-    installFixture(app);
-  }, authenticate: req => {
-    const id = req.headers.cookie?.includes('fixture=pollock') ? 'pollock' : req.headers.cookie?.includes('fixture=jonathan') ? 'jonathan' : undefined;
-    return id ? { viewer: { kind: 'member', id }, valid: () => true } : undefined;
-  } });
-  let current = change({ project: 'pond', title: 'Keep shared changes current', body: 'Checks, reviews and task citations arrive in every window.\nThe owner answers the exact commit; the agent performs the merge.' });
-  const hidden = change({ id: 'github:other/app#4', repo: 'github:other/app', project: 'other', title: 'Private other project change' });
-  const publish = () => { replaceChanges(loom.db, [current, hidden]); loom.live.changed([{ type: 'change', id: current.id }]); };
-  publish();
+const title = 'Keep shared changes current', hiddenTitle = 'Private other project change';
+const changeId = 'github:acme/app#3';
+
+// Disposable shared database and the production root transport composition.
+// Serve the shipped standalone app, with no intercepted query results, copied
+// legacy records, custom authentication resolver or substituted browser feed.
+async function fixture() {
+  const client = new Database(':memory:');
+  const at = '2026-11-14T20:00:00.000Z', clock = new FakeClock(Date.parse(at));
+  const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
+  db.insert(s.members).values(['sam', 'lee'].map(id => ({ id, role: 'member' as const, joinedAt: at }))).run();
+  db.insert(s.projects).values(['pond', 'other'].map(id => ({ id, name: id }))).run();
+  db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run();
+  const cookie = 'c'.repeat(64), token = 't'.repeat(64);
+  const fingerprint = createHash('sha256').update(token).digest('hex');
+  const session = createHash('sha256').update(cookie).digest('hex');
+  db.insert(s.tokens).values({ fingerprint, label: 'Disposable browser fixture', kind: 'owner', member: 'sam', createdAt: at }).run();
+  db.insert(s.sessions).values({ id: session, token: fingerprint, device: 'Fixture', via: 'token', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
+  for (const [id, project, name] of [[changeId, 'pond', title], ['github:other/app#4', 'other', hiddenTitle]]) {
+    db.insert(s.changes).values({ id, repository: project === 'pond' ? 'acme/app' : 'other/app', number: 3, title: name,
+      body: 'Checks, reviews and task citations arrive in every window.', url: '', state: 'open', draft: false,
+      authorLogin: 'art', project, agent: null, branch: 'work', headCommit: 'a'.repeat(40), baseBranch: 'next',
+      checks: 'running', review: 'required', mergeable: 'unknown', waitingOn: 'ci', openedAt: at, updatedAt: at }).run();
+  }
+  db.insert(s.changeChecks).values({ change: changeId, name: 'Typecheck', state: 'running' }).run();
+  db.insert(s.changePeople).values({ change: changeId, login: 'Reviewer', role: 'reviewer' }).run();
+  for (const [id, name, ownerKind, owner, project] of [
+    ['visible', 'Track the shared change', 'household', null, 'pond'],
+    ['private', 'Private linked task', 'member', 'lee', null],
+  ] as const) {
+    db.insert(s.tasks).values({ id, title: name, ownerKind, owner, project, createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
+    db.insert(s.changeTasks).values({ change: changeId, task: id }).run();
+  }
+  const data = nextData(db, clock, request => request.headers.origin === `http://${request.headers.host}`);
+  const serveData = getRequestListener(request => data.http.fetch(request));
+  const http = createServer((request, response) => {
+    const url = new URL(request.url!, 'http://localhost');
+    if (url.pathname === '/graphql') { void serveData(request, response); return; }
+    const file = url.pathname.startsWith('/app/') ? resolve(root, url.pathname.slice(5)) : join(root, 'index.html');
+    if (!file.startsWith(`${root}/`) || !existsSync(file)) { response.writeHead(404).end(); return; }
+    response.setHeader('content-type', ({ '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2' } as Record<string, string>)[extname(file)] ?? 'application/octet-stream');
+    response.end(readFileSync(file));
+  });
+  const detach = data.attach(http);
+  await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
+  const address = http.address(); if (!address || typeof address === 'string') throw new Error('No fixture listener');
+  return { db, data, cookie, session, url: `http://127.0.0.1:${address.port}`,
+    async close() { detach(); await data.close(); await new Promise<void>(ok => http.close(() => ok())); client.close(); } };
+}
+
+// Runs without a browser or built assets: catches /graphql falling through to
+// HTML, missing Work fields and fixture visibility errors before CI screenshots.
+it('serves the shipped Changes selection over the real authenticated HTTP listener', async () => {
+  const app = await fixture();
+  try {
+    const post = (cookie?: string) => fetch(`${app.url}/graphql`, { method: 'POST',
+      headers: { 'content-type': 'application/json', ...(cookie ? { cookie: `loom_ui=${cookie}` } : {}) }, body: JSON.stringify({ query: changesQuery }) });
+    expect((await post()).status).toBe(401);
+    const response = await post(app.cookie);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const result = await response.json(); expect(result.errors).toBeUndefined();
+    expect(result.data.changes.map((row: { id: string }) => row.id)).toEqual([changeId]);
+    expect(result.data.changeTasks.map((row: { task: string }) => row.task)).toEqual(['visible']);
+    app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
+    expect((await post(app.cookie)).status).toBe(401);
+  } finally { await app.close(); }
+});
+
+it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares generated checks, review and linked tasks across browser windows and withdraws revoked access', async () => {
+  const app = await fixture();
   const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   try {
-    const staticFiles = async (route: Route) => {
-      const url = new URL(route.request().url());
-      if (url.pathname === '/live' || url.pathname.startsWith('/api/')) return route.continue();
-      const path = url.pathname.startsWith('/app/') ? resolve(root, url.pathname.slice(5)) : join(root, 'index.html');
-      if (!path.startsWith(`${root}/`) || !existsSync(path)) return route.fulfill({ status: 404, body: '' });
-      await route.fulfill({ body: readFileSync(path), contentType: ({ '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2' } as Record<string, string>)[extname(path)] ?? 'application/octet-stream' });
-    };
     const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
-    await context.grantPermissions(['local-network-access'], { origin: loom.url });
-    await context.addCookies([{ name: 'fixture', value: 'jonathan', url: loom.url }]);
-    await context.route('**/*', staticFiles);
+    await context.addCookies([{ name: 'loom_ui', value: app.cookie, url: app.url }]);
     const a = await context.newPage(), b = await context.newPage();
-    await Promise.all([a.goto(`${loom.url}/p/changes-preview`), b.goto(`${loom.url}/p/changes-preview`)]);
-    const row = (page: typeof a, title = current.title) => page.locator('[data-split-row]').filter({ hasText: title });
-    await expect.poll(() => row(b).count()).toBe(1);
-    await row(a).click(); await row(b).click();
+    const errors: string[] = [];
+    for (const page of [a, b]) page.on('pageerror', error => errors.push(error.message));
+    await Promise.all([a.goto(`${app.url}/p/changes-preview`), b.goto(`${app.url}/p/changes-preview`)]);
+    const row = (page: typeof a) => page.locator('[data-split-row]').filter({ hasText: title });
+    for (const page of [a, b]) {
+      await expect.poll(() => row(page).count()).toBe(1);
+      expect(await page.getByText(hiddenTitle, { exact: true }).count()).toBe(0);
+      await row(page).click();
+      await expect.poll(() => page.getByText('Typecheck · running', { exact: true }).count()).toBe(1);
+      await expect.poll(() => page.getByText('Track the shared change', { exact: true }).count()).toBe(1);
+      expect(await page.getByText('Private linked task', { exact: true }).count()).toBe(0);
+    }
     await b.reload();
-    await expect.poll(() => b.getByRole('heading', { name: current.title, exact: true }).count()).toBe(1);
-    current = { ...current, checks: { state: 'failing', total: 2, failing: ['Typecheck'], running: [] } }; publish();
-    for (const page of [a, b]) await expect.poll(() => page.getByText('Failing: Typecheck', { exact: true }).count()).toBe(1);
-    const result = loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'tasks.create', {
-      title: 'Track the shared change', description: 'acme/app#3', project: 'pond', actor: 'art', at: new Date(clock.now()).toISOString(),
-    }, 'browser:citation');
-    expect(result.ok).toBe(true);
-    for (const page of [a, b]) await expect.poll(() => page.getByText('Track the shared change', { exact: true }).count()).toBe(1);
-    current = { ...current, checks: { state: 'passing', total: 2, failing: [], running: [] } }; publish();
-    await expect.poll(() => b.getByText('passing · 2 checks', { exact: true }).count()).toBe(1);
+    await expect.poll(() => b.getByRole('heading', { name: title, exact: true }).count()).toBe(1);
+    // Commit once; both retained browser subscriptions receive the same rows.
+    app.data.writes.run(() => {
+      app.db.update(s.changes).set({ checks: 'failing', review: 'changes_requested' }).where(eq(s.changes.id, changeId)).run();
+      app.db.update(s.changeChecks).set({ state: 'failing' }).where(eq(s.changeChecks.change, changeId)).run();
+      app.db.update(s.tasks).set({ title: 'Updated linked task' }).where(eq(s.tasks.id, 'visible')).run();
+    });
+    for (const page of [a, b]) {
+      await expect.poll(() => page.getByText('Typecheck · failing', { exact: true }).count()).toBe(1);
+      await expect.poll(() => page.getByText('changes requested', { exact: true }).count()).toBe(1);
+      await expect.poll(() => page.getByText('Updated linked task', { exact: true }).count()).toBe(1);
+    }
     const shots = process.env.LOOM_TEST_SHOTS ?? resolve('artifacts/changes-piece'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       await b.setViewportSize({ width, height: 900 });
-      await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; document.documentElement.dataset.motion = 'reduce'; }, look);
+      await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
       await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
       expect(await b.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       await b.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
-    // Canonical Task-linked PR badges are covered by the Tasks browser proof.
-    // This fixture retains Changes' own checks, citations, answers and project scope.
-    const pollock = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 900 } });
-    await pollock.grantPermissions(['local-network-access'], { origin: loom.url });
-    await pollock.addCookies([{ name: 'fixture', value: 'pollock', url: loom.url }]); await pollock.route('**/*', staticFiles);
-    const p = await pollock.newPage(); await p.goto(`${loom.url}/p/changes-preview`);
-    await expect.poll(() => row(p).count()).toBe(1);
-    expect(await row(p, hidden.title).count()).toBe(0);
-    await row(p).click();
-    await p.getByRole('button', { name: 'Check merge answer', exact: true }).click();
-    await expect.poll(() => p.getByText('Couldn’t check', { exact: true }).count()).toBe(1);
-    expect(await p.getByRole('button', { name: 'Yes, merge it', exact: true }).count()).toBe(0);
-    await pollock.close();
-    await a.getByRole('button', { name: 'Check merge answer', exact: true }).click();
-    await expect.poll(() => a.getByRole('button', { name: 'Yes, merge it', exact: true }).isEnabled()).toBe(true);
-    await a.getByRole('button', { name: 'Yes, merge it', exact: true }).click();
-    await expect.poll(() => b.getByText('do', { exact: true }).count()).toBe(1);
-    expect(allowed).toBe(true);
-    current = { ...current, state: 'merged', closed: new Date(clock.now()).toISOString() }; publish();
-    await expect.poll(() => row(b).textContent()).toContain('Merged');
-    clock.advance(7 * 86400_000);
+    app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());
+    for (const page of [a, b]) {
+      await expect.poll(() => row(page).count()).toBe(0);
+      expect(await page.getByRole('heading', { name: title, exact: true }).count()).toBe(0);
+      expect(await page.getByText('Updated linked task', { exact: true }).count()).toBe(0);
+    }
+    // Ending a session also clears retained content and denies reconnection.
+    app.data.writes.run(() => app.db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run());
+    for (const page of [a, b]) await expect.poll(() => row(page).count()).toBe(1);
+    app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     for (const page of [a, b]) await expect.poll(() => row(page).count()).toBe(0);
-  } finally { await browser.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
+    await b.reload();
+    await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
+    expect(await row(b).count()).toBe(0);
+    expect(errors).toEqual([]);
+    await context.close();
+  } finally { await browser.close(); await app.close(); }
 }, 60_000);
