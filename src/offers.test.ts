@@ -84,6 +84,8 @@ describe('mcp_tools', () => {
     ['nine tools', Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`tool_${i}`, tool])), /at most 8 tools/],
     ['a bad name', { 'Relay-Now': tool }, /a tool's name/],
     ['a core tool\'s name', { recall: tool }, /core's own/],
+    ['a retired Comms title tool', { comms_title: tool }, /core's own/],
+    ['a retired Comms reader tool', { comms_thread: tool }, /core's own/],
     ['a core widget tool\'s name', { loom_hello: tool }, /core's own/],
     ['a missing description', { house: { ...tool, description: undefined } }, /description is required/],
     ['an over-long description', { house: { ...tool, description: long(1001) } }, /description is required/],
