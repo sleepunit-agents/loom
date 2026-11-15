@@ -52,8 +52,9 @@ export class ConversationMail {
     }
     const contexts=new Map<string,()=>AnswerContext|null>();
     for(const item of items)if(item.volume==='full'&&prepared.get(item.id)!==null)contexts.set(item.id,await prepareAnswerContext(this.comms,item));
-    const first=items[0],cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
-    const history=first?.volume==='full'&&prepared.get(first.id)!==null?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
+    const ordinary=(item:Item,words:string|null|undefined)=>item.source==='thread'&&!!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
+    const cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
+    const history=items.some(item=>ordinary(item,prepared.get(item.id)))?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
@@ -76,7 +77,8 @@ export class ConversationMail {
       const dialogue=history();
       const taken=conversations.take(conversation, job, items.map(item => item.id));
       if(taken.length)db.update(messages).set({delivery:'sending'}).where(and(eq(messages.kind,'message'),inArray(messages.inboxItem,taken.map(item=>item.id)))).run();
-      return taken.map((item,index) => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null;return {item,words:visible,...(answerContext?{answerContext}:{}),...(index===0&&visible!==null&&dialogue.length?{history:dialogue}:{})};});
+      let historyAttached=false;
+      return taken.map(item => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null,includeHistory=!historyAttached&&ordinary(item,visible)&&dialogue.length>0;if(includeHistory)historyAttached=true;return {item,words:visible,...(answerContext?{answerContext}:{}),...(includeHistory?{history:dialogue}:{})};});
     });
   }
 

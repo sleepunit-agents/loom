@@ -71,7 +71,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     await confirmPending();
     let requested=limit,input:z.infer<typeof batch>;
     for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
-    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||new Set(input.items.map(row=>row.id)).size!==input.items.length||input.items.some((row,i)=>i>0&&row.seq<=input.items[i-1].seq||row.history.some((line,index)=>index>0&&line.seq<=row.history[index-1].seq)))throw unavailable();
+    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||new Set(input.items.map(row=>row.id)).size!==input.items.length||input.items.filter(row=>row.history.length>0).length>1||input.items.some((row,i)=>row.history.length>0&&row.source!=='thread'||i>0&&row.seq<=input.items[i-1].seq||row.history.some((line,index)=>index>0&&line.seq<=row.history[index-1].seq)))throw unavailable();
     let accepted=0;
     for(const row of input.items){
      if(!current())throw unavailable();

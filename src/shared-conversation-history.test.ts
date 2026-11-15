@@ -133,3 +133,34 @@ it('rejects an oversized history array at the receiving SDK before acceptance',a
  }});clean.push(()=>client.close());
  await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();
 });
+it.each(['dim','mute','expired'] as const)('gives the Full follow-up its context after a first %s item',async mode=>{
+ const f=await fixture();
+ if(mode==='expired')f.root.writes.run(()=>f.db.update(s.messages).set({keepUntil:new Date(f.clock.now()).toISOString()}).where(eq(s.messages.seq,3)).run());
+ else f.root.writes.run(()=>f.db.update(s.inbox).set({volume:mode}).where(eq(s.inbox.messageSeq,3)).run());
+ await f.send('Second Full follow-up','second-full');
+ let accepted=0;
+ await f.client.takeAndAccept(async item=>{accepted++;if(accepted===1&&mode!=='mute')expect(item.history).toEqual([]);else{expect(item.words).toBe('Second Full follow-up');expect(item.history.map(line=>line.words)).toEqual(['PRIOR PERSON DIALOGUE','PRIOR AGENT REPLY']);}});
+ expect(accepted).toBe(mode==='mute'?1:2);
+});
+it('keeps private thread history off nonthread mail even when old dialogue exists',async()=>{
+ const f=await fixture();await f.client.takeAndAccept(async()=>{});
+ f.root.writes.run(()=>f.root.services.conversations.send({toKind:'agent',to:'art',conversation:f.thread.conversation,source:'notice',fromKind:'unknown',words:'Notice only'}));
+ await f.client.takeAndAccept(async item=>{expect(item.words).toBe('Notice only');expect(item.history).toEqual([]);});
+});
+it('excludes a reply between pending thread inputs and attaches history only once',async()=>{
+ const f=await fixture();await f.client.reply({clientId:'between',words:'REPLY BETWEEN PENDING INPUTS',model:'fixture'});await f.send('Second current input','second');
+ let accepted=0;await f.client.takeAndAccept(async item=>{accepted++;expect(item.history.map(line=>line.words)).toEqual(accepted===1?['PRIOR PERSON DIALOGUE','PRIOR AGENT REPLY']:[]);});expect(accepted).toBe(2);
+});
+it('drops history already expired at the receiving clock while accepting current input',async()=>{
+ const f=await fixture(),client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>{
+  const response=await f.root.http.request(new Request(url,init));if(!String(url).endsWith('/take'))return response;
+  const value=await response.json();value.value.items[0].history[0].keepUntil=new Date(f.clock.now()-1).toISOString();return Response.json(value);
+ }});clean.push(()=>client.close());
+ await client.takeAndAccept(async item=>{expect(item.words).toBe('Do that again');expect(item.history.map(line=>line.words)).toEqual(['PRIOR AGENT REPLY']);});
+});
+it('never repeats an earlier answered question through ordinary history',async()=>{
+ const f=await bodyFixture(clean),client=sdk(f),digest=await client.digest({summary:'Question',question:{to:'alice',words:'OLD QUESTION',answers:'yes-no'}});
+ const answered=await f.root.http.request('/api/inbox/answer',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({input:{item:digest.item,answer:'yes'},id:'answer'})});expect(answered.status).toBe(200);
+ await client.takeAndAccept(async item=>expect(item.question?.words).toBe('OLD QUESTION'));
+ await f.send('Later ordinary message','later');await client.takeAndAccept(async item=>expect(item.history).toEqual([]));
+});

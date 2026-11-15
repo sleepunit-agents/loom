@@ -11,8 +11,8 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
  const days=()=>db.select({days:household.commsDays}).from(household).get()?.days??14;
  const deadline=(row:typeof messages.$inferSelect)=>{const count=days();return Number.isInteger(count)&&count>=1&&count<=14?wordsDeadline(row,count):NaN;};
  // Questions and answers belong exclusively to the validated answer-context path.
- // Person words may recur only after this body accepted their Full delivery.
- const delivery=(row:typeof messages.$inferSelect)=>{
+ // Person words may recur only after an earlier body accepted their Full delivery.
+ const deliveryFingerprint=(row:typeof messages.$inferSelect)=>{
   if(row.kind==='reply'&&row.sender===cv.agent&&!row.inboxItem)return 'reply';
   if(row.kind!=='message'||row.sender!==cv.member||!row.inboxItem)return null;
   const item=db.select().from(inbox).where(eq(inbox.id,row.inboxItem)).get();
@@ -23,23 +23,23 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
  const rows=db.select().from(messages).where(and(eq(messages.thread,thread.id),lt(messages.seq,beforeSeq))).orderBy(desc(messages.seq)).limit(100).all();
  const prepared:{snapshot:typeof messages.$inferSelect;delivery:string;words:string}[]=[];let bytes=2;
  for(const row of rows){
-  const accepted=delivery(row);
-  if(!accepted||!row.words||!(deadline(row)>Date.parse(comms.now())))continue;
+  const acceptedFingerprint=deliveryFingerprint(row);
+  if(!acceptedFingerprint||!row.words||!(deadline(row)>Date.parse(comms.now())))continue;
   let words:string|null;try{words=await comms.words(row.thread,row.seq);}catch{continue;}
   if(words===null||!(deadline(row)>Date.parse(comms.now())))continue;
   const line={seq:row.seq,kind:row.kind,sender:row.sender,at:row.at,words,keepUntil:new Date(deadline(row)).toISOString()};
   const size=Buffer.byteLength(JSON.stringify(line))+(prepared.length?1:0);
   if(bytes+size>1_048_576)break;
-  bytes+=size;prepared.push({snapshot:row,delivery:accepted,words});
+  bytes+=size;prepared.push({snapshot:row,delivery:acceptedFingerprint,words});
  }
  return()=>{
   const currentThread=db.select().from(threads).where(eq(threads.id,thread.id)).get();
   if(currentThread?.conversation!==conversation)throw Error('Dialogue changed; take again');
-  return prepared.flatMap(({snapshot,delivery:accepted,words})=>{
+  return prepared.flatMap(({snapshot,delivery:acceptedFingerprint,words})=>{
    const current=db.select().from(messages).where(and(eq(messages.thread,snapshot.thread),eq(messages.seq,snapshot.seq))).get();
    // Optional old context that moved during preparation is omitted; the independently
    // retained current input can still proceed. Never publish the stale snapshot.
-   if(!current?.words||!(deadline(current)>Date.parse(comms.now()))||JSON.stringify(current)!==JSON.stringify(snapshot)||delivery(current)!==accepted)return[];
+   if(!current?.words||!(deadline(current)>Date.parse(comms.now()))||JSON.stringify(current)!==JSON.stringify(snapshot)||deliveryFingerprint(current)!==acceptedFingerprint)return[];
    if(current.kind!=='message'&&current.kind!=='reply')return[];
    return[{seq:current.seq,kind:current.kind,sender:current.sender,at:current.at,words,keepUntil:new Date(deadline(current)).toISOString()}];
   }).reverse();
