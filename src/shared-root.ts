@@ -47,6 +47,7 @@ import { Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
+import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
@@ -91,7 +92,7 @@ export function sharedRoot(options: {
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {read:PullRequestReader;rule:MergeRuleReader};
+  changes?: {rule:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
   workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
@@ -254,7 +255,7 @@ export function sharedRoot(options: {
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
-  const changePolling=options.changes ? pollChanges(services.changes,options.changes.read,clock) : undefined;
+  const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
   const authenticate = credentials.authenticate;
 
