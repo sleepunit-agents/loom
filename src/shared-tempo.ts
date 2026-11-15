@@ -25,6 +25,7 @@ export interface SharedTempoOptions {
   instructions?: TempoOptions['instructions'];
   changeRevision?: TempoOptions['changeRevision'];
   settings?: TempoOperationOptions['settings'];
+  mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
   chatMember?(viewer: Viewer): string | undefined;
   settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
   contributors?: readonly SweepPart[];
@@ -45,7 +46,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       }),
       operation: options.operation ?? (() => { throw new Error('Unknown Tempo operation'); }),
     },
-    commands: { authorize: (viewer, access) => {
+    commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => {
       // Chat is the control surface. A current body may carry out its recorded
       // member's ordinary mailbox preference, without becoming that member.
       const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
