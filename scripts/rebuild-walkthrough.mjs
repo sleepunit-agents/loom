@@ -92,6 +92,13 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Home'){
+     const runtimeRows=tile.locator('[aria-label$="current runtime jobs"] > li');
+     const expected=runtimeRows.filter({hasText:report.example.runtime.job.title}).first();
+     await expected.waitFor({state:'visible'});await expected.scrollIntoViewIfNeeded();
+     row.runtimeJobs=await runtimeRows.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('h4')?.textContent?.trim()??'',status:row.querySelector('p')?.textContent?.trim()??''})));
+     row.text=await tile.innerText();
+    }
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);

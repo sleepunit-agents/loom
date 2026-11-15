@@ -1,4 +1,3 @@
-import {exampleRuntime,exampleModelRoles} from './example-runtime.js';
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
 import Database from 'better-sqlite3';
@@ -9,6 +8,7 @@ import {createDataSchema} from './core/data/database.js';
 import {householdService} from './apps/household.js';
 import {sharedRoot} from './shared-root.js';
 import {FakeClock} from './core/clock.js';
+import {exampleRuntime,exampleModelRoles,exampleBackdateMs} from './example-runtime.js';
 import {loadKey} from './pieces/comms/crypto.js';
 
 export async function exampleHome(directory:string, webRoot=resolve('dist/web')) {
@@ -16,7 +16,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
  // Exclusive creation: this command never opens an existing household.
  mkdirSync(home,{mode:0o700});
  // Settle fictitious inbox mail before wall-clock startup, without future facts.
- const at=new Date(Date.now()-10_000).toISOString(),clock=new FakeClock(Date.parse(at));
+ const at=new Date(Date.now()-exampleBackdateMs).toISOString(),clock=new FakeClock(Date.parse(at));
  const client=new Database(join(home,'app.db'));
  let root:ReturnType<typeof sharedRoot>|undefined;
  try {
@@ -49,11 +49,11 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   const setup=root.writes.run(()=>s.signin.issue({kind:'owner',member:'alex',label:'Example setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
   let account:{id:string};let runtime:Awaited<ReturnType<typeof exampleRuntime>>;
   try{
-   const response=await root.http.request('http://example/api/runtime/accountCreate',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({id:'example-account',input:{provider:'example-provider',label:'Example model subscription'}})});
+   const response=await root.http.request('http://example/api/runtime/accountCreate',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({id:'example-account',input:{provider:exampleModelRoles[0].provider,label:'Example model subscription'}})});
    const answer=z.object({ok:z.literal(true),value:z.object({id:z.string()}).strict()}).strict().safeParse(await response.json());
    if(!response.ok||!answer.success)throw Error('Example account could not be created through its API');
    account=answer.data.value;
-   runtime=await exampleRuntime(root,clock,setup.token,account.id);
+   runtime=await exampleRuntime(root,clock,setup.token,{account:account.id,owner:'alex',provider:exampleModelRoles[0].provider});
   }finally{root.writes.run(()=>s.signin.revoke(setup.fingerprint));}
   const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');
   writeFileSync(adapters,'export default () => ({modelRoles: () => '+JSON.stringify(exampleModelRoles)+'});\n',{mode:0o600});

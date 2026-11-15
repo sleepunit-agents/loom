@@ -22,7 +22,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(app.text.trim().length).toBeGreaterThan(0);
   expect(Array.isArray(app.consoleErrors)).toBe(true);expect(Array.isArray(app.live.frames)).toBe(true);
   expect(readFileSync(join(out,app.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
-  if(title==='Home'){expect(app.error).toBeUndefined();expect(app.text).toContain(runtimeTitle);expect(app.text).toContain('queued');}
+  if(title==='Home'){expect(app.error).toBeUndefined();expect(app.runtimeJobs).toContainEqual({title:runtimeTitle,status:'queued · Unassigned'});}
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
  });
  it('sends and answers through the real Comms and Inbox controls',{retry:0,timeout:20_000},async()=>{
