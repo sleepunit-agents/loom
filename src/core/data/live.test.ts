@@ -170,3 +170,13 @@ it('fences validation callbacks after a literal callback stops live access', asy
   await live.drain(); expect(late).toBe(0);
 
 });
+
+it('timing notifications wake selections without reviving a read invalidated by a private write',async()=>{
+ const {live,watch}=setup(),context={};
+ const stream=watch();await stream.next();
+ live.captureRead(context);const version=live.readVersion(context);
+ live.timingsChanged();expect(live.currentRead(version)).toBe(true);
+ live.changed();expect(live.currentRead(version)).toBe(false);
+ live.timingsChanged();expect(live.currentRead(version)).toBe(false);
+ live.close();expect(live.currentRead(live.epoch())).toBe(false);
+});

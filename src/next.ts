@@ -132,20 +132,20 @@ const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const notificationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
+const measuringSignals = new WeakMap<Foundation, () => void>();
 const measuring = new WeakMap<Foundation, Awaited<ReturnType<typeof installMeasuring>>>();
 export async function closeNext(app: Foundation) {
-  await measuring.get(app)?.close();
-  try {await secretWorkerClosers.get(app)?.();}
-  finally {
-    try { await notificationClosers.get(app)?.(); await secretMutationClosers.get(app)?.(); }
-    finally {
-      try { await bridgeDaemons.get(app)?.close(); }
-      finally {
-        try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); }
-        finally { await runtimeClosers.get(app)?.(); }
-      }
-    }
+  const failures: unknown[] = [];
+  for (const close of [
+    () => measuring.get(app)?.close(),
+    secretWorkerClosers.get(app), notificationClosers.get(app), secretMutationClosers.get(app),
+    () => bridgeDaemons.get(app)?.close(),
+    async () => { try { await secretAuthorities.get(app)?.close(); } finally { secretAuthorities.delete(app); } },
+    runtimeClosers.get(app),
+  ]) {
+    try { await close?.(); } catch (error) { failures.push(error); }
   }
+  if (failures.length) throw failures[0];
 }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
@@ -370,7 +370,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   // No schema creation or migration here: only the approved shared home has
   // Measuring tables. The separate move owns existing homes.
   if (!measuring.has(app) && app.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='measuring_settings'").get()) {
-    measuring.set(app, await installMeasuring(app, sharedMemory));
+    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, sharedMemory));
   }
   return effects;
 }
@@ -410,6 +410,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
       const meter = measuring.get(app);
       return meter?.enabled() ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work();
     });
+    measuringSignals.set(app, () => data!.timingsChanged());
     memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
     // Legacy operation commits include private source touches until shared
     // command composition takes over their committed-write signal.

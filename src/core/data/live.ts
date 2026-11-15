@@ -1,3 +1,4 @@
+import { clearReadDeadline } from './read-lease.js';
 import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
@@ -38,8 +39,23 @@ export class DataLive {
   constructor(private readonly measure?: MeasureRead) {}
   private listeners = new Set<() => void>();
   private stopped = false;
+  private version = 0;
+  private readVersions = new WeakMap<object, number>();
+  epoch(): number { return this.version; }
+  captureRead(context: unknown): void {
+    clearReadDeadline(context);
+    if (context && typeof context === 'object') this.readVersions.set(context, this.version);
+  }
+  readVersion(context: unknown): number | undefined {
+    return context && typeof context === 'object' ? this.readVersions.get(context) : undefined;
+  }
+  currentRead(version: number | undefined): boolean { return !this.stopped && version !== undefined && version === this.version; }
   private executions = new ExecutionDrain();
-  changed() { for (const listener of [...this.listeners]) listener(); }
+  changed() { this.version++; for (const listener of [...this.listeners]) listener(); }
+  /** Timing rows cannot change private selection membership. Wake readers
+   * without making an otherwise current read invalidate its own publication.
+   * Real data/access writes must always use changed(). */
+  timingsChanged() { for (const listener of [...this.listeners]) listener(); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
 
   /** After stopping admission, wait for actual resolvers, including executions
@@ -48,6 +64,7 @@ export class DataLive {
 
   private async read(args: ExecutionArgs, initial: boolean) {
     if (this.stopped) throw new Error('Live data access ended');
+    this.captureRead(args.contextValue);
     instrumentExecution(args.schema);
     return this.executions.scope(() => !this.stopped, () => initial && this.measure
       ? this.measure(() => execute(executionArguments(args))) : execute(executionArguments(args)));

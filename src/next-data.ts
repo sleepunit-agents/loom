@@ -19,13 +19,15 @@ import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
+import { modelAccountQueries } from './runtime/account-query.js';
 
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead) {
+  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
     if (!admitted()) return;
     const auth = resolve(request);
-    return auth && { ...auth, valid: () => admitted() && auth.valid() };
+    return auth && { ...auth, valid: () => admitted() && auth.valid() && accounts.valid(auth.viewer) };
   };
   const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
@@ -53,7 +55,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...measuringVisibility(viewer),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields });
+  }), { ...fields, ...ownFields, ...accounts.fields });
   const socket = dataSocket({ live, clock, originAllowed, measure,
 
     authenticate(request) {
@@ -69,12 +71,13 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     schema,
   });
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); } });
-  const http = dataHttp(db, authenticate, publicOrigin, schema);
+  const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());
   let closing: Promise<void> | undefined;
   return {
     http,
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
+    timingsChanged() { live.timingsChanged(); },
     writes,
     close() {
       if (closing) return closing;

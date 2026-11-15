@@ -269,8 +269,11 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     const probeAck=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await probeAck;
     const sample=once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'sample',payload:{query:'subscription { observe(query:"{ tasks { id } }") { revision patches { path value } } }'}}));
-    await sample;
-    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:1});
+    expect(JSON.parse(String((await sample)[0])).payload.data.observe.revision).toBe(1);
+    const direct=once(ws,'message');
+    ws.send(JSON.stringify({type:'subscribe',id:'direct',payload:{query:'{ tasks { id } }'}}));
+    expect(JSON.parse(String((await direct)[0])).payload.data.tasks).toEqual([{id:'pump'}]);
+    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:2});
     const sampleClosed=once(ws,'close');ws.close();await sampleClosed;ws=undefined;
     const command=(authorization:string,verb:string,input:unknown,id:string)=>fetch(loom.url+'/api/measuring/'+verb,{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({input,id})});
     const proposal={after:{on:false,send_outside:false,outside_address:'',keep_days:90},agent:'art',why:'Stop timing'};
@@ -288,7 +291,7 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     const first = once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } approvals { id } memoryKnowledge { total } }") { revision patches { path value } } }'}}));
     expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}],memoryKnowledge:{total:0}});
-    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:1});
+    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:2});
     expect(credentialTimer).toBe(true);
     const databaseClose = loom.db.close.bind(loom.db);
     loom.db.close = () => { expect(credentialTimer).toBe(false); databaseClosed = true; return databaseClose(); };

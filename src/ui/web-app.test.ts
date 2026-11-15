@@ -4,6 +4,7 @@
  * inside its weight (JS under 230 KB, CSS under 120 KB, gzipped).
  */
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { dirname, relative, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
@@ -38,7 +39,16 @@ describe('the app (web/)', () => {
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
     const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { imports?: string[]; isDynamicEntry?: boolean }>;
     const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
-      .map(piece => `src/pieces/${piece}/index.tsx`);
+      .map(piece => {
+        const registration = resolve(root, 'web/src/pieces', piece, 'registration.ts');
+        const source = readFileSync(registration, 'utf8');
+        const target = source.match(/import\(['"]([^'"]+)['"]\)/)?.[1];
+        expect(target, piece + ' lazy screen import').toBeDefined();
+        const path = resolve(dirname(registration), target!);
+        const screen = ['.tsx', '.ts'].map(extension => path + extension).find(existsSync);
+        expect(screen, piece + ' screen module').toBeDefined();
+        return relative(resolve(root, 'web'), screen!);
+      });
     expect(screens.length).toBeGreaterThan(10);
     for (const page of ['index.html', 'next.html']) {
       expect(manifest[page], page).toBeDefined();

@@ -104,7 +104,7 @@ export function sharedRoot(options: {
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
   catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
-  measuringReady = installMeasuring({ operations, live: { changed: () => data.changed() },
+  measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
   const authenticate = credentials.authenticate;

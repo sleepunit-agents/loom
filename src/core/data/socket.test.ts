@@ -1,11 +1,12 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { WebSocket } from 'ws';
 import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
+import { keepReadUntil } from './read-lease.js';
 import { DataLive } from './live.js';
 import { dataSocket } from './socket.js';
 import { GraphQLNonNull, GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
@@ -13,7 +14,7 @@ import type { Authentication } from '../live/index.js';
 import { FakeClock } from '../clock.js';
 
 const clean: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
+afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 async function setup(authenticate?: (request: IncomingMessage) => Authentication | undefined) {
   const client = new Database(':memory:'); clean.push(() => { client.close(); });
   createDataSchema(client);
@@ -366,4 +367,42 @@ it('carries the socket admission fence into deferred live child callbacks', asyn
   // Independent installed watchers still use the live hub after socket close.
   const stream = f.live.watch({ schema: dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) }), query: '{ tasks { id } }', valid: () => true });
   expect((await stream.next()).value?.revision).toBe(1); await stream.return!();
+});
+
+it('restarts a live selection if current data changes after the iterator resolves but before publication', async () => {
+  const f=await setup(); let allowed=true,revoke=true;
+  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:()=>allowed?'PRIVATE LATE LIVE':null}}})}));
+  const watch=DataLive.prototype.watch;
+  vi.spyOn(DataLive.prototype,'watch').mockImplementation(function(this:DataLive,options){
+    const stream=watch.call(this,options);
+    return {...stream,next:async()=>{const value=await stream.next();if(!value.done&&revoke){revoke=false;allowed=false;this.changed();}return value;}};
+  });
+  const ws=await f.open(),seen:string[]=[];ws.on('message',raw=>seen.push(String(raw)));
+  const closed=once(ws,'close');
+  ws.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:'{private}'}}}));
+  expect((await closed)[0]).toBe(1012);expect(seen.join('')).not.toContain('PRIVATE LATE LIVE');
+  const fresh=await f.open();
+  const value=await read(fresh,()=>fresh.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:'{private}'}}})));
+  expect(value.payload.data.observe).toMatchObject({revision:1,patches:[{path:[],value:{private:null}}]});
+});
+it('rechecks a direct query after serialization changes current data without ending its credential', async () => {
+  const f=await setup();let allowed=true,revoke=true;
+  const changing=new GraphQLScalarType({name:'Changing',serialize:()=>({toJSON(){if(revoke){revoke=false;allowed=false;f.live.changed();}return 'public';}})});
+  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:()=>allowed?'PRIVATE SERIALIZED':null},trigger:{type:changing,resolve:()=>true}}})}));
+  const ws=await f.open(),seen:string[]=[];ws.on('message',raw=>seen.push(String(raw)));
+  const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'direct',payload:{query:'{private trigger}'}}));
+  expect((await closed)[0]).toBe(1012);expect(seen.join('')).not.toContain('PRIVATE SERIALIZED');
+  const fresh=await f.open();const value=await read(fresh,()=>fresh.send(JSON.stringify({type:'subscribe',id:'direct',payload:{query:'{private trigger}'}})));
+  expect(value.payload.data).toEqual({private:null,trigger:'public'});
+});
+
+it('withholds a private-word lease that expires during serialization without any data commit', async () => {
+  const f=await setup();const until=f.clock.now()+1;let advance=true;
+  const trigger=new GraphQLScalarType({name:'DeadlineTrigger',serialize:()=>({toJSON(){if(advance){advance=false;f.clock.advance(1);}return 'public';}})});
+  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:(_root,_args,context)=>{if(f.clock.now()>=until)return null;keepReadUntil(context,until);return 'PRIVATE EXPIRED FRAME';}},trigger:{type:trigger,resolve:()=>true}}})}));
+  const ws=await f.open(),seen:string[]=[];ws.on('message',raw=>seen.push(String(raw)));
+  const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'deadline',payload:{query:'{private trigger}'}}));
+  expect((await closed)[0]).toBe(1012);expect(seen.join('')).not.toContain('PRIVATE EXPIRED FRAME');
+  const fresh=await f.open();const value=await read(fresh,()=>fresh.send(JSON.stringify({type:'subscribe',id:'deadline',payload:{query:'{private trigger}'}})));
+  expect(value.payload.data).toEqual({private:null,trigger:'public'});
 });
