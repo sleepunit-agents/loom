@@ -10,6 +10,7 @@ import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import * as schema from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
+import {householdService} from './apps/household.js';
 import {initializeSharedHome} from './shared-initialize.js';
 import {startSharedHome} from './shared-startup.js';
 vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,renameSync:vi.fn(real.renameSync)};});
@@ -36,6 +37,18 @@ it('first install publishes a private prepared inventory and the ordinary startu
  app.writes.run(()=>app.services.tasks.create({title:'Fresh live task',goal:'Water flows',why:'Exercise the initial credential',owner:{kind:'household'}},{kind:'member',id:viewer.id}));
  expect(String((await next)[0])).toContain('Fresh live task');
  await app.close();const before=readFileSync(join(home,'program.json'));await initializeSharedHome(home,clock);expect(readFileSync(join(home,'program.json'))).toEqual(before);
+});
+it('first install stores the server zone once and preserves a later household choice',async()=>{
+ vi.stubEnv('TZ','America/Chicago');const home=fixture();await initializeSharedHome(home,new FakeClock());
+ const program=JSON.parse(readFileSync(join(home,'program.json'),'utf8')),db=new Database(program.database);
+ try{
+  expect(db.prepare('SELECT timezone FROM household').get()).toEqual({timezone:'America/Chicago'});
+  db.prepare('UPDATE household SET timezone = ?').run('Asia/Tokyo');
+  vi.stubEnv('TZ','Europe/London');
+  const now=()=>new Date(0).toISOString();householdService(schema.dataDatabase(db,now),now).initialize('assistant');
+  await initializeSharedHome(home,new FakeClock());
+  expect(db.prepare('SELECT timezone FROM household').get()).toEqual({timezone:'Asia/Tokyo'});
+ }finally{db.close();}
 });
 it.each(['precious-memory.md','loom.db'])('never initializes a nonempty home containing %s',async name=>{
  const home=fixture();writeFileSync(join(home,name),name==='loom.db'?'':'Precious words');const before=readFileSync(join(home,name));

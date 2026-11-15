@@ -17,7 +17,11 @@
     {
       "id": "inbox-003",
       "promise": "Takes a yes, a no, or an answer in your own words.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "action",
+        "action": "inboxDecisions"
+      }
     },
     {
       "id": "inbox-004",
@@ -27,7 +31,11 @@
     {
       "id": "inbox-005",
       "promise": "Marks what you have read and keeps what was answered.",
-      "source": "docs/how-it-works/site/inbox.html"
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "action",
+        "action": "inboxHistory"
+      }
     },
     {
       "id": "inbox-006",
@@ -77,7 +85,11 @@
     {
       "id": "inbox-015",
       "promise": "An item that is a question says how it is answered, with yes or no or in words, and what happens on each answer. The answer, who gave it and when are recorded on the item. Loom also adds a new item for the agent in the same conversation, with answer as its source and the question as its source id.",
-      "source": "docs/how-it-works/site/inbox.html#how-h"
+      "source": "docs/how-it-works/site/inbox.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxDecisions"
+      }
     },
     {
       "id": "inbox-016",
@@ -87,7 +99,11 @@
     {
       "id": "inbox-017",
       "promise": "Opening an item marks it read for that member. An item lists the tasks, approvals, pull requests or conversations it is about.",
-      "source": "docs/how-it-works/site/inbox.html#how-h"
+      "source": "docs/how-it-works/site/inbox.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "inboxHistory"
+      }
     },
     {
       "id": "inbox-018",

@@ -28,6 +28,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   ] as const) house.setAgent({id,about,markBg,markFg:'#ffffff',faceShape,faceEyes:'dot'});
   house.setMember({id:'alex',role:'owner',fullOwner:true,agents:['fern','moss']});
   house.setMember({id:'robin',role:'member',agents:['moss']});
+  house.initialize();
   const commsKey=await loadKey(home);
   root=sharedRoot({db,clock,commsKey,originAllowed:()=>false,reportError:error=>{throw error;},
    modelRoles:()=>[{model:'example-model',provider:'example-provider',harness:'example-harness',series:'example'}]});
