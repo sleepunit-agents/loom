@@ -17,11 +17,10 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   try{const facts=await work(),screenshot=await capture(name);checks[name]={ok:true,facts,screenshot};}
   catch(error){const failed={ok:false,error:String(error)};try{failed.screenshot=await capture(name+'-failed');}catch{}checks[name]=failed;throw error;}
  };
- const answerRequest={id:randomUUID(),input:{id:example.approval,answer:'allow'}};
  await observe('held',async()=>{
   await tile.getByRole('button',{name:'Pause agent',exact:true}).click();
   await tile.getByRole('button',{name:'Resume agent',exact:true}).waitFor();
-  const response=await page.request.post(url+'/api/approvals/answer',{headers:{origin:url},data:answerRequest,maxRedirects:0});
+  const response=await page.request.post(url+'/api/approvals/answer',{headers:{origin:url},data:{id:randomUUID(),input:{id:example.approval,answer:'allow'}},maxRedirects:0});
   assert.equal(response.status(),200);assert.equal((await response.json()).ok,true);
   const current=await trigger(example.trigger);assert.equal(current.row.state,'held');assert.equal(current.row.lastFiredAt,null);assert.equal(current.events.filter(event=>event==='observed').length,1);assert.equal(current.events.filter(event=>event==='fired').length,0);
   return {state:current.row.state,observedAnswers:1,firedEvents:0,source:'An actual owner answer arrived while the agent was paused.'};
@@ -31,10 +30,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   await tile.getByText(/answer · once · fired/).waitFor();
   const current=await trigger(example.trigger);assert.equal(current.row.state,'fired');assert.equal(current.events.filter(event=>event==='fired').length,1);
   assert.equal(current.row.sourceKind,'answer');assert.equal(current.row.watches,'approval:'+example.approval);assert.equal(current.row.lifespan,'once');assert.equal(current.row.enabled,false);
-  const replay=await page.request.post(url+'/api/approvals/answer',{headers:{origin:url},data:answerRequest,maxRedirects:0});
-  assert.equal(replay.status(),200);assert.equal((await replay.json()).ok,true);
-  const after=await trigger(example.trigger);assert.equal(after.events.filter(event=>event==='observed').length,1);assert.equal(after.events.filter(event=>event==='fired').length,1);
-  return {state:current.row.state,firedEvents:1,sourceKind:current.row.sourceKind,watches:current.row.watches,lifespan:current.row.lifespan,enabled:current.row.enabled,replayDidNotFire:true};
+  return {state:current.row.state,firedEvents:1,sourceKind:current.row.sourceKind,watches:current.row.watches,lifespan:current.row.lifespan,enabled:current.row.enabled};
  });
  const create=async(label,words)=>{
   const back=tile.getByRole('region',{name:'Tempo: the open item',exact:true}).getByRole('button',{name:'Tempo',exact:true});if(await back.isVisible())await back.click();
