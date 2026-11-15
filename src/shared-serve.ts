@@ -20,7 +20,13 @@ export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { 
     const pending = measureResponse(meter, request, response, () => { void listener(request, response); });
     void pending?.catch(() => { if (!response.headersSent) response.writeHead(503); response.end(); });
   });
-  server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  server.on('connection', socket => {
+    sockets.add(socket);
+    // HTTP gives up its raw error handler on upgrade; a denied handshake can
+    // still receive a peer reset before close completes. Keep the owner here.
+    socket.on('error', () => socket.destroy());
+    socket.once('close', () => sockets.delete(socket));
+  });
   let detach: (() => void) | undefined;
   let closing: Promise<void> | undefined;
   const close = () => {
