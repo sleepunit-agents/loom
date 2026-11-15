@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import {accountEvidenceError} from './account-evidence-errors.js';
+import {accountEvidenceError} from '../../scripts/rebuild-account-evidence-errors.mjs';
 const key='Fictional/private+key==';
-it.each([key,encodeURIComponent(key),key.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')])('redacts the copied key from protocol and cleanup errors: %s',form=>{const error=accountEvidenceError(Error('Protocol or cleanup failed: '+form+' /login/fake-link'),key);expect(error.message).not.toContain(form);expect(error.message).not.toContain('/login/fake-link');expect(error.message).toContain('[virtual key redacted]');expect(error.message).toContain('Protocol or cleanup failed');});
-it('retains useful errors before a key exists while still hiding a login link',()=>{expect(accountEvidenceError(Error('Early failure /login/fake-link'),'').message).toBe('Error: Early failure /login/[redacted]');});
+it.each([key,encodeURIComponent(key),'Fictional_private-key',key.slice(0,12),'Fictional/\nprivate+key=='])('withholds arbitrary protocol and cleanup diagnostics after key capture: %s',form=>{const error=accountEvidenceError(Error('Failure '+form+' /login/fake-link'),key);expect(error.message).toBe('Passkey browser evidence failed after virtual credential capture');expect(error.message).not.toContain(form);});
+it('retains useful errors before key capture while hiding a login link',()=>{expect(accountEvidenceError(Error('Early failure /login/fake-link'),'').message).toBe('Error: Early failure /login/[redacted]');});
