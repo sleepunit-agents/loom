@@ -88,9 +88,9 @@ it.each(['allow','stop'] as const)('uses the default native private pipe and rea
  });
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}})),errors=vi.fn();
  const running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>bytes,env:{ACCOUNT_PROFILE:'/account'},signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},error:errors});
- await waiting;expect(f.source).not.toHaveBeenCalled();
+ expect(await Promise.race([waiting.then(()=>true),running.then(()=>false)])).toBe(true);expect(f.source).not.toHaveBeenCalled();
  if(decision==='allow'){
-  let published!:()=>void;const waitingStatus=new Promise<void>(resolve=>{published=resolve;}),unobserve=f.root.writes.observe(()=>{if(f.db.select().from(s.agentStatus).get()?.state==='waiting')published();});tick();await waitingStatus;unobserve();
+  let published!:()=>void;const waitingStatus=new Promise<void>(resolve=>{published=resolve;}),unobserve=f.root.writes.observe(()=>{if(f.db.select().from(s.agentStatus).get()?.state==='waiting')published();});tick();await waitingStatus;unobserve();expect(f.db.select().from(s.threads).get()?.working).toBe(true);
   const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'alice',true));f.clock.advance(1000);
  }else{f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));tick();}
  expect(await running).toBe(0);await actorDone;if(failure)throw failure;expect(errors).not.toHaveBeenCalled();expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
