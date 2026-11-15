@@ -1,4 +1,5 @@
 /** Tempo authority at the outside door. Services themselves remain trusted. */
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { and, eq, getTableColumns } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -20,13 +21,14 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
   const recipient = (kind: 'person' | 'agent', id: string) => kind === 'agent' ? ownsAgent(id) :
     !!db.select().from(members).where(eq(members.id, id)).get() && (owner || viewer.kind === 'member' && viewer.id === id);
   const sharedProject = (id: string) => !!db.select().from(projects).where(and(eq(projects.id, id), taskVisibility(viewer).projects!(getTableColumns(projects)))).get();
+  const visibleItem = (id:string) => conversationQuestionPolicy(db).sourceAllowsItem(viewer,id);
   const sourceAllowed = (kind: string, watch: string | null | undefined) => {
-    if (kind === 'time' || owner) return true;
+    if (kind === 'time' || owner && !(kind==='answer' && watch?.startsWith('question:'))) return true;
     if (!watch) return false;
     const colon = watch.indexOf(':'), prefix = watch.slice(0, colon), id = watch.slice(colon + 1);
     if (kind === 'answer' && prefix === 'question') {
       const row = db.select().from(inbox).where(eq(inbox.id, id)).get();
-      return !!row && recipient(row.toKind, row.to);
+      return !!row && recipient(row.toKind, row.to) && visibleItem(id);
     }
     const row = kind === 'pull-request' && prefix === 'change' ? db.select().from(changes).where(eq(changes.id, id)).get()
       : kind === 'job' && prefix === 'job' ? db.select().from(jobs).where(eq(jobs.id, id)).get()
@@ -37,7 +39,7 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
     return 'project' in row && !!row.project && sharedProject(row.project) || !!row.agent && ownsAgent(row.agent);
   };
   switch (access.action) {
-    case 'volume': return recipient(access.item.toKind, access.item.to);
+    case 'volume': return recipient(access.item.toKind, access.item.to) && visibleItem(access.item.id);
     case 'settings': return recipient(access.who.kind, access.who.id) ||
       (viewer.kind === 'agent' && access.who.kind === 'person' && !!db.select().from(memberAgents)
         .where(and(eq(memberAgents.agent, viewer.id), eq(memberAgents.member, access.who.id))).get());

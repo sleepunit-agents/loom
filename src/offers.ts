@@ -111,7 +111,7 @@ export const RUNTIME_VENUE = 'relay';
  * (src/transport/mcp-app-hello.ts) are named that way.
  */
 /** Retired core names cannot be reintroduced by a piece's tool offer. */
-export const isRetiredMcpTool = (name: string): boolean => name === 'comms_title' || name === 'comms_thread';
+export const isRetiredMcpTool = (name: string): boolean => ['comms_title','comms_thread','conversation_digest','conversations','conversation','conversation_findings'].includes(name);
 export const isCoreMcpTool = (name: string): boolean => (TOOLS as readonly string[]).includes(name) || isRetiredMcpTool(name) || name.startsWith('loom_');
 
 /**

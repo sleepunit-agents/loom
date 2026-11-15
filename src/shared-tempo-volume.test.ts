@@ -14,7 +14,7 @@ function fixture(tempo?:SharedTempoOptions){
  db.insert(members).values(['owner','sam','other'].map(id=>({id,role:id==='owner'?'owner' as const:'member' as const,joinedAt:now()}))).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(boxes).values({id:'box',name:'Box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
- db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'sam',agent:'art'}]).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();db.insert(projectMembers).values([{project:'pond',member:'sam'},{project:'pond',member:'other'}]).run();db.insert(projectAgents).values({project:'pond',agent:'art'}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,reportError(error){throw error;}});
  const source=root.services.conversations.open({agent:'art',venue:'loom',place:'chat',label:'Sam chat',member:'sam',project:'pond'});

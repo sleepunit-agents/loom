@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, memberAgents, agents, boxes, jobs, conversations, tokens, approvals, approvalRecord, inbox, projects } from './core/data/schema.js';
+import { members, memberAgents, agents, boxes, jobs, conversations, tokens, approvals, approvalRecord, inbox, projects, projectMembers, projectAgents } from './core/data/schema.js';
 import { dataAuthentication } from './core/data/authentication.js';
 import { Operations } from './core/operations/index.js';
 import { sharedRoot } from './shared-root.js';
@@ -18,9 +18,10 @@ function fixture(){
  db.insert(boxes).values({id:'box',name:'Box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();
  db.insert(memberAgents).values({member:'owner',agent:'art'}).run();
+ db.insert(projectMembers).values({project:'pond',member:'owner'}).run();db.insert(projectAgents).values({project:'pond',agent:'art'}).run();
  const errors:unknown[]=[];const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:e=>errors.push(e)});
  const conversation=root.services.conversations.open({agent:'art',venue:'loom',place:'chat',member:'owner',project:'pond',label:'Tempo settings'});
- db.insert(jobs).values({id:'body',box:'box',agent:'art',conversation:conversation.id,member:'owner',title:'Chat',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+ db.insert(jobs).values({id:'body',box:'box',agent:'art',conversation:conversation.id,member:'owner',project:'pond',title:'Chat',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  db.update(conversations).set({job:'body'}).where(eq(conversations.id,conversation.id)).run();
  db.insert(tokens).values([{fingerprint:hash(body),label:'Body',kind:'agent',agent:'art',job:'body',createdAt:now()},
   {fingerprint:hash(unbound),label:'Agent',kind:'agent',agent:'art',createdAt:now()},
@@ -80,6 +81,7 @@ it('withdraws captured authentication if the token is rebound to a different bod
 
 it('keeps concurrent async body requests in their own authenticated conversations',async()=>{
  const f=fixture(),now=()=>new Date(f.clock.now()).toISOString();
+ f.db.insert(memberAgents).values({member:'other',agent:'art'}).run();
  const second=f.root.services.conversations.open({agent:'art',venue:'loom',place:'second-chat',member:'other',label:'Second chat'});
  f.db.insert(jobs).values({id:'body2',box:'box',agent:'art',conversation:second.id,member:'other',title:'Second',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  f.db.update(conversations).set({job:'body2'}).where(eq(conversations.id,second.id)).run();

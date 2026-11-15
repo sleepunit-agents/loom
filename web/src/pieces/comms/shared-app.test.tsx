@@ -1,3 +1,5 @@
+// Companion presentation is covered separately; these fixtures model Comms data only.
+vi.mock('../attention/comms-companion', () => ({ default: () => null }));
 import { afterEach, expect, it, vi } from 'vitest';
 import { Children, createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer has no declarations.

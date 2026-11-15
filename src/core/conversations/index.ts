@@ -19,6 +19,9 @@ export type DigestInput = {
   question?: Question;
 };
 
+/** These live phases follow the running acknowledgement; queued/starting do not. */
+export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => state === 'running' || state === 'waiting';
+
 /** All multi-row changes commit together, including source deduplication and
  * the question/answer round trip. now is injected for fake-clock execution. */
 export class Conversations {
@@ -83,7 +86,7 @@ export class Conversations {
   pending(conversationId: string, jobId: string): Item[] {
     const conversation = this.conversation(conversationId);
     const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
-    if (conversation.job !== jobId || job?.conversation !== conversationId || job.agent !== conversation.agent || job.state !== 'running') throw new Error('Job is not running in this conversation');
+    if (conversation.job !== jobId || job?.conversation !== conversationId || job.agent !== conversation.agent || !liveConversationJob(job.state)) throw new Error('Job is not running in this conversation');
     return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
       or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
   }
