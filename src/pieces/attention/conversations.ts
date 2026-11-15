@@ -1,5 +1,5 @@
 import { statement } from '../../core/db/index.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 /** Desk metadata only. Delivered words are rejected before retry storage or SQL. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';

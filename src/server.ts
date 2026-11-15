@@ -10,7 +10,6 @@ import { IDENTITY_SECTIONS } from './identity/sections.js';
  * no chat clients. Just the tools that carry a persistent persona across
  * any MCP-compatible runtime.
  */
-import { nudge } from './collections/pull.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
@@ -73,16 +72,9 @@ import {
   projectOrphansText,
 } from './tools/project.js';
 import { knowledgeFreshness } from './tools/knowledge-list.js';
-import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
-import { conversationsList, conversationView, homeFor, type ConversationSelection } from './conversations.js';
+import { homeFor, type ConversationSelection } from './conversations.js';
 import { houseConversation } from './household-store.js';
-import { threadOfAgentConversation } from './comms.js';
 import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
-
-/** The agent a context dir is: its household name, else its directory's name. */
-function agentOfDir(contextDir: string, selection?: ConversationSelection): string {
-  return (selection === undefined ? householdOf(contextDir)?.agent : selection?.agent) ?? (contextDir.replace(/\/+$/, '').split('/').pop() || 'agent');
-}
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -91,7 +83,7 @@ export interface LoomServerConfig {
   memorySelection?: MemorySelection;
   /** Explicit People/Owners metadata; null disables legacy household discovery for these readers. */
   peopleSelection?: PeopleSelection;
-  /** Explicit conversation readers use generic core renders; offline houses/services have no runtime binding. */
+  /** Conversation-derived Memory context; explicit offline houses/services have no runtime binding. */
   conversationSelection?: ConversationSelection;
   /** Explicit commons selection; null uses the local knowledge store, omitted keeps legacy discovery. */
   knowledgeSelection?: KnowledgeSelection;
@@ -162,18 +154,6 @@ export function bodyHouseConversation(contextDir: string, caller: LoomServerConf
   return held && held.agent === self ? held.conversation : null;
 }
 
-/**
- * Why a session from `caller`'s house may not write for `conversation` (a digest, a Comms title), or null when it may
- * (t-2061): no house (loom's machine, an owner's session), as before; any house, only the conversation the runtime said
- * it holds, and nothing at all when it said none (fail closed), a service's too (t-2118).
- */
-export function houseWriteProblem(contextDir: string, caller: LoomServerConfig['caller'], conversation: string | undefined, selection?: ConversationSelection): string | null {
-  const held = bodyHouseConversation(contextDir, caller, selection);
-  if (held === undefined) return null;
-  if (held === null) return `${caller?.house ?? `the ${caller?.service} service`} holds no conversation the runtime named, so it writes for none`;
-  return held === conversation ? null : `${caller?.house} holds ${held}: it writes for that conversation only`;
-}
-
 // ─── Server Factory ───────────────────────────────────────────────────────────
 
 export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
@@ -193,8 +173,6 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
 
   // ─── Identity ───────────────────────────────────────────────────────────────
 
-  /** The conversation and run this session's body was given at identity (conversation_digest writes there). */
-  let here: { conversation: string; run: string } | undefined;
 
   server.registerTool(
     'identity',
@@ -231,18 +209,11 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'Return only this identity section: ' + IDENTITY_SECTIONS.map(section => section.name).join(', ') + '; "all" returns full output. Missing content is omitted. Omit for core + index.',
         ),
         pieces: z.array(z.string()).optional().describe('Return only these identity pieces. Combined with piece when both are given.'),
-        conversation: z.string().max(64).optional().describe(
-          'The conversation this body is in (cv-…), as the runtime or harness that started it says. ' +
-          'With run, it is where conversation_digest writes.',
-        ),
-        run: z.string().max(128).optional().describe('This body run\'s id, as the runtime or harness that started it says.'),
+
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role, people, piece, pieces, conversation, run }) => {
-      // The body's conversation and run (docs/specs/conversations.md): kept for this session's
-      // conversation_digest. Both or neither; a later identity call replaces them.
-      if (conversation !== undefined || run !== undefined) here = { conversation: conversation ?? '', run: run ?? '' };
+    async ({ project, client, model, role, people, piece, pieces }) => {
       // Precedence: explicit param > data-driven manifest resolution > the
       // static code-map seed fallback > LOOM_CLIENT (inside loadIdentity).
       const peer = server.server.getClientVersion()?.name;
@@ -1508,64 +1479,6 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async () => ({ content: [{ type: 'text' as const, text: await projectOrphansText(contextDir, config.memorySelection) }] }),
   );
 
-  // ─── Conversations (docs/specs/conversations.md) ──────────────────────────────
-
-  const convText = (f: () => unknown) => {
-    try {
-      return { content: [{ type: 'text' as const, text: JSON.stringify(f(), null, 2) }] };
-    } catch (e) {
-      if (e instanceof ConversationError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
-      throw e;
-    }
-  };
-  const isoTime = z.string().max(40).refine((v) => !Number.isNaN(Date.parse(v)), 'an ISO-8601 time');
-
-  server.registerTool(
-    'conversation_digest',
-    {
-      description:
-      'Write this body run\'s digest of its conversation: what was asked, decided and done, and whether the owner ' +
-      'is needed. For the conversation and run given to identity (rejected without them); a second write in the ' +
-      'same run replaces it. Quote a line only when its words carry the meaning: never a transcript. The test for ' +
-      'anything written about a person: would they be fine reading it? A body in a conversation writes this instead of an episode.',
-      inputSchema: z.object({
-        summary: z.string().max(600).describe('What happened, at most 600 characters.'),
-        asks: z.array(z.string().max(200)).max(8).optional().describe('What was asked of the agent.'),
-        decisions: z.array(z.string().max(200)).max(8).optional().describe('What was decided.'),
-        tasks: z.array(z.string().max(64)).max(16).optional().describe('Task refs made or moved (t-…).'),
-        projects: z.array(z.string().max(80)).max(4).optional().describe('Project names (slugs or aliases); omitted: the project whose links.venues names this conversation\'s place, if exactly one does.'),
-        needs_owner: z.union([z.string().max(200), z.object({
-          ask: z.string().max(140).describe('The one question or request the owner answers, in plain words, as you\'d ask a person who doesn\'t know your lanes: no ids (a-…, t-…, cv-…, h-…, repo#N), no "round N", no lane words (nudge-watch, chain-check, local-wake). At most 140 characters. Refused with why if it names any.'),
-          why: z.string().max(240).optional().describe('One plain line: why it needs them.'),
-          if_yes: z.string().max(140).optional().describe('What happens if they say yes (or do it), short.'),
-          if_no: z.string().max(140).optional().describe('What happens if they say no (or leave it), short.'),
-          answers: z.enum(['yes-no', 'words']).optional().describe('How they answer. "yes-no": their sheet shows Yes and No buttons, and you get "Yes, to: <ask>" (or "No, …") with your if_yes (or if_no) line, as their message in this conversation. "words": a reply box only, for an ask Yes and No can\'t answer ("Gabe or Mark?"). Left off, an ask with if_yes or if_no is "yes-no", so phrase it as a yes/no question, or say "words".'),
-          href: z.string().max(500).optional().describe('The exact thing to open, https:// (the pull request to merge): the sheet\'s first button.'),
-          refs: z.array(z.string().max(100)).max(8).optional().describe('The ids it\'s about: t-40, a-7693c00e, owner/repo#12, cv-…. They become links and details, never the headline.'),
-          waits_on: z.object({ approval: z.string().max(20).optional(), task: z.string().max(20).optional() }).optional().describe('What resolves it, one of {approval: "a-…"} (allowed, denied or gone) or {task: "t-…"} (closed): core checks and clears the ask, leaving an FYI. An approval shows its Allow and Deny right on the ask, so the owner never hunts for the card. No pull requests: loom can\'t read GitHub, so write needs_owner null in a later digest once it\'s merged.'),
-        }).strict()]).nullable().optional().describe('What you need the owner for, or null. It shows in their Inbox (and on Home), headlined by `ask`, where they can answer Yes or No (a yes/no ask), reply to you in words, mark it done or dismiss it, until a later digest has none or what it waits on is resolved. Write it for them: what decision, why, what happens either way. Like {"ask": "OK to install rclone and restic on loom\'s machine to set up the Google Drive backup?", "why": "The nightly backup has no offsite copy yet.", "if_yes": "I install both and run the first backup tonight.", "if_no": "Backups stay on this machine only.", "refs": ["t-40", "a-7693c00e"], "waits_on": {"approval": "a-7693c00e"}}. A plain one-line string is still taken as the ask alone.'),
-        needs_owner_href: z.string().max(500).nullable().optional().describe('The older name for needs_owner.href: the exact thing to open, as an https:// URL. Give it once, either way.'),
-      }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (input) => convText(() => {
-      // From a body's house, only the conversation that house holds (t-2061): inside one house every body could read
-      // another's ids, so the conversation it names at identity proves nothing by itself.
-      const notHeld = houseWriteProblem(contextDir, config.caller, here?.conversation, config.conversationSelection);
-      if (notHeld) throw new ConversationError(notHeld, 403);
-      // A Comms thread's own project is the fallback for a digest that names none (comms.md, "Project").
-      const home = config.conversationSelection === undefined && here ? homeFor(contextDir) : undefined;
-      const self = config.conversationSelection === undefined ? householdOf(contextDir)?.agent : undefined;
-      const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
-      const d = writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project, config.memorySelection);
-      // An ask raised or cleared is what needs its owner moving (t-2025): the HTTP listeners pull it now, not on their
-      // next round (a nudge names only the domain, through the household's live data).
-      const h = config.conversationSelection === undefined ? homeFor(contextDir) : undefined;
-      if (h) nudge(h, 'loom/attention');
-      return d;
-    }),
-  );
-
   server.registerTool(
     'describe_self',
     {
@@ -1591,64 +1504,6 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       setAboutAsk(mine.household, mine.agent, null);
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, description: t }) }] };
     },
-  );
-
-  server.registerTool(
-    'conversations',
-    {
-      description:
-      'This agent\'s conversations, newest first (at most 100): venue, place, label, people, agents, projects, ' +
-      'started, last, turn count, the newest digest\'s summary and any open needs_owner. No text: conversations hold none.',
-      inputSchema: z.object({
-        people: z.string().max(80).optional().describe('Only conversations with this person (a slug).'),
-        project: z.string().max(80).optional().describe('Only conversations whose digests name this project (a slug or alias).'),
-        venue: z.string().max(32).optional().describe('Only this venue (slack, session, wake, …).'),
-        since: isoTime.optional().describe('Only conversations active after this time (their last turn is later).'),
-      }).strict(),
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    async ({ people, project, venue, since }) => convText(() => {
-      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project, config.memorySelection) } : {}) }, process.env, config.conversationSelection, config.memorySelection);
-      // From a house, only the conversation it holds (t-2118): a digest summarises its conversation's words, and a
-      // house (a sibling's, a guest's, a chat bridge's) never reads another's. None from a house the runtime named none for.
-      const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
-      return { conversations: held === undefined ? all : all.filter((c) => held !== null && c.id === held) };
-    }),
-  );
-
-  server.registerTool(
-    'conversation',
-    {
-      description:
-      'One of this agent\'s conversations: the record, its digests (newest first), the findings on it, and its ' +
-      'render (the venue\'s own when its piece is installed and offers one, else core\'s generic render).',
-      inputSchema: z.object({ id: z.string().max(64).describe('The conversation id, cv-….') }).strict(),
-      annotations: { readOnlyHint: true, openWorldHint: true },
-    },
-    async ({ id }) => {
-      // From a house, only the conversation it holds (t-2118), the same refusal as one that isn't there.
-      const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
-      if (held !== undefined && held !== id) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `no conversation ${id}` }, null, 2) }], isError: true };
-      const view = await conversationView(contextDir, agentOfDir(contextDir, config.conversationSelection), id, process.env, config.conversationSelection, config.memorySelection);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
-    },
-  );
-
-  server.registerTool(
-    'conversation_findings',
-    {
-      description:
-      'Graders\' findings on this agent\'s own turns, newest first: one line per conversation per UTC day at most, ' +
-      'from a grader that saw only redacted text. For introspection: what to learn from. Empty until the household\'s review has run.',
-      inputSchema: z.object({ since: isoTime.optional().describe('Only findings after this time.') }).strict(),
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    async ({ since }) => convText(() => {
-      // From a house, the findings on the conversation it holds only (t-2118); none from a house it named none for.
-      const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
-      if (held === null) return { findings: [] };
-      return { findings: findingsOf(contextDir, { ...(since ? { since } : {}), ...(held ? { conversation: held } : {}) }, config.memorySelection) };
-    }),
   );
 
   // MCP-App render probe — env-gated, throwaway. Not part of the tool surface
