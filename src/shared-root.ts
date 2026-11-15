@@ -1,5 +1,4 @@
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
-import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
@@ -192,7 +191,6 @@ export function sharedRoot(options: {
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
-  registerTempoSettingsAnswer(operations, db, services.approvals);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
