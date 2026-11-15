@@ -6,6 +6,7 @@ export async function approvalActions({page,tile,app,example,out}){
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{await run();await page.screenshot({path:join(out,screenshot),fullPage:true});evidence[name]={ok:true,screenshot};}catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});evidence[name]={ok:false,error:String(error),screenshot};}};
  const request=(name,extra={})=>write(()=>s.request({kind:'command',target:`example-worker:${name}`,what:`Fictitious ${name}`,why:'Measure a real approval answer.',agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',ask:`Allow fictitious ${name}?`,ifYes:'Fern performs this exact step.',ifNo:'Fern leaves it alone.',...extra}));
  const answer=async(card,button)=>{
+  const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();
   await tile.getByText(card.what,{exact:true}).first().click();
   const reader=tile.getByRole('region',{name:'Approvals: the open item',exact:true});
   await reader.getByText(card.target,{exact:false}).waitFor();
