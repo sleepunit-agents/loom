@@ -83,3 +83,17 @@ it.each(['merge','command'] as const)('keeps an explicit No for the exact %s tar
 it('does not carry an exact-head No into a genuinely new commit',async()=>{
  const f=await fixture();f.grant('ask');const first=await f.ask();expect((await f.call('answer',{id:first.id,answer:'deny'},'deny',f.owner)).status).toBe(200);f.grant('do');const next='b'.repeat(40);f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:next}).run());expect((await f.ask('new-head',{...request,target:change+'@'+next})).state).toBe('allowed');expect(f.root.services.approvals.get(first.id).state).toBe('denied');
 });
+it('keeps the exact-head owner answer across a fresh Changes read, while preserving GitHub blockers and requiring a new answer for a new head',async()=>{
+ const f=await fixture();const row=f.db.select().from(s.changes).get()!;
+ const rawChange={id:row.id,repo:row.repository,number:row.number,page:'',title:row.title,body:'',url:'',state:'open' as const,draft:false,author:{login:'art'},created:row.openedAt,updated:row.updatedAt,closed:null,head:{ref:'work',id:row.headCommit},base:{ref:'next'},checks:{state:'passing' as const,total:1,failing:[],running:[]},review:{state:'approved' as const,by:[]},mergeable:'yes' as const,conflicts:false,people:[]};
+ f.db.insert(s.agentAccounts).values({agent:'art',service:'github',login:'art'}).run();f.db.insert(s.projectRepositories).values({project:'pond',repository:row.repository}).run();
+ const asked=await f.ask();expect((await f.call('answer',{id:asked.id,answer:'allow'},'allow',f.owner)).status).toBe(200);
+ expect(f.root.services.changes.put(rawChange).waitingOn).toBe('agent');
+ f.clock.advance(31*60_000);expect(f.root.services.changes.put(rawChange).waitingOn).toBe('you');
+ f.db.update(s.approvals).set({state:'used',usedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.approvals.id,asked.id)).run();expect(f.root.services.changes.put(rawChange).waitingOn).toBe('agent');
+ f.db.update(s.approvals).set({state:'allowed',expiresAt:new Date(f.clock.now()+60000).toISOString()}).where(eq(s.approvals.id,asked.id)).run();
+ expect(f.root.services.changes.put({...rawChange,checks:{...rawChange.checks,state:'running'}}).waitingOn).toBe('ci');
+ expect(f.root.services.changes.put({...rawChange,head:{...rawChange.head,id:'b'.repeat(40)}}).waitingOn).toBe('you');
+ f.root.services.changes.put(rawChange);expect((await f.call('answer',{id:asked.id,answer:'deny'},'deny',f.owner)).status).toBe(200);
+ f.grant('do');expect(f.root.services.changes.put(rawChange).waitingOn).toBe('you');
+});

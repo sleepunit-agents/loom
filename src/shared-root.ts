@@ -89,7 +89,7 @@ export function sharedRoot(options: {
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {rule:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
+  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
   workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
