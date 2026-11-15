@@ -54,9 +54,10 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  const query='{ memoryKnowledge { pages { slug title fresh } } memoryPerson(id:"fiction:friend") { name } memoryProject(id:"fiction:pond") { name } memoryActivity { entries { title } } }';
  const read=async()=>{const response=await request('/graphql',{query},headers);expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  expect(await read()).toMatchObject({memoryKnowledge:{pages:[]},memoryPerson:null,memoryProject:null,memoryActivity:{entries:[]}});
- const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:app.url,'user-agent':'Mozilla/5.0 HeadlessChrome/140.0'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
- expect((await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
- const first=await waitMessage(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}}})));
+ const open=async()=>{const socket=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:app.url,'user-agent':'Mozilla/5.0 HeadlessChrome/140.0'}});cleanup.push(()=>socket.terminate());await once(socket,'open');expect((await waitMessage(socket,()=>socket.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');return socket;};
+ let ws=await open();
+ const observe=()=>waitMessage(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}}})));
+ const first=await observe();
  expect(first.payload.data.observe.patches[0].value).toEqual(await read());
  const added=await waitMessage(ws,async()=>{const command=memoryCall('mind.knowledgeAdd',{title:'Fictional pump',domain:'fiction',body:'Fictional pump words',source:''},(path,init)=>fetch(app.url+path,{...init,headers:{...init.headers,cookie,origin:app.url}}));expect((await command.result).ok).toBe(true);});
  expect(JSON.stringify(added)).toContain('Fictional pump');
@@ -68,6 +69,8 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  const project=await waitMessage(ws,()=>projects.write({slug:'pond',name:'Private fictional pond'}));expect(JSON.stringify(project)).toContain('Private fictional pond');
  const activity=await waitMessage(ws,()=>app.writes.run(()=>app.services.conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'})));expect(JSON.stringify(activity)).toContain('Private fictional session');
  expect(await read()).toMatchObject({memoryKnowledge:{pages:[{title:'Fictional pump'}]},memoryPerson:{name:'Private fictional friend'},memoryProject:{name:'Private fictional pond'},memoryActivity:{entries:[{title:'Private fictional session'}]}});
+ const disconnected=once(ws,'close');ws.close(1000,'Reload');await disconnected;ws=await open();
+ const reconnected=await observe();expect(reconnected.payload.data.observe).toMatchObject({revision:1,patches:[{path:[],value:await read()}]});
  const demoted=await waitMessage(ws,()=>app.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run()));expect(JSON.stringify(demoted)).not.toContain('Private fictional');
  expect(await read()).toEqual({memoryKnowledge:null,memoryPerson:null,memoryProject:null,memoryActivity:null});
  await waitMessage(ws,()=>app.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run()));
