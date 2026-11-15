@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createMeasuring, DEFAULT_MEASURING, type TimingDay } from '../../core/measuring/index.js';
 import { createFoundation } from '../../core/app.js';
 import { FakeClock } from '../../core/clock.js';
 import { migrateHouseholdTables } from '../../core/household/schema.js';
@@ -14,7 +15,7 @@ import { replaceChanges } from './store.js';
 
 const closes:(()=>void)[]=[],homes:string[]=[];
 afterEach(()=>{for(const close of closes.splice(0).reverse())close();for(const h of homes.splice(0))rmSync(h,{recursive:true,force:true});});
-function setup(staging=false, request:typeof fetch=vi.fn() as unknown as typeof fetch) {
+function setup(staging=false, request:typeof fetch=vi.fn() as unknown as typeof fetch, measure?: <T>(work:()=>Promise<T>)=>Promise<T>) {
  const home=mkdtempSync(join(tmpdir(),'changes-daemon-'));homes.push(home);
  const clock=new FakeClock(),app=createFoundation({home,clock});closes.push(app.close);
  migrateHouseholdTables(app.db);
@@ -23,7 +24,7 @@ function setup(staging=false, request:typeof fetch=vi.fn() as unknown as typeof 
  const project={slug:'pond',name:'Pond',repositories:['acme/app'],members:[],agents:['art']};
  app.db.transaction(()=>store.create(project))();
  const secrets={resolveGitHub:vi.fn(async()=>'github-acme'),withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('fake-test-token')};
- const job=installChangesDaemon(app,{home,clock,sharing:()=>store.sharing(),attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}),secrets,staging,request});closes.push(job.close);
+ const job=installChangesDaemon(app,{home,clock,sharing:()=>store.sharing(),attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}),secrets,staging,request,measure});closes.push(job.close);
  return {app,clock,store,job,secrets,home};
 }
 it('reads destination household projects dynamically and holds all credential and forge access in staging',async()=>{
@@ -89,4 +90,13 @@ it('commits with the installed service even after the original household owner i
  await job.run();
  expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeDefined();
  expect(app.db.prepare('SELECT due FROM changes_jobs').get()).toEqual({due:clock.now()+180000});
+});
+
+it('records a background GitHub read through the installed daemon boundary', async()=>{
+ const rows:TimingDay[]=[];
+ const meter=await createMeasuring({...DEFAULT_MEASURING,on:true},[{kind:'job',name:'changes.read'}],{add:row=>{rows.push(row);},prune(){}});
+ const request=vi.fn(async()=>Response.json({data:{repository:{pullRequests:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}})) as unknown as typeof fetch;
+ const {job}=setup(false,request,work=>meter.runAsync('job','changes.read',work));
+ try {await job.run();expect(request).toHaveBeenCalledTimes(2);expect(rows).toEqual([expect.objectContaining({kind:'job',name:'changes.read',count:1})]);}
+ finally {job.close();await meter.close();}
 });

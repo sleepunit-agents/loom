@@ -1,3 +1,4 @@
+import { settledNotices } from './core/tempo/notices.js';
 import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
 import { SecretStartup } from './pieces/secrets/shared-startup.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
@@ -6,6 +7,7 @@ import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
+
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -30,10 +32,11 @@ import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
-import { settledNotices } from './core/tempo/notices.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { registerSharedRuntime } from './shared-runtime.js';
+import { installMeasuring } from './core/measuring/install.js';
+import { measuringSettingsProposals } from './core/measuring/proposal.js';
 import { registerSharedAccountReports } from './shared-account-reports.js';
 
 class BodyTooLarge extends Error {}
@@ -64,9 +67,21 @@ export function sharedRoot(options: {
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   const notices = settledNotices(db, () => data.changed());
+  let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
+  let measuringReady: ReturnType<typeof installMeasuring>;
+  const stops: (() => void)[] = [];
+  const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
+  const measuringProposal = measuringSettingsProposals(db);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation]);
+  approvedOperations.set(measuringProposal.operation[0], card => {
+    measuringProposal.operation[1](card);
+    // Synchronous outer writes have committed or rolled back before this runs.
+    queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady.then(value => value.refresh())).catch(report); });
+  });
   const credentials = sharedCredentials(db, clock, () => !closing);
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...notices.fields, ...options.fields }, () => !closing, credentials.authenticate);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...notices.fields, ...options.fields }, () => !closing, credentials.authenticate, work => meter?.enabled()
+    ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
@@ -82,7 +97,12 @@ export function sharedRoot(options: {
       options.runtimeJobEnded?.(id);
     } catch (error) { options.reportError(error); }
   };
-  const runtime = createRuntime(db, clock, { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  const jobClock = (name: 'runtime.tick' | 'tempo.tick' | 'conversations.expire'): Clock => ({
+    now: () => clock.now(), at: (time, work) => clock.at(time, () => {
+      if (meter?.enabled()) meter.run('job', name, work); else work();
+    }),
+  });
+  const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
 
   const requests = new SecretRequests(db, now);
@@ -104,7 +124,7 @@ export function sharedRoot(options: {
     if(closing || !values)return Promise.resolve();
     if(secretRecovery)return secretRecovery;
     cancelSecretRecovery?.();
-    secretRecovery=values.reconcilePending().catch(()=>{}).finally(()=>{
+    secretRecovery=(meter?.enabled() ? meter.runAsync('job','secrets.reconcile',()=>values.reconcilePending()) : values.reconcilePending()).catch(()=>{}).finally(()=>{
       secretRecovery=undefined;
       if(!closing)cancelSecretRecovery=clock.at(clock.now()+60_000,recoverSecrets);
     });
@@ -115,7 +135,7 @@ export function sharedRoot(options: {
   const services = {
     bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
-    approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
+    approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
     runtime,
@@ -123,14 +143,17 @@ export function sharedRoot(options: {
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
-  const commsLifetime = comms ? conversationLifetime(db, clock, comms.service, data.writes, options.reportError) : undefined;
+  const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
-  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
+  try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
   catch (error) { notices.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
+    onClose(stop) { if (closing) stop(); else stops.push(stop); },
+  }, db).then(value => { meter = value; return value; });
   const authenticate = credentials.authenticate;
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -154,7 +177,11 @@ export function sharedRoot(options: {
     let finished!: () => void;
     const entry = { abort, done: new Promise<void>(resolve => { finished = resolve; }) };
     active.add(entry); c.set('shutdown', abort);
-    try { await next(); } finally { active.delete(entry); finished(); }
+    try {
+      if (!meter) await measuringReady;
+      if (closing) return c.json(failure('unavailable', 'Loom is closing'), 503);
+      await next();
+    } finally { active.delete(entry); finished(); }
   });
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
@@ -181,6 +208,8 @@ export function sharedRoot(options: {
   });
   runtime.start();
   return {
+    measuring: measuringReady,
+    ready: measuringReady.then(() => undefined),
     http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
@@ -199,9 +228,11 @@ export function sharedRoot(options: {
       cancelSecretRecovery?.(); values?.close(); startup?.close();
       const deliveryStopped = delivery?.close();
       const stopped = data.close();
+      for (const stop of stops.splice(0).reverse()) stop();
+      const measured = measuringReady.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, deliveryStopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();

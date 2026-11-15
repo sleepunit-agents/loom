@@ -1,3 +1,6 @@
+import { measureResponse } from './core/measuring/response.js';
+import { measuringHttp } from './core/measuring/http.js';
+import { installMeasuring } from './core/measuring/install.js';
 import { nextData } from './next-data.js';
 import type { Viewer } from './core/index.js';
 import {installMemorySignals} from './transport/memory-signals.js';
@@ -129,18 +132,20 @@ const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const notificationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
+const measuringSignals = new WeakMap<Foundation, () => void>();
+const measuring = new WeakMap<Foundation, Awaited<ReturnType<typeof installMeasuring>>>();
 export async function closeNext(app: Foundation) {
-  try {await secretWorkerClosers.get(app)?.();}
-  finally {
-    try { await notificationClosers.get(app)?.(); await secretMutationClosers.get(app)?.(); }
-    finally {
-      try { await bridgeDaemons.get(app)?.close(); }
-      finally {
-        try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); }
-        finally { await runtimeClosers.get(app)?.(); }
-      }
-    }
+  const failures: unknown[] = [];
+  for (const close of [
+    () => measuring.get(app)?.close(),
+    secretWorkerClosers.get(app), notificationClosers.get(app), secretMutationClosers.get(app),
+    () => bridgeDaemons.get(app)?.close(),
+    async () => { try { await secretAuthorities.get(app)?.close(); } finally { secretAuthorities.delete(app); } },
+    runtimeClosers.get(app),
+  ]) {
+    try { await close?.(); } catch (error) { failures.push(error); }
   }
+  if (failures.length) throw failures[0];
 }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
@@ -232,7 +237,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
       ? installedSecretUse(app.operations, credentials.source, app.live, 'changes')
       : {async withValue() { throw new Error('GitHub credential unavailable'); }}, credentials?.github ?? {});
     installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
-      staging: options.staging, interval: credentials?.interval, request: credentials?.request});
+      staging: options.staging, interval: credentials?.interval, request: credentials?.request, measure: work => { const meter = measuring.get(app); return meter ? meter.runAsync('job', 'changes.read', work) : work(); }});
   }
   const inventory = mindSources(app.db, options.home);
   const sharedMemory = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
@@ -362,6 +367,11 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const workers=await startSecretWorkers(app,sharing,effects,options.secretWorkers);
     secretWorkerClosers.set(app,workers.close);
   }
+  // No schema creation or migration here: only the approved shared home has
+  // Measuring tables. The separate move owns existing homes.
+  if (!measuring.has(app) && app.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='measuring_settings'").get()) {
+    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, sharedMemory));
+  }
   return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
@@ -394,8 +404,13 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // The generated door uses the SAME connection and fresh shared credentials.
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+    const measuringApi = measuringHttp(app, sharedData);
     const memory=memoryQueries.get(app);
-    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields);
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields, undefined, undefined, work => {
+      const meter = measuring.get(app);
+      return meter?.enabled() ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work();
+    });
+    measuringSignals.set(app, () => data!.timingsChanged());
     memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
     // Legacy operation commits include private source touches until shared
     // command composition takes over their committed-write signal.
@@ -458,11 +473,18 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     if (!hosts.length) throw new Error('next mode needs a bind host');
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
+        const dispatch = () => {
         if (!sameOrigin(req)) { res.writeHead(403); res.end(); return; }
         // The ephemeral credential endpoint authenticates a bearer itself. Generic
         // operation routing cannot mint a link, even with encoded path parameters.
+        let parts: string[];
+        try { parts = new URL(req.url ?? '/', 'http://localhost').pathname.split('/').map(decodeURIComponent); }
+        catch { res.writeHead(400); res.end(); return; }
+        if (parts[1] === 'api' && parts[2] === 'measuring') return measuringApi(req, res);
         if (req.url?.startsWith('/api/') && req.url.split('?')[0] !== '/api/signin/link') return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
+        };
+        void measureResponse(measuring.get(app), req, res, dispatch)?.catch(() => { if (!res.headersSent) res.writeHead(503); res.end(); });
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
       servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), data.attach(http));

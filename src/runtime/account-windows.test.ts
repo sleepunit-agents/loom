@@ -107,3 +107,14 @@ it('an identical successful refresh supersedes an older changed response', async
   expect(readAccountWindows(db, 'shared')[0]?.usage).toBe(0.2);
   expect(currentAccountCapacity(db, 'shared', now).hasRoom).toBe(true);
 });
+it('stores valid provider offset timestamps as the same UTC instants', () => {
+  const db = fixture();
+  expect(recordAccountWindows(db, identity, [{ ...window, readAt: '2026-11-14T22:00:00+02:00', resetsAt: '2026-11-15T00:00:00+03:00' }], now)).toBe(true);
+  expect(readAccountWindows(db, 'shared')).toEqual([{ ...window, reserve: 0.05 }]);
+  expect(db.select().from(modelAccounts).get()).toMatchObject({ usageReadAt: now, resetsAt: window.resetsAt });
+});
+it('does not freshen an older offset observation while normalizing storage', () => {
+  const db = fixture(); recordAccountWindows(db, identity, [window], now);
+  expect(recordAccountWindows(db, identity, [{ ...window, usage: 0.9, readAt: '2026-11-14T22:59:00+03:00' }], now)).toBe(false);
+  expect(readAccountWindows(db, 'shared')).toEqual([{ ...window, reserve: 0.05 }]);
+});

@@ -8,7 +8,7 @@ import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
 import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 import { readDeadline } from './read-lease.js';
-import { DataLive } from './live.js';
+import { DataLive, type MeasureRead } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
 
 /** Standard graphql-transport-ws on /graphql. Authentication belongs to the
@@ -17,6 +17,7 @@ import { dataSubscriptions } from './subscriptions.js';
  */
 export function dataSocket(options: {
   live: DataLive;
+  measure?: MeasureRead;
   clock: Clock;
   authenticate(request: IncomingMessage): Authentication | undefined;
   schema(viewer: Viewer): GraphQLSchema;
@@ -57,7 +58,10 @@ export function dataSocket(options: {
       return Object.freeze({ viewer: auth.viewer });
     },
     validate: (...args) => run(() => validate(...args)),
-    execute: (args: ExecutionArgs) => run(() => { options.live.captureRead(args.contextValue); return execute(executionArguments(args)); }),
+    execute: (args: ExecutionArgs) => run(() => {
+      options.live.captureRead(args.contextValue);
+      return options.measure ? options.measure(() => execute(executionArguments(args))) : execute(executionArguments(args));
+    }),
     subscribe: (args: ExecutionArgs) => run(async (): Promise<ExecutionResult | AsyncIterable<ExecutionResult>> => {
       const result = await subscribe(executionArguments(args));
       if (stopping && Symbol.asyncIterator in result) {

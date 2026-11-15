@@ -4,13 +4,13 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
+import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays } from './core/data/schema.js';
 import type { SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const credential='tempo-owner-credential-'.repeat(3), hash=(s:string)=>createHash('sha256').update(s).digest('hex');
-function fixture(tempo?: SharedTempoOptions,fields?:Parameters<typeof sharedRoot>[0]['fields']){
+function fixture(tempo?: SharedTempoOptions, measuring=false, fields?:Parameters<typeof sharedRoot>[0]['fields']){
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()}]).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -18,6 +18,7 @@ function fixture(tempo?: SharedTempoOptions,fields?:Parameters<typeof sharedRoot
  db.insert(agentModels).values({agent:'art',model:'model',position:0}).run();
  db.insert(agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
  db.insert(tokens).values({fingerprint:hash(credential),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
+ if(measuring)db.insert(measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:90}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,fields,reportError(error){throw error;}});
  cleanup.push(()=>{client.close();},()=>root.close());
  const call=(name:string,input:unknown,id:string)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({input,id})});
@@ -137,7 +138,7 @@ it('labels a person sweep for its ordinary recipient and preserves a trusted not
 it('withdraws a selected notice when recipient sharing changes during a sibling await',async()=>{
  const {GraphQLString}=await import('graphql/index.js');let entered!:()=>void,release!:()=>void;
  const ready=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
- const f=fixture(undefined,{held:{type:GraphQLString,async resolve(){entered();await gate;return 'ready';}}}),sam='sam-frame-token-'.repeat(3);
+ const f=fixture(undefined,false,{held:{type:GraphQLString,async resolve(){entered();await gate;return 'ready';}}}),sam='sam-frame-token-'.repeat(3);
  f.db.insert(tokens).values({fingerprint:hash(sam),label:'Sam',kind:'owner',member:'sam',createdAt:f.now()}).run();
  f.db.insert(projects).values({id:'pond',name:'Pond'}).run();f.db.insert(projectMembers).values({member:'sam',project:'pond'}).run();
  f.root.writes.run(()=>f.root.services.conversations.send({toKind:'person',to:'sam',source:'notice',fromKind:'agent',project:'pond',words:'PRIVATE PROJECT WORDS'}));
@@ -149,4 +150,17 @@ it('withdraws a selected notice when recipient sharing changes during a sibling 
   if(response.status===200)expect(JSON.parse(text).data.settledInboxNotice).toBeNull();
   else expect([401,403,503]).toContain(response.status);
  }finally{release();await pending;}
+});
+
+
+it('records scheduled Tempo work by its fixed job name only while Measuring is on',async()=>{
+ const f=fixture(undefined,true);
+ await f.root.ready;
+ expect((await f.call('tempo.set',f.trigger,'set')).status).toBe(200);
+ f.clock.advance(5000);
+ expect(f.db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'job',name:'tempo.tick',count:1}));
+ const g=fixture();
+ expect((await g.call('tempo.set',g.trigger,'set')).status).toBe(200);
+ g.clock.advance(5000);
+ expect(g.db.select().from(timingDays).all()).toEqual([]);
 });

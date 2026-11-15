@@ -1205,7 +1205,7 @@ CREATE TABLE `measuring_settings` (
 	CONSTRAINT "measuring_settings_singleton" CHECK("measuring_settings"."singleton" = 1),
 	CONSTRAINT "measuring_settings_on_boolean" CHECK("measuring_settings"."on" in (0, 1)),
 	CONSTRAINT "measuring_settings_send_outside_boolean" CHECK("measuring_settings"."send_outside" in (0, 1)),
-	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 1 and 3650)
+	CONSTRAINT "measuring_settings_keep_days_range" CHECK("measuring_settings"."keep_days" between 0 and 3650)
 );
 
 CREATE TABLE `migrations` (
