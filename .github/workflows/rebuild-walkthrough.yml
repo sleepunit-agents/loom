@@ -4,9 +4,7 @@ on:
   workflow_call:
 permissions:
   contents: read
-concurrency:
-  group: rebuild-walkthrough-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+# The caller owns cancellation; the reusable job takes no second concurrency lock.
 jobs:
   walkthrough:
     runs-on: ubuntu-latest
@@ -28,12 +26,13 @@ jobs:
           set -euo pipefail
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           test -x "$LOOM_TEST_CHROME"
-          export LOOM_TEST_SHOTS="$RUNNER_TEMP/rebuild-walkthrough"
+          export LOOM_TEST_SHOTS="$RUNNER_TEMP/rebuild-walkthrough-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$LOOM_TEST_SHOTS/report.json"
           nice -n 19 npx vitest run src/ui/rebuild-walkthrough.integration.test.ts --maxWorkers=1
           test -s "$LOOM_TEST_SHOTS/report.json"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/rebuild-walkthrough/
+          path: ${{ runner.temp }}/rebuild-walkthrough-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
