@@ -61,3 +61,10 @@ it('lets trusted modules manage project lists without outside owner permission',
  expect(installed.call('household.setProject',{...project,members:[]},'trusted')).toMatchObject({ok:true});
  expect(f.db.select().from(projectMembers).all()).toEqual([]);
 });
+
+it('rolls back newly added grants when saving its receipt fails',async()=>{
+ const f=fixture();await f.call({...project,members:[],agents:[]});
+ f.client.exec("CREATE TRIGGER refuse_new_grants BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
+ expect((await f.call(project,'owner','new-grants')).status).toBe(503);
+ expect(f.db.select().from(projectMembers).all()).toEqual([]);expect(f.db.select().from(projectAgents).all()).toEqual([]);
+});
