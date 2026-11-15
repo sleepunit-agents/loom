@@ -24,6 +24,7 @@ export function dataSocket(options: {
   const admitted = new WeakMap<WebSocket, Authentication>();
   const cleanups = new Map<WebSocket, () => void>();
   let stopping = false, closing: Promise<void> | undefined;
+  // Transport setup/direct reads and shared hub resolvers have independent lifetimes.
   const executions = new Set<Promise<void>>();
   async function run<T>(operation: () => T | PromiseLike<T>): Promise<T> {
     if (stopping) throw new Error('Data access ended');

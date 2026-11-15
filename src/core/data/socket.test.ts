@@ -237,3 +237,76 @@ it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLi
     expect(events).toEqual(['read', 'closed']);
   } finally { release(); }
 });
+
+it('fences a queued protocol frame before async cleanup can close the transport', async () => {
+  let stream!: IncomingMessage['socket'], stopping = false, lateValidity = 0, executions = 0;
+  const f = await setup(request => {
+    stream = request.socket;
+    return { viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } };
+  });
+  const ws = await f.open();
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    late: { type: GraphQLString, resolve: () => { executions++; return 'must not leave'; } },
+  } }) }));
+  const messages: string[] = []; ws.on('message', raw => messages.push(String(raw)));
+  const ended = once(ws, 'close'); stopping = true;
+  const closing = f.socket.close();
+  // A correctly masked RFC6455 frame already queued at the transport. Inject
+  // synchronously, before close's asynchronous cleanup, without a timer race.
+  const payload = Buffer.from(JSON.stringify({ type: 'subscribe', id: 'late', payload: { query: '{ late }' } }));
+  expect(payload.length).toBeLessThan(126);
+  const mask = Buffer.from([1, 2, 3, 4]);
+  stream.emit('data', Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, payload.map((byte, i) => byte ^ mask[i % 4])]));
+  await ended; await closing;
+  expect(lateValidity).toBe(0); expect(executions).toBe(0); expect(messages).toEqual([]);
+  expect(() => f.socket.attach(createServer())).toThrow('access ended');
+});
+
+it('blocks buffered words and validity callbacks when serialisation reenters shutdown', async () => {
+  let stopping = false, lateValidity = 0, closing: Promise<void> | undefined;
+  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } }));
+  const ws = await f.open();
+  const secret = new GraphQLScalarType({ name: 'ClosingSecret', serialize: () => ({ toJSON() {
+    stopping = true; closing = f.socket.close(); return 'must not leave';
+  } }) });
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => 'secret' } } }) }));
+  const messages: string[] = []; ws.on('message', raw => messages.push(String(raw)));
+  const ended = once(ws, 'close');
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'secret', payload: { query: '{ secret }' } }));
+  await ended; expect(closing).toBeDefined(); await closing;
+  expect(lateValidity).toBe(0); expect(messages).toEqual([]);
+});
+
+it('publishes the same close promise before clock cleanup can reenter', async () => {
+  const f = await setup();
+  const at = f.clock.at.bind(f.clock), seen: Promise<void>[] = [];
+  let reenter = false;
+  f.clock.at = (when, callback) => {
+    const cancel = at(when, callback);
+    return () => { if (reenter) seen.push(f.socket.close()); cancel(); };
+  };
+  await f.open(); reenter = true;
+  const closing = f.socket.close(); await closing;
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen.every(promise => promise === closing)).toBe(true);
+  expect(f.socket.close()).toBe(closing);
+});
+
+it('drains socket work without closing independent watchers on its shared live hub', async () => {
+  let stopping = false, lateValidity = 0, lateExecutions = 0;
+  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } }));
+  const ws = await f.open();
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    socketOnly: { type: GraphQLString, resolve: () => { if (stopping) lateExecutions++; return 'socket'; } },
+  } }) }));
+  await read(ws, () => ws.send(JSON.stringify({ ...selection, payload: { ...selection.payload, variables: { query: '{ socketOnly }' } } })));
+  const schema = dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) });
+  const stream = f.live.watch({ schema, query: '{ tasks { title } }', valid: () => true });
+  clean.push(async () => { await stream.return?.(); });
+  await stream.next(); stopping = true;
+  const closing = f.socket.close(); f.live.changed(); await closing;
+  expect(lateValidity).toBe(0); expect(lateExecutions).toBe(0);
+  const pending = stream.next();
+  f.client.exec("UPDATE tasks SET title='Still live'"); f.live.changed();
+  expect((await pending).value.patches).toEqual([{ path: ['tasks', 0, 'title'], value: 'Still live' }]);
+});
