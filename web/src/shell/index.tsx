@@ -12,8 +12,8 @@ import Launcher from './launcher';
 import { useHiding } from './hiding';
 import { useCompanion } from './companion';
 import { RailContext } from '../desk-rail';
-import { useRecords, type LiveRecord } from '../data';
-import { oneWindowKept, type Prefs } from '../look';
+import { useMemberPreferences } from './member-preferences';
+import { oneWindowKept } from '../look';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -29,7 +29,7 @@ export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
-  const preferences = useRecords<LiveRecord & { prefs: Prefs }>('household.preferences');
+  const preferences = useMemberPreferences();
   const [keptOneWindow] = useState(oneWindowKept);
   const lastOneWindow = useRef(keptOneWindow);
   if (preferences.status === 'live') lastOneWindow.current = preferences.records[0]?.prefs.oneWindow === true;
