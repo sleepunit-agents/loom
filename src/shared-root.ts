@@ -61,7 +61,7 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>operations.close());
   memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());
   startupCleanups.push(()=>memorySignals?.close());
-  const stopMemoryWrites=data.writes.observe(()=>memorySignals!.changed());startupCleanups.push(stopMemoryWrites);
+  const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
   const requests = new SecretRequests(db, now);
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
