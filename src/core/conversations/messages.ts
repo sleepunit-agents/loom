@@ -1,15 +1,17 @@
+import { randomUUID } from 'node:crypto';
 /** Trusted private-message service. External doors authenticate and authorize;
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, lte, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads } from '../data/schema.js';
+import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
+import type { DigestInput } from './index.js';
 
 type Message = typeof messages.$inferSelect;
 type Answer = NonNullable<typeof inbox.$inferSelect.answer>;
-export type PrivateQuestion = { words: string; answers: 'yes-no' | 'words'; why?: string; ifYes?: string; ifNo?: string; link?: string };
+export type PrivateQuestion = { words: string; answers: 'yes-no' | 'words'; why?: string; ifYes?: string; ifNo?: string; link?: string; waitsOnKind?: 'approval' | 'task'; waitsOnId?: string; refs?: string[] };
 export type MessageInput = {
   thread: string; sender: string; kind: 'message' | 'reply' | 'card' | 'notice'; words: string;
   clientId?: string; run?: string; tool?: string; cardState?: Message['cardState'];
@@ -81,14 +83,14 @@ export class CommsMessages {
   }
 
   async prepareAsk(threadId: string, agent: string, clientId: string, question: PrivateQuestion): Promise<() => Message> {
-    question = { ...question };
+    question = { ...question, refs: question.refs ? [...question.refs] : undefined };
     const { cv } = this.context(threadId);
     if (agent !== cv.agent || !cv.member) throw new Error('Agent differs from private thread');
     const old = this.retry(threadId, agent, clientId);
     if (old) return () => { this.context(threadId); return old; };
     if (!question.words.trim()) throw new Error('Question needs words');
     const words = await this.key.seal(JSON.stringify(question));
-    const refs = refsIn(Object.values(question).join('\n'));
+    const refs = [...refsIn(Object.values(question).join('\n')), ...question.refs ?? []];
     return () => this.db.transaction(() => {
       const { cv } = this.context(threadId);
       if (agent !== cv.agent || !cv.member) throw new Error('Agent differs from private thread');
@@ -97,8 +99,40 @@ export class CommsMessages {
       const row = this.append({ thread: threadId, sender: agent, kind: 'ask', clientId, words }, refs);
       return this.attach(row, this.threads.conversations.send({ toKind: 'person', to: cv.member!, conversation: cv.id,
         source: 'thread', sourceId: `${threadId}:${row.seq}`, fromKind: 'agent', fromId: agent,
-        answers: question.answers, thread: threadId, messageSeq: row.seq, refs }));
+        answers: question.answers, waitsOnKind: question.waitsOnKind, waitsOnId: question.waitsOnId, thread: threadId, messageSeq: row.seq, refs }));
     });
+  }
+
+  /** Body reports use this for private digests: prepare encryption outside the
+   * caller's transaction, then commit question, digest and rewrite retirement
+   * together after that caller rechecks its current authority. */
+  async prepareDigest(input: DigestInput): Promise<() => typeof digests.$inferSelect> {
+    input = { ...input, items: input.items?.map(item => ({ ...item })),
+      question: input.question ? { ...input.question, refs: input.question.refs ? [...input.question.refs] : undefined } : undefined };
+    const cvs = this.threads.conversations, cv = cvs.conversation(input.conversation);
+    if (input.summary.length > 600) throw new Error('Digest summary exceeds 600 characters');
+    if (!input.question || cv.venue !== 'loom' || !cv.member) return () => cvs.digest(input);
+    const thread = this.db.select().from(threads).where(eq(threads.conversation, cv.id)).get();
+    if (cv.venue !== 'loom' || !cv.member || !thread || input.question.to !== cv.member) throw new Error('Private digest needs its member thread');
+    const previous = () => this.db.select().from(digests).where(and(eq(digests.conversation, cv.id), eq(digests.run, input.run))).get();
+    const before = previous(), question = input.question;
+    const ask = await this.prepareAsk(thread.id, cv.agent, `digest:${randomUUID()}`, {
+      words: question.words, answers: question.answers, why: question.why ?? undefined,
+      ifYes: question.ifYes ?? undefined, ifNo: question.ifNo ?? undefined, link: question.link ?? undefined,
+      waitsOnKind: question.waitsOnKind === 'task' || question.waitsOnKind === 'approval' ? question.waitsOnKind : undefined,
+      waitsOnId: question.waitsOnId ?? undefined, refs: question.refs,
+    });
+    return () => this.db.transaction(() => {
+      const current = cvs.conversation(cv.id);
+      if (current.agent !== cv.agent || current.member !== cv.member || current.project !== cv.project
+        || JSON.stringify(previous()) !== JSON.stringify(before)) throw new Error('Digest changed during preparation');
+      const message = ask();
+      return cvs.digest({ ...input, question: undefined }, message.inboxItem!);
+    });
+  }
+
+  async digest(input: DigestInput): Promise<typeof digests.$inferSelect> {
+    return (await this.prepareDigest(input))();
   }
 
   async answer(itemId: string, member: string, answer: Answer, text?: string): Promise<typeof inbox.$inferSelect> {
