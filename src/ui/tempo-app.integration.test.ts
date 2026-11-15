@@ -71,9 +71,25 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   for(const page of [a,b])await expect.poll(()=>page.getByRole('button',{name:'Pause agent',exact:true}).count()).toBe(1);
   await a.getByRole('button',{name:'Cancel',exact:true}).click();
   for(const page of [a,b])await expect.poll(()=>page.getByText(/once · stopped/).count()).toBe(1);
+  await a.getByRole('button',{name:'Create trigger',exact:true}).click();
+  const form=a.getByRole('form',{name:'Create trigger'});
+  await form.getByLabel('Label',{exact:true}).fill('Browser-created trigger');
+  await form.getByLabel('Time (America/Chicago)',{exact:true}).fill(new Date(clock.now()+7200000).toISOString());
+  await form.getByLabel('Set by',{exact:true}).selectOption('household');
+  await form.getByLabel('Recipient',{exact:true}).fill('art');
+  await form.getByLabel('Words',{exact:true}).fill('Created through Tempo');
+  await form.getByRole('button',{name:'Create trigger',exact:true}).click();
+  await expect.poll(()=>a.getByRole('form',{name:'Create trigger'}).count()).toBe(0);
+  for(const page of [a,b]){
+   await page.getByRole('button',{name:/Browser-created trigger/}).click();
+   await expect.poll(()=>page.getByText('Created through Tempo',{exact:true}).count()).toBe(1);
+  }
+  await a.getByRole('button',{name:'Run now',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByText(/once · fired/).count()).toBe(1);
+  expect(client.prepare("SELECT words FROM inbox WHERE source='trigger' AND words='Created through Tempo'").all()).toHaveLength(1);
   app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
   for(const page of [a,b]){
-   await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(0);
+   await expect.poll(()=>page.getByRole('heading',{name:'Browser-created trigger',exact:true}).count()).toBe(0);
    await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   }
  } finally {
