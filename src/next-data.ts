@@ -7,16 +7,16 @@ import type { DataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
 import { dataHttp, withQueryFields } from './core/data/http.js';
 import type { memoryQueryFields } from './transport/memory-queries.js';
-import { DataLive } from './core/data/live.js';
+import { DataLive, type MeasureRead } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}) {
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, measure?: MeasureRead) {
   const authenticate = dataAuthentication(db, () => clock.now());
-  const live = new DataLive();
+  const live = new DataLive(measure);
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
@@ -25,7 +25,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'timingDays', 'measuringSettings'],
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...measuringVisibility(viewer) },
   }), fields);
-  const socket = dataSocket({ live, clock, originAllowed,
+  const socket = dataSocket({ live, clock, originAllowed, measure,
     authenticate(request) {
       const headers = new Headers();
       for (const [name, value] of Object.entries(request.headers)) {

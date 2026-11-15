@@ -6,7 +6,7 @@ import { execute, subscribe, GraphQLError, type ExecutionArgs, type GraphQLSchem
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
-import { DataLive } from './live.js';
+import { DataLive, type MeasureRead } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
 
 /** Standard graphql-transport-ws on /graphql. Authentication belongs to the
@@ -15,6 +15,7 @@ import { dataSubscriptions } from './subscriptions.js';
  */
 export function dataSocket(options: {
   live: DataLive;
+  measure?: MeasureRead;
   clock: Clock;
   authenticate(request: IncomingMessage): Authentication | undefined;
   schema(viewer: Viewer): GraphQLSchema;
@@ -53,7 +54,7 @@ export function dataSocket(options: {
       // execution. Neither variables nor connectionParams supply this context.
       return Object.freeze({ viewer: auth.viewer });
     },
-    execute: (args: ExecutionArgs) => run(() => execute(args)),
+    execute: (args: ExecutionArgs) => run(() => options.measure ? options.measure(() => execute(args)) : execute(args)),
     subscribe: (args: ExecutionArgs) => run(async () => {
       const result = await subscribe(args);
       if (stopping && Symbol.asyncIterator in result) {

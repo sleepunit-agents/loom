@@ -405,7 +405,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
     const measuringApi = measuringHttp(app, sharedData);
     const memory=memoryQueries.get(app);
-    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields);
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields, work => {
+      const meter = measuring.get(app);
+      return meter?.enabled() ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work();
+    });
     memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
     // Legacy operation commits include private source touches until shared
     // command composition takes over their committed-write signal.

@@ -139,3 +139,18 @@ it.each(['resolve', 'reject'])('drains an underlying %s execution after its cons
   await closing;
   expect(drained).toBe(true);
 });
+
+it('measures only initial snapshot work and does not measure its own notification rerun or idle subscription', async () => {
+  let value='first', reads=0, measurements=0;
+  let live:DataLive;
+  live=new DataLive(async work=>{const result=await work();measurements++;live.changed();return result;});
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{value:{type:GraphQLString,resolve(){reads++;return value;}}}})});
+  const stream=live.watch({schema,query:'{ value }',valid:()=>true});
+  try {
+    expect((await stream.next()).value).toEqual({revision:1,patches:[{path:[],value:{value:'first'}}]});
+    expect(reads).toBe(2);expect(measurements).toBe(1);
+    const changed=stream.next();value='second';live.changed();
+    expect((await changed).value).toEqual({revision:2,patches:[{path:['value'],value:'second'}]});
+    expect(reads).toBe(3);expect(measurements).toBe(1);
+  } finally {await stream.return?.();live.close();await live.drain();}
+});

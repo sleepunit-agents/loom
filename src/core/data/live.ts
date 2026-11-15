@@ -32,7 +32,9 @@ export function dataDiff(before: unknown, after: unknown, path: (string | number
  * including changes to sharing facts. Rolled-back writes must not signal.
  * Every rerun uses the generated SQL query and its current visibility policy.
  */
+export type MeasureRead = <T>(read: () => T | Promise<T>) => T | Promise<T>;
 export class DataLive {
+  constructor(private readonly measure?: MeasureRead) {}
   private listeners = new Set<() => void>();
   private stopped = false;
   private executions = new Set<Promise<void>>();
@@ -43,13 +45,13 @@ export class DataLive {
    * whose consumer already cancelled. Cancellation cannot cancel their IO. */
   async drain() { while (this.executions.size) await Promise.all([...this.executions]); }
 
-  private async read(args: ExecutionArgs) {
+  private async read(args: ExecutionArgs, initial: boolean) {
     if (this.stopped) throw new Error('Live data access ended');
     let finish!: () => void;
     const done = new Promise<void>(resolve => { finish = resolve; });
     // Retain before invoking user resolvers: they can synchronously reenter close.
     this.executions.add(done);
-    try { return await execute(args); }
+    try { return await (initial && this.measure ? this.measure(() => execute(args)) : execute(args)); }
     finally { this.executions.delete(done); finish(); }
   }
 
@@ -67,6 +69,7 @@ export class DataLive {
     const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
+    let initial = true;
     let ended = false, dirty = true, previous: unknown, revision = 0, reading = false;
     let wake: (() => void) | undefined;
     const cancelled = Symbol('cancelled');
@@ -88,8 +91,9 @@ export class DataLive {
           // Cancellation must release next() even if an async projection never
           // settles. The losing execution stays observed, including rejection.
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
+          const measure = initial; initial = false;
           const result = await Promise.race([
-            this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }),
+            this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure),
             cancellation,
           ]);
           cancel = undefined;
