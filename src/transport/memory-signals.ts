@@ -19,5 +19,5 @@ export function installMemorySignals(clock:Clock,memory:MemoryDeadlines|undefine
  };
  try{stopObserver=memory?.observeDeadlines(schedule);schedule();}
  catch(error){close();throw error;}
- return {changed(){if(closed)return;changed();schedule();},close};
+ return {changed(){if(closed)return;changed();schedule();},rearm:schedule,close};
 }

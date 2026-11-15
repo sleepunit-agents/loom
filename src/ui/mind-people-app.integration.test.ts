@@ -1,16 +1,13 @@
 /** One CI-only browser test, two windows and six responsive look screenshots. */
+import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
 import { expect,it } from 'vitest';
 import { existsSync,mkdtempSync,mkdirSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join,resolve } from 'node:path';
 import { chromium } from 'playwright-core';
-import { startLoom } from '../foundation.js';
-import { createFoundation } from '../core/app.js';
 import { FakeClock } from '../core/clock.js';
-import { migrateHouseholdTables } from '../core/household/schema.js';
-import { TokenDatabase } from '../core/household/tokens.js';
-import { HouseholdDatabase } from '../core/household/document.js';
 import { PeopleStore } from '../backends/people.js';
+import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',chromium.executablePath()].find(p=>p&&existsSync(p));
 const enabled=!!process.env.CI&&process.env.LOOM_PEOPLE_EVIDENCE==='1';
@@ -18,9 +15,7 @@ if(enabled&&process.env.RUNNER_ENVIRONMENT==='self-hosted')throw new Error('Peop
 if(enabled&&(!chrome||!existsSync(join(root,'next.html'))))throw new Error('People browser evidence requires Chrome and built next app in CI');
 it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, authorized relationships, outside updates and add in two windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'people-app-'));const clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
-  metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art','other'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
-  metadata.db.transaction(()=>new TokenDatabase(metadata.db).replace({v:1,tokens:[]},{}))();metadata.close();
+
   for(const directory of ['commons','agents/art','agents/other'])mkdirSync(join(home,directory),{recursive:true});
   const directory=new PeopleStore({dbPath:join(home,'commons/people.db'),now:()=>clock.now()});
   const relationship=new PeopleStore({dbPath:join(home,'agents/art/memories.db'),now:()=>clock.now()});
@@ -30,15 +25,22 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   directory.write({slug:'casey',name:'Casey Smith'});
   relationship.write({slug:'jonathan',name:'Jonathan Barket',summary:'Builds the household',how:{mode:'direct'},may:[{text:'May discuss projects',source:'Jonathan'}]});
   other.write({slug:'casey',name:'Casey Smith',summary:'Knows the workshop'});
-  const app=await startLoom({home,next:true,clock,webRoot:root});
+  // Prepare only the fixture's newly created writable halves.
+  migrateMindReceipts(directory.database);migrateMindReceipts(relationship.database);
+  const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art','other']}),{app}=fixture;
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
-    const diagnostics:string[]=[];
+    const diagnostics:string[]=[];let phase='initial';
+    const diagnostic=(value:string)=>{if(diagnostics.length<100)diagnostics.push(value);};
     for(const [name,page] of [['desktop',a],['phone',b]] as const){
       page.on('pageerror',error=>diagnostics.push(`${name}: ${error.message}`));
       page.on('websocket',socket=>{
+        const queries=new Map<string,string>();
+        diagnostic(`${name}/${phase}: socket ${new URL(socket.url()).pathname==='/graphql'?'graphql':'other'}`);
+        socket.on('framesent',({payload})=>{try{const frame=JSON.parse(String(payload)),doc=frame.payload?.variables?.query;const query=typeof doc==='string'?/\bquery\s+(MemoryPeopleAccess|MemoryPeople|MemoryPerson)\b/.exec(doc)?.[1]:undefined;if(query){queries.set(frame.id,query);diagnostic(`${name}/${phase}: sent ${query}`);}}catch{}});
+        socket.on('framereceived',({payload})=>{try{const frame=JSON.parse(String(payload)),query=queries.get(frame.id);if(query){const delta=frame.payload?.data?.observe;diagnostic(`${name}/${phase}: ${query} ${frame.type} errors=${frame.payload?.errors?.length??0} revision=${delta?.revision??0} patches=${delta?.patches?.length??0}`);}}catch{}});
         socket.on('close',()=>diagnostics.push(`${name}: websocket closed`));
         socket.on('framereceived',({payload})=>{
           try{const frame=JSON.parse(String(payload));if(frame.ok===false)diagnostics.push(`${name}: ${frame.code}: ${frame.message}`);}catch{/* not JSON */}
@@ -46,9 +48,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       });
     }
     try {
-    const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});if(!link.ok)throw Error('Fixture sign-in failed');
-    await a.goto(app.url+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');
-    await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
+    await signInMemory(a,fixture);
     await Promise.all([a.goto(`${app.url}/p/people-preview`),b.goto(`${app.url}/p/people-preview`)]);
     const row=(p:typeof a,name:string)=>p.locator('[data-split-row]').filter({hasText:name});
     await expect.poll(()=>row(b,'Jonathan Barket').count()).toBe(1);
@@ -71,7 +71,8 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     }
     relationship.write({slug:'jonathan',summary:'Updated from outside the app'});
     await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
-    await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
+    expect(app.memory.people.read('art:jonathan',{kind:'member',id:'owner'})?.card.summary).toBe('Updated from outside the app');
+    phase='reload';await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
     // Bounded fixture trace: distinguish a missed press from a rejected route.
     // No text, HTML, input values, sign-in URLs or history payloads are retained.
     await b.evaluate(()=>{
@@ -127,11 +128,12 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
             tile:!!tile,hidden:tile?.hasAttribute('hidden'),inert:!!tile?.closest('[inert]'),focused:tile?.hasAttribute('data-focused'),
             mode:split?.getAttribute('data-mode'),open:split?.hasAttribute('data-open'),
             rows:tile?.querySelectorAll('[data-split-row]').length??0,
+            states:['Opening People','Opening people','Connection lost','don’t have access','Something went wrong','This app could not open','No people yet'].filter(label=>tile?.textContent?.includes(label)),
             backButtons:tile?.querySelectorAll('.loom-split__back').length??0};
         }).catch(()=>({unavailable:true}));
         diagnostics.push(`${name} People view: ${JSON.stringify(state)}`);
       }
       console.error('People fixture diagnostics',diagnostics);throw error;
     }
-  } finally {await browser.close();await app.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
+  } finally {await browser.close();await fixture.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
 },60_000);

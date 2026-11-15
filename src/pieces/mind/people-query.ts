@@ -1,3 +1,4 @@
+import {keepReadUntil} from '../../core/data/read-lease.js';
 /** Person cards stay in their existing files; these fields join the one query schema. */
 import { GraphQLBoolean, GraphQLFloat, GraphQLError, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { peopleReader, mayReadPerson, type PeopleReaderOptions } from './people.js';
@@ -31,7 +32,10 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
  let reader:ReturnType<typeof peopleReader>|undefined=peopleReader(options);
  const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&mayReadPerson(context.viewer,agent,options.sharing());
  const anyVisible=(context:MemoryQueryContext)=>visible(context)||options.agents.some(a=>visible(context,a.agent));
- const safe=<T>(read:()=>T):T=>{try{return read();}catch{throw new GraphQLError('People are unavailable');}};
+ const safe=<T>(read:()=>T,context?:MemoryQueryContext):T=>{try{
+  if(context){const until=reader?.nextDeadline();if(until!==undefined)keepReadUntil(context,until);}
+  return read();
+ }catch{throw new GraphQLError('People are unavailable');}};
  const person=new GraphQLObjectType<PersonRecord,MemoryQueryContext>({name:'MemoryPerson',fields:{
   id:requiredText,slug:requiredText,agent:text,name:requiredText,card:{type:new GraphQLNonNull(card)},updated:requiredText,synthesizedAt:text,kind:requiredText,
   evidence:{type:list(evidence)},newer:{type:GraphQLInt},fields:{type:list(field)},projects:{type:list(project)},ownership:{type:ownership},mergedFrom:text,
@@ -44,11 +48,11 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
  }});
  return {nextDeadline:()=>reader?.nextDeadline(),fields:{
   memoryPeopleAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?reader?.access(context.viewer)??null:null},
-  memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),resolve:(_source,_args,context)=>anyVisible(context)?safe(()=>reader?.list(context.viewer)??[]):[]},
+  memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),resolve:(_source,_args,context)=>anyVisible(context)?safe(()=>reader?.list(context.viewer)??[],context):[]},
   memoryPerson:{type:person,args:{id:{type:new GraphQLNonNull(GraphQLString)}},resolve:(_source,args,context)=>{
    const colon=(args.id as string).indexOf(':');if(colon<1)return null;
    const agent=(args.id as string).slice(0,colon);if(!visible(context,agent==='commons'?undefined:agent))return null;
-   return safe(()=>reader?.read(args.id,context.viewer)??null);
+   return safe(()=>reader?.read(args.id,context.viewer)??null,context);
   }},
  },close(){reader?.close();reader=undefined;}};
 }

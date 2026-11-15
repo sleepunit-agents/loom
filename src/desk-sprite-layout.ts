@@ -59,4 +59,3 @@ export function checkSpriteLayout(raw: unknown, error: (message:string)=>Error =
 /** The sheet files a manifest uses. */
 export const spriteSheets = (m: SpriteManifest): string[] =>
   [...new Set(Object.values(m.states).flatMap((byF) => Object.values(byF ?? {}).flat().map((v) => v!.sheet ?? 'sheet.png')))];
-

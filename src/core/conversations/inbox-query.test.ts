@@ -438,7 +438,6 @@ it('projects per-agent Needs counts separately from all states without opening w
   f.revoke();
   expect((await read()).data).toEqual({ inboxFolders: { needs: 0, agents: [] } });
 });
-
 it('searches recorded public answers and resolution text in the same recipient mailbox',async()=>{
  const f=await fixture(),cvs=f.comms.threads.conversations;
  const answered=cvs.send({toKind:'person',to:'alice',source:'notice',sourceId:'public-question',member:'alice',fromKind:'agent',answers:'words',words:'Which fixture?'});cvs.answer(answered.id,'alice','words','Use the amber fixture');

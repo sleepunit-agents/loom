@@ -12,6 +12,8 @@ import { HouseholdDatabase } from '../../core/household/document.js';
 import { FakeClock, type Sharing } from '../../core/index.js';
 import { touchSocketPath } from '../../core/touched/index.js';
 import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
+import Database from 'better-sqlite3';
+import {migrateMindReceipts} from './receipt-schema.js';
 const cleanup: Array<() => unknown | Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const sharing: Sharing = { members:{ owner:{owner:true,agents:['art']}, partial:{owner:false,agents:['art']} }, projects:{}, services:{} };
@@ -30,7 +32,8 @@ async function start(home: string, extra = {}) {
 }
 async function store(home: string) {
   const backend = new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')}); cleanup.push(()=>backend.close());
-  await backend.writePage({slug:'fact',title:'A fact',domain:'systems',body:'Original'}); return backend;
+  await backend.writePage({slug:'fact',title:'A fact',domain:'systems',body:'Original'});
+  const prepared=new Database(join(home,'commons/knowledge.db'));try{migrateMindReceipts(prepared);}finally{prepared.close();}return backend;
 }
 async function notify(directory: string, change: {type:string;id:string}) {
   const socket = createConnection(touchSocketPath(directory)); socket.on('error',()=>{});

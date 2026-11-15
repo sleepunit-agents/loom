@@ -25,7 +25,7 @@ async function fixture(missing = false, timers = true) {
   const backend = missing ? undefined : new SqliteKnowledgeBackend({ dbPath: path });
   if (backend) { cleanups.push(() => backend.close()); await backend.writePage({ slug: 'fact', title: 'Fact', domain: 'systems', body: 'Original' }); }
   const db = missing ? undefined : new BetterSqlite3(path);
-  if (db) cleanups.push(() => db.close());
+  if (db) { migrateMindReceipts(db); cleanups.push(() => db.close()); }
   const clock = new FakeClock(Date.UTC(2026, 10, 12));
   // Retry-window tests advance wall time, without exercising daemon schedules.
   if (!timers) clock.at = () => () => {};

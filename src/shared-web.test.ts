@@ -1,5 +1,5 @@
 import {afterEach,expect,it} from 'vitest';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {sharedWeb} from './shared-web.js';
@@ -15,4 +15,10 @@ it('serves app navigation and immutable built assets without turning missing res
 it('rejects malformed app roots before acquiring shared services or source listeners',()=>{
  const f=fixture();rmSync(join(f.root,'assets'),{recursive:true});writeFileSync(join(f.root,'assets'),'not a directory');expect(()=>sharedWeb(f.root)).toThrow('assets are not a directory');
  rmSync(join(f.root,'next.html'));mkdirSync(join(f.root,'next.html'));expect(()=>sharedWeb(f.root)).toThrow('entry is not a file');
+});
+it('refuses asset symlinks escaping the public root',async()=>{
+ const f=fixture();symlinkSync(join(f.home,'private.db'),join(f.root,'assets','private.js'));
+ const web=sharedWeb(f.root);expect((await web.request('http://loom/app/assets/private.js')).status).toBe(404);
+ rmSync(join(f.root,'assets'),{recursive:true});symlinkSync(f.home,join(f.root,'assets'));
+ expect(()=>sharedWeb(f.root)).toThrow('escape');
 });
