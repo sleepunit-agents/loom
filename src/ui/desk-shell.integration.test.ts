@@ -53,6 +53,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(() => a.locator('.next-shell').count()).toBe(1);
     expect(await a.locator('html').getAttribute('data-look')).toBe('neon');
     const set = (prefs:unknown,id:string) => {
+      const result = app.operations.call('direct',{kind:'member',id:'owner'},'household.setPreferences',prefs,id);
       expect(result.ok).toBe(true);
     };
     set({look:'daylight',sound:true,motion:'on',contrast:'on',zoom:true},'appearance');
@@ -187,7 +188,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     set({motion:'off'},'companion-full-motion');
     await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
     await b.evaluate(()=>{
-      const state=window as Window & {deskMoves?:{agent:string;duration:number;from:string}[];deskAnimate?:HTMLElement['animate']};
+      const state=window as unknown as Window & {deskMoves?:{agent:string;duration:number;from:string}[];deskAnimate?:HTMLElement['animate']};
       state.deskMoves=[];state.deskAnimate=HTMLElement.prototype.animate;
       HTMLElement.prototype.animate=function(frames,options){
         if(this.dataset.agent&&this.closest('.desk-agent-rail')&&Array.isArray(frames))state.deskMoves!.push({agent:this.dataset.agent,duration:typeof options==='object'?Number(options?.duration):Number(options),from:String(frames[0]?.transform)});
@@ -196,15 +197,15 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     });
     await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(0);
-    expect(await b.evaluate(()=>(window as Window & {deskMoves:{agent:string;duration:number;from:string}[]}).deskMoves.some(m=>m.agent==='art'&&m.duration===260&&m.from!=='translateY(0px)'))).toBe(true);
+    expect(await b.evaluate(()=>(window as unknown as Window & {deskMoves:{agent:string;duration:number;from:string}[]}).deskMoves.some(m=>m.agent==='art'&&m.duration===260&&m.from!=='translateY(0px)'))).toBe(true);
     set({motion:'on'},'companion-reduced-motion');
     await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('reduce');
-    await b.evaluate(()=>{(window as Window & {deskMoves:unknown[]}).deskMoves=[];});
+    await b.evaluate(()=>{(window as unknown as Window & {deskMoves:unknown[]}).deskMoves=[];});
     await b.getByRole('button',{name:'Open Comms',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
 
-    expect(await b.evaluate(()=>(window as Window & {deskMoves:unknown[]}).deskMoves.length)).toBe(0);
-    await b.evaluate(()=>{const state=window as Window & {deskAnimate:HTMLElement['animate']};HTMLElement.prototype.animate=state.deskAnimate;});
+    expect(await b.evaluate(()=>(window as unknown as Window & {deskMoves:unknown[]}).deskMoves.length)).toBe(0);
+    await b.evaluate(()=>{const state=window as unknown as Window & {deskAnimate:HTMLElement['animate']};HTMLElement.prototype.animate=state.deskAnimate;});
     await b.getByRole('button',{name:'Home',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
     await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
