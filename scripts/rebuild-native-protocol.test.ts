@@ -6,6 +6,7 @@ import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
+import {exampleSettleMs} from '../dist/example-runtime.js';
 import {nativeProtocolSmoke} from './rebuild-native-protocol.mjs';
 async function household(run){
  const parent=mkdtempSync(join(tmpdir(),'loom-native-protocol-')),home=join(parent,'home');let app;
@@ -81,4 +82,19 @@ it('withdraws enrolled body authority even when normal HTTP job retirement is re
  const bodies=context.db.prepare("SELECT b.revoked_at FROM tokens b JOIN tokens r ON b.made_from=r.fingerprint WHERE r.label='Native protocol fixture worker' AND b.job IS NOT NULL").all();
  expect(bodies.length).toBeGreaterThan(0);expect(bodies.every(row=>!!row.revoked_at)).toBe(true);
  restored(context.db,context.example.runtime.box);
+}));
+
+it('accepts one requested follow-up job after the default jobs without consuming unrelated targets',{timeout:20_000},()=>household(async context=>{
+ await nativeProtocolSmoke(context);
+ const commit=await context.app.services.comms.prepareSend({thread:context.example.runtime.thread,sender:'alex',kind:'message',clientId:'native-target-followup',words:'Fictional target-only follow-up'});
+ context.app.writes.run(commit);context.clock.advance(exampleSettleMs);
+ const id=context.app.services.conversations.conversation(context.example.runtime.conversation).job;expect(id).toBeTruthy();
+ const result=await nativeProtocolSmoke({...context,targets:[{id,words:'Fictional target-only follow-up'}]});
+ expect(result.runs).toHaveLength(1);expect(result.runs[0]).toMatchObject({job:id,state:'done',hadInput:true,running:true,bootstrapErased:true});
+ const acquired=context.db.prepare("SELECT revoked_at FROM tokens WHERE label LIKE 'Native protocol fixture %'").all();
+ expect(acquired).toHaveLength(4);expect(acquired.every(row=>!!row.revoked_at)).toBe(true);
+}));
+it('rejects missing, duplicate or empty target inputs before acquiring any authority',{timeout:20_000},()=>household(async context=>{
+ for(const targets of [[],[{id:'same',words:'a'},{id:'same',words:'b'}],[{id:'',words:'a'}],[{id:'one',words:' '}],null])await expect(nativeProtocolSmoke({...context,targets})).rejects.toThrow('targets must');
+ expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
 }));

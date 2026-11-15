@@ -10,8 +10,11 @@ import {httpWorkerControl,reportWorkerHealth} from '../dist/runtime/worker-http.
 import {workOnce} from '../dist/runtime/worker.js';
 import {bodyProgram} from '../dist/runtime/body-program.js';
 import {bodyInput} from '../dist/runtime/body-bootstrap.js';
-export async function nativeProtocolSmoke({app,example,clock,home,signal,native}){
+export async function nativeProtocolSmoke({app,example,clock,home,signal,native,targets}){
  if(!example.fictional||!example.runtime)throw Error('Native protocol requires the new fictional household');
+ const supplied=targets===undefined?[{id:example.runtime.job.id,words:'Check the shed hinges before the example rain.'},{id:example.runtime.publicJob.id,words:'Inspect the shared garden path'}]:targets;
+ if(!Array.isArray(supplied)||!supplied.length||supplied.some(row=>!row||typeof row.id!=='string'||!row.id.trim()||typeof row.words!=='string'||!row.words.trim())||new Set(supplied.map(row=>row.id)).size!==supplied.length)throw Error('Native fixture targets must be unique jobs with expected input');
+ const selected=supplied.map(({id,words})=>({id,words}));
  const db=app.services.comms.db.$client,box=example.runtime.box;
  const before=db.prepare('SELECT name,hosts_any,report_only,always_on FROM boxes WHERE id=?').get(box);
  if(!before)throw Error('The example worker is unavailable');
@@ -36,8 +39,8 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
   const control=Object.fromEntries(Object.entries(rawControl).map(([name,method])=>[name,async(...args)=>{
    trace.push(name);try{const result=await method(...args);if(name==='next'&&result)assigned.add(result.id);return result;}catch(error){trace.push(name+'-failed');throw error;}
   }]));
-  const expected=new Set([example.runtime.job.id,example.runtime.publicJob.id]);
-  for(let n=0;n<2;n++){
+  const expected=new Map(selected.map(row=>[row.id,row.words]));
+  for(let n=0;n<selected.length;n++){
    let observed,bodyBytes,commandToken;
    const executor={build:async job=>{trace.push('build '+job.id);if(!expected.has(job.id))throw Error('A different fixture job was assigned');return'fictional-native-artifact';},start(job,build,parentSignal){
     let settle,execution,released=false;const stopped=new AbortController();
@@ -49,7 +52,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
       commandToken=Buffer.from(bootstrap.token);
       execution=bodyProgram({args:[configuration],read:path=>readFile(path,'utf8'),stdin:async()=>bodyBytes,env:{},signal:AbortSignal.any([parentSignal,stopped.signal]),clock,
        native:async(job,words,bodySignal)=>{
-        const expectedWords=job.id===example.runtime.job.id?'Check the shed hinges before the example rain.':'Inspect the shared garden path';
+        const expectedWords=expected.get(job.id);
         observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare('SELECT job FROM conversations WHERE id=?').get(job.conversation)?.job};
         let finished=false;
         const call=async(name,input)=>{
@@ -71,7 +74,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
     };
    }};
    const result=await workOnce({box,control,executor,signal:abort.signal});
-   if(result!=='finished'||!observed?.hadInput||!observed.running||observed.currentJob!==observed.job||!bodyBytes?.every(byte=>byte===0))throw Error('The real native protocol did not complete: '+JSON.stringify({result,observed,expected:[...expected],trace,erased:bodyBytes?.every(byte=>byte===0),jobs:db.prepare('SELECT id,state,conversation FROM jobs WHERE agent=?').all('moss')}));
+   if(result!=='finished'||!observed?.hadInput||!observed.running||observed.currentJob!==observed.job||!bodyBytes?.every(byte=>byte===0))throw Error('The real native protocol did not complete: '+JSON.stringify({result,observed,expected:[...expected.keys()],trace,erased:bodyBytes?.every(byte=>byte===0),jobs:db.prepare('SELECT id,state,conversation FROM jobs WHERE agent=?').all('moss')}));
    const row=db.prepare('SELECT state,model,conversation,box,log_tail FROM jobs WHERE id=?').get(observed.job);
    if(!commandToken?.every(byte=>byte===0))throw Error('Native fixture capability was not erased');
    if(row?.state!=='done'||row.model!==observed.requestedModel||row.conversation!==observed.conversation||row.box!==box)throw Error('The native fixture body did not finish in its assigned scope: '+JSON.stringify({row,observed}));
@@ -79,7 +82,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native}
    if(row.log_tail?.includes('PRIVATE_NATIVE_FIXTURE_OUTPUT'))throw Error('Native worker output escaped into job metadata');
    runs.push({...observed,state:row.state,bootstrapErased:true});expected.delete(observed.job);
   }
-  if(expected.size)throw Error('The example private and public jobs were not both observed');
+  if(expected.size)throw Error('The requested example jobs were not all observed');
   return{runs,scope:'Real Root HTTP and normal worker/body code; fictional native provider and artifact only.'};
  }finally{
   abort.abort();clearTimeout(deadline);signal?.removeEventListener('abort',stop);
