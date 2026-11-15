@@ -74,6 +74,8 @@ for (const mode of ['--account-signin', '--account-usage']) {
     f.signIn.mockRejectedValue(new Error('private credential'));
     f.usage.mockReturnValue(vi.fn().mockRejectedValue(new Error('private credential')));
     expect(await workerProgram(f)).toBe(1); expect(f.output).not.toHaveBeenCalled();
+    if (mode === '--account-signin') expect(f.signIn).toHaveBeenCalledOnce();
+    else { expect(f.usage).toHaveBeenCalledOnce(); expect(f.usage.mock.results[0].value).toHaveBeenCalledOnce(); }
     expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
     expect(f.handlers.size).toBe(0);
   });
