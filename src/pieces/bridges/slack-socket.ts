@@ -26,7 +26,18 @@ export interface SlackSocketOptions {
  * not envelope_id, which is only the ACK address. No history replay or polling.
  */
 export function slackSocket(options: SlackSocketOptions): { close(): Promise<void> } {
-  const { clock } = options;
+  return socketTransport(options);
+}
+/** Shared bridge entry point: app must come from bot authentication (bots.info),
+ * never from an incoming envelope. Root owns workspace binding and invalidates
+ * this transport on credential/config changes. Every socket hello must match.
+ */
+export function bridgeSlackSocket(options: SlackSocketOptions & { app: string }): { close(): Promise<void> } {
+  if (typeof options.app !== 'string' || !/^A[A-Z0-9]{1,199}$/.test(options.app)) throw Error('Invalid Slack app binding');
+  return socketTransport(options);
+}
+function socketTransport(options: SlackSocketOptions & { app?: string }): { close(): Promise<void> } {
+  const { clock, app } = options;
   let closed = false, generation = 0, failures = 0;
   const active = new Set<Promise<unknown>>();
   function track<T>(promise: Promise<T>): Promise<T> {
@@ -109,7 +120,7 @@ export function slackSocket(options: SlackSocketOptions): { close(): Promise<voi
           if (!object(frame)) throw Error();
           if (frame.type === 'disconnect') { disconnect(epoch); return; }
           if (frame.type === 'hello') {
-            if (hello) throw Error();
+            if (hello || (app !== undefined && (!object(frame.connection_info) || frame.connection_info.app_id !== app))) throw Error();
             hello = true; cancelDeadline?.(); failures = 0; heartbeat(socket, epoch); return;
           }
           if (!hello) throw Error();
