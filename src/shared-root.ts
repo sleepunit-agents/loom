@@ -97,8 +97,11 @@ export function sharedRoot(options: {
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.all([stopped, ...pending.map(entry => entry.done)]).then(
-        () => { operations.close(); resolve(); }, error => { operations.close(); reject(error); });
+      void Promise.allSettled([stopped, ...pending.map(entry => entry.done)]).then(results => {
+        try { operations.close(); } catch (error) { reject(error); return; }
+        const failed = results.find(result => result.status === 'rejected');
+        if (failed) reject(failed.reason); else resolve();
+      });
       return closing;
     },
   };

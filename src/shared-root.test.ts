@@ -1,5 +1,8 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { DataLive } from './core/data/live.js';
+import { dataQueries } from './core/data/queries.js';
+import { taskVisibility } from './core/data/visibility.js';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -15,7 +18,7 @@ import { sharedRoot } from './shared-root.js';
 import { serveShared } from './shared-serve.js';
 
 const cleanup: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) await close(); } finally { vi.restoreAllMocks(); } });
 const token = 'a'.repeat(64), cookie = 'b'.repeat(64);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixture(approvedOperations?: Parameters<typeof sharedRoot>[0]['approvedOperations'], fields?: Parameters<typeof sharedRoot>[0]['fields']) {
@@ -27,7 +30,8 @@ function fixture(approvedOperations?: Parameters<typeof sharedRoot>[0]['approved
   db.insert(sessions).values({ id: hash(cookie), token: hash(token), device: 'Browser', via: 'token', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
   const errors: unknown[] = [];
   const root = sharedRoot({ db, clock, originAllowed: () => true, approvedOperations, fields, reportError: error => errors.push(error) });
-  cleanup.push(() => root.close());
+  const closeFixture = () => root.close();
+  cleanup.push(closeFixture);
   // A trusted producer installs a typed operation. The root never accepts a
   // registry or caller identity from an HTTP request.
   root.operations.register({ name: 'tasks.make', write: true, recheckPolicy: true,
@@ -43,7 +47,7 @@ function fixture(approvedOperations?: Parameters<typeof sharedRoot>[0]['approved
   const command = (input: unknown = { title: 'Pump' }, headers: Record<string, string> = { authorization: 'Bearer ' + token }, id = 'make') => root.http.request('http://loom/api/tasks/make', {
     method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ input, id }),
   });
-  return { client, db, clock, root, errors, command };
+  return { client, db, clock, root, errors, command, closeFixture };
 }
 
 it('uses actual shared services and receipts for cookie/bearer commands and generated reads', async () => {
@@ -64,6 +68,9 @@ it('uses actual shared services and receipts for cookie/bearer commands and gene
 });
 
 it('publishes a command commit through the same real GraphQL socket and closes before SQLite', async () => {
+  let hub: DataLive | undefined;
+  const originalWatch = DataLive.prototype.watch;
+  vi.spyOn(DataLive.prototype, 'watch').mockImplementation(function(this: DataLive, options) { hub = this; return originalWatch.call(this, options); });
   const f = fixture();
   const http = createServer(getRequestListener(request => f.root.http.fetch(request)));
   const detach = f.root.attach(http);
@@ -84,6 +91,8 @@ it('publishes a command commit through the same real GraphQL socket and closes b
   expect((await f.command()).status).toBe(503);
   await close; await closed;
   expect(() => f.root.attach(createServer())).toThrow('Loom is closing');
+  expect(hub).toBeInstanceOf(DataLive);
+  expect(() => hub!.watch({ schema: dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) }), query: '{ tasks { id } }', valid: () => true })).toThrow('Live data access ended');
   expect(f.client.open).toBe(true);
   expect(f.errors).toEqual([]);
 });
@@ -262,4 +271,56 @@ it('drains an already executing socket read before the caller may close shared S
   const closing = f.root.close().then(() => { events.push('closed'); });
   await ended; release(); await readDone; await closing;
   expect(events).toEqual(['read', 'closed']);
+});
+
+it('drains an executing HTTP resolver and fences its late authentication before shared SQLite closes', async () => {
+  let release!: () => void, began!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const events: string[] = [];
+  const f = fixture(undefined, { slowHttp: { type: GraphQLString, async resolve() {
+    began(); await held; f.db.select().from(tasks).all(); events.push('read'); return 'done';
+  } } });
+  const server = createServer(), detach = f.root.attach(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  cleanup.push(async () => { release(); detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
+  const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
+  cleanup.push(() => ws.terminate()); await once(ws, 'open');
+  const pending = f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query: '{ slowHttp }' }) });
+  await started;
+  const lateAuthentication: string[] = [];
+  const prepare = f.client.prepare.bind(f.client);
+  vi.spyOn(f.client, 'prepare').mockImplementation(sql => { if (/from\s+"(?:tokens|sessions|members)"/i.test(sql)) lateAuthentication.push(sql); return prepare(sql); });
+  const ended = once(ws, 'close');
+  const closing = f.root.close().then(() => { events.push('closed'); });
+  await ended; release();
+  const response = await pending; expect([401, 503]).toContain(response.status);
+  expect(await response.text()).not.toContain('"done"'); await closing;
+  expect(events).toEqual(['read', 'closed']); expect(lateAuthentication).toEqual([]);
+  expect(f.client.open).toBe(true);
+});
+
+it('drains an admitted command preparation even when transport cleanup fails', async () => {
+  const f = fixture(), error = new Error('transport drain failed');
+  cleanup.splice(cleanup.indexOf(f.closeFixture), 1);
+  let began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  const events: string[] = [];
+  f.root.operations.register({ name: 'tasks.wait', input: z.object({}), output: z.null(), write: true, may: () => true,
+    async prepare() { began(); await held; f.db.select().from(tasks).all(); events.push('prepared'); }, run: () => null,
+  });
+  const server = createServer(), detach = f.root.attach(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  cleanup.push(async () => { release(); detach(); try { await f.root.close(); } catch (failure) { expect(failure).toBe(error); } await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
+  const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
+  cleanup.push(() => ws.terminate()); await once(ws, 'open');
+  const pending = f.root.http.request('http://loom/api/tasks/wait', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ input: {}, id: 'waiting' }) });
+  await started;
+  vi.spyOn(DataLive.prototype, 'drain').mockRejectedValue(error);
+  const ended = once(ws, 'close');
+  const closing = f.root.close().then(() => { throw new Error('must report cleanup failure'); }, failure => { expect(failure).toBe(error); events.push('closed'); });
+  await ended; release(); expect((await pending).status).toBe(403); await closing;
+  expect(events).toEqual(['prepared', 'closed']); expect(f.client.open).toBe(true);
 });

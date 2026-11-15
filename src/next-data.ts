@@ -49,6 +49,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); },
     writes,
-    close() { return closing ??= (async () => { await socket.close(); live.close(); })(); },
+    close() {
+      if (closing) return closing;
+      let resolve!: () => void, reject!: (error: unknown) => void;
+      closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      void (async () => { try { await socket.close(); } finally { live.close(); } })().then(resolve, reject);
+      return closing;
+    },
   };
 }
