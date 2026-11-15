@@ -1,0 +1,129 @@
+/** Real CLI/default listener, with only fictional prepared stores and keys. */
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import Database from 'better-sqlite3';
+import {generateX25519Identity} from 'age-encryption';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,chmodSync,symlinkSync} from 'node:fs';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {Readable} from 'node:stream';
+import {once} from 'node:events';
+import {pathToFileURL} from 'node:url';
+import {WebSocket} from 'ws';
+import {createServer} from 'node:http';
+import {createDataSchema} from './core/data/database.js';
+import {members,agents,memberAgents,household} from './core/data/schema.js';
+import {requestLocalLink} from './core/signin/operator.js';
+import {FakeClock} from './core/clock.js';
+import {startSharedHome} from './shared-startup.js';
+import {run} from './cli/serve.js';
+import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import {PeopleStore} from './backends/people.js';
+import {ProjectsStore} from './backends/projects.js';
+const cleanups:Array<()=>unknown|Promise<unknown>>=[];
+beforeEach(()=>{vi.stubEnv('LOOM_WORKER_SOCKET',undefined);vi.stubEnv('LOOM_PUBLIC_URL',undefined);});
+afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();vi.unstubAllEnvs();});
+async function fixture(){
+ const home=mkdtempSync(join(tmpdir(),'loom-default-fiction-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
+ const database=join(home,'app.db'),client=new Database(database),db=createDataSchema(client);
+ const at='2026-11-15T12:00:00.000Z';
+ db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'peer',role:'member',joinedAt:at}]).run();
+ db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+ db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();
+ db.insert(household).values({defaultAgent:'fiction',timezone:'Asia/Tokyo'}).run();client.close();
+ const webRoot=join(home,'public');mkdirSync(webRoot);writeFileSync(join(webRoot,'next.html'),'<main>SHARED FICTIONAL ENTRY</main>');
+ const commsKey=join(home,'comms.key');writeFileSync(commsKey,await generateX25519Identity(),{mode:0o600});
+ const common=join(home,'commons'),agent=join(home,'agents/fiction');
+ const program={database,commsKey,signinMember:'owner',webRoot,memory:{checkingAgent:'fiction',sources:{commons:{directory:common,knowledge:join(common,'knowledge.db'),people:join(common,'people.db')},agents:[{agent:'fiction',directory:agent,memories:join(agent,'memories.db')}]}}};
+ const config=join(home,'program.json');writeFileSync(config,JSON.stringify(program),{mode:0o600});
+ return {home,config,program};
+}
+async function signedIn(home:string,url:string,member='owner'){
+ const link=await requestLocalLink(home,{request:'link',member,label:'Fictional local sign-in',ttl:30});expect(link.url).toBe(url);
+ const response=await fetch(url+link.path,{method:'POST',redirect:'manual',headers:{origin:url,'user-agent':'Fictional browser'}});
+ expect(response.status).toBe(303);return response.headers.get('set-cookie')!.split(';',1)[0];
+}
+it('normal serve --http installs public assets, current sign-in, Memory, Comms and Tempo on the same real door',async()=>{
+ const f=await fixture(),errors:string[]=[],printed:string[]=[];let ready!:(url:string)=>void;
+ symlinkSync(f.program.commsKey,join(f.program.webRoot,'key.js'));
+ const started=new Promise<string>(resolve=>{ready=resolve;});
+ const pending=run(['--http','--home',f.home,'--host','127.0.0.1','--port','0'],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:text=>printed.push(text),stderr:text=>{errors.push(text);const match=/shared app on (\S+)/.exec(text);if(match)ready(match[1]);}});
+ cleanups.push(async()=>{process.emit('SIGTERM');expect(await pending).toBe(0);});
+ const url=await Promise.race([started,pending.then(code=>{throw Error(`CLI stopped (${code}): ${errors.join('')}`);})]);
+ expect(await (await fetch(url+'/p/knowledge-preview')).text()).toBe('<main>SHARED FICTIONAL ENTRY</main>');
+ expect(await (await fetch(url+'/auth/session')).json()).toEqual({viewer:null});
+ expect((await fetch(url+'/app/key.js')).status).toBe(404);
+ expect(printed).toHaveLength(1);
+ const bootstrap=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});expect(bootstrap.status).toBe(303);
+ const cookie=bootstrap.headers.get('set-cookie')!.split(';',1)[0];
+ expect(await (await fetch(url+'/auth/session',{headers:{cookie}})).json()).toMatchObject({viewer:{kind:'member',id:'owner'}});
+ const query=async(cookie:string)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({query:'{ deskTime { timezone } homeComms { agents } memoryKnowledge { pages { title } } memoryPeople { id } memoryProjects { id } memoryActivity { entries { title } } triggers { id } }'})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
+ expect(await query(cookie)).toMatchObject({deskTime:{timezone:'Asia/Tokyo'},homeComms:{agents:['fiction']},memoryKnowledge:{pages:[]},memoryPeople:[],memoryProjects:[],memoryActivity:{entries:[]},triggers:expect.arrayContaining([{id:'knowledge-sweep:fiction'}])});
+ const socket=new WebSocket(url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:url}});socket.on('error',()=>{});cleanups.push(()=>socket.terminate());await once(socket,'open');
+ const next=async(action:()=>unknown)=>{const message=once(socket,'message');await action();return JSON.parse(String((await message)[0]));};
+ expect((await next(()=>socket.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
+ const initial=await next(()=>socket.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){observe(query:$query){revision patches{path value removed}}}',variables:{query:'{memoryKnowledge{pages{title}}}'}}})));
+ expect(initial.payload.data.observe.revision).toBe(1);
+ const changed=await next(async()=>{const response=await fetch(url+'/api/mind/knowledgeAdd',{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({id:'startup-fact',input:{title:'Socket fact',domain:'fiction',body:'Fictional words',source:''}})});expect(await response.json()).toMatchObject({ok:true});});
+ expect(JSON.stringify(changed)).toContain('Socket fact');
+ const peer=await signedIn(f.home,url,'peer');expect((await query(peer)).memoryKnowledge).toBeNull();
+ const audit=new Database(f.program.database,{readonly:true});try{for(const token of audit.prepare('SELECT fingerprint,label FROM tokens').all() as Array<{fingerprint:string;label:string}>)expect(token.label.includes(token.fingerprint)).toBe(false);}finally{audit.close();}
+ expect((await fetch(url+'/live')).status).toBe(404);expect(errors).toEqual([`loom: shared app on ${url}\n`]);
+});
+it('refuses an old SQLite store before preparing Memory files and preserves its exact bytes',async()=>{
+ const f=await fixture(),old=join(f.home,'old.db'),client=new Database(old);client.exec("CREATE TABLE precious(words TEXT);INSERT INTO precious VALUES('FICTIONAL PRECIOUS WORDS')");client.close();
+ const before=readFileSync(old);writeFileSync(f.config,JSON.stringify({...f.program,database:old}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('separate move');
+ expect(readFileSync(old)).toEqual(before);expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+});
+it('releases the adapter, database, source listeners and home ownership after bind failure and on repeated close',async()=>{
+ const f=await fixture(),module=join(f.home,'adapters.mjs');
+ writeFileSync(module,"import {writeFileSync} from 'node:fs';import {join} from 'node:path';export let client,closed=0;export default ({db,home})=>{client=db.$client;return {close(){closed++;writeFileSync(join(home,'adapter-closed'),String(client.prepare('SELECT count(*) AS n FROM members').get().n));}}};",{mode:0o600});
+ writeFileSync(f.config,JSON.stringify({...f.program,adapters:module}),{mode:0o600});
+ const blocked=createServer();await new Promise<void>(ok=>blocked.listen(0,'127.0.0.1',ok));cleanups.push(()=>new Promise<void>(ok=>blocked.close(()=>ok())));
+ const address=blocked.address();if(!address||typeof address==='string')throw Error('No port');
+ const clock=new FakeClock(),scheduled=vi.spyOn(clock,'at');
+ await expect(startSharedHome({home:f.home,port:address.port,clock})).rejects.toThrow();
+ const adapter=await import(pathToFileURL(module).href);expect(adapter.client.open).toBe(false);expect(adapter.closed).toBe(1);
+ expect(readFileSync(join(f.home,'adapter-closed'),'utf8')).toBe('2');const calls=scheduled.mock.calls.length;clock.advance(86400000);expect(scheduled).toHaveBeenCalledTimes(calls);
+ const app=await startSharedHome({home:f.home,port:0,clock,stdout:()=>{}});expect(adapter.client.open).toBe(true);
+ await expect(startSharedHome({home:f.home,port:0,clock,stdout:()=>{}})).rejects.toThrow('already running');expect(adapter.client.open).toBe(true);
+ await Promise.all([app.close(),app.close()]);expect(adapter.client.open).toBe(false);expect(adapter.closed).toBe(2);
+ const reopened=new Database(f.program.database,{readonly:true});expect(reopened.prepare('SELECT count(*) AS n FROM members').get()).toEqual({n:2});reopened.close();
+});
+it('refuses a public startup inventory without starting a listener',async()=>{
+ const f=await fixture();chmodSync(f.config,0o644);
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+});
+it('refuses public assets overlapping private files or a startup owner who is not an owner',async()=>{
+ const f=await fixture();
+ writeFileSync(f.config,JSON.stringify({...f.program,webRoot:f.home}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
+ const alias=join(f.home,'public-alias');symlinkSync(f.home,alias);
+ writeFileSync(f.config,JSON.stringify({...f.program,webRoot:alias}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
+ writeFileSync(f.config,JSON.stringify({...f.program,signinMember:'peer'}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('existing household owner');
+ expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);
+});
+it('rechecks the configured startup owner after service adapters finish',async()=>{
+ const f=await fixture(),module=join(f.home,'demote.mjs'),printed=vi.fn();
+ writeFileSync(module,"export default ({db})=>{db.$client.prepare(\"UPDATE members SET role='member' WHERE id='owner'\").run();return {};};",{mode:0o600});
+ writeFileSync(f.config,JSON.stringify({...f.program,adapters:module}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0,stdout:printed})).rejects.toThrow('no longer allowed');expect(printed).not.toHaveBeenCalled();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+ const client=new Database(f.program.database,{readonly:true});expect(client.prepare('SELECT count(*) AS n FROM signin_links').get()).toEqual({n:0});client.close();
+});
+it('keeps existing precious source bytes unchanged through failed and complete startup',async()=>{
+ const f=await fixture(),sources=f.program.memory.sources;mkdirSync(sources.commons.directory,{recursive:true});mkdirSync(sources.agents[0].directory,{recursive:true});
+ const knowledge=new SqliteKnowledgeBackend({dbPath:sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'PRECIOUS FICTIONAL WORDS'});knowledge.close();
+ new PeopleStore({dbPath:sources.commons.people}).close();new PeopleStore({dbPath:sources.agents[0].memories}).close();new ProjectsStore({dbPath:sources.agents[0].memories}).close();
+ const paths=[sources.commons.knowledge,sources.commons.people,sources.agents[0].memories],before=paths.map(path=>readFileSync(path));
+ const snapshots=()=>paths.map(path=>{const db=new Database(path,{readonly:true,fileMustExist:true});try{return db.serialize();}finally{db.close();}}),initial=snapshots();
+ const unchanged=()=>snapshots().every((bytes,index)=>bytes.equals(initial[index]))&&paths.every((path,index)=>readFileSync(path).equals(before[index]));
+ const blocked=createServer();await new Promise<void>(ok=>blocked.listen(0,'127.0.0.1',ok));cleanups.push(()=>new Promise<void>(ok=>blocked.close(()=>ok())));const address=blocked.address();if(!address||typeof address==='string')throw Error('No port');
+ await expect(startSharedHome({home:f.home,port:address.port,stdout:()=>{}})).rejects.toThrow();expect(unchanged()).toBe(true);
+ const app=await startSharedHome({home:f.home,port:0,stdout:()=>{}}),cookie=await signedIn(f.home,app.url);cleanups.push(()=>app.close());
+ const response=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{memoryKnowledge{pages{title}} memoryPeople{id} memoryProjects{id} memoryActivity{entries{title}}}'})});
+ expect(await response.json()).toMatchObject({data:{memoryKnowledge:{pages:[{title:'Kept fact'}]}}});
+ const write=await fetch(app.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'unprepared',input:{title:'No upgrade',domain:'fiction',body:'Fiction',source:''}})});expect(await write.json()).toMatchObject({ok:false,code:'unavailable'});
+ await app.close();expect(unchanged()).toBe(true);
+});

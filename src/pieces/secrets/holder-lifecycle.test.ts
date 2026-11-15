@@ -13,9 +13,7 @@ import {connect as tlsConnect} from 'node:tls';
 import {connect as netConnect,createServer} from 'node:net';
 import * as storage from './holder-store.js';
 import {privateBytes} from './local-holder.js';
-import {listenHolderAuthority,remoteHolderAuthority} from './holder-authority.js';
-import {Readable} from 'node:stream';
-import {run as serve} from '../../cli/serve.js';
+import {listenHolderAuthority,remoteHolderAuthority,authorityServerConfig} from './holder-authority.js';
 import {startLoom} from '../../foundation.js';
 import {fixture} from '../../fixture.js';
 import {HouseholdDatabase} from '../../core/household/document.js';
@@ -122,7 +120,6 @@ it('runs the packaged persistent entrypoint until signal and closes both sockets
   expect(existsSync(s.config.read.socket)).toBe(false);expect(existsSync(s.config.mutation.socket)).toBe(false);
 });
 
-
 it('failed daemon authority startup preserves an occupied socket and releases the new home',async()=>{
   const s=await setup();writeFileSync(s.authority.socket,'occupied',{mode:0o600});
   await expect(startLoom({home:s.appHome,next:true,staging:true,secretAuthority:s.authority,stdout:()=>{}})).rejects.toThrow(/^Secret holder authority unavailable$/);
@@ -161,9 +158,8 @@ it('rejects unknown top-level and nested persistent and authority configuration 
     writeFileSync(s.file,JSON.stringify(bad),{mode:0o600});await expect(startPersistentHolder(s.file)).rejects.toThrow();
     expect(existsSync(join(s.config.directory,'holder.db'))).toBe(false);
   }
-  const file=join(s.home,'authority.json');writeFileSync(file,JSON.stringify({...s.authority,extra:true}),{mode:0o600});
-  const stderr=vi.fn();expect(await serve(['--next','--secret-authority',file],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr})).toBe(2);
-  expect(stderr).toHaveBeenCalledWith('Invalid secret holder authority configuration\n');expect(existsSync(s.authority.socket)).toBe(false);
+  expect(authorityServerConfig.safeParse({...s.authority,extra:true}).success).toBe(false);
+  expect(existsSync(s.authority.socket)).toBe(false);
 });
 it('bounds authority connections before TLS and incomplete HTTP headers',async()=>{
   const s=await setup(),current=vi.fn(()=>true);const authority=await listenHolderAuthority(s.authority,current);closes.push(authority.close);

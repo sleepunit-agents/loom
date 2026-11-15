@@ -6,19 +6,19 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { chromium } from 'playwright-core';
-import { eq } from 'drizzle-orm';
-import * as startup from '../shared-start.js';
+
+import * as startup from '../shared-startup.js';
 import { run } from '../cli/serve.js';
 import { FakeClock } from '../core/clock.js';
-import { tasks, sessions, members } from '../core/data/schema.js';
+
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(path=>path&&existsSync(path));
 it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('first-run CLI sign-in opens one GraphQL socket, receives task deltas and loses access when the browser ends',async()=>{
  const home=mkdtempSync(join(tmpdir(),'loom-first-browser-')),clock=new FakeClock();
- const actual=startup.startSharedLoom;let app!:Awaited<ReturnType<typeof actual>>;
- const start=vi.spyOn(startup,'startSharedLoom').mockImplementation(async options=>app=await actual({...options,port:0,clock}));
+ const actual=startup.startSharedHome;let app!:Awaited<ReturnType<typeof actual>>;
+ const start=vi.spyOn(startup,'startSharedHome').mockImplementation(async options=>app=await actual({...options,port:0,clock}));
  let printed='',ready!:(url:string)=>void;const listening=new Promise<string>(ok=>{ready=ok;});
- const running=run(['--next','--staging','--home',home],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:text=>{printed+=text;},stderr:text=>{const url=/next app on (http:\/\/\S+)/.exec(text)?.[1];if(url)ready(url);}});
+ const running=run(['--http','--home',home,'--port','0'],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:text=>{printed+=text;},stderr:text=>{const url=/shared app on (http:\/\/\S+)/.exec(text)?.[1];if(url)ready(url);}});
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {
   const url=await listening;
@@ -36,18 +36,18 @@ it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('f
   await expect.poll(()=>frames.some(frame=>frame.includes('"tasks":[]'))).toBe(true);
   // Commit after the real tile has subscribed; it must draw the change without
   // navigation, a second read or a legacy feed waking it.
-  const owner=app.db.select().from(members).get()!.id,at=new Date(clock.now()).toISOString();
-  app.writes.run(()=>app.db.insert(tasks).values({id:'t-browser',title:'First-run live pump',ownerKind:'household',createdByKind:'member',createdBy:owner,createdAt:at,changedAt:at}).run());
+  const {viewer}=await (await context.request.get(url+'/auth/session')).json();
+  const task=app.writes.run(()=>app.services.tasks.create({title:'First-run live pump',goal:'Water flows',why:'Test the actual live selection',owner:{kind:'household'}},{kind:'member',id:viewer.id})).value;
   await expect.poll(()=>page.getByText('First-run live pump',{exact:true}).count()).toBeGreaterThan(0);
   const before=frames.length;
-  app.writes.run(()=>app.db.update(tasks).set({title:'Pump changed live'}).where(eq(tasks.id,'t-browser')).run());
+  app.writes.run(()=>app.services.tasks.edit(task.id,{title:'Pump changed live'}));
   await expect.poll(()=>page.getByText('Pump changed live',{exact:true}).count()).toBeGreaterThan(0);
   expect(frames.slice(before).some(frame=>frame.includes('Pump changed live'))).toBe(true);
   expect(paths.every(path=>path==='/graphql')).toBe(true);
   expect(paths.length).toBe(2); // one connection in each loaded document
   expect(errors).toEqual([]);
   console.info('First-run browser evidence: cookie-only GraphQL upgrade; ack, initial rows and changed task frames received; no /live', {connections:paths.length,frames:frames.length});
-  app.writes.run(()=>app.db.delete(sessions).run());
+  expect((await context.request.post(url+'/logout')).status()).toBe(200);
   await expect.poll(()=>page.getByText('Pump changed live',{exact:true}).count()).toBe(0);
   expect((await context.request.post(url+'/graphql',{data:{query:'{ tasks { id } }'}})).status()).toBe(401);
  } finally {
