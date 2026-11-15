@@ -13,6 +13,7 @@ import { installTaskCommands } from './apps/task-operations.js';
 import type { Viewer } from './policy.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
+import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 
 class BodyTooLarge extends Error {}
@@ -24,6 +25,7 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  tempo?: SharedTempoOptions;
   taskConversationVisible?(viewer: Viewer, id: string): boolean;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
@@ -41,6 +43,7 @@ export function sharedRoot(options: {
     conversations: new Conversations(db, now),
   };
   installTaskCommands(operations, db, services.tasks, options.taskConversationVisible ?? (() => false));
+  const tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo);
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -87,7 +90,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -98,6 +101,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
+      tempo.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
