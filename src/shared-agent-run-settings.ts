@@ -17,9 +17,12 @@ export const agentRunSettingsInput=z.object({agent:text(200),houseRepository:rep
    ports:z.array(z.object({address:z.ipv4().or(z.ipv6()).transform(value=>value.includes(':')?new URL('http://['+value+']/').hostname.slice(1,-1):value),port:z.number().int().min(1).max(65535)}).strict()).max(128).refine(values=>new Set(values.map(value=>JSON.stringify([value.address,value.port]))).size===values.length),
   }).strict();
 
-/** Trusted typed application, shared by direct owner edits and approved cards. */
+export function mayChangeAgentRunSettings(db:DataDatabase,viewer:Viewer,agent:string){
+ return mayAct(viewer,{type:'runtime.agent-run-settings',agent},sharedSharing(db),'agent-setup');
+}
+/** Validate current owner authority and selected machines without writing. */
 export function validateAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.infer<typeof agentRunSettingsInput>){
-   if(!mayAct(viewer,{type:'runtime.agent-run-settings',agent:input.agent},sharedSharing(db),'agent-setup'))throw new OperationError('denied','Current agent owner required');
+   if(!mayChangeAgentRunSettings(db,viewer,input.agent))throw new OperationError('denied','Current agent owner required');
    const sharing=sharedSharing(db);
    for(const id of input.boxes){
     const box=db.select().from(boxes).where(eq(boxes.id,id)).get();
@@ -27,6 +30,7 @@ export function validateAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.i
     if(!box||box.revokedAt||!lent?.lent&&!maySee(viewer,{type:'runtime.box',member:box.owner},sharing))throw new OperationError('invalid','Choose an available machine');
    }
 }
+/** Apply the typed edit, preserving separately governed Secret references. */
 export function applyAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.infer<typeof agentRunSettingsInput>){
    validateAgentRunSettings(db,viewer,input);
    const {agent,houseRepository,houseFile,houseBranch,nestedContainers,gpu}=input;
@@ -43,7 +47,7 @@ export function registerAgentRunSettings(operations:Operations,db:DataDatabase,c
  const applied=new WeakSet<object>();
  operations.register({name:'runtime.agentRunSettingsSet',write:true,recheckPolicy:true,doors:['http'],
   input:agentRunSettingsInput,output:z.object({saved:z.literal(true)}).strict(),
-  may:(viewer,input)=>mayAct(viewer,{type:'runtime.agent-run-settings',agent:input.agent},sharedSharing(db),'agent-setup'),
+  may:(viewer,input)=>mayChangeAgentRunSettings(db,viewer,input.agent),
   run(ctx,input){
    applyAgentRunSettings(db,ctx.viewer,input);
    applied.add(input);for(const type of ['agentRunSettings','agentBoxes','agentHousePorts'])ctx.changed(type,input.agent);return{saved:true as const};
