@@ -379,11 +379,13 @@ main[data-pending]::before { content: ''; position: fixed; inset: 0 0 auto; heig
 @media (display-mode: standalone) { html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); } }
 html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
 
-/* Toasts on a phone (toasts.tsx; Jonathan, 2026-11-03: one covered the whole screen): a strip at the top centre, under
-   the status bar and clear of the dock; a desktop keeps toast.css's bottom right. toast.css's .v-toaster sits in
-   @layer cojeev-states, which comes after Tailwind's utilities, so a utility class can't move it: its bottom and right
-   won over max-lg:bottom-auto and max-lg:right-auto, and a viewport with a top and a bottom stretched the toast to the
-   screen's height. This rule is unlayered, so it wins. */
+/* Toasts stay clear of the dock. Desktop's dock reserves 104px; a notice
+   under the pointer can stay open, so expiry cannot be relied on to unblock
+   its keys. Phone notices remain at the top, below the safe area. Unlayered
+   placement wins over the component registry's toast defaults. */
+@media (width >= 64rem) {
+  .v-toaster[data-slot="toast-viewport"] { bottom: calc(104px + var(--s-6) + env(safe-area-inset-bottom)); }
+}
 @media (width < 64rem) {
   .v-toaster[data-slot="toast-viewport"] { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; left: 0; right: 0; margin-inline: auto; }
 }
