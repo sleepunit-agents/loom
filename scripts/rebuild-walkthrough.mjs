@@ -1,3 +1,4 @@
+import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
@@ -20,6 +21,7 @@ import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
+import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {approvalInbox} from './rebuild-approval-inbox.mjs';
 
@@ -88,6 +90,7 @@ export async function* walkthroughSteps(output) {
   page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame()&&new URL(request.url()).origin===app.url)connections.clear();});
   page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigation++;});
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
+
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
   page.on('pageerror',error=>pageErrors.push(error.message));
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
@@ -133,6 +136,7 @@ export async function* walkthroughSteps(output) {
     await page.waitForFunction(ready,`${title} tile`);
     row.opened=true;row.text=await tile.innerText();row.path=new URL(page.url()).pathname;
     row.unavailable=/unavailable|couldn.t load/i.test(row.text);
+    if(title==='Comms'&&row.opened)Object.assign(report.actions,await conversationLinks({page,example:report.example}));
     if(title==='Comms'&&row.opened){report.actions={...report.actions,conversationRecords:await conversationRecords({page,app,example:report.example,out})};}
     if(selections[title]){
      row.selection=selections[title];
@@ -183,6 +187,8 @@ export async function* walkthroughSteps(output) {
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
+   if(title==='Home'&&row.opened){report.actions={...report.actions,homeMessage:await homeActions({page,tile:page.getByRole('region',{name:'Home tile',exact:true}),app,out})};}
+
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);

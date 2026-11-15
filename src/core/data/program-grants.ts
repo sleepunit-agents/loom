@@ -1,4 +1,5 @@
 /** Canonical SQLite port. Restriction markers are never removed by grant edits. */
+import {statement} from '../db/index.js';
 import {eq} from 'drizzle-orm';
 import type {DataDatabase} from './database.js';
 import {programTokens,programRecordGrants,programOperationGrants} from './schema.js';
@@ -6,7 +7,7 @@ import {normalizeProgramGrants,type ProgramGrantStore} from '../../shared-progra
 export function programGrantStore(db:DataDatabase):ProgramGrantStore{
  // One statement gives marker and both grant lists the same read snapshot,
  // without a Cartesian join between record and operation grants.
- const read=db.$client.prepare(`SELECT 'marker' AS kind,NULL AS name FROM program_tokens WHERE token=?
+ const read=statement(db.$client,`SELECT 'marker' AS kind,NULL AS name FROM program_tokens WHERE token=?
  UNION ALL SELECT 'record',record_type FROM program_record_grants WHERE token=?
  UNION ALL SELECT 'operation',operation FROM program_operation_grants WHERE token=?`);
  return{
@@ -21,7 +22,7 @@ export function programGrantStore(db:DataDatabase):ProgramGrantStore{
    db.insert(programTokens).values({token:fingerprint}).onConflictDoNothing().run();
    db.delete(programRecordGrants).where(eq(programRecordGrants.token,fingerprint)).run();
    db.delete(programOperationGrants).where(eq(programOperationGrants.token,fingerprint)).run();
-   for(const record of grants.records)db.insert(programRecordGrants).values({token:fingerprint,record}).run();
+   for(const record of grants.records)db.insert(programRecordGrants).values({token:fingerprint,recordType:record}).run();
    for(const operation of grants.operations)db.insert(programOperationGrants).values({token:fingerprint,operation}).run();
    return undefined;
   },

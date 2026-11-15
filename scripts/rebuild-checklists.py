@@ -73,12 +73,16 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  if f.stem=='conversations':
   for row in rows:
+   if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
+   if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
  for app,text,contains in ui.get(f.stem,[]):
   probe={'kind':'ui','app':app,'contains':contains}
   if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
   add(text,'',probe)
  if f.stem=='tempo':
+  for row in rows:
+   if row['promise'].startswith('Waiting on an approval is a once-only trigger on that answer.'):row['probe']={'kind':'action','action':'tempoResumed'}
   for check,text in [('held','An answer arriving while the agent is paused does not fire its trigger.'),('resumed','Resuming fires the held once-only answer trigger exactly once.'),('settled','Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.'),('cancelled','Cancelling a future trigger prevents delivery beyond its deadline.')]:add(text,'',{'kind':'action','action':'tempo'+check.capitalize()})
  if f.stem=='conversations':
   add('Sending in Comms persists the message after reload and creates one Inbox delivery item.','',{'kind':'action','action':'commsSend'})
@@ -111,6 +115,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith(('Marks what you have read', 'Opening an item marks it read')):row['probe']={'kind':'action','action':'inboxHistory'}
  if f.stem=='desk':
   for row in rows:
+   if row['promise'].startswith("Home shows each agent's last answer and recent conversations"):row['probe']={'kind':'action','action':'homeMessage'}
    if row['promise'].startswith('Wears one of three looks'):row['probe']={'kind':'action','action':'deskLooks'}
    if row['promise'].startswith('A look is a set of colours'):row['probe']={'kind':'action','action':'deskAppearance'}
 
