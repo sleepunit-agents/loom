@@ -3,7 +3,8 @@ import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { Ask } from './model';
-import type { OwnedAgent, AgentStatus, RuntimeJob } from './home-model';
+import type { OwnedAgent, AgentStatus } from './home-model';
+import type { CurrentJob } from './current-jobs';
 import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
@@ -13,7 +14,7 @@ vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
 vi.mock('./member-retention',()=>({useMemberRetention:vi.fn()}));
-import { currentRuntimeJobs, orderedAgents, reportLink } from './home-model';
+import { orderedAgents, reportLink } from './home-model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 const ask=(id:string,fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:`Question ${id}`,why:'The whole reason',if_yes:'I continue.',if_no:'I stop.',refs:['t-2205'],source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 const live=<T,>(records:T[])=>({records,status:'live' as const});
@@ -189,7 +190,7 @@ it('checks the real member wait operation from Home without synthesizing a local
   expect(f.call.mock.calls.some(([name])=>name==='attention.answer')).toBe(false);
 });
 
-const runtimeJob=(id:string,fields:Partial<RuntimeJob>={}):RuntimeJob=>({id,agent:'art',title:`Runtime ${id}`,state:'queued',box:'worker',runner:'worker',createdAt:1,...fields});
+const runtimeJob=(id:string,fields:Partial<CurrentJob>={}):CurrentJob=>({id,agent:'art',title:`Runtime ${id}`,state:'queued',box:'worker',queuedAt:new Date(1).toISOString(),...fields});
 it('shows generated current jobs independently of reports and preserves server order and concurrent titles',async()=>{
   f.snapshots['generated.jobs']=live([
     {id:'first',agent:'art',title:'Same work',state:'running',box:'worker',queuedAt:'2026-11-14T01:00:00Z'},
@@ -218,11 +219,6 @@ it.each(['loading','offline','denied'] as const)('clears Runtime words and avoid
   await publish('generated.jobs',live([{...runtimeJob('returned'),queuedAt:new Date(1).toISOString()}]));expect(words(tree!.root.findByProps({'aria-label':'Art runtime jobs'}))).toContain('Runtime returned');
   await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Runtime returned');expect(text()).not.toContain('Art card');
 });
-it('orders Runtime work deterministically by state, queued time and identity without mutating the live snapshot or limiting rows',()=>{
-  const rows=[runtimeJob('z',{createdAt:2}),runtimeJob('b'),runtimeJob('a'),...Array.from({length:40},(_,i)=>runtimeJob(`running-${i}`,{state:'running'}))];
-  const original=[...rows];const jobs=currentRuntimeJobs(rows,'art');expect(rows).toEqual(original);expect(jobs).toHaveLength(43);expect(jobs.slice(-3).map(j=>j.id)).toEqual(['a','b','z']);
-});
-
 it('shows member conversation metadata and opens the latest and first unread exact threads',async()=>{
  const pending=request<any>();f.once.mockReturnValue(pending.call);const go=await draw();
  expect(f.once).toHaveBeenCalledWith('comms.agents',{});
