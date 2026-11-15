@@ -35,11 +35,13 @@ const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
 const words='alpha NATIVE_PRIVATE_MEMORY_WORDS',title='PRIVATE_MEMORY_TITLE';
 const input={category:'project',title,content:words,project:'pond'};
-async function fixture(){
+async function fixture(options:{unprepared?:boolean}={}){
  const home=mkdtempSync(join(tmpdir(),'native-memory-fiction-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));clean.push(()=>{for(const db of owned.connections.splice(0))if(db.open)db.close();});
  const common=join(home,'commons'),directory=join(home,'agents/art'),other=join(home,'agents/mark');
  const memory={checkingAgent:'art',sources:{commons:{directory:common,knowledge:join(common,'knowledge.db'),people:join(common,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'memories.db')},{agent:'mark',directory:other,memories:join(other,'memories.db')}]}};
  await prepareSharedMemorySources(memory);const project=new ProjectsStore({dbPath:memory.sources.agents[0].memories});project.write({slug:'pond',name:'Fictional pond'});project.close();
+ let sourceBefore:Buffer|undefined;
+ if(options.unprepared){const db=new Database(memory.sources.agents[0].memories);db.exec('DROP TABLE memory_command_schema; DROP TABLE memory_command_preparations; DROP TABLE memory_command_receipts');sourceBefore=db.serialize();db.close();}
  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(Date.parse('2026-11-14T18:00:00Z'));
  const f=await bodyFixture(clean,{memory});await f.root.ready;
  const server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
@@ -49,7 +51,7 @@ async function fixture(){
  const call=async(verb:string,value:unknown,id:string,token=raw.body)=>{const response=await fetch(url+'/api/memory/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:value,id})});return {status:response.status,result:await response.json()};};
  const query=async(query:string,token=raw.body)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  const count=()=>source.prepare("SELECT 1 FROM sqlite_schema WHERE name='memories'").get()? (source.prepare('SELECT count(*) AS n FROM memories').get() as {n:number}).n:0;
- return {...f,home,path,source,url,call,query,count,other:memory.sources.agents[1].memories};
+ return {...f,home,path,source,url,call,query,count,sourceBefore,other:memory.sources.agents[1].memories};
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
@@ -75,7 +77,8 @@ it('binds commands to the actual body, publishes committed content, and reads op
  const id=remembered.result.value.ids[0];expect(id).toMatch(/^art:[a-f0-9-]{36}$/);expect(JSON.stringify(remembered)).not.toContain(title);expect(JSON.stringify(remembered)).not.toContain(words);
  expect(await f.query(`{memoryProjectMemory(id:"${id}"){title content}}`)).toEqual({memoryProjectMemory:{title,content:words}});
  const recall=await f.call('recall',{query:'alpha',limit:1},'recall');expect(recall.status).toBe(200);expect(recall.result.value).toMatchObject({ids:[id],matches:[{id}]});expect(JSON.stringify(recall)).not.toContain(words);
- const before=embed.calls;expect(await f.call('recall',{query:'alpha',limit:1},'recall')).toEqual(recall);expect(embed.calls).toBe(before);
+ const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all();
+ const priorHeat=heat(),before=embed.calls;expect(await f.call('recall',{query:'alpha',limit:1},'recall')).toEqual(recall);expect(embed.calls).toBe(before);expect(heat()).toEqual(priorHeat);
  for(const token of [raw.agent,raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
  expect((await f.call('remember',{...input,agent:'mark'},'choose-agent')).status).toBe(400);expect((await f.call('remember',{...input,path:f.other},'choose-path')).status).toBe(400);
  const canonical=JSON.stringify({category:input.category,content:input.content,project:input.project,title:input.title}),fingerprint=f.key.hash(canonical);
@@ -83,6 +86,28 @@ it('binds commands to the actual body, publishes committed content, and reads op
  expect(f.db.select().from(s.operationResults).all().find(row=>row.id==='remember')?.inputHash).toBe(fingerprint);
  expect(f.source.prepare('SELECT input_hash FROM memory_command_receipts WHERE id=?').get('remember')).toEqual({input_hash:fingerprint});
  expect(f.count()).toBe(1);expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(words))).toBe(false);expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(title))).toBe(false);
+});
+it('forwards TTL, metadata, category and project filters and truncates eligible recall matches',async()=>{
+ const f=await fixture(),ids:string[]=[];
+ for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other']] as const){
+  const value={category,project,title:'Option '+i,content:'alpha option '+i,...(i===0?{ttl:'2d',metadata:{nested:{enabled:false,count:0},tags:[]}}:{})};
+  const result=await f.call('remember',value,'option-'+i);expect(result.status).toBe(200);ids.push(result.result.value.ids[0]);
+ }
+ const stored=f.source.prepare('SELECT ttl,expires_at,metadata FROM memories WHERE uuid=?').get(ids[0].slice(4));expect(stored).toEqual({ttl:'2d',expires_at:'2026-11-16T18:00:00.000Z',metadata:JSON.stringify({nested:{enabled:false,count:0},tags:[]})});
+ const filtered=await f.call('recall',{query:'alpha',category:'project',project:'pond',limit:50},'filtered');expect(filtered.status).toBe(200);expect(new Set(filtered.result.value.ids)).toEqual(new Set(ids.slice(0,2)));
+ const limited=await f.call('recall',{query:'alpha',category:'project',project:'pond',limit:1},'limited');expect(limited.result.value.ids).toHaveLength(1);expect(ids.slice(0,2)).toContain(limited.result.value.ids[0]);
+});
+it('leaves an existing unprepared source byte-for-byte unchanged through startup and refused commands',async()=>{
+ const f=await fixture({unprepared:true});expect(f.source.serialize()).toEqual(f.sourceBefore);
+ expect(await f.query('{memoryProject(id:"art:pond"){name}}')).toEqual({memoryProject:{name:'Fictional pond'}});
+ expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
+ expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
+});
+it('recovers recall after shared receipt failure without adding heat again',async()=>{
+ const f=await fixture();expect((await f.call('remember',input,'initial')).status).toBe(200);
+ f.db.$client.exec("CREATE TRIGGER fail_recall_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(503);
+ const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all(),before=heat(),calls=embed.calls;expect(before).toEqual([expect.objectContaining({recall_heat:expect.any(Number)})]);
+ f.db.$client.exec('DROP TRIGGER fail_recall_core');expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(200);expect(heat()).toEqual(before);expect(embed.calls).toBe(calls);
 });
 it('recovers the committed private result after shared receipt failure and reserves the id against unrelated writes',async()=>{
  const f=await fixture();f.db.$client.exec("CREATE TRIGGER fail_memory_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");

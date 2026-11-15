@@ -21,6 +21,9 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const close=()=>{if(closed)return;closed=true;for(const source of sources.values())source.db.close();sources.clear();};
  const selected=(viewer:Viewer)=>{if(closed)return;const body=options.body(viewer);return body?sources.get(body.agent):undefined;};
  const current=(viewer:Viewer)=>{const source=selected(viewer);return source&&semanticMemoryReady(source.db)?source:undefined;};
+ // Keep lookups at their owning snapshot: recovery filters expiry, admission
+ // deletes expired rows under its lock, execution retains the original deadline.
+ // The shared identity check applies equally to preparations and receipts.
  const check=(prior:Identity,receipt:Readonly<WriteReceipt>)=>{if(prior.name!==receipt.name||prior.input_hash!==receipt.inputHash)throw new OperationError('conflict','Operation id already used for different input');};
  const recover=(ctx:Context)=>{
   if(closed||!ctx.receipt||ctx.viewer.kind!=='agent')return;
