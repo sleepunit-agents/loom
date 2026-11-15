@@ -2,6 +2,7 @@
  * claim or report is reconciled by loom's job-silence sweep. */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 export const workerAssignment = z.object({
@@ -66,14 +67,22 @@ function operationCaller(input: WorkerHttpOptions) {
   }
   return call;
 }
-export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: { account: string; owner: string; provider: string; windows: readonly QuotaWindow[] }) {
+export interface WorkerAccountIdentity { account: string; owner: string; provider: string }
+export function readWorkerAccountBasis(input: WorkerHttpOptions, identity: WorkerAccountIdentity) {
+  return operationCaller(input)('accountUsageBasis', identity, z.object({ basis: z.uuid() }).strict());
+}
+export function reportWorkerAccountUnavailable(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { basis: string }) {
+  return operationCaller(input)('accountUnavailable', observation, z.object({ recorded: z.boolean() }).strict());
+}
+export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { windows: readonly QuotaWindow[]; basis: string }) {
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
 }
-export function httpWorkerControl(input: WorkerHttpOptions): WorkerControl {
+export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[] }): WorkerControl {
+  const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
   return {
-    next: async () => (await call('next', {}, workerAssignment.nullable())) ?? undefined,
+    next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build) => { await call('started', { job, build }, ack); },
     heartbeat: async (job, state) => (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active,
     finish: async (job, exitCode, logTail) => { await call('finish', { job, exitCode, logTail }, ack); },

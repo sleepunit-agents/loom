@@ -1,9 +1,9 @@
 import { useDataQuery } from '../../data/graphql';
 import { stamp } from './time';
 
-/** Bounded summary field; selecting this does not subscribe Home to messages. */
+/** The server selects the latest answered conversation before the limit. */
 export const lastAnswerQuery = `query DeskLastAnswer($agent: String!) {
-  recentConversations(agent: $agent, limit: 8) {
+  recentConversations(agent: $agent, limit: 1, answeredOnly: true) {
     id agent lastAnswer { at words }
   }
 }`;
@@ -18,6 +18,6 @@ export function LastAnswer({ agent, name }: { agent: string; name: string }) {
     {!current ? <p>Answer unavailable.</p> : answer ? <>
       <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{answer.words}</p>
       <p><time dateTime={answer.at}>{stamp(Date.parse(answer.at))}</time></p>
-    </> : <p>No retained agent answer in recent conversations.</p>}
+    </> : <p>No retained agent answer.</p>}
   </section>;
 }

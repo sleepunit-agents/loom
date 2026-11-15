@@ -142,11 +142,11 @@ it('keeps the trusted dispatch import graph free of process and credential I/O',
     const source = await readFile(path, 'utf8');
     expect(source).not.toMatch(/\b(?:require|eval|fetch)\s*\(|\bprocess\s*\.\s*(?:env|getBuiltinModule|loadEnvFile|binding)\b/);
     for (const entry of parse(source)[0]) {
-      if (entry.typeOnly) continue;
+      if ('typeOnly' in entry && entry.typeOnly) continue;
       expect(entry.type).toBe('static');
       const name = entry.specifier!;
       if (name.startsWith('.')) await walk(resolve(dirname(path), name.replace(/\.js$/, '.ts')));
-      else expect(['drizzle-orm', 'drizzle-orm/sqlite-core', 'node:crypto']).toContain(name);
+      else expect(['drizzle-orm', 'drizzle-orm/sqlite-core', 'node:crypto', 'zod']).toContain(name);
     }
   };
   await walk(fileURLToPath(new URL('./dispatcher.ts', import.meta.url)));

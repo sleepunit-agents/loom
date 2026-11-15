@@ -4,9 +4,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions } from './core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
+import { workerProgram } from './runtime/worker-program.js';
 import { workOnce } from './runtime/worker.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -224,4 +225,56 @@ it('requires the current bearer runner proof rather than a runner-labelled cooki
   expect(f.db.select().from(operationResults).all()).toEqual([]);
   expect(f.db.select().from(jobs).get()?.state).toBe('queued');
   expect((await f.call('next', {}, 'bearer')).status).toBe(200);
+});
+
+it('reports local worker facts through default HTTP and uses them in the same poll placement', async () => {
+  const f = fixture(), job = f.send('handoff');
+  f.db.insert(jobNeeds).values({ job: job.id, need: 'gpu:5090' }).run();
+  f.db.insert(boxFacts).values([{ box: 'worker', fact: 'rack:attic', fromOwner: true }, { box: 'worker', fact: 'gpu:old', fromOwner: false }, { box: 'other', fact: 'gpu:other', fromOwner: false }]).run();
+  expect(await f.control.next()).toBeUndefined(); expect(f.db.select().from(jobs).get()?.state).toBe('queued');
+  const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => f.root.http.fetch(new Request(input, init))); cleanup.push(() => { fetcher.mockRestore(); });
+  const command = { command: '/fake', args: [], cwd: '/fake', env: {} }, config = { url: 'https://loom.example', box: 'worker', tokenFile: '/token', build: command, runners: { codex: command }, facts: ['gpu:5090', 'rack:attic'] };
+  expect(await workerProgram({ args: ['/config'], read: async path => path === '/config' ? JSON.stringify(config) : credential, on: () => {}, off: () => {}, error: text => { throw Error(text); }, executor: () => ({} as never),
+    run: async input => { expect(await input.control.next()).toMatchObject({ id: job.id, box: 'worker' }); },
+  })).toBe(0);
+  expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'starting', box: 'worker' });
+  expect(f.db.select().from(boxFacts).all().sort((a,b) => (a.box+a.fact).localeCompare(b.box+b.fact))).toEqual([{ box: 'other', fact: 'gpu:other', fromOwner: false }, { box: 'worker', fact: 'gpu:5090', fromOwner: false }, { box: 'worker', fact: 'rack:attic', fromOwner: true }]);
+});
+it('rolls machine facts and health back with a failed poll receipt and refuses replay', async () => {
+  const f = fixture(), job = f.send(); f.db.insert(jobNeeds).values({ job: job.id, need: 'after' }).run(); f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run(); const health = f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt;
+  f.clock.advance(1000);
+  f.client.exec("CREATE TRIGGER reject_facts_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect((await f.call('next', { facts: ['after'] }, 'facts-poll')).status).toBe(503);
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'before', fromOwner: false }]); expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt).toBe(health);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'queued', box: null, account: null, claimedAt: null });
+  expect(f.db.select().from(operationResults).all()).toEqual([]); f.client.exec('DROP TRIGGER reject_facts_receipt');
+  expect((await f.call('next', { facts: ['after'] }, 'facts-poll')).status).toBe(200);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'starting', box: 'worker', account: 'account' });
+  expect((await f.call('next', { facts: ['newer'] }, 'newer-facts-poll')).status).toBe(200);
+  expect((await f.call('next', { facts: ['after'] }, 'facts-poll')).status).toBe(409);
+  expect(f.db.select().from(boxFacts).get()?.fact).toBe('newer');
+});
+for (const facts of [[''], ['gpu:5090', 'gpu:5090'], ['gpu:5090', ' gpu:5090 '], ['bad\nline'], ['bad\rfact'], ['bad\0fact'], Array(129).fill('fact').map((v,i) => v+i), ['x'.repeat(257)], null, 'gpu:5090']) it('rejects malformed machine facts at the authenticated door without writes', async () => {
+  const f = fixture(), before = f.db.select().from(boxes).all();
+  expect((await f.call('next', { facts })).status).toBe(400);
+  expect(f.db.select().from(boxFacts).all()).toEqual([]); expect(f.db.select().from(boxes).all()).toEqual(before); expect(f.db.select().from(operationResults).all()).toEqual([]);
+});
+it('cannot report another machine or use a runner cookie to replace facts', async () => {
+  const f = fixture(); f.db.insert(boxFacts).values({ box: 'worker', fact: 'before', fromOwner: false }).run();
+  expect((await f.call('next', { facts: ['after'], box: 'worker' }, 'inject', otherCredential)).status).toBe(400);
+  for (const key of [ownerCredential, agentCredential]) expect((await f.call('next', { facts: ['after'] }, 'deny-'+key[0], key)).status).toBe(403);
+  f.db.insert(sessions).values({ id: hash('z'.repeat(64)), token: hash(credential), device: 'Fixture', via: 'link', isAgent: true, issuedAt: f.now(), seenAt: f.now(), provedAt: f.now() }).run();
+  expect((await f.root.http.request('/api/runtime/next', { method: 'POST', headers: { cookie: 'loom_ui='+'z'.repeat(64), 'content-type': 'application/json' }, body: JSON.stringify({ id: 'cookie-facts', input: { facts: ['after'] } }) })).status).toBe(403);
+  f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run());
+  expect((await f.call('next', { facts: ['after'] }, 'revoked')).status).toBe(401);
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'before', fromOwner: false }]); expect(f.db.select().from(operationResults).all()).toEqual([]);
+});
+
+it('accepts fact reports from a report-only machine without assigning its queued work', async () => {
+  const f = fixture(), job = f.send(); f.db.update(boxes).set({ reportOnly: true }).where(eq(boxes.id, 'worker')).run();
+  f.clock.advance(1000);
+  expect(await (await f.call('next', { facts: ['os:linux'] }, 'report-only-facts')).json()).toMatchObject({ value: null });
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'os:linux', fromOwner: false }]);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()).toMatchObject({ state: 'queued', box: null });
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt).toBe(f.now());
 });

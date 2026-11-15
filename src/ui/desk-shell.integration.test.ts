@@ -38,6 +38,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  const thread=messages.threads.open({member:'owner',agent:'art',title:'Desk fixture conversation'});
  await messages.send({thread:thread.id,sender:'art',kind:'reply',words:'The shared desk reader is ready.'});
  const question=await messages.ask(thread.id,'art','desk-question',{words:'OK to run the backup now?',why:'A disposable browser fixture question.',answers:'yes-no'});
+ // Newer unanswered threads must not hide the latest actual agent reply.
+ for(let n=0;n<9;n++){clock.advance(1);messages.threads.open({member:'owner',agent:'art',title:`Unanswered seed ${n}`});}
  const app=await serveShared({db,clock,webRoot,commsKey:key,originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
  let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {

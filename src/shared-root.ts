@@ -1,3 +1,4 @@
+import { recordActionResult } from './shared-action-results.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
@@ -59,9 +60,9 @@ export function sharedRoot(options: {
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
-/** Trusted startup loads the household key, never an outside request. */
+  /** Trusted startup loads the household key, never an outside request. */
   commsKey?: WordsKey;
-/** Authenticated private holder-to-worker sink; values never enter this root. */
+  /** Authenticated private holder-to-worker sink; values never enter this root. */
   secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
@@ -96,7 +97,7 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
-  registerSharedAccountReports(operations, db, now, credentials.runner);
+  const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   const roles = () => options.modelRoles?.() ?? [];
   let tempo!: ReturnType<typeof installSharedTempo>;
   const jobEnded = (id: string) => {
@@ -225,6 +226,9 @@ export function sharedRoot(options: {
 
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
+    // The admitted member receives server-owned outcome metadata even when
+    // preparation was refused after credential expiry. Never write after stop.
+    if (!closing) recordActionResult({db,writes:data.writes,operations,viewer:auth.viewer,window:auth.window===true,name:`${c.req.param('piece')}.${c.req.param('operation')}`,input:parsed.data.input,id:parsed.data.id,result:answer,now:()=>clock.now(),reportError:options.reportError});
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
@@ -243,6 +247,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      accountReports.close();
       commsLifetime?.close();
       runtime.close();
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();

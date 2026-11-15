@@ -6,7 +6,7 @@ import { agentApp, homeApp, HomeSurface, RailSurface, BarSurface, SignalsSurface
 import { projectsApp } from './pieces/projects/registration';
 import { knowledgeApp } from './pieces/knowledge/registration';
 import { sharingApp } from './pieces/sharing/registration';
-import { clockApp } from './pieces/clock/registration';
+import { tempoApp } from './pieces/tempo/registration';
 import { commsApp } from './pieces/comms/registration';
 import { tasksApp } from './pieces/tasks/registration';
 import { changesApp } from './pieces/changes/registration';
@@ -15,7 +15,7 @@ import { bridgesApp } from './pieces/bridges/registration';
 import { inboxApp } from './pieces/attention/registration';
 import { peopleApp } from './pieces/people/registration';
 /** Composition is the one place that chooses the installed first-party apps. */
-export const apps = [tasksApp, approvalsApp, sharingApp, changesApp, knowledgeApp, inboxApp, bridgesApp, clockApp, commsApp, homeApp, agentApp, peopleApp, projectsApp, activityApp, settingsApp, setupApp, accountApp];
+export const apps = [tasksApp, approvalsApp, sharingApp, changesApp, knowledgeApp, inboxApp, bridgesApp, tempoApp, commsApp, homeApp, agentApp, peopleApp, projectsApp, activityApp, settingsApp, setupApp, accountApp];
 
 export const appAt = (path: string) => apps.find(app => path === app.path || path.startsWith(`${app.path}/`));
 
