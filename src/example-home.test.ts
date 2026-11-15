@@ -7,8 +7,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {exampleHome,runExampleHome} from './example-home.js';
 import {startSharedHome} from './shared-startup.js';
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 it('builds fictitious data through services, then normal startup signs in and queries it',async()=>{
+ vi.stubEnv('TZ','America/Chicago');
  const parent=mkdtempSync(join(tmpdir(),'loom-example-test-')),home=join(parent,'home');
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
  try{
@@ -34,8 +35,8 @@ it('builds fictitious data through services, then normal startup signs in and qu
   let link='';app=await startSharedHome({home,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
-  const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title status } approvals { id state } changes { id project agent } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
-  const result=await query.json();expect(result.errors).toBeUndefined();
+  const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ deskTime { timezone } tasks { id title status } approvals { id state } changes { id project agent } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
+  const result=await query.json();expect(result.errors).toBeUndefined();expect(result.data.deskTime).toEqual({timezone:'America/Chicago'});
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
   expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);

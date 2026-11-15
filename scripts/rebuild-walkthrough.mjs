@@ -49,7 +49,7 @@ export async function* walkthroughSteps(output) {
   report.example=await exampleHome(home);
   let link='';app=await startSharedHome({home,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
-  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block'});
+  const context=await browser.newContext({timezoneId:'Asia/Tokyo',viewport:{width:1600,height:1000},serviceWorkers:'block'});
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
@@ -68,6 +68,10 @@ export async function* walkthroughSteps(output) {
   await page.screenshot({path:join(out,'00-signin.png'),fullPage:true});
   await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.locator('.next-shell').waitFor();report.signin.ok=true;
+  const householdZone=Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  await page.waitForFunction(zone=>document.querySelector('.next-system-clock')?.getAttribute('title')?.endsWith(`, ${zone} time`),householdZone);
+  report.clock={householdZone,browserZone:await page.evaluate(()=>Intl.DateTimeFormat().resolvedOptions().timeZone),title:await page.locator('.next-system-clock').getAttribute('title')};
+
   await page.screenshot({path:join(out,'01-desk.png'),fullPage:true});
   const openLauncher=async()=>{await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await page.getByRole('dialog',{name:'Apps',exact:true}).waitFor();};
   await openLauncher();
