@@ -395,6 +395,22 @@ replay cannot restore active authority. Running-body Stop remains with the recei
 body's status protocol. Preparation changes the thread working indicator, without
 inventing a reported agent status or consuming another conversation's Stop.
 
+## Machine registry
+
+An authenticated member registers their own machine with
+`runtime.boxCreate({name,sameMachineAsLoom})` through the normal HTTP command
+and stable receipt. A new machine starts in report-only mode, with hosting and
+always-on alerts disabled; its owner configures those independently through
+`runtime.boxSettingsSet`. Registration issues no credential. Runner credentials
+are issued by canonical Sign-in for the recorded machine.
+
+The machine owner or a current household owner can call
+`runtime.boxRevoke({box})`. Revocation retains job history and immediately
+withdraws existing machine/body credentials through the normal current-credential
+checks. It cannot restore a revoked machine or transfer ownership. A replacement
+may reuse the visible name, but receives a different machine ID. Neither command
+accepts an owner, token, heartbeat or caller-chosen enrollment timestamp.
+
 ## Body command/read consumer
 
 `bodyCommandClient` calls the existing Root HTTP operation and generated GraphQL
