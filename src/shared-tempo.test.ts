@@ -1,15 +1,16 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, memberAgents, tokens, inbox, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
+import { members, agents, memberAgents, tokens, inbox, changes, agentModels, agentRunSettings, jobs } from './core/data/schema.js';
+import type { SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const credential='tempo-owner-credential-'.repeat(3), hash=(s:string)=>createHash('sha256').update(s).digest('hex');
-function fixture(){
+function fixture(tempo?: SharedTempoOptions){
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()}]).run();
  db.insert(agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -17,7 +18,7 @@ function fixture(){
  db.insert(agentModels).values({agent:'art',model:'model',position:0}).run();
  db.insert(agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
  db.insert(tokens).values({fingerprint:hash(credential),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError(error){throw error;}});
+ const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,reportError(error){throw error;}});
  cleanup.push(()=>client.close(),()=>root.close());
  const call=(name:string,input:unknown,id:string)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({input,id})});
  const trigger={id:'delivery',ownerKind:'household',sourceKind:'time',times:now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Check pump',note:'Delivery'};
@@ -45,4 +46,44 @@ it('holds paused triggers, resumes through shared commands, then stops timers be
  await f.root.close();
  const before=f.db.select().from(jobs).all();f.clock.advance(10000);
  expect(f.db.select().from(jobs).all()).toEqual(before);
+});
+
+it('fails settings closed without chat provenance and forwards configured adapters from trusted composition',async()=>{
+ const f=fixture();
+ expect((await f.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).status).toBe(503);
+ const settings=vi.fn(()=>({id:'proposal'})),admit=vi.fn(()=>true),operation=vi.fn(),instructions=vi.fn(()=> 'From repository');
+ const g=fixture({settings,admit,operation,instructions});
+ expect(await (await g.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).json()).toEqual({ok:true,value:{id:'proposal'}});
+ expect(settings).toHaveBeenCalledWith({kind:'member',id:'owner'},{kind:'agent',id:'art'},{settleSeconds:60});
+ expect((await g.call('tempo.set',{...g.trigger,instructions:null,file:'routines/check.md'},'file')).status).toBe(200);
+ expect(instructions).toHaveBeenCalledWith('routines/check.md');
+ g.clock.advance(5000);expect(admit).toHaveBeenCalledWith({kind:'agent',id:'art'},expect.arrayContaining([expect.objectContaining({words:'From repository'})]));
+ expect((await g.call('tempo.set',{...g.trigger,times:g.now(),id:'operation',targetKind:'operation',target:'custom.operation'},'operation')).status).toBe(200);
+ expect(operation).toHaveBeenCalledWith('custom.operation',expect.objectContaining({id:'operation'}),expect.any(String));
+});
+it('publishes settled person notifications and rejects unknown operation targets while allowing the built-in sweep',async()=>{
+ const f=fixture(),publish=vi.fn();
+ // Exercise the actual default notification admission, including the post-settle publication.
+ const stop=f.root.writes.observe(publish);
+ expect((await f.call('tempo.set',{...f.trigger,toKind:'person',to:'owner'},'person')).status).toBe(200);
+ // The real generated live hub receives the same committed/settled notification.
+ const { DataLive }=await import('./core/data/live.js');
+ const notified=vi.spyOn(DataLive.prototype,'changed');
+ notified.mockClear();f.clock.advance(5000);expect(notified).toHaveBeenCalled();notified.mockRestore();stop();
+ expect((await f.call('tempo.set',{...f.trigger,times:f.now(),id:'unknown',targetKind:'operation',target:'unknown'},'unknown')).status).toBe(200);
+ expect(f.root.services.tempo.triggers).toBeDefined();
+ const failed=f.client.prepare("SELECT state FROM triggers WHERE id='unknown'").get();expect(failed).toEqual({state:'failed'});
+ expect((await f.call('tempo.set',{...f.trigger,times:f.now(),id:'sweep',targetKind:'operation',target:'tempo.sweep'},'sweep')).status).toBe(200);
+ expect(f.client.prepare("SELECT state FROM triggers WHERE id='sweep'").get()).toEqual({state:'fired'});
+});
+
+it('forwards durable Changes revisions and extra sweep contributors into the installed service',async()=>{
+ const revision=vi.fn(()=> 'revision-1');
+ const f=fixture({changeRevision:revision,contributors:[{name:'Extra',open:()=>[{id:'extra',words:'Extra work',openedAt:'2026-11-14T00:00:00Z'}]}]});
+ const at=f.now();f.db.insert(changes).values({id:'pr',repository:'org/repo',number:1,title:'PR',body:'',url:'https://example.test/pr',state:'open',draft:false,authorLogin:'art',branch:'feature',headCommit:'abc',baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:at,updatedAt:at}).run();
+ expect((await f.call('tempo.set',{...f.trigger,id:'watch-pr',sourceKind:'pull-request',times:null,watches:'change:pr'},'watch-pr')).status).toBe(200);
+ expect(revision).toHaveBeenCalledWith('pr');
+ expect(f.db.select().from(inbox).all()).toMatchObject([{source:'trigger',words:'Check pump'}]);
+ const summaries=f.root.services.tempo.sweep.run({kind:'agent',id:'art'},'extra');
+ expect(summaries).toMatchObject([{part:'Extra',count:1}]);
 });
