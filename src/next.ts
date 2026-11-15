@@ -153,7 +153,6 @@ export interface NextOptions {
   secretWrites?: {holder: AsyncSecretMutations; retryKeys: string | SecretRetryKeyFiles};
   bridges?: NextBridgesOptions;
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
-  clockDeadmanAgents?: readonly string[];
 }
 export async function installNext(app: Foundation, options: NextOptions) {
   if (options.secretWrites && !options.secretAuthority) throw new Error('Secret writes require holder authority');
