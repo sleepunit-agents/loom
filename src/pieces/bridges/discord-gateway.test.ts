@@ -3,9 +3,8 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startLoom } from '../../foundation.js';
 import { discordGateway, type DiscordGatewayOptions, type DiscordCheckpoint } from './discord-gateway.js';
-import { FakeClock } from '../../core/index.js';
+import { FakeClock } from '../../core/clock.js';
 class Socket extends EventEmitter {
   readyState = 1;
   send = vi.fn((_text: string, callback: (error?: Error) => void) => callback());
@@ -167,6 +166,7 @@ describe('Discord gateway session transport',()=>{
     const h=fixture(); await settled(); h.sockets[0].send.mockImplementationOnce((_t,cb)=>cb(Error('private'))); await identified(h); expect(h.sockets[0].terminate).toHaveBeenCalledOnce();
   });
   it('resumes only atomically stored raw receipts after daemon restart; rollback replays a failed write',async()=>{
+    const { startLoom } = await import('../../foundation.js');
     const home=mkdtempSync(join(tmpdir(),'discord-gateway-')); let app=await startLoom({home});
     try {
       app.db.exec('CREATE TABLE gateway_cursor (id INTEGER PRIMARY KEY, value TEXT); CREATE TABLE gateway_events (seq INTEGER PRIMARY KEY, value TEXT)');
@@ -235,4 +235,26 @@ describe('Discord gateway session transport',()=>{
     }
     await f.transport.close(); const count=socket.mock.calls.length; f.clock.advance(60000); await settled(); expect(socket).toHaveBeenCalledTimes(count);
   });
+});
+
+
+it.each([false, true])('does not send an expired deferred credential with delayed timer dispatch (resume=%s)', async resume => {
+  let now = 0, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const clock = {now:()=>now,at:()=>()=>{}};
+  const f = fixture({clock,load:()=>resume ? {session:'private',seq:1,url:'wss://gateway.discord.gg/'} : undefined,
+    secrets:{withValue:async (_name,use)=>{await gate;return use('PRIVATE-LATE');}}});
+  await settled(); const s = f.sockets[0]; s.hello(); await settled();
+  now = 15_000; release(); await settled();
+  expect(s.send).not.toHaveBeenCalled(); expect(s.terminate).toHaveBeenCalledOnce();
+});
+it.each([false, true])('allows the deferred credential before its absolute deadline (resume=%s)', async resume => {
+  let now = 0, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const clock = {now:()=>now,at:()=>()=>{}};
+  const f = fixture({clock,load:()=>resume ? {session:'private',seq:1,url:'wss://gateway.discord.gg/'} : undefined,
+    secrets:{withValue:async (_name,use)=>{await gate;return use('PRIVATE-FRESH');}}});
+  await settled(); const s = f.sockets[0]; s.hello(); await settled();
+  now = 14_999; release(); await settled();
+  expect(s.sent()).toEqual([expect.objectContaining({op:resume ? 6 : 2,d:expect.objectContaining({token:'PRIVATE-FRESH'})})]);
 });

@@ -4,6 +4,8 @@ import BetterSqlite3,{type Database} from 'better-sqlite3';
 import {z} from 'zod';
 import {operation,maySee,type Operations,type Live,type Viewer,type Sharing} from '../../core/index.js';
 import type {Mind} from './role.js';
+import type {Clock} from '../../core/clock.js';
+import {projectDeadline} from './project-deadlines.js';
 import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
 import type {ProjectSectionRole,ProjectQuery} from './projects-roles.js';
@@ -16,7 +18,12 @@ const day=86400000;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
-export function installMindProjects(operations:Operations,live:Live,options:{agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:Mind;tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}){
+export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:Mind|{list(viewer:Viewer):PersonRecord[]};tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}
+export type ProjectsReader=ReturnType<typeof createProjectsReader>;
+const readers=new WeakMap<Operations,ProjectsReader>();
+export const installedMindProjects=(operations:Operations)=>readers.get(operations);
+/** Read-only sources and typed roles; no registry, live transport or schema initialization. */
+export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
  const sources=new Map<string,Database>();
  try{for(const a of options.agents)if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch(e){for(const db of sources.values())db.close();throw e;}
  const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},options.sharing());
@@ -33,11 +40,12 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
   if(cols.includes('salience'))rows.push(...db.prepare(`SELECT ${fields} FROM memories WHERE ${where} ORDER BY salience DESC,created DESC,id DESC LIMIT 10`).all(...args) as Row[]);
   const counts=Object.fromEntries((db.prepare(`SELECT category,count(*) AS n FROM memories WHERE ${where} GROUP BY category`).all(...args) as {category:string;n:number}[]).map(r=>[r.category,r.n]));
   const activity=(db.prepare(`SELECT max(coalesce(updated,created)) AS at FROM memories WHERE ${where}`).get(...args) as {at:string|null}).at;
-  return {key:'memories',label:'Memories',available:true,...(activity?{activity}:{}),counts,total:Object.values(counts).reduce((a,b)=>a+b,0),items:[...new Map(rows.map(r=>[r.ref,r])).values()].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).map(r=>({title:`${r.title} — ${r.content}`.replace(/\s+/g,' ').slice(0,200),href:`/p/projects-preview/project/${encodeURIComponent(`${q.agent}:${q.card.slug}`)}/memory/${encodeURIComponent(r.ref)}`,ref:r.ref,when:r.created,changed:r.updated??r.created,status:r.category,new:Date.parse(r.updated??r.created)>Date.parse(q.since)}))};
+  const expiry=(db.prepare(`SELECT expires_at AS at FROM memories WHERE ${where} AND expires_at IS NOT NULL ORDER BY julianday(expires_at),expires_at LIMIT 1`).get(...args) as {at:string}|undefined)?.at;
+  return {key:'memories',label:'Memories',available:true,...(expiry?{expires:Date.parse(expiry)}:{}),...(activity?{activity}:{}),counts,total:Object.values(counts).reduce((a,b)=>a+b,0),items:[...new Map(rows.map(r=>[r.ref,r])).values()].sort((a,b)=>Date.parse(b.created)-Date.parse(a.created)).map(r=>({title:`${r.title} — ${r.content}`.replace(/\s+/g,' ').slice(0,200),href:`/p/projects-preview/project/${encodeURIComponent(`${q.agent}:${q.card.slug}`)}/memory/${encodeURIComponent(r.ref)}`,ref:r.ref,when:r.created,changed:r.updated??r.created,status:r.category,new:Date.parse(r.updated??r.created)>Date.parse(q.since)}))};
  }
  function peopleSection(v:Viewer,q:ProjectQuery):ProjectSection{
   if(!options.people)return {key:'people',label:'People',available:false};
-  const result=options.people.call(v,'peopleList',{});if(!result.ok)throw Error('People could not answer');
+  const result='call' in options.people?options.people.call(v,'peopleList',{}):{ok:true as const,value:options.people.list(v)};if(!result.ok)throw Error('People could not answer');
   const fields=q.names.map(n=>n.replace(/-/g,'_'));
   // A hub may use the household directory and its own agent relationships, never another agent's cards.
   const rows=(result.value as PersonRecord[]).filter(p=>!p.agent||p.agent===q.agent);
@@ -49,7 +57,7 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
   if(!allowed(viewer,agent)||!db||!has(db,'projects'))return;
   const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as {slug:string;card_json:string;updated:string;archived_at:string|null}|undefined;
   if(!row)return;
-  const card=JSON.parse(row.card_json) as ProjectCard,now=operations.clock.now();
+  const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
   const q:ProjectQuery={agent,card,names:[card.slug,...(card.links.aliases??[])],notePrefixes:card.links.notes?.length?card.links.notes:[card.slug],since:new Date(now-7*day).toISOString(),now};
   const sections:ProjectSection[]=[];
   const section=(key:string,label:string,fn:()=>Omit<ProjectSection,'key'|'label'>)=>{try{const raw=fn();const {key:_key,label:_label,...data}=raw as ProjectSection;sections.push({...sectionSchema.parse(data),key,label});}catch{sections.push({key,label,available:true,error:`${label} couldn't answer`});}};
@@ -87,26 +95,34 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
  }
  // Live registers separate index/hub projections so paused cards never invoke roles just to list them.
  const hub=(id:string,v:Viewer)=>read(id,v,true);
- operations.register(operation({name:'mind.projectsList',input:z.object({}).strict(),output:z.unknown(),may:()=>true,run:ctx=>ids().flatMap(id=>{const r=read(id,ctx.viewer);return r?[r]:[];})}));
- operations.register(operation({name:'mind.projectRead',input:z.object({id:z.string().min(3).max(200)}).strict(),output:z.unknown(),may:(v,i)=>allowed(v,i.id.split(':')[0]),run:(ctx,i)=>hub(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Project not found'}}));
- const changed=(c:{type:string})=>['project','memory','person','task','change','core.access','household.sharing'].includes(c.type)||c.type==='note'||c.type.startsWith('notes.')||c.type.startsWith('comms.')||c.type.startsWith('attention.');
  const expires=(r:ProjectRecord)=>{
-  const db=sources.get(r.agent),now=operations.clock.now(),deadlines=Object.values(r.card.where).flatMap(f=>f.verified_at?[Date.parse(f.verified_at)+(f.stale_after_days??14)*day+1,Date.parse(f.verified_at)+(Math.floor((now-Date.parse(f.verified_at))/day)+1)*day]:[]);
-  if(db&&has(db,'memories')){const names=[r.slug,...(r.card.links.aliases??[])];try{const row=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE ${activeMemory} AND expires_at IS NOT NULL AND project IN (${names.map(()=>'?').join(',')})`).get(new Date(now).toISOString(),...names) as {at:string|null};if(row.at)deadlines.push(Date.parse(row.at));}catch{/* Section already exposes a source error. */}}
-  deadlines.push(...r.sections.flatMap(s=>[...(s.expires?[s.expires]:[]),...(s.activity?[Date.parse(s.activity)+7*day]:[])]));
-  deadlines.push(...r.sections.flatMap(sectionItems).flatMap(i=>[...(i.when?Array.from({length:7},(_,n)=>Date.parse(i.when!)+(n+1)*day):[]),...(i.changed?[Date.parse(i.changed)+7*day]:[])]));
-  return deadlines.filter(t=>t>now).sort((a,b)=>a-b)[0];
+  const db=sources.get(r.agent),now=clock.now(),deadlines=[projectDeadline(r,now)];
+  if(db&&has(db,'memories')){const names=[r.slug,...(r.card.links.aliases??[])];try{const row=db.prepare(`SELECT expires_at AS at FROM memories WHERE ${activeMemory} AND expires_at IS NOT NULL AND project IN (${names.map(()=>'?').join(',')}) ORDER BY julianday(expires_at),expires_at LIMIT 1`).get(new Date(now).toISOString(),...names) as {at:string}|undefined;if(row)deadlines.push(Date.parse(row.at));}catch{/* Section already exposes a source error. */}}
+  return deadlines.filter((at):at is number=>at!==undefined&&Number.isFinite(at)&&at>now).sort((a,b)=>a-b)[0];
  };
- live.register({name:'project',ids,read:(id,v)=>read(id,v),inScope:(r,s)=>s===undefined||r.id===s,refreshOn:changed,expires:r=>expires(r as ProjectRecord)});
- live.register({name:'project.hub',ids,read:hub,inScope:(r,s)=>s!==undefined&&(r.id===s||((r as ProjectRecord).card.links.aliases??[]).some(a=>`${r.agent}:${a}`===s)),refreshOn:changed,expires:r=>expires(r as ProjectRecord)});
  const memoryRead=(id:string,v:Viewer):ProjectMemory|undefined=>{
   const colon=id.indexOf(':');if(colon<1)return;const agent=id.slice(0,colon),ref=id.slice(colon+1),db=sources.get(agent);
   if(!db||!maySee(v,{type:'memory',agent},options.sharing())||!has(db,'memories'))return;
-  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ref=? AND ${activeMemory}`).get(ref,new Date(operations.clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
+  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ref=? AND ${activeMemory}`).get(ref,new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
  };
- operations.register(operation({name:'mind.projectMemoryRead',input:z.object({id:z.string().min(3).max(300)}).strict(),output:z.unknown(),may:(v,i)=>maySee(v,{type:'memory',agent:i.id.split(':')[0]},options.sharing()),run:(ctx,i)=>memoryRead(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Memory not found'}}));
- live.register({name:'project.memory',ids:scope=>scope?[scope]:[],read:memoryRead,inScope:(r,s)=>r.id===s,refreshOn:c=>c.type==='memory',expires:r=>(r as ProjectMemory).expires});
- live.register({name:'projects.access',ids:()=>['projects'],read:(_id,v)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)}),inScope:()=>true});
- return {close(){for(const db of sources.values())db.close();}};
+ const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
+ let closed=false;
+ const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ return reader;
+}
+
+/** Retiring operation/record binding over the same typed reader. */
+export function installMindProjects(operations:Operations,live:Live,options:ProjectsOptions){
+ const reader=createProjectsReader(operations.clock,options);
+ operations.register(operation({name:'mind.projectsList',input:z.object({}).strict(),output:z.unknown(),may:()=>true,run:ctx=>reader.list(ctx.viewer)}));
+ operations.register(operation({name:'mind.projectRead',input:z.object({id:z.string().min(3).max(200)}).strict(),output:z.unknown(),may:(v,i)=>reader.allowed(v,i.id.split(':')[0]),run:(ctx,i)=>reader.read(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Project not found'}}));
+ operations.register(operation({name:'mind.projectMemoryRead',input:z.object({id:z.string().min(3).max(300)}).strict(),output:z.unknown(),may:(v,i)=>maySee(v,{type:'memory',agent:i.id.split(':')[0]},options.sharing()),run:(ctx,i)=>reader.memoryRead(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Memory not found'}}));
+ const changed=(c:{type:string})=>['project','memory','person','task','change','core.access','household.sharing'].includes(c.type)||c.type==='note'||c.type.startsWith('notes.')||c.type.startsWith('comms.')||c.type.startsWith('attention.');
+ live.register({name:'project',ids:reader.ids,read:reader.readIndex,inScope:(r,s)=>s===undefined||r.id===s,refreshOn:changed,expires:r=>reader.expires(r as ProjectRecord)});
+ live.register({name:'project.hub',ids:reader.ids,read:reader.read,inScope:(r,s)=>s!==undefined&&(r.id===s||((r as ProjectRecord).card.links.aliases??[]).some(a=>`${r.agent}:${a}`===s)),refreshOn:changed,expires:r=>reader.expires(r as ProjectRecord)});
+ live.register({name:'project.memory',ids:scope=>scope?[scope]:[],read:reader.memoryRead,inScope:(r,s)=>r.id===s,refreshOn:c=>c.type==='memory',expires:r=>(r as ProjectMemory).expires});
+ live.register({name:'projects.access',ids:()=>['projects'],read:(_id,v)=>reader.access(v),inScope:()=>true});
+ const installed={...reader,close(){if(readers.get(operations)===installed)readers.delete(operations);reader.close();}};
+ readers.set(operations,installed);return installed;
 }

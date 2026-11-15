@@ -112,3 +112,28 @@ it('enforces the fourteen-day household keep maximum at the database boundary', 
   const f = setup();
   expect(() => f.db.insert(household).values({ commsDays: 15 }).run()).toThrow();
 });
+
+it('orders recent conversations by actual time across whole-second and millisecond timestamps', () => {
+  const { service, comms, thread, db } = setup();
+  const newer = comms.threads.conversations.open({ agent: 'art', venue: 'wake', place: 'night', label: 'Newer' });
+  db.update(conversations).set({ lastAt: '2026-11-14T18:00:00Z' }).where(eq(conversations.id, thread.conversation)).run();
+  db.update(conversations).set({ lastAt: '2026-11-14T18:00:00.500Z' }).where(eq(conversations.id, newer.id)).run();
+  expect(service.recent({ kind: 'member', id: 'owner' }, 'art', 1).map(row => row.id)).toEqual([newer.id]);
+});
+
+it('withholds last-answer wording at an equal whole-second stored deadline', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Expired answer' });
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(f.opens()).toBe(0);
+});
+
+it('rechecks the independent household age deadline after opening the latest answer', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Household expiry' });
+  f.db.insert(household).values({ commsDays: 1 }).run();
+  f.onOpen(() => f.setTime('2026-11-15T18:00:00.000Z'));
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(f.opens()).toBe(1);
+});

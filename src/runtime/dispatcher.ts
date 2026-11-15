@@ -1,9 +1,10 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
+import { workerPolicy } from './body-policy.js';
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { boxes, jobNeeds, jobs } from '../core/data/schema.js';
+import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs } from '../core/data/schema.js';
 import { Jobs } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
@@ -32,9 +33,13 @@ export class Dispatcher {
         // model on a queued job is the initial preference; this records the
         // model actually requested from the worker after current placement.
         this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
-        return { id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, claimed.agent)).get();
+        const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
+          .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
+          .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
+        return { run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, harness: placement.harness,
-          brief: claimed.brief ?? '', house: { repository: claimed.houseRepository ?? '',
+          brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
     }, { behavior: 'immediate' });
@@ -59,7 +64,9 @@ export class Dispatcher {
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
-      this.jobs.heartbeat(id, box, state);
+      // The worker reports a live process, not whether its body resumed work.
+      // Preserve a body's explicit waiting status until a body status update.
+      this.jobs.heartbeat(id, box, job.state === 'waiting' ? 'waiting' : state);
       return { active: true };
     }, { behavior: 'immediate' });
   }

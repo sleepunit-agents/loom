@@ -18,6 +18,9 @@ export const tempoWatch = {
  * Repeated callbacks/recovery replay use the same event id, so TriggerEngine
  * persists deduplication, including while the recipient is paused. */
 export class TempoSources {
+  private closed = false;
+  /** Stop late source notifications before the shared database is closed. */
+  close(): void { this.closed = true; }
   constructor(private db: DataDatabase, private engine: Pick<TriggerEngine, 'event'>) {}
 
   /** Recover the commit-to-callback gap after restart. Only active watches are
@@ -26,8 +29,10 @@ export class TempoSources {
    * This recovers the latest durable outcome, not intermediate offline changes.
    */
   recover(changeRevision?: (id: string) => string | undefined): void {
+    if (this.closed) return;
     const watches = new Set<string>();
     for (const row of this.db.select({ kind: triggers.sourceKind, watches: triggers.watches }).from(triggers).where(eq(triggers.enabled, true)).all()) {
+      if (this.closed) return;
       if (!row.watches || row.kind === 'time') continue;
       const key = JSON.stringify([row.kind, row.watches]);
       if (watches.has(key)) continue;
@@ -49,6 +54,7 @@ export class TempoSources {
   }
 
   change(id: string, revision: string): void {
+    if (this.closed) return;
     if (!revision) throw new Error('A change needs its durable source revision');
     const row = this.db.select().from(changes).where(eq(changes.id, id)).get();
     if (!row) return;
@@ -59,6 +65,7 @@ export class TempoSources {
   }
 
   approval(id: string): void {
+    if (this.closed) return;
     const row = this.db.select().from(approvals).where(eq(approvals.id, id)).get();
     if (!row?.decidedAt || !['allowed', 'denied', 'used'].includes(row.state)) return;
     // Spending an allowed answer must not produce a second answer event.
@@ -66,12 +73,14 @@ export class TempoSources {
   }
 
   question(id: string): void {
+    if (this.closed) return;
     const row = this.db.select().from(inbox).where(eq(inbox.id, id)).get();
     if (!row?.answeredAt || row.state !== 'answered') return;
     this.engine.event('answer', tempoWatch.question(id), JSON.stringify(['question', id, row.answeredAt, row.answer, row.answerText]));
   }
 
   secret(id: string): void {
+    if (this.closed) return;
     const row = this.db.select().from(secretRequests).where(eq(secretRequests.id, id)).get();
     if (!row?.answeredAt || !['allowed', 'denied', 'revoked'].includes(row.state)) return;
     // Revoking an earlier grant is not a new answer to the original request.
@@ -79,6 +88,7 @@ export class TempoSources {
   }
 
   job(id: string): void {
+    if (this.closed) return;
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
     if (!row?.endedAt || !['done', 'failed', 'stopped', 'lost'].includes(row.state)) return;
     this.engine.event('job', tempoWatch.job(id), JSON.stringify(['job', id, row.endedAt, row.state]));
