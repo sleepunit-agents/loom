@@ -8,7 +8,7 @@ import { Jobs } from './jobs.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
-function fixture(venue: 'loom' | 'handoff' = 'handoff') {
+function fixture(venue: 'loom' | 'handoff' | 'wake' = 'wake') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
   const now = () => at, db = createDataSchema(client, now);
@@ -19,8 +19,8 @@ function fixture(venue: 'loom' | 'handoff' = 'handoff') {
   db.insert(agentModels).values({ agent: 'art', model: 'primary', position: 0 }).run();
   db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'https://example.org/house', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: true }).run();
   const comms = new Conversations(db, now), runtime = new Jobs(db, now);
-  const conversation = comms.open({ agent: 'art', venue, place: 'thread', label: 'Reply', project: 'pond', member: 'owner' });
-  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'loom' ? 'thread' : 'handoff', fromKind: venue === 'loom' ? 'person' : 'agent', fromId: venue === 'loom' ? 'owner' : 'art', words: 'Hello' });
+  const conversation = comms.open({ agent: 'art', venue, place: 'thread', label: 'Reply', project: 'pond', member: venue === 'wake' ? null : 'owner' });
+  const send = () => comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'loom' ? 'thread' : venue === 'wake' ? 'trigger' : 'handoff', fromKind: venue === 'loom' ? 'person' : 'agent', fromId: venue === 'loom' ? 'owner' : 'art', words: venue === 'handoff' ? null : 'Hello' });
   const tick = (ms: number) => { at = new Date(Date.parse(at) + ms).toISOString(); };
   return { db, comms, runtime, conversation, send, tick, now };
 }
@@ -29,7 +29,7 @@ it('admits nonempty inbox once and snapshots house, model, labels and needs', ()
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
   f.send();
   const job = f.runtime.admit(f.conversation.id)!;
-  expect(job).toMatchObject({ agent: 'art', conversation: f.conversation.id, title: 'Reply', model: 'primary', state: 'queued', houseFile: 'Housefile', startedByKind: 'agent', startedBy: 'art', project: 'pond', member: 'owner', brief: 'Hello' });
+  expect(job).toMatchObject({ agent: 'art', conversation: f.conversation.id, title: 'Reply', model: 'primary', state: 'queued', houseFile: 'Housefile', startedByKind: 'agent', startedBy: 'art', project: 'pond', member: null, brief: 'Hello' });
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(job.id);
   expect(f.db.select().from(jobNeeds).all()).toEqual([{ job: job.id, need: 'gpu' }]);
   f.db.update(agentRunSettings).set({ houseFile: 'changed' }).run();
@@ -203,11 +203,11 @@ it('does not copy a legacy private brief into a new failed-start retry', () => {
   expect(f.runtime.get(job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
 });
 
-for (const venue of ['handoff', 'loom'] as const) it(`keeps dim admission and retry briefs to one line for ${venue}`, () => {
+for (const venue of ['wake', 'handoff', 'loom'] as const) it(`keeps dim admission and retry briefs to one line for ${venue}`, () => {
   const f = fixture(venue); f.send(); const dim = f.send();
   f.db.update(inbox).set({ volume: 'dim', words: '\n  First dim line  \nDETAILS_MUST_NOT_REACH_THE_BODY' }).where(eq(inbox.id, dim.id)).run();
   const job = f.runtime.admit(f.conversation.id)!;
-  expect(job.brief).toBe(venue === 'loom' ? '' : 'Hello\n\nFirst dim line');
+  expect(job.brief).toBe(venue === 'wake' ? 'Hello\n\nFirst dim line' : '');
   expect(f.runtime.workerBrief(job.id)).toBe(job.brief); f.runtime.claim(job.id, 'worker');
   const retry = f.runtime.finish(job.id, 'worker', 1).retry!;
   expect(retry.brief).toBe(job.brief); expect(f.runtime.workerBrief(retry.id)).toBe(job.brief);
