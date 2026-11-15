@@ -1,5 +1,4 @@
-/** Protocol capacity fixture. Owning HTTP/Signin/source/worker composition is
- * covered separately by runtime-runner/clock-worker.test.ts. */
+/** Remaining legacy protocol capacity fixture, until its bootstrap is retired. */
 import {afterEach,expect,it} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
