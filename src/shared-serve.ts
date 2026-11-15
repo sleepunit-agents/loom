@@ -1,23 +1,25 @@
+import {listenForTouchSources} from './core/touched/group.js';
+import {prepareSharedMemorySources,validateSharedMemoryOptions} from './shared-memory.js';
+import {sharedWeb} from './shared-web.js';
+import { measureResponse } from './core/measuring/response.js';
 /** Production HTTP/socket owner for the fresh shared composition. The caller
  * supplies the initialized connection and closes it only after this listener. */
 import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { getRequestListener } from '@hono/node-server';
-import {listenForTouchSources} from './core/touched/group.js';
-import {prepareSharedMemorySources,validateSharedMemoryOptions} from './shared-memory.js';
-import {sharedWeb} from './shared-web.js';
 import { sharedRoot } from './shared-root.js';
 
 export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number; webRoot?:string }) {
   const web=options.webRoot?sharedWeb(options.webRoot):undefined;
-  validateSharedMemoryOptions(options.db,options.memory);
-  await prepareSharedMemorySources(options.memory);
+  validateSharedMemoryOptions(options.db,options.memory);await prepareSharedMemorySources(options.memory);
   const root = sharedRoot(options);
   const sockets = new Set<Socket>();
-  const server = createServer(getRequestListener(async request => {
-    const response=await root.http.fetch(request);
-    return web&&response.status===404&&['GET','HEAD'].includes(request.method)?web.fetch(request):response;
-  }));
+  let meter: Awaited<typeof root.measuring> | undefined;
+  const listener = getRequestListener(async request=>{const response=await root.http.fetch(request);return web&&response.status===404&&['GET','HEAD'].includes(request.method)?web.fetch(request):response;});
+  const server = createServer((request, response) => {
+    const pending = measureResponse(meter, request, response, () => { void listener(request, response); });
+    void pending?.catch(() => { if (!response.headersSent) response.writeHead(503); response.end(); });
+  });
   server.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   let detach: (() => void) | undefined;
   let stopTouches:(()=>Promise<void>)|undefined;
@@ -38,10 +40,11 @@ export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { 
     return closing;
   };
   try {
+    await root.ready;
+    meter = await root.measuring;
     stopTouches=await listenForTouchSources(root.operations,root.memory.touches);
     detach = root.attach(server);
-    // This listener owns only GraphQL upgrades. Finish unsupported handshakes
-    // so an old /live client cannot leave a connection pending indefinitely.
+    // Only GraphQL upgrades are installed on this listener.
     server.on('upgrade',(request,socket)=>{if(new URL(request.url??'/', 'http://localhost').pathname!=='/graphql')socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');});
     const host = options.host ?? '127.0.0.1';
     await new Promise<void>((resolve, reject) => {

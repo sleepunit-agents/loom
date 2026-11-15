@@ -29,6 +29,7 @@ export function installChangesDaemon(app: Foundation, options: {
  home: string; clock: Clock; sharing:()=>Sharing;
  attribution:()=>Attribution; secrets: Secrets; approvals?: Approvals;
  staging?: boolean; interval?: number; request?: typeof fetch;
+ measure?: <T>(work: () => Promise<T>) => Promise<T>;
 }) {
  const projects=householdProjects(new SharingDatabase(app.db,options.home));
  const knownAgents=()=>new HouseholdDatabase(app.db).household(options.home)?.agents??[];
@@ -38,7 +39,7 @@ export function installChangesDaemon(app: Foundation, options: {
  });
  job=startChangesJob(app,{
   ...options,projects,knownAgents,
-  read:githubReader(options.secrets,options.request),
+  read:(repo,now)=>{const work=()=>githubReader(options.secrets,options.request)(repo,now);return options.measure ? options.measure(work) : work();},
  });
  return job;
 }

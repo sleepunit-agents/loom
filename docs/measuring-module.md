@@ -2,9 +2,7 @@
 
 The product goal is the approved Measuring page in `docs/how-it-works/`.
 `src/core/measuring/index.ts` implements its instrumentation lifecycle. It is
-an internal module, not another endpoint or a settings authority. Until the
-shared model and endpoint wire it in, this module does not enable monitoring
-in the running program.
+an internal module, not another endpoint or a settings authority. The root installs it when the household uses the approved shared schema. It creates no tables and never upgrades an existing home.
 
 The integration supplies owner-approved settings, a fixed inventory of names
 from code, and optionally a `TimingStore` backed by the shared Drizzle model.
@@ -36,8 +34,8 @@ and also before the first completed span of a new UTC day. Closing cancels
 the timer. Disabled and outside-only instances schedule no retention work. Storage failures are reported through a payload-free callback and do
 not change the outcome of application work.
 
-Choices where the page is silent: 90 days by default, configurable from 1 to
-3650; at most 2048 registered code names; arithmetic mean for typical;
+Choices where the page is silent: 90 days by default, configurable from 0 to
+3650 (zero selects outside-only, requiring an enabled outside destination); at most 2048 registered code names; arithmetic mean for typical;
 HTTP/protobuf for outside export. The configured address is the full OTLP
 traces URL (usually ending in `/v1/traces`). No outside exporter is created
 unless explicitly enabled with an address. Export batches and queue are
@@ -62,14 +60,9 @@ database transaction as the answer and audit; stale proposals fail and require
 a fresh card. Pending proposals survive process restart without closures or a
 second payload store. The authenticated outside door restricts Allow to a
 household owner. Reload the Measuring instance only after that transaction
-commits; the handler performs no SDK, timer or outside work. The service is not
-yet mounted in the running program.
+commits; the handler performs no SDK, timer or outside work. The root mounts `measuring.propose` and `measuring.answer`; agents propose, and only a current shared-model household owner can answer. An optional validated conversation ties the question to its thread.
 
-Still required by the Measuring page: owner-only settings changes through the
-normal approval mechanism;
-owners and agents reading daily rows through the one query endpoint; wiring
-the wrappers to its actual request, operation and job boundaries. Those
-integration points depend on the concrete model and endpoint work in t-2235.
+`installMeasuring` owns startup, settings reload and shutdown. Successful answers schedule a committed-settings refresh after the synchronous outer transaction has returned. Failed transactions do not refresh; unchanged settings and receipt replays do not replace the SDK. Shutdown fences the runtime before closing SQLite. The root instruments HTTP request completion, initial websocket query snapshots and direct websocket queries, all registered operation dispatches, and the Changes daemon's background GitHub reads. Subscription idle lifetime and subsequent pushed snapshots are excluded from request timing; Measuring-triggered reruns cannot measure themselves. Names are code-defined and exclude URL paths and payloads. The shared Approvals tile and inline card render before/after and bind Measuring Allow/Deny to the authenticated API. There is no standalone Measuring settings screen: changes originate in chat through the proposal operation.
 
 `src/core/measuring/visibility.ts` supplies the read policy for that endpoint:
 include `timingDays` and `measuringSettings` in its selected tables and merge
@@ -78,8 +71,11 @@ agents and current household owners can read daily rows; settings are visible
 only to current owners. The predicates check membership in SQL on every read,
 including for a retained generated schema. They snapshot the supplied identity;
 the outside door must still authenticate it and check token/session validity.
-This module creates no endpoint and grants no settings writes. Mounting it in
-the shared endpoint remains integration work for t-2235.
+This module creates no endpoint and grants no settings writes. The root mounts both tables and this policy on the same HTTP and websocket query schema.
 
 OpenTelemetry references: [JavaScript instrumentation](https://opentelemetry.io/docs/languages/js/instrumentation/)
 and [exporters](https://opentelemetry.io/docs/languages/js/exporters/).
+
+The browser uses the canonical generated GraphQL client shared by Tasks and every other tile, with one window socket and normalized cache; no compatibility shim owns another client.
+
+The fresh sharedRoot also installs Measuring and registers its handler in the common approval map. serveShared awaits readiness before listening. Generic approval services schedule a rollback-safe committed-settings refresh. ExecutionDrain retains resolver and validation work. Both HTTP listeners use the response finish/close helper. Close awaits enabled startup and exporter shutdown before SQLite closes. Register built-in operations before root readiness so the startup inventory includes them.
