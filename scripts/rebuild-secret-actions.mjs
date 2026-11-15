@@ -14,7 +14,8 @@ export async function secretDefaultAction({page,tile,out}){
   await tile.getByRole('button',{name:'Save household default',exact:true}).click();
   const result=await response,body=await result.json();
   if(result.status()!==200||body.ok!==true||body.value?.saved!==true)throw Error('The household default change was refused');
-  await tile.getByRole('status').filter({hasText:'Saved.'}).waitFor();
+  // The live default update remounts this form and retires its local status.
+  // The server acknowledgment plus persisted selection are the outcome proof.
   phase='reload';await page.reload();await page.locator('.next-shell').waitFor();
   const persisted=page.getByRole('region',{name:'Settings tile',exact:true}).getByRole('combobox',{name:/^For a secret with no rule/});
   await persisted.waitFor();
