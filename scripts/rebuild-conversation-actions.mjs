@@ -2,10 +2,8 @@
  * Reads inspect only its disposable example store; writes use visible controls. */
 import {join} from 'node:path';
 import {commsDeliveryEvidence} from '../dist/rebuild/comms-delivery-evidence.js';
-export async function conversationActions({page,app,example,out,open,actions=['commsSend','commsSendReload','inboxAnswer','commsAnswer'],previous={}}){
- const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
- const readyButton=async button=>{const enabled=button.and(page.locator(':enabled'));await enabled.waitFor({state:'visible'});await enabled.focus();return enabled;};
- const select=async tile=>{
+const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
+export async function selectExampleConversation(page,tile){
   const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true});
   const row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'}).first();
   const back=tile.getByRole('button',{name:/Back to conversations/});
@@ -13,7 +11,10 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   if(await heading.isVisible())return;
   if(await back.isVisible())await activate(back);
   await activate(row);await heading.waitFor({state:'visible'});
- };
+ }
+export async function conversationActions({page,app,example,out,open,actions=['commsSend','commsSendReload','inboxAnswer','commsAnswer'],previous={}}){
+ const readyButton=async button=>{const enabled=button.and(page.locator(':enabled'));await enabled.waitFor({state:'visible'});await enabled.focus();return enabled;};
+ const select=tile=>selectExampleConversation(page,tile);
  const visibleComms=async()=>{
   const tile=page.getByRole('region',{name:'Comms tile',exact:true});
   return await tile.isVisible()?tile:open('Comms');

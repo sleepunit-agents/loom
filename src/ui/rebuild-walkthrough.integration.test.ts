@@ -32,13 +32,13 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Comms')expect(step.value.report.actions?.approvalPreparedChanges,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.valueAction,JSON.stringify(app.valueAction)).toMatchObject({ok:true,added:true,replaced:true,removed:true,persistedAfterReload:true,writeOnly:true,recorded:true,ruleSaved:true});
   if(title==='Inbox')for(const name of ['inboxDecisions','inboxHistory']){const result=step.value.report.actions?.[name];expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
-  if(title==='Inbox')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
+  if(title==='Tasks')expect(step.value.report.actions?.taskQuestions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Comms')expect(step.value.report.actions?.taskInlineQuestion,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Approvals')expect(step.value.report.actions?.approvalDecisions,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Changes')expect(step.value.report.actions?.workVisibility,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Settings')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,before:'ask',after:'never',persistedAfterReload:true});
   if(title==='Changes')expect(step.value.report.actions?.changeWorkflow,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
-  if(title==='Comms')expect(step.value.report.actions?.changeInline,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
+  if(title==='Changes')expect(step.value.report.actions?.changeInline,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Tasks')for(const name of ['taskReady','taskLifecycle','taskStructure','taskComments'])expect(step.value.report.actions?.[name],JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
   if(title==='Bridges')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,discordChannel:true,slackPerson:true,persistedAfterReload:true});
   if(title==='People')expect(step.value.report.actions?.commsSend,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true,persistedAfterReload:true,inboxCopies:1});
