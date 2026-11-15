@@ -65,8 +65,12 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
   expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
-  const paused=await context.request.post(url+'/api/tempo/pause',{data:{id:'pause',input:{agent:'art'}}});expect(paused.status()).toBe(200);
+  await a.getByRole('button',{name:'Pause agent',exact:true}).click();
   for(const page of [a,b])await expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0);
+  await b.getByRole('button',{name:'Resume agent',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('button',{name:'Pause agent',exact:true}).count()).toBe(1);
+  await a.getByRole('button',{name:'Cancel',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByText(/once · stopped/).count()).toBe(1);
   app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
   for(const page of [a,b]){
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(0);
