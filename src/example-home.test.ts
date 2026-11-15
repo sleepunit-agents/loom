@@ -8,8 +8,9 @@ import {join} from 'node:path';
 import {exampleHome,runExampleHome} from './example-home.js';
 import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 it('builds fictitious data through services, then normal startup signs in and queries it',async()=>{
+ vi.stubEnv('TZ','America/Chicago');
  const parent=mkdtempSync(join(tmpdir(),'loom-example-test-')),home=join(parent,'home');
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
  try{
@@ -50,7 +51,8 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const post=async(path:string,input:unknown)=>{const response=await fetch(app!.url+path,{method:'POST',redirect:'error',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify(input)});expect(response.status).toBe(200);return response.json();};
   const read=async(query:string,variables:Record<string,unknown>={})=>{const result=await post('/graphql',{query,variables});expect(result.errors).toBeUndefined();return result.data;};
-  const result={data:await read('{ tasks { id title status } approvals { id state } changes { id project agent } triggers { id } currentJobs(agent:"moss"){id title state box} modelAccounts { __typename ... on RuntimeAccountDetail { id label usage hasRoom signedInOn{id name} } ... on RuntimeAccountSummary { label level } } }')};
+  const result={data:await read('{ deskTime { timezone } tasks { id title status } approvals { id state } changes { id project agent } triggers { id } currentJobs(agent:"moss"){id title state box} modelAccounts { __typename ... on RuntimeAccountDetail { id label usage hasRoom signedInOn{id name} } ... on RuntimeAccountSummary { label level } } }')};
+  expect(result.data.deskTime).toEqual({timezone:'America/Chicago'});
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
   expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);

@@ -38,10 +38,26 @@ the separate data move prepares it.
 
 This is the canonical command/source side. The general native MCP
 consumer is built on t-2241. Exposing the remaining semantic changes
-(drafts, ratification, editing and version history) through that path is
+(proposals and ratification) through that path is
 still on t-2243; their existing core/stdio helpers remain. No installed
 service or real source is changed by this implementation.
 
+## Native edits and saved body revisions
+
+memory.update accepts one own opaque ID and changed content, metadata, or a
+feedback observation. A changed body saves the displaced revision first.
+memory.restoreRevision accepts that ID and an integer revision_id belonging
+to the same memory. It saves the displaced body before restoring the old one;
+replay does not add another revision. Neither command chooses another source.
+
+memoryHistory(id:) on the canonical GraphQL door returns the newest ten
+retained revisions (id, op, replacedAt, content) under current private Memory
+visibility. This explicit history read includes retained revisions of archived
+or expired rows. Restoring a body revision does not unarchive the memory or
+renew its lifetime; memory.restore is the separate archive restoration.
+Shared command receipts contain only opaque IDs and keyed fingerprints;
+private effects, revisions and receipts commit together and roll back if the
+current body's authority ends before commit. Draft browsing remains separate.
 A receiving body's Identity
 ---------------------------------
 
@@ -57,3 +73,28 @@ The receiving body loads its Identity through its ordinary authenticated query
 client after accepting mail and before calling its model. The private text
 joins only that model's input; it never becomes a shared assignment, job brief,
 status or receipt. The generic model/MCP factory remains unchanged.
+
+Retained archives and pending proposals
+---------------------------------
+
+`memoryArchive(agent:, first:, before:)` and `memoryProposals(agent:, first:,
+before:)` browse the declared agent's retained source under current private
+Memory visibility. Project membership alone grants neither read. Archive pages
+include archived memories even after expiry; proposal pages include only pending
+proposals. These explicit retained reads do not make either kind active or
+recallable, and they do not renew a current-memory freshness lease.
+
+Each page returns `entries` and `nextBefore`. The default page size is 50,
+with a maximum of 200. Pass `nextBefore` as the next request's `before` until
+it is null. Entries follow descending source row order. The cursor is an exact
+signed SQLite integer encoded as text; it grants no authority and cannot select
+a file. Nullable fields preserve old source shapes and rough proposals. An older
+row without a UUID has a null ID rather than receiving a newly written ID.
+Missing or undeclared sources return null; an existing source with a missing
+table returns an empty page. Reads never create or upgrade either.
+
+Archive entries expose their retained note and archive time as well as the
+memory's original expiry. `expiresAt` preserves the stored timestamp text; it
+is not the numeric freshness deadline returned by active-memory reads. Proposal IDs use `agent:proposal:<uuid>`, distinct from
+active memory IDs. This read surface does not add proposal authoring or ratification
+to the native command catalogue.
