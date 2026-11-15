@@ -1,6 +1,7 @@
 import './agent-face.css';
 import { lazy, Suspense, useContext } from 'react';
-import { useRecords, type LiveRecord } from '../../data';
+import type { LiveRecord } from '../../data';
+export { useDeskAgentDisplays as useAgentDisplays } from './agent-displays';
 import type { FaceEyes, FaceShape, FaceState } from '../../face';
 import { PixelContext } from '../../look';
 import type { Sprite } from '../../pixel-face';
@@ -8,10 +9,6 @@ const PixelFace = lazy(() => import('../../pixel-face'));
 const Face = lazy(() => import('../../face'));
 export interface AgentDisplay extends LiveRecord {
   agent: string; sprite?: Sprite; mark: { bg: string; fg: string }; face: { shape: FaceShape; eyes: FaceEyes };
-}
-export function useAgentDisplays() {
-  const snapshot = useRecords<AgentDisplay>('household.agentDisplay');
-  return snapshot.status === 'live' ? snapshot.records : [];
 }
 export function faceState(state?: string, needsYou = false): FaceState {
   return needsYou ? 'needs-input' : state === 'working' ? 'working' : state === 'waiting' ? 'thinking' : state === 'offline' ? 'error' : 'idle';

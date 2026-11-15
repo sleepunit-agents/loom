@@ -1,7 +1,8 @@
-import { useRecords } from '../../data';
+import { useDataQuery } from '../../data/graphql';
 import { latestStatus, type AgentStatus, type OwnedAgent } from './home-model';
 
-type Minute = { id: string; at: number; timezone: string };
+export const deskTimeQuery = 'query DeskTime { deskTime { at timezone } }';
+export interface DeskTimeData { deskTime: { at:number;timezone:string } | null }
 /** Formatting shared with the present desk, without its legacy shell/clock state. */
 export function serverTime(at: number, timezone: string, words = false): string {
   try {
@@ -11,8 +12,9 @@ export function serverTime(at: number, timezone: string, words = false): string 
 }
 const glyph = {width:15,height:15,viewBox:'0 0 16 16','aria-hidden':true} as const;
 export function BarClock() {
-  const time = useRecords<Minute>('household.time');
-  const minute = time.status === 'live' ? time.records[0] : undefined;
+  const time = useDataQuery<DeskTimeData>(deskTimeQuery);
+  const value = time.status === 'live' ? time.data?.deskTime : undefined;
+  const minute = value && Number.isSafeInteger(value.at) && typeof value.timezone === 'string' ? value : undefined;
   const text = minute && serverTime(minute.at, minute.timezone);
   const words = text && minute ? serverTime(minute.at, minute.timezone, true) : 'Loom time unavailable';
   return <span className="next-system-clock loom-sys__clock" title={words}><span aria-hidden="true">{text || '—:—'}</span><span className="sr-only">{words}</span></span>;

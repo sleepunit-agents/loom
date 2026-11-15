@@ -11,7 +11,9 @@ import { createHash } from 'node:crypto';
 import { TokenDatabase } from '../household/tokens.js';
 import { HouseholdDatabase } from '../household/document.js';
 import { TokenResolver } from '../../household.js';
-import { setupLocal, caller, prompt } from '../../__fixtures__/clock-local.js';
+import { installApprovals } from '../../pieces/approvals/index.js';
+import { fixtureSharing } from '../../fixture.js';
+import { approvalsRole } from '../../pieces/approvals/role.js';
 
 const close: (() => void | Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const stop of close.splice(0).reverse()) await stop(); });
@@ -82,14 +84,17 @@ it('exports the installed next household with synthetic token and settings conti
   expect(new TokenResolver(household, { persistence: new TokenDatabase(restored) }).resolve(token)).toMatchObject({ kind: 'owner', member: 'jonathan' });
   expect(restored.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
 });
-it('honors installed Clock and Approvals private exclusions in a real restored image', async () => {
-  const s = await setupLocal('once');
-  const result = s.request(prompt, 'PRIVATE_APPROVAL_SENTINEL', { ...caller, member: 'jonathan', people: ['jonathan'], project: 'pond' });
+it('honors installed Approvals private exclusions in a real restored image', async () => {
+  const home=mkdtempSync(join(tmpdir(),'export-approval-image-'));close.push(()=>rmSync(home,{recursive:true,force:true}));
+  const access=fixtureSharing();access.services.runtime={types:['approval'],operations:['approvals.piece-request']};
+  const app=await startLoom({home,sharing:()=>access,install:app=>installApprovals(app.db,app.operations,app.live,()=>access,{localAgent:'art'}),stdout(){}});close.push(()=>app.close());
+  const result=approvalsRole(app.operations,'runtime').call('request',{who:{agent:'art',where:'house (queue)'},for:'jonathan',member:'jonathan',people:['jonathan'],project:'pond'},
+    {kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'PRIVATE_APPROVAL_SENTINEL',why:'Private fixture',if_yes:'Allow',if_no:'Deny'},'private-export');
   expect(result.ok).toBe(true);
-  expect(JSON.stringify(s.app.db.prepare('SELECT * FROM approvals_approvals').all())).toContain('PRIVATE_APPROVAL_SENTINEL');
-  const image = exportDatabaseImage(s.app.db);
+  expect(JSON.stringify(app.db.prepare('SELECT * FROM approvals_approvals').all())).toContain('PRIVATE_APPROVAL_SENTINEL');
+  const image=exportDatabaseImage(app.db);
   expect(image.bytes.includes(Buffer.from('PRIVATE_APPROVAL_SENTINEL'))).toBe(false);
-  const restored = new Database(image.bytes); close.push(() => restored.close());
+  const restored=new Database(image.bytes);close.push(()=>restored.close());
   expect(restored.prepare('SELECT * FROM approvals_approvals').all()).toEqual([]);
 });
 it.each([

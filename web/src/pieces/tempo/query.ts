@@ -19,4 +19,3 @@ export interface TempoData {
   triggerLog: TriggerEvent[];
   agentPauses: AgentPause[];
 }
-

@@ -17,4 +17,3 @@ it('shows every persisted before/after value, including settings retained while 
   expect(text()).toContain('None'); expect(text()).toContain(after.outside_address);
   expect(text()).toContain('90'); expect(text()).toContain('7');
 });
-

@@ -1,5 +1,5 @@
 // An agent's pixel face (Jonathan, 2026-11-04: the PixelLab sheets he made for Art, "he likes them"): its sprite sheet,
-// kept with the household's marks (src/household.ts spriteOf, served at /faces/<agent>/sheet.png), drawn at whole
+// kept in shared agent_sprites and selected over the generated connection, drawn at whole
 // pixels (1x, 2x on a card). An agent with no sheet keeps its drawn face (face.tsx); Appearance's "Pixel faces" turns
 // these off for the person who'd rather compare. Its own chunk, and its sheet loads only when a face is drawn.
 //
@@ -18,6 +18,8 @@
 // rare neck crack at 15), a rare one never twice in a row. A facing's animations differ from south's, on purpose; a facing with none for a state uses that
 // state's south (south-west: south-east's, mirrored, first).
 import { useEffect, useRef, useState } from 'react';
+import { useDataQuery } from './data/graphql';
+import { checkSpriteLayout } from '../../src/desk-sprite-layout';
 import type { FaceState } from './face';
 import { motionQuery, reducedMotion } from './access';
 
@@ -51,7 +53,9 @@ type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial
 /** A box in a cell, in the sheet's pixels. */
 export type Crop = { x: number; y: number; w: number; h: number };
 type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement> };
-export type Sprite = { facings: string[]; v: string; base: string };
+export type Sprite = { agent?: string; v: string };
+export const deskSpriteQuery = 'query DeskSprite($agent:String!,$version:String!){deskSprite(agent:$agent,version:$version){id version layout sheets}}';
+export interface DeskSpriteAsset {id?:string;version:string;layout:string;sheets:string}
 
 /** loom's states by the manifest's names. */
 const NAME: Record<FaceState, string> = { idle: 'idle', working: 'working', thinking: 'thinking', 'needs-input': 'waiting', complete: 'done', error: 'error', talking: 'talking' };
@@ -67,23 +71,23 @@ export function stateFrom(m: Manifest, st: FaceState): string {
 const fileOf = (v: Variant) => v.sheet ?? 'sheet.png';
 
 const sheets = new Map<string, Promise<Sheet | null>>();
-/** The manifest and its sheets, loaded once per page. */
-function sheetOf(s: Sprite): Promise<Sheet | null> {
-  const key = `${s.base}?${s.v}`;
-  let p = sheets.get(key);
-  if (!p) {
-    p = (async () => {
-      try {
-        const m = (await (await fetch(`${s.base}manifest.json?v=${s.v}`)).json()) as Manifest;
-        const all = Object.values(m.states).flatMap((byF) => Object.values(byF ?? {}).flat()) as Variant[];
-        const imgs: Record<string, HTMLImageElement> = {};
-        await Promise.all([...new Set(all.map(fileOf))].map(async (f) => { const i = new Image(); i.src = `${s.base}${f}?v=${s.v}`; await i.decode(); imgs[f] = i; }));
-        return { m, imgs };
-      } catch { return null; }
-    })();
-    sheets.set(key, p);
+/** Decoded pictures are shared per exact asset version, without a second transport. */
+function sheetOf(agent:string,data:DeskSpriteAsset):Promise<Sheet|null> {
+  const key=JSON.stringify([agent,data.version]);let pending=sheets.get(key);
+  if(!pending){
+    pending=(async()=>{try{
+      const m=checkSpriteLayout(JSON.parse(data.layout)) as Manifest,packed:unknown=JSON.parse(data.sheets);
+      if(!packed||typeof packed!=='object'||Array.isArray(packed))throw Error('Invalid sprite sheets');
+      const all=Object.values(m.states).flatMap(byF=>Object.values(byF??{}).flat()) as Variant[],imgs:Record<string,HTMLImageElement>=Object.create(null);
+      await Promise.all([...new Set(all.map(fileOf))].map(async name=>{
+        if(!Object.hasOwn(packed,name)||typeof (packed as Record<string,unknown>)[name]!=='string')throw Error('Missing sprite sheet');
+        const image=new Image();image.src='data:image/png;base64,'+(packed as Record<string,string>)[name];await image.decode();imgs[name]=image;
+      }));return {m,imgs};
+    }catch{return null;}})();sheets.set(key,pending);
+    // A transient decoder failure may be retried by a later live mount.
+    void pending.then(value=>{if(!value&&sheets.get(key)===pending)sheets.delete(key);});
   }
-  return p;
+  return pending;
 }
 
 /** A state's animations in a facing: its own; with none, that state's south (else idle's south, the base). A face
@@ -235,9 +239,17 @@ const pageEnv: PlayerEnv = { now: () => performance.now(), setTimeout: (f, ms) =
 
 /** This sprite's manifest and sheets once they're here, and whether they can't be had. */
 function useSheet(sprite: Sprite): { sheet: Sheet | null; failed: boolean } {
-  const [got, setGot] = useState<{ sheet: Sheet | null; failed: boolean }>({ sheet: null, failed: false });
-  useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) setGot({ sheet: s, failed: !s }); }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
-  return got;
+  const query=useDataQuery<{deskSprite:DeskSpriteAsset|null}>(deskSpriteQuery,{agent:sprite.agent??'',version:sprite.v});
+  const asset=query.status==='live'&&query.data?.deskSprite?.version===sprite.v?query.data.deskSprite:undefined;
+  const key=JSON.stringify([sprite.agent,sprite.v]);
+  const [got,setGot]=useState<{key:string;sheet:Sheet|null;failed:boolean}>();
+  useEffect(()=>{
+    if(!asset||!sprite.agent)return;let on=true;
+    void sheetOf(sprite.agent,asset).then(sheet=>{if(on)setGot({key,sheet,failed:!sheet});});
+    return()=>{on=false;};
+  },[asset,sprite.agent,key]);
+  if(!sprite.agent||!asset)return {sheet:null,failed:query.status!=='loading'};
+  return got?.key===key?got:{sheet:null,failed:false};
 }
 
 export default function PixelFace({ sprite, state = 'idle', size, label, fallback, talk, scale: fixed, onShown, onFrom, onReady }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode;
@@ -296,7 +308,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   useEffect(() => { if (talk) player.current?.talk(talk.n); }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
-  if (failed) return <>{fallback}</>;
+  if (failed || !sheet) return <>{fallback}</>;
   const [w, h] = PIXEL.box;
   // The agent's own scale and offset (its manifest, t-1849), on top of the whole-pixel 1x or 2x. None, and it's drawn as ever.
   const k = scale * (sheet?.m.scale ?? 1);

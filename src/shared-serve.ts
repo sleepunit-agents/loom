@@ -5,12 +5,17 @@ import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { getRequestListener } from '@hono/node-server';
 import { sharedRoot } from './shared-root.js';
+import { sharedWeb } from './shared-web.js';
 
-export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number }) {
+export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number; webRoot?: string }) {
+  const web = options.webRoot ? sharedWeb(options.webRoot) : undefined;
   const root = sharedRoot(options);
   const sockets = new Set<Socket>();
   let meter: Awaited<typeof root.measuring> | undefined;
-  const listener = getRequestListener(request => root.http.fetch(request));
+  const listener = getRequestListener(async request => {
+    const response = await root.http.fetch(request);
+    return web && response.status === 404 && ['GET','HEAD'].includes(request.method) ? web.fetch(request) : response;
+  });
   const server = createServer((request, response) => {
     const pending = measureResponse(meter, request, response, () => { void listener(request, response); });
     void pending?.catch(() => { if (!response.headersSent) response.writeHead(503); response.end(); });

@@ -1,375 +1,225 @@
-/** One next-mode browser test; later desk slices extend this same scenario. */
-import { it, expect } from 'vitest';
-import BetterSqlite3 from 'better-sqlite3';
-import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
-import { chromium } from 'playwright-core';
-import { startLoom } from '../foundation.js';
-import { FakeClock } from '../core/clock.js';
-import { HouseholdDatabase } from '../core/household/document.js';
-import { migrateHouseholdTables } from '../core/household/schema.js';
-import { deskHome } from './agent-desk.fixture.js';
-import { HouseholdRows } from '../core/household/rows.js';
-import { manifestFromPixelLab } from '../household.js';
-import { sheet } from './pixel-sheet.fixture.js';
-import { TokenDatabase } from '../core/household/tokens.js';
-const enabled = process.env.LOOM_DESK_EVIDENCE === '1';
-const chrome = process.env.LOOM_TEST_CHROME;
-const root = resolve('dist/web');
-if (enabled && (!chrome || !existsSync(chrome) || !existsSync(join(root,'next.html')))) throw Error('Desk evidence needs Chrome and the built app');
-it.runIf(enabled)('desk applies member appearance live across fresh windows and serves PWA assets', async () => {
-  const home = mkdtempSync(join(tmpdir(),'desk-shell-'));
-  // Activity uses the listed agent's real read-only episode source, never the old reference home.
-  const seedSteps = (base:string,now:number) => {
-    const path=join(base,'agents','art');mkdirSync(path,{recursive:true});
-    const db=new BetterSqlite3(join(path,'memories.db'));
-    db.exec('CREATE TABLE IF NOT EXISTS memories(uuid TEXT,ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
-    for(const [i,title] of ['Shipped the desk look','Checked the live activity','Kept the five agents together','Earlier desk work'].entries())
-      db.prepare('INSERT INTO memories(uuid,ref,title,content,created,project,metadata,expires_at,category,archived) VALUES(?,?,?,?,?,NULL,?,NULL,?,0)').run(`desk-step-${i}`,`desk-step-${i}`,title,'The household desk has its look back.',new Date(now-i*60000).toISOString(),'{"where":"terminal"}','episode');
-    db.close();
+/** The shipped desk on the actual shared HTTP/socket listener; CI owns Chromium.
+ * Production root composition owns the readers and lifetime. No legacy home,
+ * JSON records, copied app or route feeds. */
+import {it,expect} from 'vitest';
+import Database from 'better-sqlite3';
+import {createHash} from 'node:crypto';
+import {existsSync,mkdirSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {chromium,type Page} from 'playwright-core';
+import {eq} from 'drizzle-orm';
+import {generateX25519Identity} from 'age-encryption';
+import {FakeClock} from '../core/clock.js';
+import {createDataSchema} from '../core/data/database.js';
+import {agents,agentStatus,household,members,memberAgents,tokens,jobs,boxes} from '../core/data/schema.js';
+import {CommsMessages} from '../core/conversations/messages.js';
+import {wordsKey} from '../pieces/comms/crypto.js';
+import {serveShared} from '../shared-serve.js';
+import {storeDeskSprite} from '../desk-sprites.js';
+import {manifestFromPixelLab} from '../household.js';
+import {sheet} from './pixel-sheet.fixture.js';
+const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
+if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Desk evidence needs Chrome and the built app');
+it.runIf(enabled)('shared desk applies live appearance, renders owned cards and opens actual Inbox rows at three looks and sizes',async()=>{
+ const client=new Database(':memory:'),clock=new FakeClock(Date.now()),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
+ const raw='d'.repeat(64),fingerprint=createHash('sha256').update(raw).digest('hex');
+ db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();
+ db.insert(household).values({timezone:'America/Chicago'}).run();
+ const ids=['art','birch','cedar','elm','fern'];
+ db.insert(agents).values(ids.map((id,position)=>({id,position,about:id==='art'?'Keeps the household moving.':'',markBg:'#B8A6FF',markFg:'#ffffff',faceShape:'pebble' as const,faceEyes:'dot' as const}))).run();
+ db.insert(memberAgents).values(ids.map(agent=>({member:'owner',agent}))).run();
+ db.insert(agentStatus).values(ids.map(agent=>({agent,state:agent==='art'?'working' as const:'idle' as const,work:agent==='art'?'Rebuilding the shared desk':'',changedAt:now()}))).run();
+ db.insert(tokens).values({fingerprint,label:'Disposable desk fixture',kind:'owner',member:'owner',createdAt:now()}).run();
+ const privateBrief='PRIVATE JOB INSTRUCTIONS OMITTED';db.insert(jobs).values({id:'desk-current-job',agent:'art',member:'owner',state:'waiting',title:'Fixture current desk work',brief:privateBrief,model:'fixture-model',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+ const machine={owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()};
+ db.insert(boxes).values([{...machine,id:'desk-box',name:'Disposable worker'},{...machine,id:'retired-box',name:'Retired worker',revokedAt:now()}]).run();
+ const picture=sheet(),layout=manifestFromPixelLab(JSON.parse(picture.json.toString()));storeDeskSprite(db,'art',layout,{'sheet.png':picture.png});
+ const key=wordsKey(await generateX25519Identity()),messages=new CommsMessages(db,key,now);
+ const thread=messages.threads.open({member:'owner',agent:'art',title:'Desk fixture conversation'});
+ await messages.send({thread:thread.id,sender:'art',kind:'reply',words:'The shared desk reader is ready.'});
+ const question=await messages.ask(thread.id,'art','desk-question',{words:'OK to run the backup now?',why:'A disposable browser fixture question.',answers:'yes-no'});
+ // Newer unanswered threads must not hide the latest actual agent reply.
+ for(let n=0;n<9;n++){clock.advance(1);messages.threads.open({member:'owner',agent:'art',title:`Unanswered seed ${n}`});}
+ const app=await serveShared({db,clock,webRoot,commsKey:key,originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
+ let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
+ try {
+  browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block',hasTouch:true});
+  await context.addInitScript(()=>{const w=window as typeof window&{__deskVibrations:number};w.__deskVibrations=0;Object.defineProperty(navigator,'vibrate',{value:()=>{w.__deskVibrations++;return true;}});});
+  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[],connections=new Map<Page,number>();let maximumConnections=0,legacyConnections=0,faceRequests=0;
+  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/faces/'))faceRequests++;if(request.isNavigationRequest()&&request.frame()===page.mainFrame())connections.set(page,0);});page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/graphql'){const count=(connections.get(page)??0)+1;connections.set(page,count);maximumConnections=Math.max(maximumConnections,count);}else if(new URL(socket.url()).pathname==='/live')legacyConnections++;});}
+  const issued=await app.http.request(app.url+'/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+raw}});
+  expect(issued.status).toBe(200);const link=await issued.json() as {ok:boolean;value:{path:string}};
+  await a.goto(app.url+link.value.path);
+  const admitted=a.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname.startsWith('/login/'));
+  await a.getByRole('button',{name:'Sign in',exact:true}).click();
+  const response=await admitted;
+  if(response.status()!==303){const headers=response.request().headers();console.error('Desk sign-in headers',{origin:headers.origin??'absent',fetchSite:headers['sec-fetch-site']??'absent',status:response.status()});}
+  expect(response.status()).toBe(303);
+  await expect.poll(()=>a.locator('.next-shell').count()).toBe(1);await b.goto(app.url);
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+  for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
+  app.writes.run(()=>db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,'desk-box')).run());
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'0 enrolled boxes; health unavailable',exact:true}).count()).toBe(1);
+  app.writes.run(()=>db.insert(boxes).values({...machine,id:'new-desk-box',name:'New disposable worker'}).run());
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('img',{name:'1 enrolled box; health unavailable',exact:true}).count()).toBe(1);
+  await a.locator('.next-preferences summary').click();
+  await a.getByRole('combobox',{name:'Look',exact:true}).selectOption('daylight');
+  for(const page of [a,b])await expect.poll(()=>page.locator('html').getAttribute('data-look')).toBe('daylight');
+  // Saves travel through the real cookie HTTP command; displayed choices come
+  // back through each window's one generated live-query connection.
+  const set=async(input:object,id:string)=>{
+   const result=await a.evaluate(async({input,id})=>{const response=await fetch('/api/household/setPreferences',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({input,id})});return {status:response.status,ok:(await response.json()).ok};},{input,id});
+   expect(result).toEqual({status:200,ok:true});
   };
-  seedSteps(home,Date.parse('2026-11-13T18:40:00Z'));
-  const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-13T18:41:00Z')),webRoot:root,install(app) {
-    migrateHouseholdTables(app.db);
-    app.db.transaction(() => {
-      new HouseholdDatabase(app.db).replace(home,{v:1,tz:'America/Chicago',agents:['art','birch','cedar','elm','fern'],default:'art',owner:'owner',about:{art:'Keeps the household moving.'},members:[{person:'owner',role:'owner',agents:'*'}]});
-      new TokenDatabase(app.db).replace({v:1,tokens:[]},{});
-      // Existing technical test sheet, never supplied artwork or screenshot evidence.
-      const sample = sheet(), manifest = manifestFromPixelLab(JSON.parse(sample.json.toString()));
-      new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,rawManifest:Buffer.from(JSON.stringify(manifest)).toString('base64'),sheets:{'sheet.png':sample.png.toString('base64')},v:'browser-fixture'});
-    })();
-  }});
-  const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
-  seedSteps(old.h.home,Date.now()-60000);
-  old.ask('art','OK to run the backup now?');
-  const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
-  expect(raised.ok).toBe(true);
-  const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
-  try {
-    const context = await browser.newContext({viewport:{width:1280,height:900}});
-    const a = await context.newPage(), b = await context.newPage();
-    const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
-    const oldContext=await browser.newContext({viewport:{width:1280,height:900},reducedMotion:'reduce',serviceWorkers:'block'});
-    await oldContext.addInitScript(()=>{sessionStorage.setItem('loom-arrived','1');sessionStorage.setItem('loom-booted','1');});
-    await oldContext.request.post(old.base+'/login',{form:{token:old.tok.owner},maxRedirects:0});
-    const reference=await oldContext.newPage();
-    const board=await browser.newPage();
-    const link = app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
-    if (!link.ok) throw Error('Fixture sign-in failed');
-    await a.goto(app.url+(link.value as {path:string}).path);
-    await a.getByRole('button',{name:'Sign in',exact:true}).click();
-    await expect.poll(() => a.locator('.next-shell').count()).toBe(1);
-    expect(await a.locator('html').getAttribute('data-look')).toBe('neon');
-    const set = (prefs:unknown,id:string) => {
-      const result = app.operations.call('direct',{kind:'member',id:'owner'},'household.setPreferences',prefs,id);
-      expect(result.ok).toBe(true);
-    };
-    set({look:'daylight',sound:true,motion:'on',contrast:'on',zoom:true},'appearance');
-    await b.goto(app.url);
-    for (const page of [a,b]) {
-      await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe('daylight');
-      await expect.poll(() => page.locator('html').getAttribute('data-mode')).toBe('light');
-      await expect.poll(() => page.locator('html').getAttribute('data-sound')).toBe('on');
-      await expect.poll(() => page.locator('html').getAttribute('data-motion')).toBe('reduce');
-      await expect.poll(() => page.locator('html').getAttribute('data-contrast')).toBe('more');
-      expect(await page.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
-    }
-    // Ground is the member's live choice, shared across windows like the look.
-    for (const ground of ['wash', 'contours', 'depth']) {
-      set({ground}, 'ground-'+ground);
-      for (const page of [a,b]) {
-        await expect.poll(() => page.locator('html').getAttribute('data-ground')).toBe(ground);
-        await expect.poll(() => page.locator('.loom-ground').count()).toBe(ground==='wash'?0:1);
-      }
-    }
-    // The SAME Home scenario proves real Activity IO, live replacement in both windows and reader navigation.
-    for(const page of [a,b]) {
-      await expect.poll(()=>page.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').count()).toBe(3);
-      expect(await page.getByText('Earlier desk work',{exact:true}).count()).toBe(0);
-    }
-    const activityDb=new BetterSqlite3(join(home,'agents','art','memories.db'));
-    activityDb.prepare('UPDATE memories SET title=? WHERE ref=?').run('Shipped the live desk look','desk-step-0');activityDb.close();
-    expect(app.operations.call('direct',{kind:'agent',id:'art'},'core.touched',{type:'memory',id:'art:desk-step-0'}).ok).toBe(true);
-    for(const page of [a,b])await expect.poll(()=>page.getByText('Shipped the live desk look',{exact:true}).count()).toBe(1);
-    await a.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').first().click();
-    await expect.poll(()=>a.getByRole('heading',{name:'Shipped the live desk look',exact:true}).count()).toBe(1);
-    expect(new URL(a.url()).searchParams.get('e')).toBe('e~art~desk-step-0');
-    await a.goto(app.url);
-    // The optional agent window uses the real Household profile role; both windows replace outside edits.
-    for(const page of [a,b])await page.goto(app.url+'/p/agents-preview/agent/art');
-    for(const page of [a,b])await expect.poll(()=>page.getByText('Keeps the household moving.',{exact:true}).count()).toBe(1);
-    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile').ok).toBe(true);
-    for(const page of [a,b])await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
-    const longDescription='https://example.invalid/'+ 'x'.repeat(550);
-    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:longDescription},'desk-profile-long').ok).toBe(true);
-    await expect.poll(()=>b.getByText(longDescription,{exact:true}).count()).toBe(1);
-    await b.setViewportSize({width:390,height:900});
-    await expect.poll(()=>b.locator('.desk-home').evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(1);
-    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile-restore').ok).toBe(true);
-    await b.setViewportSize({width:1280,height:900});
-    await reference.goto(old.base+'/a/art?t=*art');
-    await reference.locator('.loom-agentwin').getByRole('button',{name:'Write one',exact:true}).click();
-    await reference.getByLabel("art's description",{exact:true}).fill('Keeps the household moving and the desk readable.');
-    await reference.locator('.loom-agentwin').getByRole('button',{name:'Save',exact:true}).click();
-    await expect.poll(()=>reference.locator('.loom-aghead__desc').getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
-    for(const page of [a,b])await page.goto(app.url);
-    await a.bringToFront();
-    await expect.poll(()=>a.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
-    await a.evaluate(()=>document.fonts.ready);
-    const faceLink=a.getByRole('link',{name:'Open art agent window',exact:true});
-    // A live face preference can replace the pressed canvas before release. Navigation must survive it.
-    set({pixel:true},'agent-link-pixel');
-    await expect.poll(()=>faceLink.locator('canvas').count()).toBe(1);
-    const hit=await faceLink.boundingBox();if(!hit)throw Error('Agent link is not visible');
-    await a.mouse.move(hit.x+hit.width/2,hit.y+hit.height/2);await a.mouse.down();
-    set({pixel:false},'agent-link-drawn');
-    await expect.poll(()=>faceLink.locator('[data-slot=agent-face]').count()).toBe(1);
-    await a.mouse.up();
-    await expect.poll(async()=>({path:new URL(a.url()).pathname,readers:await a.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
-    set({pixel:true},'agent-link-restore');
-    await a.goto(app.url);
-    // Exercise the real renderer through the database-backed display feed on both surfaces.
-    const painted = async (page: typeof a, selector: string) => page.locator(selector).evaluateAll(nodes => nodes.some(node => {
-      const cv = node as HTMLCanvasElement, data = cv.getContext('2d')?.getImageData(0,0,cv.width,cv.height).data;
-      return data && data.some((n,i) => i % 4 === 3 && n > 0);
-    }));
-    await expect.poll(()=>painted(b,'.desk-home-card .loom-pixel-face canvas')).toBe(true);
-    await a.getByRole('button',{name:'Open Inbox',exact:true}).click();
-    await expect.poll(()=>painted(a,'.desk-rail-card .loom-pixel-face canvas')).toBe(true);
-    set({pixel:false},'pixel-off');
-    await expect.poll(()=>a.locator('.desk-rail-card [data-slot=agent-face]').count()).toBe(1);
-    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
-    set({pixel:true},'pixel-on');
-    await expect.poll(()=>painted(a,'.desk-rail-card .loom-pixel-face canvas')).toBe(true);
-    await expect.poll(()=>painted(b,'.desk-home-card .loom-pixel-face canvas')).toBe(true);
-    // A refused manifest and an undecodable sheet both recover to the drawn face.
-    await a.route('**/faces/art/manifest.json*',route=>route.fulfill({status:404,body:'not found'}));
-    await a.reload();
-    await expect.poll(()=>a.locator('.desk-rail-card [data-slot=agent-face]').count()).toBe(1);
-    await b.route('**/faces/art/sheet.png*',route=>route.fulfill({status:200,contentType:'image/png',body:'not a PNG'}));
-    await b.reload();
-    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
-    await a.unroute('**/faces/art/manifest.json*'); await b.unroute('**/faces/art/sheet.png*');
-    new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
-    await a.getByRole('button',{name:'Home',exact:true}).click();
-    // Account actions belong to the registered app, never a floating corner toolbar.
-    expect(await a.getByRole('button',{name:'Add a passkey',exact:true}).count()).toBe(0);
-    expect(await a.getByRole('button',{name:'Sign out',exact:true}).count()).toBe(0);
-    // Comms and Inbox now have actual sharedRoot proofs in their own integration files.
-    // Comparison boards intentionally retain the fixture's ordinary drawn identity.
-    expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
-    await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
-    // iPad's home-screen app has its own status bar even in a desktop-width layout.
-    await a.addInitScript(()=>Object.defineProperty(navigator,'standalone',{value:sessionStorage.getItem('desk-ios')==='1',configurable:true}));
-    await a.evaluate(()=>sessionStorage.setItem('desk-ios','1'));
-    await a.reload();
-    await expect.poll(()=>a.locator('.next-system-clock').count()).toBe(1);
-    expect(await a.locator('html').getAttribute('class')).toContain('loom-ios-app');
-    expect(await a.locator('.next-system-clock').isVisible()).toBe(false);
-    expect(await a.locator('.next-system-icons').isVisible()).toBe(false);
-    await a.evaluate(()=>sessionStorage.removeItem('desk-ios'));
-    await a.reload();
-    await expect.poll(()=>a.locator('.next-system-clock').isVisible()).toBe(true);
-    const shots = resolve('artifacts/desk-shell'); mkdirSync(shots,{recursive:true});
-    for (const look of ['neon','lowlight','daylight']) {
-      set({look,contrast:'off',motion:'on',sound:false},'look-'+look);
-      await expect.poll(() => a.locator('html').getAttribute('data-look')).toBe(look);
-      for (const width of [390,1280,1920]) {
-        const page = width===390?b:a;
-        await page.setViewportSize({width,height:900}); await page.reload();
-        await expect.poll(() => page.locator('.next-shell').count()).toBe(1);
-        await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
-        await expect.poll(()=>page.locator('.next-status-bar .loom-pbar__needs').getAttribute('aria-label')).toBe('1 needs you');
-        expect(await page.locator('.next-status-bar h1').innerText()).toBe('Home');
-        await expect.poll(()=>page.locator('.next-system-clock').getAttribute('title')).toBe('12:41 PM, America/Chicago time');
-        expect(await page.locator('.next-system-clock').isVisible()).toBe(width!==390);
-        expect(await page.locator('.next-system-icons').isVisible()).toBe(width!==390);
-        expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('5 agents');
-        await expect.poll(()=>page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('Tasks · 0 in progress · 0 ready');
-        await expect.poll(()=>page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('0 enrolled boxes · health unavailable');
-        expect(await page.locator('.next-system-icons [aria-label="0 enrolled boxes; health unavailable"]').count()).toBe(1);
-        expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-        await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
-        await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(width<1024?1:5);
-        expect(await page.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
-        expect(await page.locator('.desk-home-compose').count()).toBe(width<1024?1:5);
-        if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
-        await reference.setViewportSize({width,height:900});
-        await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
-        for (const surface of ['home','home-steps','work','launcher','agent']) {
-          if(surface==='home') {
-            await page.getByRole('button',{name:'Check again',exact:true}).click();
-            await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
-            // Checking may scroll its button into view; capture Home from its identity/header.
-            await page.locator('.desk-home').evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
-            if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0);
-          }
-          if(surface==='home-steps') {
-            await page.getByRole('region',{name:'art desk details',exact:true}).getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
-            await reference.locator('.loom-bigcard[data-agent=art]').getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
-          }
-          if(surface==='work') {
-            await page.getByRole('button',{name:'Open Inbox',exact:true}).click();
-            await expect.poll(()=>page.locator('[data-tile=inbox]').count()).toBe(1);
-            await expect.poll(()=>page.locator('.next-status-bar h1').innerText()).toBe('Inbox');
-            if(width===390) {
-              await page.getByRole('button',{name:'All apps',exact:true}).click({button:'right'});
-              expect(await page.getByRole('menu').count()).toBe(0);
-              const needs=page.locator('.next-status-bar .loom-pbar__needs');
-              await needs.click();
-              expect(new URL(page.url()).pathname).toBe('/p/inbox-preview');
-              const bar=await page.locator('.next-status-bar').boundingBox();
-              expect(bar!.height).toBeLessThan(40);
-              expect(await page.locator('.next-status-bar .loom-tick__track').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
-              await page.locator('.next-status-bar summary').click();
-              await expect.poll(()=>page.getByRole('combobox',{name:'Look',exact:true}).isVisible()).toBe(true);
-              await page.locator('.next-status-bar summary').click();
-            }
-            // The shipped Inbox uses shared rows; this shell fixture seeds legacy attention for the rail only.
-            await expect.poll(()=>page.locator('[data-tile=inbox]').getByRole('textbox',{name:'Search asks',exact:true}).isVisible()).toBe(true);
-            await reference.goto(old.base+(width<1024?'/inbox':'/inbox?t=*inbox'));
-            if(width>=1024) {
-              await expect.poll(()=>page.locator('.desk-rail-card').count()).toBe(1);
-              await expect.poll(()=>reference.locator('.loom-arail').count()).toBe(1);
-              const rail=await page.locator('.next-rail').boundingBox(),tile=await page.locator('[data-tile=inbox]').boundingBox();
-              expect(Math.round(rail!.width)).toBe(width>=1440?320:296);expect(tile!.x+tile!.width).toBeLessThanOrEqual(rail!.x-9);
-              expect(await page.locator('.next-rail button').allTextContents()).toContain('Asks youOK to run the backup now? ›');
-              if(look==='neon'&&width===1280) {
-              // Device hide choices: strips, overlays, persistence and no peek reflow.
-              const choose=async(part:'rail'|'dock',label:string)=>{
-                const target=part==='rail'?page.locator('.next-rail-edge').count().then(n=>n?page.locator('.next-rail-edge'):page.locator('.next-rail')):Promise.resolve(page.getByRole('button',{name:'All apps',exact:true}));
-                await (await target).click({button:'right',force:true});
-                await page.getByRole('menuitem',{name:label,exact:true}).click();
-              };
-              const tileBox=()=>page.locator('[data-tile=inbox]').boundingBox();
-              await choose('rail','Minimize to strip');
-              await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(false);
-              expect(await page.locator('.next-rail-edge').getAttribute('data-attention')).toBe('true');
-              const stripped=await tileBox();expect(stripped!.width).toBeGreaterThan(tile!.width);
-              await page.getByRole('button',{name:'Show agents rail',exact:true}).click();
-              await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(true);
-              expect(await tileBox()).toEqual(stripped);
-              await page.keyboard.press('Escape');
-              await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(false);
-              await choose('rail','Auto-hide');
-              const automatic=await tileBox();
-              await page.locator('.next-rail-edge').hover();
-              await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(true);
-              expect(await tileBox()).toEqual(automatic);
-              await page.locator('[data-tile=inbox] .next-strip-title').click();
-              await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(false);
-              await page.reload();
-              await expect.poll(()=>page.locator('.next-rail').getAttribute('data-mode')).toBe('auto');
-              expect(await page.locator('.next-rail').isVisible()).toBe(false);
-              await choose('rail','Always show');
-              await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(true);
-              await choose('dock','Minimize to strip');
-              await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(false);
-              await expect.poll(async()=>(await tileBox())!.height).toBeGreaterThan(tile!.height);
-              const hiddenDock=await tileBox();
-              await page.getByRole('button',{name:'Show dock',exact:true}).click();
-              await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
-              expect(await tileBox()).toEqual(hiddenDock);
-              await choose('dock','Auto-hide');
-              await page.locator('.next-dock-edge').hover();
-              await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
-              await page.keyboard.press('Escape');
-              await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(false);
-              await page.locator('.next-dock-edge').click({button:'right',force:true});
-              await page.getByRole('menuitem',{name:'Always show',exact:true}).click();
-              await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
-              }
-              // The real rail measures overflow and retries full cards when its room returns.
-              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.height='120px');
-              await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
-              expect(await page.locator('.desk-rail-compact').count()).toBe(4);
-              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.height='3000px');
-              await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe(null);
-              expect(await page.locator('.desk-rail-card').count()).toBe(5);
-              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
-              await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
-            }
-          }
-          if(surface==='launcher') {
-            if(look==='neon'&&width===1280){
-              await page.getByRole('button',{name:'All apps',exact:true}).first().click();
-              await expect.poll(()=>page.getByRole('dialog').getByRole('region',{name:'Work',exact:true}).count()).toBe(1);
-              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('system');
-              await expect.poll(()=>page.locator('.loom-lsec').count()).toBe(1);
-              await expect.poll(()=>page.locator('.loom-lsec__name').textContent()).toBe('System');
-              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('passkey');
-              await expect.poll(()=>page.locator('.loom-lapp').count()).toBe(1);
-              // Enter on the account shortcut must activate it, never the search's first result.
-              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
-              await page.getByRole('button',{name:'Open your account',exact:true}).focus();
-              await page.keyboard.press('Enter');
-              await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(1);
-              const accountTile=page.locator('[data-tile=account]');
-              await expect.poll(()=>accountTile.getByRole('form',{name:'Add a passkey',exact:true}).count()).toBe(1);
-              await expect.poll(()=>accountTile.getByRole('button',{name:'Add a passkey',exact:true}).isEnabled()).toBe(true);
-              await expect.poll(()=>accountTile.getByRole('button',{name:'Sign out this device',exact:true}).isEnabled()).toBe(true);
-              await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
-              await page.getByRole('button',{name:'All apps',exact:true}).first().click();
-              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('profile');
-              await page.keyboard.press('Enter');
-              expect(await page.locator('[data-tile=account]').count()).toBe(1);
-              await page.getByRole('button',{name:'All apps',exact:true}).first().click();
-              await page.getByRole('button',{name:'Close app launcher',exact:true}).focus();
-              await page.keyboard.press('Enter');
-              await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
-              await page.getByRole('button',{name:'Close Your account',exact:true}).click();
-              await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(0);
-            }
-            await page.getByRole('button',{name:'All apps',exact:true}).first().click();
-            await expect.poll(()=>page.getByRole('textbox',{name:'Find an app',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
-            await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
-            await expect.poll(()=>page.locator('.loom-lapp').count()).toBe(1);
-            await page.keyboard.press('Escape');
-            await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
-            await page.getByRole('button',{name:'All apps',exact:true}).first().click();
-            if(width<1024) { await reference.goto(old.base+'/setup'); await expect.poll(()=>reference.getByText('More',{exact:true}).count()).toBeGreaterThan(0); }
-            else { await reference.keyboard.press('Control+Shift+Space'); await expect.poll(()=>reference.getByRole('textbox',{name:'Find an app',exact:true}).count()).toBe(1); }
-          }
-          if(surface==='agent') {
-            await page.bringToFront();
-            await page.keyboard.press('Escape');await page.goto(app.url);
-            // Roster may arrive before Needs you; wait for the band that sets the face's vertical position.
-            await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
-            await page.evaluate(()=>document.fonts.ready);
-            await page.getByRole('link',{name:'Open art agent window',exact:true}).click();
-            await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]}).catch(async error=>{console.error('Agent entry failed',look,width,page.url(),await page.locator('.next-notice').textContent());await page.screenshot({path:join(shots,'agent-failure.png')});throw error;});
-            await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
-            expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(1);
-            expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-            await reference.goto(old.base+'/a/art'+(width<1024?'':'?t=*art'));
-            await expect.poll(()=>reference.locator('.loom-agentwin').count()).toBe(1);
-            await expect.poll(()=>reference.locator('.loom-agentwin').getByText('Shipped the desk look',{exact:true}).count()).toBe(1);
-            await expect.poll(()=>page.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').count()).toBe(3);
-          }
-          await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
-          if(surface==='home'&&width===390) {
-            // The long full question stays intact. Also show the rows below it, not just a top-of-page claim.
-            await page.locator('.desk-home-compact').last().scrollIntoViewIfNeeded();
-            await reference.locator('.loom-phome .loom-rrow').last().scrollIntoViewIfNeeded();
-            const oldRows=await reference.screenshot({path:join(shots,`old-home-agents-${look}-${width}.png`),animations:'disabled'});
-            const newRows=await page.screenshot({path:join(shots,`new-home-agents-${look}-${width}.png`),animations:'disabled'});
-            await board.setViewportSize({width:width*2,height:932});
-            await board.setContent(`<body style="margin:0;background:#17151e;color:#fff;font:14px monospace"><div style="display:flex"><section><p style="height:16px;margin:8px">OLD · Home agents · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${oldRows.toString('base64')}"></section><section><p style="height:16px;margin:8px">NEW · Home agents · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${newRows.toString('base64')}"></section></div></body>`);
-            await board.screenshot({path:join(shots,`compare-home-agents-${look}-${width}.png`)});
-            for(const [p,selector] of [[page,'.desk-home'],[reference,'.loom-phome']] as const)await p.locator(selector).evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
-          }
-          const before=await reference.screenshot({path:join(shots,`old-${surface}-${look}-${width}.png`),animations:'disabled'});
-          const after=await page.screenshot({path:join(shots,`new-${surface}-${look}-${width}.png`),animations:'disabled'});
-          await board.setViewportSize({width:width*2,height:932});
-          await board.setContent(`<body style="margin:0;background:#17151e;color:#fff;font:14px monospace"><div style="display:flex"><section><p style="height:16px;margin:8px">OLD · ${surface} · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${before.toString('base64')}"></section><section><p style="height:16px;margin:8px">NEW · ${surface} · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${after.toString('base64')}"></section></div></body>`);
-          await board.locator('img').evaluateAll(imgs=>Promise.all(imgs.map(i=>(i as HTMLImageElement).decode())));
-          await board.screenshot({path:join(shots,`compare-${surface}-${look}-${width}.png`)});
-        }
-        await page.keyboard.press('Escape');await page.goto(app.url);
-
-      }
-    }
-    expect(errors).toEqual([]);
-  } finally { await browser.close(); await old.close(); await app.close(); rmSync(home,{recursive:true,force:true}); }
+  await set({sound:true,motion:'on',contrast:'on',zoom:true,ground:'wash'},'appearance');
+  for(const page of [a,b]){
+   await expect.poll(()=>page.locator('html').getAttribute('data-sound')).toBe('on');await expect.poll(()=>page.locator('html').getAttribute('data-motion')).toBe('reduce');
+   await expect.poll(()=>page.locator('html').getAttribute('data-contrast')).toBe('more');await expect.poll(()=>page.locator('html').getAttribute('data-ground')).toBe('wash');
+   expect(await page.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
+  }
+  // Accessibility choices belong to this shared Appearance control, rather
+  // than the retired Accessibility app. Follow reacts to each device live.
+  await set({motion:'follow',contrast:'follow'},'access-follow');
+  await b.emulateMedia({reducedMotion:'reduce',contrast:'more'});
+  await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('reduce');
+  await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('more');
+  await b.emulateMedia({reducedMotion:'no-preference',contrast:'no-preference'});
+  await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
+  await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('normal');
+  await set({motion:'on',contrast:'on'},'access-on');
+  for(const page of [a,b]){await expect.poll(()=>page.locator('html').getAttribute('data-motion')).toBe('reduce');await expect.poll(()=>page.locator('html').getAttribute('data-contrast')).toBe('more');}
+  await b.emulateMedia({reducedMotion:'reduce',contrast:'more'});
+  await set({motion:'off',contrast:'off'},'access-off');
+  await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
+  await expect.poll(()=>b.locator('html').getAttribute('data-contrast')).toBe('normal');
+  await set({motion:'on',contrast:'on'},'access-restore');
+  const painted=async(page:Page)=>page.locator('.desk-home-card .loom-pixel-face canvas').evaluateAll(nodes=>nodes.some(node=>{const canvas=node as HTMLCanvasElement,pixels=canvas.getContext('2d')?.getImageData(0,0,canvas.width,canvas.height).data;return pixels?.some((value,index)=>index%4===3&&value>0);}));
+  for(const page of [a,b]){
+   await expect.poll(()=>painted(page)).toBe(true);
+   const scale=await page.locator('.desk-home-card .loom-pixel-face canvas').first().evaluate(node=>{const canvas=node as HTMLCanvasElement,box=canvas.getBoundingClientRect();return {x:box.width/canvas.width,y:box.height/canvas.height};});
+   expect(Number.isInteger(scale.x)&&scale.x>=1).toBe(true);expect(scale.y).toBe(scale.x);
+  }
+  await set({pixel:false},'pixel-off');for(const page of [a,b]){await expect.poll(()=>page.locator('.desk-home-card .loom-pixel-face').count()).toBe(0);await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);}
+  await set({pixel:true},'pixel-on');for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  // Validly stored but undecodable bytes use the drawn fallback; a later valid
+  // version recovers through the same query connection, without an asset route.
+  app.writes.run(()=>storeDeskSprite(db,'art',layout,{'sheet.png':picture.png.subarray(0,8)}));
+  for(const page of [a,b])await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
+  app.writes.run(()=>storeDeskSprite(db,'art',layout,{'sheet.png':picture.png}));for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  app.writes.run(()=>db.update(agents).set({about:'Keeps the shared desk readable.'}).where(eq(agents.id,'art')).run());
+  for(const page of [a,b]){await page.goto(app.url+'/p/agents-preview/agent/art');await expect.poll(()=>page.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(0);}
+  expect(legacyConnections).toBe(0);
+  const clockTitle=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',hour:'numeric',minute:'2-digit',hourCycle:'h12'}).format(clock.now())+', America/Chicago time';
+  await expect.poll(()=>b.locator('.next-system-clock').getAttribute('title')).toBe(clockTitle);
+  const shots=resolve('artifacts/desk-shell');mkdirSync(shots,{recursive:true});
+  for(const look of ['neon','lowlight','daylight']){
+   await set({look},'look-'+look);
+   for(const width of [390,1280,1440]){
+    await b.setViewportSize({width,height:900});await b.goto(app.url);
+    await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
+    await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+    await expect.poll(()=>b.locator('.desk-home-card').count()).toBe(width<1024?1:5);
+    expect(await b.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
+    expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await b.evaluate(()=>document.fonts.ready);await b.screenshot({path:join(shots,`new-home-${look}-${width}.png`),animations:'disabled'});
+    await b.locator('.next-preferences summary').click();await expect.poll(()=>b.getByRole('combobox',{name:'Look',exact:true}).isVisible()).toBe(true);
+    await b.screenshot({path:join(shots,`new-preferences-${look}-${width}.png`),animations:'disabled'});await b.locator('.next-preferences summary').click();
+    await b.getByText('The shared desk reader is ready.',{exact:true}).scrollIntoViewIfNeeded();
+    await b.screenshot({path:join(shots,`new-home-answer-${look}-${width}.png`),animations:'disabled'});
+    const first=b.getByRole('group',{name:'First waiting item',exact:true});
+    await first.getByRole('button').click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/inbox-preview/ask/'+encodeURIComponent(question.inboxItem!));
+    await expect.poll(()=>b.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBeGreaterThan(0);
+    await b.screenshot({path:join(shots,`new-work-${look}-${width}.png`),animations:'disabled'});
+    if(width>=1024){await expect.poll(()=>b.locator('.desk-rail-card').count()).toBe(1);await b.locator('.next-rail').screenshot({path:join(shots,`new-rail-${look}-${width}.png`),animations:'disabled'});}
+    await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
+    const screen=b.getByRole('region',{name:"Art's comm screen",exact:true});
+    await expect.poll(()=>screen.count()).toBe(1);
+    await expect.poll(()=>screen.getAttribute('data-location')).toBe(width>=1280?'rail':'inline');
+    const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);
+    if(width>=1280){await expect.poll(()=>b.locator('.desk-agent-rail > [data-companion=true]').getAttribute('data-agent')).toBe('art');expect(await b.locator('.next-rail .desk-comms-screen').count()).toBe(1);}
+    expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await b.screenshot({path:join(shots,`new-comms-${look}-${width}.png`),animations:'disabled'});
+    await b.goto(app.url+'/p/agents-preview/agent/art');await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);
+    await b.getByRole('button',{name:'All apps',exact:true}).first().click();
+    await expect.poll(()=>b.getByRole('textbox',{name:'Find an app',exact:true}).isVisible()).toBe(true);
+    await b.screenshot({path:join(shots,`new-launcher-${look}-${width}.png`),animations:'disabled'});await b.keyboard.press('Escape');
+    await b.goto(app.url+'/p/agents-preview/agent/art');await expect.poll(()=>b.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);
+    expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);await b.screenshot({path:join(shots,`new-agent-${look}-${width}.png`),animations:'disabled'});
+   }
+  }
+  // A narrow desktop keeps the full-size screen inline; minimizing clears
+  // selection even though the reader component remains mounted in the tile.
+  await b.setViewportSize({width:1024,height:900});await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
+  await expect.poll(()=>b.getByRole('region',{name:"Art's comm screen",exact:true}).getAttribute('data-location')).toBe('inline');
+  await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
+  await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);expect(await b.locator('[data-companion=true]').count()).toBe(0);
+  // Shell behavior uses actual registered apps on the same shared program.
+  // Paths survive reload; minimizing and Home retain the existing tile state.
+  await b.setViewportSize({width:1440,height:900});await b.goto(app.url+'/p/agents-preview/agent/art');
+  await expect.poll(()=>b.locator('[data-tile=agents]').count()).toBe(1);
+  await b.getByRole('button',{name:'All apps',exact:true}).first().click();
+  const launcher=b.getByRole('dialog',{name:'Apps',exact:true});
+  for(const group of ['Work','People & agents','Library','System'])expect(await launcher.getByRole('region',{name:group,exact:true}).count()).toBe(1);
+  const inventory=await launcher.locator('.loom-lapp__nm').allTextContents();await b.keyboard.press('Escape');
+  await expect.poll(()=>launcher.count()).toBe(0);
+  for(const title of inventory)expect(await b.getByRole('button',{name:title==='Home'?'Home':`Open ${title}`,exact:true}).count()).toBeGreaterThan(0);
+  await b.getByRole('button',{name:'All apps',exact:true}).first().click();
+  const find=launcher.getByRole('textbox',{name:'Find an app',exact:true});
+  await find.fill('not-an-installed-app');await expect.poll(()=>launcher.getByRole('status').innerText()).toContain('No app called');
+  await find.fill('Tas');await expect.poll(()=>launcher.locator('.loom-lapp').allTextContents()).toEqual(['Tasks']);
+  await find.press('Enter');await expect.poll(()=>launcher.count()).toBe(0);
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  const paths=JSON.parse(new URL(b.url()).searchParams.get('paths')??'{}');expect(paths.agents).toBe('/p/agents-preview/agent/art');
+  await b.reload();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await expect.poll(()=>b.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);
+  await b.locator('.next-preferences summary').click();
+  const oneWindow=b.getByRole('checkbox',{name:'One window at a time',exact:true});
+  await oneWindow.check();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  await b.getByRole('button',{name:'Open Agents',exact:true}).click();
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/agents-preview/agent/art');
+  await oneWindow.uncheck();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await b.locator('.next-preferences summary').click();
+  await b.getByRole('button',{name:'Minimize Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  const makeBig=b.getByRole('button',{name:'Make Tasks big',exact:true});await makeBig.focus();
+  await expect.poll(()=>makeBig.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
+  await b.keyboard.press('Alt+Shift+Enter');await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe('tasks');
+  await b.keyboard.press('Alt+h');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);
+  await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  // Home's two-phase composer uses real shared cookie HTTP operations and
+  // returns to current query facts; navigation alone is not a successful send.
+  clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
+  await b.goto(app.url);
+  const compose=b.getByRole('region',{name:'Message Art',exact:true}),draftWords='Disposable shared desk composer message';
+  await compose.getByRole('textbox',{name:'Message',exact:true}).fill(draftWords);
+  const opened=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/open');
+  const sent=b.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname==='/api/comms/send');
+  await compose.getByRole('button',{name:'Send',exact:true}).click();
+  const openResponse=await opened,sendResponse=await sent;expect(openResponse.status()).toBe(200);expect(sendResponse.status()).toBe(200);
+  const openResult=await openResponse.json(),sendResult=await sendResponse.json();expect(openResult.ok).toBe(true);expect(sendResult.ok).toBe(true);expect(sendResult.value.thread).toBe(openResult.value.thread);
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/comms-preview/thread/'+encodeURIComponent(openResult.value.thread.replace(/^th:/,'')));
+  const confirmed=await app.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{ commsMessages(thread:${JSON.stringify(openResult.value.thread)}) { words } }`})});
+  expect((await confirmed.json()).data.commsMessages.map((message:{words:string})=>message.words)).toEqual([draftWords]);
+  await b.goto(app.url);await expect.poll(()=>compose.getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
+  await expect.poll(()=>b.getByRole('region',{name:'Art conversations',exact:true}).getByRole('button',{name:/New conversation/}).count()).toBe(1);
+  // A supporting touch browser gets navigation feedback only when enabled.
+  const vibrations=()=>b.evaluate(()=>(window as typeof window&{__deskVibrations:number}).__deskVibrations);
+  await set({haptics:false},'haptics-off');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('off');
+  const muted=await vibrations();await b.getByRole('button',{name:'Open Agents',exact:true}).click();
+  await expect.poll(()=>b.locator('[data-tile=agents]').count()).toBe(1);expect(await vibrations()).toBe(muted);
+  await set({haptics:true},'haptics-on');await expect.poll(()=>b.locator('html').getAttribute('data-haptics')).toBe('on');
+  const audible=await vibrations();await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(vibrations).toBeGreaterThan(audible);
+  // Changing ownership must remove cards even though an owner's directory and
+  // status rows remain visible. This is an actual same-root write + socket read.
+  await b.goto(app.url);app.writes.run(()=>db.delete(memberAgents).run());
+  await expect.poll(()=>b.getByText('No agents of your own',{exact:true}).count()).toBe(1);expect(db.select().from(agents).all()).toHaveLength(5);
+  expect(legacyConnections).toBe(0);expect(faceRequests).toBe(0);expect(maximumConnections).toBe(1);expect(connections.get(a)).toBe(1);expect(connections.get(b)).toBe(1);
+  expect((await fetch(app.url+'/manifest.webmanifest')).status).toBe(200);expect((await fetch(app.url+'/sw.js')).headers.get('service-worker-allowed')).toBe('/');
+  app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).where(eq(tokens.fingerprint,fingerprint)).run());
+  for(const page of [a,b])await expect.poll(()=>page.getByText('OK to run the backup now?',{exact:true}).count()).toBe(0);
+  expect(errors).toEqual([]);
+ }finally{await browser?.close();await app.close();client.close();}
 },300000);

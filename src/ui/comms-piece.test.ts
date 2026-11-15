@@ -34,7 +34,7 @@ it('keeps the in-memory retry id when device storage is unavailable',()=>{
  expect(editDraft(draft,draft.text).id).toBe(draft.id);expect(()=>clearDraft('jonathan','th:one',draft)).not.toThrow();
 });
 
-import { latestHarness, messageView, type Message } from '../../web/src/pieces/comms/message.js';
+import { latestHarness, messageView, type Message } from '../../test/fixtures/legacy-comms-message.js';
 it('maps legacy nested cards and asks while preserving current runtime records',()=>{
  const base:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'card',from:'art',text:'Ran tests'};
  expect(messageView({...base,card:{tool:'shell',state:'done',step:{output:'passed'}}})).toMatchObject({tool:'shell',state:'done',step:{output:'passed'}});
