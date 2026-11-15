@@ -11,6 +11,7 @@ import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
+import { registerSharedPreferences } from './shared-preferences.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
@@ -33,6 +34,7 @@ export function sharedRoot(options: {
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
+  registerSharedPreferences(operations, db);
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, options.approvedOperations, now),
