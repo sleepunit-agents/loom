@@ -96,5 +96,18 @@ it.each(['owner','agent','runner'] as const)('keeps the ordinary %s token endpoi
  await act(async()=>{tree=create(h(Setup));});if(kind!=='owner')await act(async()=>tree.root.findAllByType('select').find((node:{props:{value?:string}})=>node.props.value==='owner').props.onChange({target:{value:kind}}));
  vi.stubGlobal('FormData',class{get(name:string){return({label:'Ordinary token',member:'sam',agent:'art',box:'fictional-box',expiresAt:'2026-12-01T00:00:00Z'} as Record<string,string>)[name]??null;}});
  await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit({preventDefault(){},currentTarget:{}}));
- expect(fetch).toHaveBeenCalledOnce();const [path,options]=fetch.mock.calls[0];expect(path).toBe('/api/signin/token');expect(options.headers).toEqual({'content-type':'application/json'});expect(JSON.parse(options.body)).toEqual({kind,label:'Ordinary token',expiresAt:'2026-12-01T00:00:00Z',...(kind==='owner'?{member:'sam'}:kind==='agent'?{agent:'art'}:{box:'fictional-box'})});
+ expect(fetch).toHaveBeenCalledOnce();const [path,options]=fetch.mock.calls[0];expect(path).toBe('/api/signin/token');expect(options.headers).toEqual({'content-type':'application/json'});expect(options.redirect).toBeUndefined();expect(options.cache).toBeUndefined();expect(JSON.parse(options.body)).toEqual({kind,label:'Ordinary token',expiresAt:'2026-12-01T00:00:00Z',...(kind==='owner'?{member:'sam'}:kind==='agent'?{agent:'art'}:{box:'fictional-box'})});
+});
+
+it('keeps a delivered program bearer out of browser storage and diagnostics',async()=>{
+ f.programFeed.data={programSetup:programData()};const fetch=vi.fn().mockResolvedValue(Response.json({ok:true,value:{token:privateBearer,fingerprint:'d'.repeat(64)}}));vi.stubGlobal('fetch',fetch);
+ const local={setItem:vi.fn(),getItem:vi.fn(),removeItem:vi.fn(),clear:vi.fn()},session={...local,setItem:vi.fn()};vi.stubGlobal('localStorage',local);vi.stubGlobal('sessionStorage',session);
+ const logs=(['log','info','debug','warn','error'] as const).map(name=>vi.spyOn(console,name).mockImplementation(()=>{}));
+ try{await act(async()=>{tree=create(h(Setup));});const event=await programForm();await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(event));
+ expect(JSON.stringify(tree.toJSON())).toContain(privateBearer);expect(fetch.mock.calls[0][1]).toMatchObject({cache:'no-store',redirect:'error',headers:{'content-type':'application/json'}});expect(local.setItem).not.toHaveBeenCalled();expect(session.setItem).not.toHaveBeenCalled();for(const log of logs)expect(JSON.stringify(log.mock.calls)).not.toContain(privateBearer);
+ }finally{for(const log of logs)log.mockRestore();}
+});
+it('prechecks exactly the existing record and operation grants',async()=>{
+ const data=programData();data.tokens[0].operations=['tasks.command'];f.programFeed.data={programSetup:data};await act(async()=>{tree=create(h(Setup));});
+ const form=tree.root.findByProps({'aria-label':'Save grants for Task client'});expect(form.findAllByType('input').map((node:{props:{name:string;value:string;defaultChecked:boolean}})=>[node.props.name,node.props.value,node.props.defaultChecked])).toEqual([['records','tasks',true],['records','projects',false],['operations','tasks.command',true]]);
 });
