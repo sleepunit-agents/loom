@@ -426,6 +426,7 @@ it('searches recorded public answers and resolution text in the same recipient m
  const resolved=cvs.send({toKind:'person',to:'alice',source:'task',sourceId:'task-question',member:'alice',fromKind:'agent',answers:'yes-no',words:'Continue?',waitsOnKind:'task',waitsOnId:'t-1'});cvs.resolve('task','t-1','Completed the turquoise fixture');
  expect((await f.service.search(alice,{search:'amber fixture',folder:'answered'})).map(row=>row.id)).toEqual([answered.id]);expect((await f.service.search(alice,{search:'turquoise fixture',folder:'answered'})).map(row=>row.id)).toEqual([resolved.id]);
  expect(await f.service.search({kind:'member',id:'bob'},{search:'amber fixture'})).toEqual([]);
+ const verdict=cvs.send({toKind:'person',to:'alice',source:'notice',sourceId:'isolated-decision',member:'alice',fromKind:'agent',answers:'yes-no',words:'Proceed with this fixture?'});expect(await f.service.search(alice,{search:'yes',folder:'answered'})).toEqual([]);cvs.answer(verdict.id,'alice','yes');expect((await f.service.search(alice,{search:'yes',folder:'answered'})).map(row=>row.id)).toEqual([verdict.id]);
 });
 it('searches retained encrypted answer words before paging and binds only their own deadline',async()=>{
  const f=await fixture();await f.comms.answer(f.ask.inboxItem!,'alice','words','Use the violet answer fixture');
