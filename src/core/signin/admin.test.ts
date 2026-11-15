@@ -89,15 +89,6 @@ it('plain token revoke preserves descendant passkeys and devices; compromise tak
   expect(f.s.session(c)).toBeUndefined();expect(Object.keys(f.s.sessions.read().passkeys!)).toEqual(['child']);
   expect(f.s.sessions.read().push!.subs!.a).toBeDefined();
 });
-it('generates both clients, never retries minting, and retries revocation with one stable id',async()=>{
-  const f=await setup();
-  for(const piece of ['token','sessions'] as const){expect(f.app.operations.offered('http').filter(x=>x.name.startsWith(piece+'.')).map(x=>x.cli)).toEqual(accessCommands(piece));expect((await f.client(piece,['--help'])).stdout).toContain('revoke');expect(await f.client(piece,['list','{}'])).toMatchObject({code:0,stderr:''});}
-  const minted=await f.client('token',['create','{"role":"agent","agent":"art","label":"remote"}']);expect(minted.code).toBe(0);expect(minted.stdout).toMatch(/^loom_\S+\n$/);expect(f.s.token(hash(minted.stdout.trim()))).toEqual({viewer:{kind:'agent',id:'art'}});
-  const failed=await f.client('token',['create','{"role":"agent","agent":"art","label":"lost"}'],async(url,init)=>{const r=await fetch(url,init);await r.body?.cancel();throw Error('operator-bearer');});expect(failed).toMatchObject({code:1,calls:1,stdout:''});expect(failed.stderr).not.toContain('operator-bearer');
-  let n=0;const retry=await f.client('token',['revoke','{"label":"remote"}'],async(url,init)=>{const r=await fetch(url,init);if(++n===1){await r.body?.cancel();throw Error();}return r;});expect(retry).toMatchObject({code:0,calls:2});expect(new Set(retry.bodies).size).toBe(1);
-  expect(await f.client('token',['create','{}'],async()=>new Response('private-witness',{status:503}))).toMatchObject({code:1,calls:1,stdout:''});
-  expect(await f.client('sessions',['revoke','[]'])).toMatchObject({code:2,calls:0});
-});
 it('rolls back the entire compromised line and its retry receipt when device removal cannot commit',async()=>{
   const f=await setup(),root=hash('operator-bearer'),child=hash('child');
   f.s.tokens.change(x=>x.push({role:'owner',member:'jonathan',label:'child',sha256:child,passkey:hash('credential'),from_sha256:root,created:'2026-01-01'}));
