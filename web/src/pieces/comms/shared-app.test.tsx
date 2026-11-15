@@ -180,7 +180,7 @@ function timingQuestion() {
  const before={settleSeconds:5,dimDays:1,muteDays:7},after={...before,settleSeconds:60};
  f.data.owner=true;
  f.data.approvals=[{id:'a-tempo',kind:'setting',target:'tempo:person:alice',what:'Change Tempo',why:'Requested here',agent:'art',project:null,member:'alice',conversation:'cv-pump',state:'pending',ask:'Change timings?',ifYes:'Apply',ifNo:'Keep',details:JSON.stringify({who:{kind:'person',id:'alice'},before,after}),changeSummary:'Tempo for person alice: settle 5 → 60 seconds; dim 1 → 1 days; mute 7 → 7 days',askedAt:'2026-11-14T18:00:00Z',decidedBy:null,expiresAt:null}];
- f.data.questions=[{id:'in-timing'}];
+ f.data.questions=[{id:'in-timing',sourceId:'a-tempo'}];
  f.data.items={'in-timing':{id:'in-timing',source:'approval',sourceId:'a-tempo',waitsOnKind:'approval',waitsOnId:'a-tempo',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'Change timings?'},bodyKeepUntil:'2026-11-14T18:00:01Z'}};
 }
 it.each([['Allow',true],['Deny',false]])('answers actual source timing cards inside chat with %s, without a message copy',async(label,allow)=>{
@@ -212,7 +212,7 @@ it('shows ordinary private approval cards to the conversation member even when t
 });
 it('renders an ordinary approval only once when its Inbox item is also present',async()=>{
  setup();f.data.owner=true;f.data.commsMessages=[];
- f.data.ordinaryApprovals=[{id:'a-command'}];f.data.questions=[{id:'in-command',sourceId:'a-command'}];
+ f.data.ordinaryApprovals=[{id:'a-command'}];f.data.questions=[{id:'in-command',sourceId:'a-command'}];f.data.items={'in-command':{id:'in-command',source:'approval',sourceId:'a-command',waitsOnKind:'approval',waitsOnId:'a-command',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'Run the fixture?'},bodyKeepUntil:new Date(Date.now()+60000).toISOString()}};
  f.data.approvals=[{id:'a-command',kind:'command',target:'fixture:read',what:'Read fixture',why:'ONLY ONE COMMAND',agent:'art',project:null,member:'alice',conversation:'cv-pump',state:'pending',ask:'Run the fixture?',ifYes:'Read it',ifNo:'Leave it',details:'',changeSummary:null,askedAt:'2026-11-14T18:00:00Z',decidedBy:null,expiresAt:null}];
  await draw();expect(tree.root.findAllByType('Button').filter((button:{props:{children:ReactNode}})=>button.props.children==='Allow')).toHaveLength(1);
 });
@@ -248,4 +248,9 @@ it('opens both a source task and a mentioned task in the Tasks tile',async()=>{
  for(const [label,id] of [['SOURCE TO OPEN','t-90'],['MENTION TO OPEN','t-91']]){
   const button=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes(label));await act(async()=>{button.props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/'+id);
  }
+});
+
+it('shows the exact setting proposal to its private conversation member while the owner answer waits in a different Inbox',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));setup();timingQuestion();f.data.owner=false;f.data.questions=[];f.data.commsMessages=[];f.data.ordinaryApprovals=[{id:'a-tempo'}];
+ await draw();expect(text()).toContain('Tempo settings change');expect(text()).toContain('Before');expect(text()).toContain('After');expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();
 });

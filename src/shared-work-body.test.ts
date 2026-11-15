@@ -146,6 +146,8 @@ it('returns Ask after an exact owner No even when a standing rule says Do',async
 it('validates the exact conversation approval selection through the shared query door for its private member',async()=>{
  const {conversationApprovalsQuery}=await import('../web/src/pieces/comms/work-query.js');
  const f=await fixture(),id=await f.ask();
+ const {tempoSettingsProposals}=await import('./core/tempo/proposal.js');
+ const setting=tempoSettingsProposals(f.db,f.clock).request(f.root.services.approvals,{kind:'person',id:'alice'},{settleSeconds:60},{agent:'art',askedFrom:f.thread.conversation,actingFor:'alice',project:'pond',member:'alice',conversation:f.thread.conversation,why:'Requested here'});
  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:conversationApprovalsQuery,variables:{conversation:f.thread.conversation,offset:0}})});
- const result=await response.json();expect(result.errors).toBeUndefined();expect(result.data.approvals).toEqual([{id}]);expect(result.data.inboxItems).toEqual([]);
+ const result=await response.json();expect(result.errors).toBeUndefined();expect(result.data.approvals).toHaveLength(2);expect(result.data.approvals).toEqual(expect.arrayContaining([{id},{id:setting.id}]));expect(result.data.inboxItems).toEqual([]);
 });
