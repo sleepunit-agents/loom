@@ -1,5 +1,4 @@
 import { taskSegment } from '../tasks/route';
-import type { QuerySelection } from '../../data/query';
 import type { InboxFolders, InboxItem } from '../inbox-view/model';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
@@ -20,7 +19,12 @@ function item(value: unknown): InboxItem {
     || row.body && typeof row.body.words !== 'string') throw Error('Invalid Inbox item');
   return row;
 }
-export function inboxSelection(folder: string, search: string, offset: number, selected?: string): QuerySelection<InboxReading> {
+export interface InboxSelection {
+  query:string;
+  variables:{folder:string;search:string;agent:string|null;offset:number;id:string;hasItem:boolean;onlyErrors:boolean};
+  decode(data:Record<string,unknown>):InboxReading;
+}
+export function inboxSelection(folder: string, search: string, offset: number, selected?: string): InboxSelection {
   return { query: inboxQuery, variables: { folder: folder.startsWith('agent:') || folder === 'errors' ? 'all' : folder,
     search, agent: folder.startsWith('agent:') ? folder.slice(6) : null, offset, id: selected ?? '', hasItem: !!selected, onlyErrors: folder === 'errors' },
     decode(data) {
