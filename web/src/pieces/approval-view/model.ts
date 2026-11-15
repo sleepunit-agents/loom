@@ -2,6 +2,7 @@
 // browser client will provide its result type when the composition connects it.
 export interface Approval {
   id: string; kind: 'merge' | 'command' | 'setting' | 'dangerous'; target: string;
+  actingFor?: string; operation?: string | null;
   what: string; why: string; agent: string; project: string | null; member: string | null;
   conversation: string | null; state: 'pending' | 'allowed' | 'denied' | 'used' | 'withdrawn' | 'expired';
   ask: string; ifYes: string; ifNo: string; details: string; changeSummary: string | null;

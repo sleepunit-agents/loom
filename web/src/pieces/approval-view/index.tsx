@@ -34,7 +34,7 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
   return <>
     {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
       <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id))}>Allow</Button>
-      {actions.always?.approval === approval.id && <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
+      {actions.always?.approval === approval.id && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
     </div>}
     {busy && <p role="status">Saving answer…</p>}
@@ -95,5 +95,5 @@ export default function Approvals({ snapshot, actions, renderChange, navigation 
       : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={a.what} meta={a.why} status={`${a.agent} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
     reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} /> : null}
     open={!!approval} onBack={() => setSelected(undefined)} backLabel="Approvals"
-    blank={<Empty title="Open an approval" text="Choose a request to read exactly what it allows." />} />;
+    blank={<Empty title={rulesView?"Standing rules":"Open an approval"} text={rulesView?(actions?.setRule?"Choose a scope and the answer it should use.":"Only a household owner can change standing rules."):"Choose a request to read exactly what it allows."} />} />;
 }
