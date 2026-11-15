@@ -32,7 +32,8 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
     if (!result.recorded) return false;
     db.delete(modelAccountWindows).where(eq(modelAccountWindows.account, identity.account)).run();
     for (const row of windows) db.insert(modelAccountWindows).values({ account: identity.account,
-      window: row.name, usage: row.usage, usageReadAt: row.readAt, resetsAt: row.resetsAt,
+      window: row.name, usage: row.usage, usageReadAt: row.readAt === null ? null : new Date(row.readAt).toISOString(),
+      resetsAt: row.resetsAt === null ? null : new Date(row.resetsAt).toISOString(),
       durationMs: row.durationMs, reserve: row.reserve ?? 0.05 }).run();
     return true;
   }, { behavior: 'immediate' });

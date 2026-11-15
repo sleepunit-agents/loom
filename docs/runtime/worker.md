@@ -165,3 +165,20 @@ inside its trusted image; this adds no host credential/profile mounts.
 These bindings select a configured runner. That program must still implement its
 native harness's model choice and tool restrictions; this feature does not infer
 provider CLI flags or supply an account profile that is not locally configured.
+
+## Home current-job selection
+
+The shared GraphQL door mounts `currentJobs(agent: String!)` for an agent's Home
+card. It returns only current job ID, agent, title, state, assigned box ID and
+queue time, ordered by queue time and ID. Terminal attempts disappear. Execution
+briefs, logs, account identities, build details and repository settings are not
+query fields.
+
+The query reuses the published agent/project/private-member SQL policy used by
+Approvals and bridge conversation labels: household owners see every job;
+private member jobs require that member or a household owner; other jobs are
+visible through an owned agent or project membership. Retained reads use current
+sharing facts. HTTP buffers and live socket publication use the same existing
+freshness fence as other shared selections. This field is available to the Home
+UI; its rendering is a separate consumer.
+The projection does not grant write or worker authority.

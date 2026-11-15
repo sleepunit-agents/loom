@@ -1,22 +1,10 @@
-import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import { approvals, measuringSettings } from '../data/schema.js';
 import { DEFAULT_MEASURING, type MeasuringSettings } from './index.js';
 
+import { measuringValues as settings, measuringChange as change, measuringChangeSummary as summary } from './change.js';
+
 export const MEASURING_SETTINGS_OPERATION = 'measuring.settings';
-const settings = z.object({
-  on: z.boolean(), send_outside: z.boolean(), outside_address: z.string(),
-  keep_days: z.number().int().min(1).max(3650),
-}).strict().superRefine((value, ctx) => {
-  if (!value.outside_address && !value.send_outside) return;
-  try {
-    const url = new URL(value.outside_address);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
-  } catch { ctx.addIssue({ code: 'custom', path: ['outside_address'], message: 'Use an HTTP(S) OTLP endpoint without credentials, query or fragment' }); }
-});
-const change = z.object({ before: settings, after: settings }).strict();
-const summary = (before: MeasuringSettings, after: MeasuringSettings) =>
-  `Measuring: ${JSON.stringify(before)} → ${JSON.stringify(after)}`;
 type Approval = typeof approvals.$inferSelect;
 
 /** Trusted shared-model service. The outside door authenticates the household

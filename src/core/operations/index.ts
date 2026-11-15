@@ -8,6 +8,7 @@ import type { Db } from '../db/index.js';
 import { migrate } from '../db/index.js';
 import type { Clock } from '../clock.js';
 import type { Viewer } from '../../policy.js';
+import type { Measuring, TimingTarget } from '../measuring/index.js';
 export type Door = 'http' | 'socket' | 'mcp' | 'direct';
 /** A transport supplies this capability only after authenticating its session. */
 const signedInWindow = (door: Door, viewer: Viewer, window: boolean) => window && viewer.kind === 'member' && (door === 'socket' || door === 'http');
@@ -85,6 +86,7 @@ export class Operations {
   private recoveries = new Set<NonNullable<Operation['recover']>>();
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  private measuring?: Pick<Measuring, 'run' | 'runAsync'>;
   /** Fresh composition supplies receipts backed by THIS connection. Effects and
    * receipts then commit in one transaction without creating legacy tables.
    * Omit only while using the legacy bootstrap; never mix stores/connections.
@@ -93,6 +95,7 @@ export class Operations {
     if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
     if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
     if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
+
     this.expire();
   }
   private transaction<T>(run: () => T, write: boolean): T {
@@ -209,19 +212,30 @@ export class Operations {
     return wasInternalCaller(viewer) && (door !== 'direct' || !isInternalCaller(viewer, this));
   }
   has(name: string) { return this.ops.has(name); }
+  /** Trusted composition only: inventory comes from code registration, never
+   * from a caller's requested name. Attach a stable runtime after installation;
+   * its owner controls reload and shutdown outside operation transactions. */
+  timingTargets(): readonly TimingTarget[] {
+    return [...this.ops.keys()].map(name => ({ kind: 'operation', name }));
+  }
+  measureWith(measuring: Pick<Measuring, 'run' | 'runAsync'> | undefined): void { this.measuring = measuring; }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
   /** MCP registration is a hook; it dispatches exactly like the other doors. */
   registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
     for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
   }
-  async callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+  callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+    if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid);
+    return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid));
+  }
+  private async dispatchAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
     if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     if (!valid()) return failure('denied', 'Authentication ended');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
     if ((op.windowOnly && !signedInWindow(door, viewer, window)) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
     if (op.admit && (this.db.inTransaction || this.frames.length)) return failure('unavailable', 'Admission must own the outer transaction');
-    if (!op.prepare && !op.windowOnly && !op.requiresWindow && !window) return this.call(door, viewer, name, input, id);
+    if (!op.prepare && !op.windowOnly && !op.requiresWindow && !window) return this.dispatch(door, viewer, name, input, id);
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
     if (op.requiresWindow?.(parsed.data, viewer) && !signedInWindow(door, viewer, window)) return failure('denied','A signed-in window is required');
@@ -239,6 +253,10 @@ export class Operations {
     } catch (error) { return error instanceof OperationError ? failure(error.code, error.message) : failure('unavailable', 'Operation could not complete'); }
   }
   call(door: Door, viewer: Viewer, name: string, input: unknown, id?: string): Result {
+    if (!this.measuring || !this.ops.has(name)) return this.dispatch(door, viewer, name, input, id);
+    return this.measuring.run('operation', name, () => this.dispatch(door, viewer, name, input, id));
+  }
+  private dispatch(door: Door, viewer: Viewer, name: string, input: unknown, id?: string): Result {
     if (this.ops.get(name)?.prepare) return failure('unavailable', 'Operation requires asynchronous dispatch');
     return this.execute(door, viewer, name, input, id);
   }

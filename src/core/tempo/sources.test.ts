@@ -1,11 +1,11 @@
-import Database from 'better-sqlite3';
 import { FakeClock } from '../clock.js';
 import { Conversations } from '../conversations/index.js';
 import { createTempo } from './tempo.js';
+import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, approvals, changes, inbox, jobs, members, secretRequests, secrets, triggers, triggerLog } from '../data/schema.js';
+import { agents, approvals, changes, changeChecks, inbox, jobs, members, secretRequests, secrets, triggers, triggerLog } from '../data/schema.js';
 import { TempoSources } from './sources.js';
 
 it('reports only durable answers and terminal jobs with repeatable namespaced identities', () => {
@@ -92,6 +92,27 @@ it('distinguishes changes at the same source timestamp and repeats an unchanged 
     expect(() => sources.change('pr', '')).toThrow('durable source revision');
   } finally { client.close(); }
 });
+
+it('tracks shared Changes snapshots across repeated states, rollback and restart without an external revision adapter', () => {
+  const client=new Database(':memory:'),at='2026-11-14T12:00:00.000Z',db=createDataSchema(client,()=>at);
+  const observed:string[]=[];
+  const engine={event:(_kind:string,_watch:string,event:string)=>{observed.push(event);}};
+  let sources=new TempoSources(db,engine);
+  try {
+    db.insert(triggers).values({id:'watch',ownerKind:'household',sourceKind:'pull-request',watches:'change:pr',lifespan:'until-stopped',targetKind:'operation',target:'tempo.sweep',note:'PR changes',enabled:true,state:'standing',createdAt:at,changedAt:at}).run();
+    db.insert(changes).values({id:'pr',repository:'org/repo',number:1,title:'PR',body:'',url:'https://example.test/pr',state:'open',draft:false,authorLogin:'art',branch:'feature',headCommit:'abc',baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:at,updatedAt:at}).run();
+    sources.recover();expect(observed).toEqual([]);
+    db.update(changes).set({checks:'passing'}).run();sources.recover();expect(observed).toHaveLength(1);
+    sources.recover();expect(observed).toHaveLength(1);
+    db.update(changes).set({checks:'running'}).run();sources.recover();expect(observed).toHaveLength(2);
+    expect(new Set(observed).size).toBe(2);
+    expect(()=>db.transaction(()=>{db.update(changes).set({checks:'passing'}).run();throw Error('rollback');})).toThrow();
+    sources.recover();expect(observed).toHaveLength(2);
+    sources.close();sources=new TempoSources(db,engine);sources.recover();expect(observed).toHaveLength(2);
+    db.insert(changeChecks).values({change:'pr',name:'Unit',state:'failing'}).run();sources.recover();expect(observed).toHaveLength(3);
+  } finally {sources.close();client.close();}
+});
+
 it('keeps answer words out of persisted trigger occurrences while retaining one durable answer event',()=>{
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  db.insert(members).values({id:'sam',role:'owner',joinedAt:now()}).run();
