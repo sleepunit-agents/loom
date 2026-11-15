@@ -483,3 +483,11 @@ it.each(['allowed','scope','cipher','expiry','policy'] as const)('opens retained
  let until:number|undefined;expect(await f.service.body(alice,item.id,deadline=>{until=deadline;})).toEqual(mode==='allowed'?{words:'Retained handoff words'}:null);
  if(mode==='allowed'){expect(until).toBe(Date.parse('2026-11-28T18:00:00.000Z'));expect(await f.service.body({kind:'member',id:'bob'},item.id)).toBeNull();}
 });
+
+it('matches handoff metadata without decrypting wording even on a noncanonical personal row',async()=>{
+ const f=await fixture(),encoded=await sealHandoff(f.key,'HANDOFF SEARCH WORDS','2026-11-14T18:00:00.000Z',14);
+ // Shared readers also fail closed if an internal writer misaddresses agent mail.
+ f.db.insert(inbox).values({id:'in-handoff-search',state:'waiting',volume:'full',toKind:'person',to:'alice',source:'handoff',sourceId:'parent-search-witness',fromKind:'agent',fromId:'art',words:encoded,member:'alice',agent:'art',at:'2026-11-14T18:00:00.000Z',changedAt:'2026-11-14T18:00:00.000Z'}).run();
+ const opens=f.opens();expect(await f.service.search(alice,{source:'handoff',search:'HANDOFF SEARCH WORDS'})).toEqual([]);expect(f.opens()).toBe(opens);
+ expect((await f.service.search(alice,{source:'handoff',search:'parent-search-witness'})).map(row=>row.id)).toEqual(['in-handoff-search']);expect(f.opens()).toBe(opens);
+});

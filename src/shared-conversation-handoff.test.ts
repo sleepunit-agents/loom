@@ -8,7 +8,7 @@ import * as s from './core/data/schema.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
-import {handoffDeadline,sealHandoff} from './core/conversations/handoff-words.js';
+import {handoffDeadline,handoffEnvelope,sealHandoff} from './core/conversations/handoff-words.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const brief={agent:'mark',clientId:'brief',label:'Compare fictional pumps',words:'PRIVATE HANDOFF WORDS'};
@@ -40,7 +40,7 @@ it('hands a real private brief through one inherited conversation, settled job a
  expect(cv).toMatchObject({agent:'mark',venue:'handoff',place:'job',project:'pond',member:'alice'});
  const stored=f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()!;
  expect(stored).toMatchObject({source:'handoff',fromKind:'agent',fromId:'art',to:'mark',conversation:cv.id,state:'waiting'});
- expect(stored.words).not.toContain(brief.words);expect(handoffDeadline(stored,14)).toBe(f.clock.now()+14*86400000);
+ expect(stored.words).not.toContain(brief.words);expect(handoffDeadline(stored,14)).toBe(f.clock.now()+14*86400000);expect(handoffEnvelope(stored.words)?.keepUntil).toBe(new Date(f.clock.now()+14*86400000).toISOString());
  expect(f.db.select().from(s.threads).all()).toHaveLength(1);
  expect(await create(f,'different-receipt')).toEqual(created);
  expect(f.db.select().from(s.turns).where(eq(s.turns.conversation,cv.id)).all()).toHaveLength(1);
@@ -156,7 +156,7 @@ it.each([false,true])('requires a current explicit shared owner for unlabelled p
   if(!assigned){f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();f.db.insert(s.memberAgents).values({member:'bob',agent:'mark'}).run();}
  });
  const response=await f.call('handoff',brief,'public');expect(response.status).toBe(assigned?200:403);
- if(assigned){const created=z.object({value:z.object({conversation:z.string()})}).parse(await response.json()).value;f.clock.advance(60_000);const {job}=receive(f,created.conversation);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:null,project:null,brief:''});}
+ if(assigned){const created=z.object({value:z.object({conversation:z.string()})}).parse(await response.json()).value;f.clock.advance(60_000);const {job}=receive(f,created.conversation);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:null,project:null,brief:''});const input={job,exitCode:0,logTail:'PUBLIC HANDOFF STDOUT WORDS'};const ended=await f.root.http.request('/api/runtime/finish',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+bodyCredentials.runner},body:JSON.stringify({id:'public-finish',input})});expect(ended.status).toBe(200);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()?.logTail).toBeNull();expect(f.db.select().from(s.operationResults).where(eq(s.operationResults.operation,'runtime.finish')).get()?.inputHash).not.toBe(createHash('sha256').update(JSON.stringify({exitCode:0,job,logTail:input.logTail})).digest('hex'));}
  else expect(f.db.select().from(s.inbox).all()).toEqual([]);
 });
 it('keeps one peer/parent conversation for distinct briefs, with one item and wordless turn per brief',async()=>{
