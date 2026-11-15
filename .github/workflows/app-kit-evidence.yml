@@ -68,6 +68,12 @@ jobs:
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_SHOTS="$PWD/artifacts/app-kit"
           nice -n 19 npx vitest run src/ui/attention-inbox.integration.test.ts --project browser --maxWorkers=1
+      - name: Capture Knowledge on the hosted after runner
+        if: matrix.version == 'after'
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_SHOTS="$PWD/artifacts/knowledge-app"
+          nice -n 19 npx vitest run src/ui/mind-knowledge-app.integration.test.ts --project browser --maxWorkers=1 --reporter=default --reporter=json --outputFile=artifacts/knowledge-browser.json
       - name: Capture People on the hosted after runner
         if: matrix.version == 'after'
         env:
@@ -112,6 +118,14 @@ jobs:
           path: |
             artifacts/people-app/
             artifacts/people-browser.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.version == 'after'
+        with:
+          name: knowledge-app-${{ github.event.pull_request.head.sha }}
+          path: |
+            artifacts/knowledge-app/
+            artifacts/knowledge-browser.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always()

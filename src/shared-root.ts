@@ -1,4 +1,9 @@
 import { recordActionResult } from './shared-action-results.js';
+import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
+import { SecretStartup } from './pieces/secrets/shared-startup.js';
+import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
+import { BridgeSettings } from './pieces/bridges/settings.js';
+import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
@@ -23,9 +28,13 @@ import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
+import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
-import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
+import { createRuntime } from './runtime/runtime.js';
+import type { ModelRole } from './runtime/placement.js';
+import { registerSharedRuntime } from './shared-runtime.js';
+import { registerSharedAccountReports } from './shared-account-reports.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -39,12 +48,14 @@ export function sharedRoot(options: {
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
-
   /** Trusted startup loads the household key, never an outside request. */
   commsKey?: WordsKey;
-
+  /** Authenticated private holder-to-worker sink; values never enter this root. */
+  secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  modelRoles?(): readonly ModelRole[];
+  runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
@@ -60,12 +71,30 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
+  registerSharedAccountReports(operations, db, now, credentials.runner);
+  const roles = () => options.modelRoles?.() ?? [];
+  let tempo!: ReturnType<typeof installSharedTempo>;
+  const jobEnded = (id: string) => {
+    try {
+      tempo?.sources.job(id);
+      tempo?.capacityChanged();
+      options.runtimeJobEnded?.(id);
+    } catch (error) { options.reportError(error); }
+  };
+  const runtime = createRuntime(db, clock, { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
+
   const requests = new SecretRequests(db, now);
+  const secretCommit = <T>(write: () => T): T => {
+    const result = data.writes.run(write);
+    for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
+    return result.value;
+  };
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
-    options.secretWrites.fingerprintKey, write => {
-      const result = data.writes.run(write);
-      for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
-    });
+    options.secretWrites.fingerprintKey, secretCommit);
+  const delivery = options.secretDelivery && new SecretDelivery(db, now, options.secretDelivery, secretCommit);
+  const startup = delivery && new SecretStartup(db, requests, delivery, secretCommit);
+  registerSharedSecretAgentCommands(operations, db, requests, delivery, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
   });
@@ -83,16 +112,18 @@ export function sharedRoot(options: {
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   comms?.install(operations);
   const services = {
+    bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
     approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
-    secrets: {requests,values,reconcile:recoverSecrets},
+    runtime,
+    secrets: {requests,values,delivery,startup,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, clock, comms.service, data.writes, options.reportError) : undefined;
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
-  let tempo: ReturnType<typeof installSharedTempo>;
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
@@ -149,6 +180,7 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  runtime.start();
   return {
     http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
@@ -161,13 +193,15 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       commsLifetime?.close();
+      runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
-      cancelSecretRecovery?.(); values?.close();
+      cancelSecretRecovery?.(); values?.close(); startup?.close();
+      const deliveryStopped = delivery?.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, deliveryStopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
