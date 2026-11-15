@@ -1,3 +1,4 @@
+import {conversationLinks} from './rebuild-conversation-links.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
@@ -132,6 +133,7 @@ export async function* walkthroughSteps(output) {
     await page.waitForFunction(ready,`${title} tile`);
     row.opened=true;row.text=await tile.innerText();row.path=new URL(page.url()).pathname;
     row.unavailable=/unavailable|couldn.t load/i.test(row.text);
+    if(title==='Comms'&&row.opened)Object.assign(report.actions,await conversationLinks({page,example:report.example}));
     if(title==='Comms'&&row.opened){report.actions={...report.actions,conversationRecords:await conversationRecords({page,app,example:report.example,out})};}
     if(selections[title]){
      row.selection=selections[title];
