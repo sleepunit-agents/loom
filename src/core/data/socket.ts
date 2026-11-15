@@ -7,6 +7,7 @@ import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
 import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
+import { readDeadline } from './read-lease.js';
 import { DataLive } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
 
@@ -23,6 +24,8 @@ export function dataSocket(options: {
 }) {
   const ws = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, handleProtocols: protocols => protocols.has('graphql-transport-ws') ? 'graphql-transport-ws' : false });
   const admitted = new WeakMap<WebSocket, Authentication>();
+  const frames = new WeakMap<object, { socket: WebSocket; version: number | undefined; until: number | undefined }>();
+  const serializing = new WeakMap<WebSocket, { version: number | undefined; until: number | undefined }[]>();
   const cleanups = new Map<WebSocket, () => void>();
   let stopping = false, closing: Promise<void> | undefined;
   // Transport setup/direct reads and shared hub resolvers have independent lifetimes.
@@ -54,7 +57,7 @@ export function dataSocket(options: {
       return Object.freeze({ viewer: auth.viewer });
     },
     validate: (...args) => run(() => validate(...args)),
-    execute: (args: ExecutionArgs) => run(() => execute(executionArguments(args))),
+    execute: (args: ExecutionArgs) => run(() => { options.live.captureRead(args.contextValue); return execute(executionArguments(args)); }),
     subscribe: (args: ExecutionArgs) => run(async (): Promise<ExecutionResult | AsyncIterable<ExecutionResult>> => {
       const result = await subscribe(executionArguments(args));
       if (stopping && Symbol.asyncIterator in result) {
@@ -75,8 +78,22 @@ export function dataSocket(options: {
     }),
     // Ordinary execution errors travel in next payloads, not onError. Drop
     // partial data as well: it may contain words from the failed projection.
-    onNext(_ctx, _id, _payload, _args, result) {
+    onNext(ctx, _id, _payload, args, result) {
       if (result.errors?.length) return { errors: [new GraphQLError('Data query could not complete')] };
+      frames.set(result, { socket: ctx.extra.socket, version: options.live.readVersion(args.contextValue), until: readDeadline(args.contextValue) });
+      return result;
+    },
+    // Tie the serialized frame to its exact execution, not a reusable protocol
+    // id. Only numbers are retained; no second selected-data buffer is created.
+    jsonMessageReplacer(key, value) {
+      if (key === 'payload' && value && typeof value === 'object') {
+        const frame = frames.get(value);
+        if (frame && value.data != null) {
+          const stack = serializing.get(frame.socket) ?? [];
+          stack.push({ version: frame.version, until: frame.until }); serializing.set(frame.socket, stack);
+        }
+      }
+      return value;
     },
     // Never include database/driver errors or query-generated values in errors.
     onError() { return [{ message: 'Data subscription could not complete' }]; },
@@ -114,6 +131,20 @@ export function dataSocket(options: {
             if (typeof callback === 'function') callback(new Error('Authentication ended'));
             return;
           }
+          let message: { type?: string; payload?: { data?: unknown } } | undefined;
+          try { message = JSON.parse(String(args[0])); } catch { /* Protocol owns non-data messages. */ }
+          if (message?.type === 'next' && message.payload?.data != null) {
+            const stack = serializing.get(socket), frame = stack?.pop();
+            if (!stack?.length) serializing.delete(socket);
+            if (!options.live.currentRead(frame?.version) || (frame?.until !== undefined && options.clock.now() >= frame.until)) {
+              // Reconnect starts every selection at revision 1. Never skip an
+              // unpublished delta and then send patches against its old base.
+              socket.close(1012, 'Data changed; reconnect');
+              const callback = args.at(-1);
+              if (typeof callback === 'function') callback();
+              return;
+            }
+          }
           send(...args);
         }) as typeof socket.send;
         const cancelExpiry = authentication.expiresAt === undefined ? undefined : options.clock.at(authentication.expiresAt, () => socket.close(4403, 'Authentication ended'));
@@ -124,7 +155,7 @@ export function dataSocket(options: {
           if (!authentication.valid()) socket.close(4403, 'Authentication ended');
           try { if (JSON.parse(raw.toString()).type === 'connection_init') { initialized = true; cancelInit(); } } catch { /* protocol validates */ }
         });
-        cleanups.set(socket, () => { cancelExpiry?.(); cancelInit(); });
+        cleanups.set(socket, () => { cancelExpiry?.(); cancelInit(); serializing.delete(socket); });
         socket.once('close', () => { cleanups.get(socket)?.(); cleanups.delete(socket); });
         authentication.activity?.();
         ws.emit('connection', socket, request);
