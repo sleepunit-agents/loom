@@ -36,6 +36,8 @@ describe('the approved data model', () => {
     // summary is silent on; preserve exact coverage for all approved columns.
     expect(actual.model_account_windows).toEqual(['account', 'window', 'usage', 'usage_read_at', 'resets_at', 'duration_ms', 'reserve']);
     delete actual.model_account_windows;
+    // Take-time volume is internal delivery proof, not an additional approved-page field.
+    actual.inbox = actual.inbox.filter(n => n !== 'taken_volume');
     actual.jobs = actual.jobs.filter(n => !['account', 'harness'].includes(n));
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);

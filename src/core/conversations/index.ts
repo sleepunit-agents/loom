@@ -103,6 +103,8 @@ export class Conversations {
       const at = this.now();
       const selected = batch ? inArray(inbox.id, [...batch]) : undefined;
       this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'), selected)).run();
+      // Snapshot each actual publication, including a retry of an unconfirmed take.
+      this.db.update(inbox).set({takenVolume:inbox.volume}).where(and(eq(inbox.conversation,conversationId),eq(inbox.job,jobId),eq(inbox.state,'taken'),ne(inbox.volume,'mute'),selected)).run();
       return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'), ne(inbox.volume, 'mute'), selected)).orderBy(asc(inbox.seq)).all();
     });
   }
