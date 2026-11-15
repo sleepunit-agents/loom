@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
-import { bodyConversationClient } from './conversation-client.js';
+import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { claudeBody } from './claude-body.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import type { Clock } from '../core/clock.js';
@@ -65,7 +65,7 @@ export async function bodyProgram(input: {
         if(item.source!==job.venue||refs.length!==1)throw new Error();
         incoming.push(refs[0]);
       }
-      if (item.words !== null) context.push(item.words);
+      const words=bodyMailContext(item);if(words!==null)context.push(words);
     });
     if (batch.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
     if(signal.aborted)throw new Error();
