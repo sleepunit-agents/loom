@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { call, type Call } from '../../data';
+import type {Call} from '../../data/store';
+import {memoryCall as call} from '../../memory/commands';
 import {useMemoryRecord,useMemoryList} from '../../memory/query';
 import {memoryQueries} from '../../memory/queries';
 import { Split, List, Row, Empty, Loading, Error, Button, Input, Textarea } from '../../kit';
