@@ -16,8 +16,6 @@ export async function secretValueAction({page,tile,out,home}){
   };
   const expectRecords=actions=>assertSecretAudit({home,name,member:'alex',writeIds,actions,values:[initial,replacement]});
   const reload=async()=>{await page.reload();await page.locator('.next-shell').waitFor();return page.getByRole('region',{name:'Settings tile',exact:true});};
-  const back=tile.getByRole('button',{name:'Back to Settings',exact:true});
-  if(await back.isVisible())await back.click();
   await tile.getByRole('button',{name:/^Secrets/}).click();
   await tile.getByText('Add a secret',{exact:true}).click();
   let form=tile.locator('form').filter({has:page.getByRole('button',{name:'Add secret',exact:true})});

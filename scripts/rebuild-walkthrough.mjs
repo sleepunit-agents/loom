@@ -139,7 +139,9 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
       :{...savedDefault,ok:false,persistedAfterReload:false,error:savedDefault.error??'The value sequence did not reach its verified reload.'};
      report.actions={...report.actions,secretDefault:row.action,secretValues:row.valueAction};
     }
-    await page.screenshot({path:join(out,row.screenshot),fullPage:true});
+    // The verified default capture is already the current Settings document.
+    if(title==='Settings'&&row.action?.screenshot)row.screenshot=row.action.screenshot;
+    else await page.screenshot({path:join(out,row.screenshot),fullPage:true});
     if(title==='Tempo'){
      row.actions={};
      await tempoWalkthrough({page,tile,url:app.url,clock,example:report.example,checks:row.actions,capture:async name=>{const file=row.screenshot.replace('.png','-'+name+'.png');await page.screenshot({path:join(out,file),fullPage:true});return file;}});
