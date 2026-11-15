@@ -47,7 +47,7 @@ async function fixture() {
     db.insert(s.tasks).values({ id, title: name, ownerKind, owner, project, createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
     db.insert(s.changeTasks).values({ change: changeId, task: id }).run();
   }
-  const app = await serveShared({db,clock,webRoot:root,
+  const app = await serveShared({db,clock,webRoot:root,reportError:error=>{throw error;},
     originAllowed:request=>!request.headers.origin||request.headers.origin===`http://${request.headers.host}`});
   return {db,data:app,cookie,session,url:app.url,
     async close(){await app.close();client.close();}};
