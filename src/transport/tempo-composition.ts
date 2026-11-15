@@ -16,14 +16,22 @@ export function installTempoComposition(options: {
   contributors?: readonly SweepPart[];
 }) {
   const { db, clock } = options;
-  const tempo = createTempo(db, clock, options.delivery);
+  let committedDepth = 0;
+  const tempo = createTempo(db, clock, { ...options.delivery, changed() {
+    // DataWrites has already woken the query hub. Its readers resume after this
+    // synchronous recovery finishes, including any newly fired Inbox writes.
+    if (!committedDepth) options.delivery.changed?.();
+  } });
   const unregister: (() => void)[] = [];
   let closed = false;
   let stop: (() => void) | undefined;
   try {
     for (const part of [...workSweepParts(db, clock), ...options.contributors ?? []]) unregister.push(tempo.sweep.register(part));
     registerTempoOperations(options.operations, db, tempo, options.commands);
-    stop = options.writes.observe(() => tempo.committed());
+    stop = options.writes.observe(() => {
+      committedDepth++;
+      try { tempo.committed(); } finally { committedDepth--; }
+    });
     tempo.start();
   } catch (error) {
     stop?.(); tempo.close(); unregister.reverse().forEach(remove => remove()); throw error;
