@@ -1,4 +1,5 @@
-import { CreateTrigger, type NewTrigger } from './create';
+import type { TempoActions } from './actions';
+import { CreateTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Input, Button } from '../../kit';
 import { folders, rows, title, source, target, history, status, terminal, triggerAgent, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
@@ -11,14 +12,7 @@ export interface TempoSnapshot {
   timezone: string;
 }
 
-/** Root supplies authenticated Operations callbacks. No actor or transport comes from the tile. */
-export interface TempoActions {
-  create?(input: NewTrigger): Promise<void>;
-  runNow(id: string): Promise<void>;
-  stop(id: string): Promise<void>;
-  pause(agent: string): Promise<void>;
-  resume(agent: string): Promise<void>;
-}
+export type { TempoActions } from './actions';
 
 function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses: readonly AgentPause[]; actions: TempoActions }) {
   const busy = useRef(false);
