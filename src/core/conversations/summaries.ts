@@ -29,7 +29,7 @@ export class ConversationSummaries {
   recent(viewer: Viewer, agent: string, limit = 8): Conversation[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 25) throw new Error('Conversation limit must be 1–25');
     return this.db.select().from(conversations).where(and(visible(viewer), eq(conversations.agent, agent)))
-      .orderBy(desc(conversations.lastAt), desc(conversations.id)).limit(limit).all();
+      .orderBy(desc(sql`julianday(${conversations.lastAt})`), desc(conversations.id)).limit(limit).all();
   }
 
   /** Words are read only when the client selects lastAnswer. Recheck the exact
@@ -44,7 +44,7 @@ export class ConversationSummaries {
     const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
     const retained = (row: ReturnType<typeof latest>, days: number) => !!row?.words && !!row.keepUntil
       && Number.isInteger(days) && days >= 1 && days <= 14
-      && row.keepUntil > this.now() && Date.parse(row.at) + days * 86400000 > Date.parse(this.now());
+      && Date.parse(row.keepUntil) > Date.parse(this.now()) && Date.parse(row.at) + days * 86400000 > Date.parse(this.now());
     const row = latest(), days = keepDays();
     if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
