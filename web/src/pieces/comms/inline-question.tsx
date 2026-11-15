@@ -1,3 +1,4 @@
+import { TaskQuestionAnswer } from '../tasks/question-answer';
 import { useMemo } from 'react';
 import { useDeadline } from './use-deadline';
 import { conversationOperation as mutate } from './operations';
@@ -25,6 +26,6 @@ export function InlineQuestion({ id, go, writable, readVisible }: { id: string; 
   } : undefined;
   const retained = item ? retainedInboxItem(item, now) : null;
   const approval = writable && retained?.body && retained.waitsOnKind === 'approval' ? retained.waitsOnId : undefined;
-  return <InboxQuestionCard sourceCard={approval ? <LiveApprovalCard id={approval} /> : undefined} id={id} inline actions={actions} snapshot={{ status: reading.status,
+  return <InboxQuestionCard sourceCard={approval ? <LiveApprovalCard id={approval} /> : writable && retained?.body && retained.source==='task' && retained.waitsOnKind==='task' ? <TaskQuestionAnswer key={retained.id} item={retained}/> : undefined} id={id} inline actions={actions} snapshot={{ status: reading.status,
     items: retained ? [retained] : [] }} />;
 }
