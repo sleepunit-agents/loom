@@ -4,6 +4,10 @@ on:
     paths:
       - 'src/next.ts'
       - 'src/foundation.ts'
+      - 'src/next-data.ts'
+      - 'src/core/data/**'
+      - 'web/src/data/**'
+      - 'web/src/pieces/change-view/**'
       - 'src/changes-*.ts'
       - 'src/pieces/changes/**'
       - 'web/src/pieces/changes/**'
@@ -29,7 +33,7 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
-      - name: Prove the new Changes app only
+      - name: Prove the shared Changes reader
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_TEST_SHOTS="$PWD/artifacts/changes-piece"

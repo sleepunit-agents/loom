@@ -33,9 +33,10 @@ export function bridgeCredentials(source: HolderGeneration, clock: Clock) {
     if (closed) return;
     cancelPoll=clock.at(clock.now()+5000,()=>{cancelPoll=undefined;void poll();});
   }
-  void poll();
+  const initial = poll();
   return {
     current:()=>current,
+    ready:()=>initial,
     observe(changed:()=>void) { listeners.add(changed);return ()=>{listeners.delete(changed);}; },
     close() {
       if (closed) return;
