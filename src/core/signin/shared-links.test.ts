@@ -315,3 +315,9 @@ it.each(['ended','aged','agent'])('withholds a one-time link if post-commit publ
  expect(response.status).toBe(change==='ended'?401:403);expect(await response.json()).toEqual({error:change==='ended'?'Member authentication required':'Sign in again before making a sign-in link'});
  expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
 });
+it('withholds a committed one-time link if publication starts shutdown',async()=>{
+ const f=fixture();let stopped=false;
+ const stop=f.root.writes.observe(()=>{if(stopped||!f.db.select().from(signinLinks).get())return;stopped=true;void f.root.close();});cleanup.push(stop);
+ const response=await f.mint();expect(stopped).toBe(true);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+});

@@ -111,3 +111,10 @@ it.each(['revoke','demote','expire'] as const)('withholds the one-time bearer if
  expect(f.db.select().from(tokens).where(eq(tokens.label,'Committed but withheld')).get()).toMatchObject({kind:'owner',member:'sam'});
  expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
 });
+it('withholds a committed one-time bearer if publication starts shutdown',async()=>{
+ const f=fixture();let stopped=false;
+ const stop=f.root.writes.observe(()=>{if(stopped||!f.db.select().from(tokens).where(eq(tokens.label,'Shutdown issuance')).get())return;stopped=true;void f.root.close();});clean.push(stop);
+ const response=await f.issue({kind:'owner',member:'sam',label:'Shutdown issuance'});
+ expect(stopped).toBe(true);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});
+ expect(f.db.select().from(tokens).where(eq(tokens.label,'Shutdown issuance')).get()).toBeDefined();
+});

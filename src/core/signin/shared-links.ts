@@ -92,6 +92,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
       if(!auth.valid() || !sharedTokenOwner(options.db, auth.viewer))throw new OperationError('denied','Household owner required');
       return sharedTokens(options.db, options.clock).issue(input.data);
     });
+      if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
       if(!auth.valid() || !sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
       return c.json({ok:true,value});
     }
@@ -120,6 +121,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     // Request input cannot choose a token/member or impersonate an agent.
     const value=write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token); });
     // Publication hooks can end this caller after the transaction committed.
+    if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
     if(!auth.valid())return c.json({error:'Member authentication required'},401);
     if(!freshBrowser())return c.json({error:'Sign in again before making a sign-in link'},403);
     return c.json({ok:true,value});
