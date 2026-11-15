@@ -43,6 +43,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   return{ok,verdict:q?.answer,answeredBy:q?.answered_by,agentAnswerCopies:replies.length,screenshot};
  });
  if(actions.includes('commsAnswer'))await attempt('commsAnswer',async()=>{
+  phase='reload-answer';await page.reload();await page.locator('.next-shell').waitFor();
   if(!evidence.inboxAnswer?.ok)throw Error('Inbox answer did not complete');
   const tile=await visibleComms();await select(tile);
   const card=tile.getByRole('article',{name:'Inbox item',exact:true}).filter({has:page.getByRole('heading',{name:question,exact:true})});
