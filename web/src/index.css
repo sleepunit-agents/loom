@@ -32,7 +32,6 @@
 @import "@/styles/cojeev/input.css";
 @import "@/styles/cojeev/dialog.css";
 @import "@/styles/cojeev/alert-dialog.css";
-@import "@/styles/cojeev/toast.css";
 @import "@/styles/cojeev/code-block.css";
 @import "@/styles/cojeev/item-adornment.css";
 @import "@/styles/cojeev/empty.css";
@@ -61,7 +60,6 @@
 @import "@/styles/cojeev/toggle.css";
 @import "@/styles/cojeev/toggle-group.css";
 @import "@/styles/cojeev/alert.css";
-@import "@/styles/cojeev/dropdown-menu.css";
 /* The looks (Neon Noir, Low Light, Daylight): Neon's structure and each look's tokens. */
 @import "@/looks/looks.css";
 
@@ -169,7 +167,7 @@
 @media (hover: none), (pointer: coarse) {
   .v-dock:not([data-variant="rail"]) [data-part="lane"] [data-part="label"] { transform: none !important; }
 }
-/* The launcher (sheets.tsx: Places and More): a phone's home screen, its tiles in the dock's colours, in turn. */
+/* The launcher (shell/launcher.tsx: All apps): a phone's home screen, its tiles in the dock's colours, in turn. */
 /* The ink on an app's colour is the palette's on-accent (dark, in both modes), as the dock's: light text on a pastel tile in dark
    mode read at 1.6:1. */
 .loom-launch-tile { color: var(--v-on-accent); }

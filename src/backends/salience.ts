@@ -206,6 +206,8 @@ export interface DigestRow {
 export interface DigestOptions {
   /** Trusted private-store selection; omitted keeps the legacy override. */
   memorySelection?: MemorySelection;
+  /** Current canonical reads omit expired rows; legacy wrapper defaults stay unchanged. */
+  excludeExpired?:boolean;
   /** Approximate token budget for the whole digest. */
   tokenBudget?: number;
   /** Rough chars-per-token for the budget estimate. */
@@ -321,12 +323,13 @@ export interface DigestAtom {
  * write order. The stored field stays, refreshed by the lane, for anything
  * that sorts in SQL.
  */
-function liveRows(db: Database, nowMs: number): Array<DigestRow & { stored: number }> {
+function liveRows(db: Database, nowMs: number,excludeExpired=false): Array<DigestRow & { stored: number }> {
+  const expiry=excludeExpired&&hasColumn(db,'memories','expires_at')?' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))':'';
   const rows = db
     .prepare(
-      `SELECT title, category, content, salience AS stored, sourcing, ${heatColumns(db)} FROM memories WHERE archived = 0 AND category != ?`,
+      `SELECT title, category, content, salience AS stored, sourcing, ${heatColumns(db)} FROM memories WHERE archived = 0 AND category != ?${expiry}`,
     )
-    .all(EPISODE_CATEGORY) as Array<Omit<DigestRow, 'salience'> & HeatInput & { stored: number }>;
+    .all(EPISODE_CATEGORY,...(expiry?[new Date(nowMs).toISOString()]:[])) as Array<Omit<DigestRow, 'salience'> & HeatInput & { stored: number }>;
   return rows
     .map(({ created, updated, authored_at, recall_heat, recall_heat_at, ...r }) => ({
       ...r,
@@ -365,14 +368,17 @@ export function digestForContext(contextDir: string, opts: DigestOptions = {}): 
   const db = openMemoriesDb(contextDir, true, opts.memorySelection);
   if (!db) return null;
   try {
-    // A store not yet migrated to salience simply has no digest yet (read-only
-    // path can't migrate; the lane / normal backend connect will add the column).
-    if (!hasColumn(db, 'memories', 'salience')) return null;
-    // Episodes are the tape, not the digest: a fresh episode is always hot
-    // and would crowd Top of Mind with what just happened.
-    const rows = liveRows(db, opts.nowMs ?? Date.now()).slice(0, 100);
-    return assembleDigest(rows, opts);
+    return digestOnConnection(db,opts);
   } finally {
     db.close();
   }
+}
+
+/** Read-only projection over an explicitly selected, already-owned connection. */
+export function digestOnConnection(db: Database, opts: DigestOptions = {}): string | null {
+  // Read-only callers leave stores predating salience untouched.
+  if (!hasColumn(db, 'memories', 'salience')) return null;
+  // Episodes belong to the tape and do not crowd the salience digest.
+  const rows = liveRows(db, opts.nowMs ?? Date.now(), opts.excludeExpired).slice(0, 100);
+  return assembleDigest(rows, opts);
 }
