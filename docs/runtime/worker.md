@@ -464,6 +464,14 @@ Native model tools report only working/waiting while a turn is live. Idle/offlin
 reports and Stop acknowledgement belong to the receiving runtime after execution
 ends, so a model cannot clear the working flag or remove the live Stop control.
 
+A private current body can request runtime.proposeAgentModels with an agent and
+ordered configured models. Root derives the requesting member and conversation,
+checks that member owns the target agent, and files the complete before/after in
+an inline setting approval. Models remain unchanged until Allow. The static
+approved operation rechecks current ownership, configured model roles and the
+previous ordering; stale cards require a new request. It has no shell or provider
+side effects. The ordinary member-only agentModelsSet command remains unchanged.
+
 runtime.proposeAgentRunSettings lets a current private chat body request its
 member's agent run configuration. The existing inline approval carries the
 previous house, machine order, ports and capabilities alongside the proposed

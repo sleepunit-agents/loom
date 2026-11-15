@@ -1,3 +1,4 @@
+import {requestApprovalWithRules} from './apps/approval-request.js';
 /** Work commands for an authenticated current body, never input-selected actors.
  * Prepared settings/dangerous actions stay with their typed proposal producers. */
 import {eq} from 'drizzle-orm';
@@ -9,7 +10,6 @@ import {operation,OperationError,type Operations} from './core/operations/index.
 import type {approvalService} from './apps/approvals.js';
 import {approvalRuleKind,type approvalRulesService} from './apps/approval-rules.js';
 import type {WorkAnswerAuthority} from './shared-work-commands.js';
-import {changeAnswers} from './apps/changes-answers.js';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import type {Viewer} from './policy.js';
 
@@ -35,16 +35,9 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   output:z.object({id:z.string(),state:z.string()}).strict(),
   may(viewer,input){try{if(!current(viewer))return false;merge(viewer,input.kind,input.target,true);return true;}catch{return false;}},
   run(ctx,input){
-   const binding=merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),row=service.request({...input,...context});
-   const rule=lastApprovalAnswer(db,row.agent,row.kind,row.target)?.event==='deny'?undefined:rules.resolve({kind:row.kind,target:row.target,project:row.project,actingFor:row.actingFor});
-   if(rule&&rule.tier!=='ask'){
-    const owner={kind:'member' as const,id:rule.setBy};
-    if((!authority||authority.approval(owner,row)===true)&&(!binding||!authority||authority.change(owner,binding.change,row)===true)){
-     const basis=`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`;
-     if(binding){changeAnswers(db,service).answer({change:binding.change.id,head:binding.head,approval:row.id,member:rule.setBy,allow:true,basis});ctx.changed('changes',binding.change.id);}
-     else service.allow(row.id,rule.setBy,basis);
-    }
-   }
+   const binding=merge(ctx.viewer,input.kind,input.target,true),context=source(ctx.viewer);
+   const row=requestApprovalWithRules(db,service,rules,{...input,...context},authority);
+   if(binding&&row.state==='allowed')ctx.changed('changes',binding.change.id);
    ctx.changed('approvals',row.id);return {id:row.id,state:service.get(row.id).state};
   },
  }));
