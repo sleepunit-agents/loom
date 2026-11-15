@@ -304,5 +304,5 @@ it('mounts standing-rule editing only for the live current-owner metadata',async
  const form=()=>tree.root.findAllByProps({'aria-label':'Standing rule'});
  expect(form()).toHaveLength(1);
  feed.owner=false;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);
- feed.owner=true;feed.ownerStatus='offline';await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);
+ feed.owner=true;for(const status of ['loading','offline','denied','error']){feed.ownerStatus=status;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);}
 });

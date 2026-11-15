@@ -35,3 +35,17 @@ it('edits and removes the exact selected kind/scope/person without changing cano
  await act(async()=>tree.root.findAllByType('button').find((button:{props:{children:unknown}})=>button.props.children==='Remove rule')!.props.onClick());
  expect(save.mock.calls[1][0]).toEqual({kind:'command',scope:'run *',person:'sam',tier:null});expect(rule.tier).toBe('tell');
 });
+it('defaults both initial creation and New rule after an existing grant to ask',async()=>{
+ const rule:Rule={kind:'command',scope:'run *',person:'sam',tier:'do',setBy:'pat',setAt:'2026-11-15T00:00:00Z'},save=vi.fn<SaveRule>(async()=>{});
+ await act(async()=>{tree=create(h(RuleEditor,{rules:[rule],save}));});await fill('Scope','github:acme/*');await submit();
+ expect(save.mock.calls[0][0]).toEqual({kind:'merge',scope:'github:acme/*',person:'',tier:'ask'});
+ await fill('Rule',JSON.stringify([rule.kind,rule.scope,rule.person]));expect(field('Answer').props.value).toBe('do');
+ await fill('Rule','');await fill('Scope','project:pond');await submit();
+ expect(save.mock.calls[1][0]).toEqual({kind:'merge',scope:'project:pond',person:'',tier:'ask'});
+});
+it('abandons an uncertain intent after fields change, even if changed back to the same body',async()=>{
+ const save=vi.fn<SaveRule>().mockRejectedValue(new Error('unknown'));
+ await act(async()=>{tree=create(h(RuleEditor,{rules:[],save}));});await fill('Scope','project:pond');await submit();
+ await fill('Scope','project:bank');await fill('Scope','project:pond');await submit();
+ expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);expect(save.mock.calls[1][1]).not.toBe(save.mock.calls[0][1]);
+});
