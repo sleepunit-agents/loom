@@ -166,3 +166,22 @@ it('keeps a standing operation stopped when it stops its own trigger', () => {
   f.clock.advance(86_400_000);
   expect(calls).toBe(1);
 });
+
+it.each(['time', 'answer'] as const)('stops a %s scan when its first operation closes Tempo', kind => {
+  const f = fixture();
+  const calls: string[] = [];
+  let changed = 0;
+  for (const id of ['first', 'second']) f.engine.set({ ...f.base, id,
+    sourceKind: kind, watches: kind === 'answer' ? 'question:q' : undefined,
+    lifespan: 'until-stopped', times: kind === 'time' ? '12:01' : undefined,
+    targetKind: 'operation', target: id });
+  f.effects.changed = () => { changed++; };
+  f.effects.operation = name => { calls.push(name); f.engine.close(); };
+  if (kind === 'time') f.clock.advance(60_000);
+  else f.engine.event('answer', 'question:q', 'one');
+  expect(calls).toEqual(['first']);
+  expect(changed).toBe(0);
+  expect(f.row('second').lastFiredAt).toBeNull();
+  f.clock.advance(86_400_000);
+  expect(calls).toEqual(['first']);
+});

@@ -128,12 +128,13 @@ export class TriggerEngine {
     try {
       do { this.again = false; this.scan(); } while (this.again && !this.closed);
     } finally { this.ticking = false; }
-    this.effects.changed?.();
+    if (!this.closed) this.effects.changed?.();
   }
   private scan(): void {
     this.cancel?.(); this.cancel = undefined;
     let next: number | undefined;
     for (const entry of this.active()) {
+      if (this.closed) return;
       // An earlier operation in this scan may have stopped or paused this row.
       const t = this.get(entry.id);
       if (!t.enabled) continue;
@@ -152,14 +153,16 @@ export class TriggerEngine {
         const logs = this.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all();
         const consumed = new Set(logs.filter(l => ['fired', 'failed'].includes(l.event)).map(l => l.note));
         for (const log of logs.filter(l => l.event === 'observed' && !consumed.has(l.note))) {
+          if (this.closed) return;
           const current = this.get(t.id);
           if (current.enabled && !this.paused(current)) this.fire(current, log.note);
         }
       }
+      if (this.closed) return;
       const current = this.get(t.id);
       if (current.enabled && current.nextDueAt && current.state !== 'failed') next = Math.min(next ?? Infinity, Date.parse(current.nextDueAt));
     }
-    if (next !== undefined) this.cancel = this.clock.at(next, () => this.tick());
+    if (!this.closed && next !== undefined) this.cancel = this.clock.at(next, () => this.tick());
   }
   private stopExpired(t: Trigger) {
     this.db.transaction(() => { this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped', 'today ended'); });
