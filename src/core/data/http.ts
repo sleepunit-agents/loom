@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { GraphQLObjectType, GraphQLSchema, GraphQLInterfaceType, GraphQLUnionType, GraphQLList, GraphQLNonNull, type execute, type GraphQLType, type GraphQLNamedType, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { GraphQLObjectType, GraphQLSchema, GraphQLInterfaceType, GraphQLUnionType, GraphQLList, GraphQLNonNull, type execute, type ExecutionArgs, type GraphQLType, type GraphQLNamedType, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { bodyLimit } from 'hono/body-limit';
 import type { Viewer } from '../../policy.js';
 import { createYoga } from 'graphql-yoga';
@@ -8,6 +8,7 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { dataAuthentication } from './authentication.js';
 import type { DataDatabase } from './database.js';
+import { readRetained } from './read-lease.js';
 import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 
 /** Authenticated GraphQL HTTP door on the shared connection. Authentication is
@@ -16,12 +17,12 @@ import { ExecutionDrain, instrumentExecution, executionArguments } from './execu
  */
 /** The fourth argument accepts either extra query fields or a caller-specific
  * root schema. The fifth adds shared fields to that root (e.g. Memory). */
-export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string, schemaOrFields: ((viewer: Viewer) => GraphQLSchema) | GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}) {
+export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string, schemaOrFields: ((viewer: Viewer) => GraphQLSchema) | GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}, readVersion?: () => number, now: () => number = Date.now) {
   const app = new Hono();
   const executions = new ExecutionDrain();
   let stopping = false;
   app.use('*', bodyLimit({ maxSize: 1024 * 1024 }));
-  app.use('*', async (c, next) => { await next(); c.header('cache-control', 'no-store'); });
+  app.use('*', async (c, next) => { await next(); c.res.headers.set('cache-control', 'no-store'); });
   app.onError(() => Response.json({ errors: [{ message: 'Data request could not complete' }] }, { status: 503, headers: { 'cache-control': 'no-store' } }));
   app.all('/graphql', async c => {
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
@@ -42,21 +43,26 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     // Outside programs are never treated as installed services. Runner reads
     // will get a separate safe projection rather than inheriting member reads.
     if (auth.viewer.kind === 'service' || auth.viewer.kind === 'runner') return c.json({ errors: [{ message: 'Caller has no data projection' }] }, 403);
+    const version = readVersion?.();
     const generated = typeof schemaOrFields === 'function' ? schemaOrFields(auth.viewer) : dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) });
     const extraFields = typeof schemaOrFields === 'function' ? fields : { ...schemaOrFields, ...fields };
     const schema = withQueryFields(generated, extraFields);
     instrumentExecution(schema);
+    const context = Object.freeze({ viewer: auth.viewer });
+    let executionContext: unknown = context;
+    const current = () => (!readVersion || version === readVersion()) && readRetained(executionContext, now());
     const yoga = createYoga({ schema, graphqlEndpoint: '/graphql', graphiql: false, logging: false,
       cors: false, batching: false,
-      context: () => Object.freeze({ viewer: auth!.viewer }),
+      context: () => context,
       plugins: [{
         // The adapter's fetch() can race abort and return before this handler.
         // Retain the actual pipeline, including result serialization, instead.
         onRequest({ requestHandler, setRequestHandler }) {
           setRequestHandler((...args) => executions.scope(() => !stopping, () => requestHandler(...args)));
         },
-        onExecute({ executeFn, setExecuteFn }: { executeFn: typeof execute; setExecuteFn(fn: typeof execute): void }) {
+        onExecute({ args, executeFn, setExecuteFn }: { args: ExecutionArgs; executeFn: typeof execute; setExecuteFn(fn: typeof execute): void }) {
           if (stopping || !auth!.valid() || stopping) throw new Error('Authentication ended');
+          executionContext = args.contextValue;
           setExecuteFn(args => executeFn(executionArguments(args)));
         },
         onSubscribe() { throw new Error('Use the websocket for subscriptions'); },
@@ -68,9 +74,38 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     const body = await response.text();
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
     if (!auth.valid() || stopping) return c.json({ errors: [{ message: 'Authentication ended' }] }, 401);
+    if (!current()) return c.json({ errors: [{ message: 'Data changed; retry the query' }] }, 503);
     auth.activity?.();
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
-    return new Response(body, { status: response.status, headers: response.headers });
+    if (!auth.valid() || stopping) return c.json({ errors: [{ message: 'Authentication ended' }] }, 401);
+    if (!current()) return c.json({ errors: [{ message: 'Data changed; retry the query' }] }, 503);
+    const guardedResponse = (): Response => {
+    let buffered: string | undefined = body;
+    const available = () => !stopping && auth!.valid() && !stopping && current();
+    // Zero buffering keeps the release check after every outer fetch/middleware
+    // await. A response returned while allowed cannot retain readable words if
+    // its consumer waits until permission or the word deadline has ended.
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        try {
+          if (!available()) throw new Error('Data access ended');
+          const bytes = new TextEncoder().encode(buffered); buffered = undefined;
+          if (!available()) throw new Error('Data access ended');
+          controller.enqueue(bytes); controller.close();
+        } catch { buffered = undefined; controller.error(new Error('Data access ended')); }
+      },
+      cancel() { buffered = undefined; },
+    }, { highWaterMark: 0 });
+    const result = new Response(stream, { status: response.status, headers: response.headers });
+    // Native clone tees and eagerly pulls the stream. Keep ordinary server
+    // middleware clones lazy too; each copy checks before releasing any bytes.
+    result.clone = () => {
+      if (result.bodyUsed) throw new TypeError('Body has already been consumed');
+      return guardedResponse();
+    };
+    return result;
+    };
+    return guardedResponse();
   });
   return Object.assign(app, { stop() { stopping = true; }, drain: () => executions.drain() });
 }
