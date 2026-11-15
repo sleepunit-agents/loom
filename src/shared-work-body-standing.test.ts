@@ -1,19 +1,19 @@
 import {afterEach,expect,it} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
-import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
+import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import type {WorkAnswerAuthority} from './shared-work-commands.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const stop of clean.splice(0).reverse())await stop();});
 const change='github:acme/app#1',head='a'.repeat(40),request={kind:'merge',target:change+'@'+head,what:'Merge pump',why:'Ready',ask:'Merge?',ifYes:'Agent merges exact head',ifNo:'Wait'};
 async function fixture(authority?:WorkAnswerAuthority){
  const f=await bodyFixture(clean,{workAnswerAuthority:authority}),at=new Date(f.clock.now()).toISOString();
- f.db.insert(s.members).values({id:'pat',role:'owner',joinedAt:at}).run();
+ f.db.insert(s.members).values({id:'pat',role:'owner',joinedAt:at}).run();const owner='o'.repeat(64);f.db.insert(s.tokens).values({fingerprint:hash(owner),label:'Standing owner',kind:'owner',member:'pat',createdAt:at}).run();
  f.db.insert(s.changes).values({id:change,repository:'acme/app',number:1,title:'Pump',body:'',url:'',state:'open',draft:false,authorLogin:'art',agent:'art',project:'pond',branch:'work',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:at,updatedAt:at}).run();
- const call=(name:string,input:unknown,id:string=randomUUID())=>f.root.http.request('/api/approvals/'+name,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.body},body:JSON.stringify({input,id})});
+ const call=(name:string,input:unknown,id:string=randomUUID(),token=raw.body)=>f.root.http.request('/api/approvals/'+name,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input,id})});
  const grant=(tier:'ask'|'tell'|'do',person='alice')=>f.root.services.approvalRules.set({kind:'merge',scope:'project:pond',person,tier},'pat');
  const ask=async(id='standing',input:unknown=request)=>{const response=await call('request',input,id);expect(response.status).toBe(200);return (await response.json()).value as {id:string;state:string};};
- return {...f,call,grant,ask};
+ return {...f,owner,call,grant,ask};
 }
 it.each(['do','tell'] as const)('atomically applies a current personal %s rule without a pending owner question or forge merge',async tier=>{
  const f=await fixture();f.grant(tier);const first=await f.ask();expect(first.state).toBe('allowed');expect(await f.ask()).toEqual(first);
@@ -71,4 +71,15 @@ it('refuses blank targets at the outside schema before any request or standing a
 it.each(['approval','change'] as const)('requires explicit true from a configured %s callback',async gate=>{
  // A JavaScript adapter can violate the static boolean contract at runtime.
  const missing=undefined as unknown as boolean,f=await fixture({approval:()=>gate==='approval'?missing:true,change:()=>gate==='change'?missing:true});f.grant('do');expect((await f.ask()).state).toBe('pending');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request']);
+});
+
+it.each(['merge','command'] as const)('keeps an explicit No for the exact %s target despite a new do/tell intent',async kind=>{
+ const f=await fixture(),input=kind==='merge'?request:{...request,kind:'command',target:'box:box:echo'};
+ const rule={kind,scope:kind==='merge'?'project:pond':'box:box:echo',person:'alice'};f.root.services.approvalRules.set({...rule,tier:'ask'},'pat');const denied=await f.ask('denied',input);expect((await f.call('answer',{id:denied.id,answer:'deny'},'deny',f.owner)).status).toBe(200);
+ for(const tier of ['do','tell'] as const){f.root.services.approvalRules.set({...rule,tier},'pat');expect((await (await f.call('rule',{kind,target:input.target})).json()).value.tier).toBe('ask');expect((await f.ask('after-no-'+tier,input)).state).toBe('pending');}
+ expect(f.db.select().from(s.approvalRecord).all().some(row=>row.event==='allow')).toBe(false);
+ const fresh=await f.ask('human-reconsider',input);expect((await f.call('answer',{id:fresh.id,answer:'allow'},'allow',f.owner)).status).toBe(200);expect((await f.ask('after-human-yes',input)).state).toBe('allowed');
+});
+it('does not carry an exact-head No into a genuinely new commit',async()=>{
+ const f=await fixture();f.grant('ask');const first=await f.ask();expect((await f.call('answer',{id:first.id,answer:'deny'},'deny',f.owner)).status).toBe(200);f.grant('do');const next='b'.repeat(40);f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:next}).run());expect((await f.ask('new-head',{...request,target:change+'@'+next})).state).toBe('allowed');expect(f.root.services.approvals.get(first.id).state).toBe('denied');
 });
