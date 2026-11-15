@@ -1,3 +1,4 @@
+import { registerAgentRunSettings } from './shared-agent-run-settings.js';
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
@@ -121,6 +122,7 @@ export function sharedRoot(options: {
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
+  registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {
       tempo?.sources.job(id);
