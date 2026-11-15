@@ -2,7 +2,6 @@
  * the connection; this never bootstraps legacy tables or opens another store. */
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
@@ -14,6 +13,7 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { nextData } from './next-data.js';
 
+class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
 export function sharedRoot(options: {
   db: DataDatabase;
@@ -28,7 +28,7 @@ export function sharedRoot(options: {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
@@ -38,14 +38,30 @@ export function sharedRoot(options: {
     conversations: new Conversations(db, now),
   };
   const authenticate = dataAuthentication(db, () => clock.now());
-  const http = new Hono();
+  const active = new Set<{ abort: AbortController; done: Promise<void> }>();
+  const http = new Hono<{ Variables: { shutdown: AbortController } }>();
+  const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
+    let size = 0;
+    return request.body ? new Request(request, {
+      body: request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, stream) {
+          size += chunk.byteLength;
+          if (limited && size > 1024 * 1024) throw new BodyTooLarge();
+          stream.enqueue(chunk);
+        },
+      }), { signal: abort.signal }), signal: abort.signal, duplex: 'half',
+    } as RequestInit) : request;
+  };
   http.use('*', async (c, next) => {
     c.header('cache-control', 'no-store');
     if (closing) return c.json(failure('unavailable', 'Loom is closing'), 503);
-    await next();
+    const abort = new AbortController();
+    let finished!: () => void;
+    const entry = { abort, done: new Promise<void>(resolve => { finished = resolve; }) };
+    active.add(entry); c.set('shutdown', abort);
+    try { await next(); } finally { active.delete(entry); finished(); }
   });
-  http.all('/graphql', c => data.http.fetch(c.req.raw));
-  http.use('/api/*', bodyLimit({ maxSize: 1024 * 1024, onError: c => c.json(failure('invalid', 'Request body too large'), 413) }));
+  http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/:piece/:operation', async c => {
     const request = c.req.raw, origin = request.headers.get('origin'), url = new URL(request.url);
@@ -55,7 +71,7 @@ export function sharedRoot(options: {
     const auth = authenticate(request);
     if (!auth?.valid()) return c.json(failure('denied', 'Authentication required'), 401);
     let body: unknown;
-    try { body = await request.json(); } catch { return c.json(failure('invalid', 'Invalid JSON'), 400); }
+    try { body = await bodyRequest(request, c.get('shutdown'), true).json(); } catch (error) { return error instanceof BodyTooLarge ? c.json(failure('invalid', 'Request body too large'), 413) : c.json(failure('invalid', 'Invalid JSON'), 400); }
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
@@ -78,7 +94,11 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
-      void data.close().then(() => { operations.close(); resolve(); }, error => { operations.close(); reject(error); });
+      const stopped = data.close();
+      const pending = [...active];
+      for (const entry of pending) entry.abort.abort();
+      void Promise.all([stopped, ...pending.map(entry => entry.done)]).then(
+        () => { operations.close(); resolve(); }, error => { operations.close(); reject(error); });
       return closing;
     },
   };

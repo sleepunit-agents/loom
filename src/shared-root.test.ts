@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import { getRequestListener } from '@hono/node-server';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
+import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
@@ -17,15 +18,15 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const token = 'a'.repeat(64), cookie = 'b'.repeat(64);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function fixture(approvedOperations?: Parameters<typeof sharedRoot>[0]['approvedOperations']) {
-  const client = new Database(':memory:'); cleanup.push(() => client.close());
+function fixture(approvedOperations?: Parameters<typeof sharedRoot>[0]['approvedOperations'], fields?: Parameters<typeof sharedRoot>[0]['fields']) {
+  const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values({ id: 'sam', role: 'owner', joinedAt: at }).run();
   db.insert(tokens).values({ fingerprint: hash(token), label: 'Sam', kind: 'owner', member: 'sam', createdAt: at }).run();
   db.insert(sessions).values({ id: hash(cookie), token: hash(token), device: 'Browser', via: 'token', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
   const errors: unknown[] = [];
-  const root = sharedRoot({ db, clock, originAllowed: () => true, approvedOperations, reportError: error => errors.push(error) });
+  const root = sharedRoot({ db, clock, originAllowed: () => true, approvedOperations, fields, reportError: error => errors.push(error) });
   cleanup.push(() => root.close());
   // A trusted producer installs a typed operation. The root never accepts a
   // registry or caller identity from an HTTP request.
@@ -113,10 +114,9 @@ it('refuses a credential revoked while request JSON is still arriving without ef
   const f = fixture();
   let writer!: ReadableStreamDefaultController<Uint8Array>, reading!: () => void;
   const started = new Promise<void>(resolve => { reading = resolve; });
-  const body = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; } });
+  const body = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; }, pull() { reading(); } }, { highWaterMark: 0 });
   const bytes = new TextEncoder().encode(JSON.stringify({ input: { title: 'Pump' }, id: 'held' }));
   const request = new Request('http://loom/api/tasks/make', { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': String(bytes.length), authorization: 'Bearer ' + token }, body, duplex: 'half' } as RequestInit);
-  const json = request.json.bind(request); request.json = () => { reading(); return json(); };
   const response = f.root.http.fetch(request);
   await started;
   f.db.update(tokens).set({ revokedAt: new Date(f.clock.now()).toISOString() }).run();
@@ -181,8 +181,15 @@ it('serves the fresh root through the production listener and shuts down a withh
   server.operations.register({ name: 'tasks.make', write: true, input: z.object({}), output: z.string(), may: () => true,
     run() { return server.services.tasks.create({ title: 'Served', goal: 'Work', why: 'Needed', owner: { kind: 'member', id: 'sam' } }, { kind: 'member', id: 'sam' }).id; },
   });
+  const ws = new WebSocket(server.url.replace('http:', 'ws:') + '/graphql', 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
+  cleanup.push(() => ws.terminate()); await once(ws, 'open');
+  let message = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await message;
+  message = once(ws, 'message'); ws.send(JSON.stringify({ type: 'subscribe', id: 'tasks', payload: { query: 'subscription { observe(query:"{ tasks { id } }") { revision patches { path value removed } } }' } }));
+  expect(JSON.parse(String((await message)[0])).payload.data.observe.patches[0].value).toEqual({ tasks: [] });
+  message = once(ws, 'message');
   const result = await fetch(server.url + '/api/tasks/make', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ input: {}, id: 'served' }) });
   expect(await result.json()).toEqual({ ok: true, value: 't-1' });
+  expect(JSON.parse(String((await message)[0])).payload.data.observe.patches).toEqual([{ path: ['tasks', 0], value: { id: 't-1' }, removed: false }]);
   const { createConnection } = await import('node:net');
   const url = new URL(server.url), held = createConnection({ host: url.hostname, port: Number(url.port) });
   cleanup.push(() => held.destroy()); await once(held, 'connect');
@@ -190,18 +197,69 @@ it('serves the fresh root through the production listener and shuts down a withh
   const connectionErrors: string[] = [];
   held.on('error', error => connectionErrors.push((error as NodeJS.ErrnoException).code ?? error.message));
   const ended = new Promise<void>(resolve => held.once('close', () => resolve()));
+  const socketClosed = once(ws, 'close');
   const close = server.close(); expect(server.close()).toBe(close);
-  await close; await ended;
+  await close; await ended; await socketClosed;
   expect(connectionErrors.every(code => code === 'ECONNRESET')).toBe(true);
   expect(f.client.open).toBe(true);
 });
 
 it('releases the fresh composition when its production listener cannot bind', async () => {
   const f = fixture(), held = createServer();
+  await f.command();
+  const scheduled = new Set<symbol>();
+  const at = f.clock.at.bind(f.clock);
+  f.clock.at = (when, work) => { const id = Symbol(); scheduled.add(id); const cancel = at(when, work); return () => { scheduled.delete(id); cancel(); }; };
   await new Promise<void>(resolve => held.listen(0, '127.0.0.1', resolve));
   cleanup.push(() => new Promise<void>(resolve => held.close(() => resolve())));
   const address = held.address(); if (!address || typeof address === 'string') throw new Error('No address');
   await expect(serveShared({ db: f.db, clock: f.clock, originAllowed: () => true, port: address.port, reportError: error => f.errors.push(error) })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+  expect(scheduled.size).toBe(0);
   expect(f.client.open).toBe(true);
   expect(f.errors).toEqual([]);
+});
+
+it.each(['/graphql', '/api/tasks/make'])('cancels and drains a held request body before closing SQLite: %s', async path => {
+  const f = fixture();
+  let reading!: () => void, cancelled = false;
+  const started = new Promise<void>(resolve => { reading = resolve; });
+  const body = new ReadableStream<Uint8Array>({ pull() { reading(); }, cancel() { cancelled = true; } }, { highWaterMark: 0 });
+  const pending = f.root.http.fetch(new Request('http://loom' + path, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body, duplex: 'half' } as RequestInit));
+  await started;
+  await f.root.close();
+  expect(cancelled).toBe(true);
+  f.client.close();
+  expect((await pending).status).not.toBe(200);
+});
+
+it('bounds streamed command bodies even without a Content-Length header', async () => {
+  const f = fixture();
+  const response = await f.command({ title: 'x'.repeat(1024 * 1024) });
+  expect(response.status).toBe(413);
+  expect(f.db.select().from(tasks).all()).toEqual([]);
+  expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
+});
+
+it('drains an already executing socket read before the caller may close shared SQLite', async () => {
+  let release!: () => void, began!: () => void, finished!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const readDone = new Promise<void>(resolve => { finished = resolve; });
+  const events: string[] = [];
+  const f = fixture(undefined, { slow: { type: GraphQLString, async resolve() {
+    began(); await held;
+    f.db.select().from(tasks).all(); events.push('read'); finished(); return 'done';
+  } } });
+  const server = createServer(), detach = f.root.attach(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  cleanup.push(async () => { release(); detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
+  const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
+  cleanup.push(() => ws.terminate()); await once(ws, 'open');
+  const ack = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await ack;
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'slow', payload: { query: '{ slow }' } })); await started;
+  const ended = once(ws, 'close');
+  const closing = f.root.close().then(() => { events.push('closed'); });
+  await ended; release(); await readDone; await closing;
+  expect(events).toEqual(['read', 'closed']);
 });
