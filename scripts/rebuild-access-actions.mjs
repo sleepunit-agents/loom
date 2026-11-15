@@ -11,11 +11,13 @@ export async function accessAction({page,tile,title,app,out}){
  try{
   if(title==='Your account'){
    const before=db.prepare('SELECT COUNT(*) AS n FROM signin_links').get().n;
+   const ownBefore=db.prepare('SELECT COUNT(*) AS n FROM signin_links l JOIN tokens t ON t.fingerprint=l.token WHERE t.member=?').get('alex').n;
    await saved('/api/signin/link',()=>tile.getByRole('button',{name:'Make sign-in link',exact:true}).click());
    await tile.locator('[data-signin-link]').waitFor();check(db.prepare('SELECT COUNT(*) AS n FROM signin_links').get().n===before+1,'No one-time sign-in link persisted');
-   check(db.prepare('SELECT COUNT(*) AS n FROM signin_links l JOIN tokens t ON t.fingerprint=l.token WHERE t.member=?').get('alex').n===before+1,'Link belongs to another member');
+   check(db.prepare('SELECT COUNT(*) AS n FROM signin_links l JOIN tokens t ON t.fingerprint=l.token WHERE t.member=?').get('alex').n===ownBefore+1,'Link belongs to another member');
    // Never put the delivered credential into evidence or screenshots.
    await tile.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await tile.locator('[data-signin-link]').waitFor({state:'hidden'});
+   check(await tile.locator('[data-signin-link]').isHidden(),'The delivered link stayed visible');
   }else if(title==='Household setup'){
    const form=tile.getByRole('form',{name:'Add member',exact:true});await form.getByRole('textbox',{name:'Member name',exact:true}).fill('walkthrough-person');
    await saved('/api/household/setMember',()=>form.getByRole('button',{name:'Add member',exact:true}).click());
@@ -28,7 +30,7 @@ export async function accessAction({page,tile,title,app,out}){
    await saved('/api/household/setProject',()=>form.getByRole('button',{name:'Create project',exact:true}).click());
    await tile.getByText('Walkthrough sharing',{exact:true}).first().waitFor();
    check(db.prepare('SELECT name FROM projects WHERE id=?').get('walkthrough-sharing')?.name==='Walkthrough sharing','Project was not persisted');
-   check(db.prepare('SELECT member FROM project_members WHERE project=?').all('walkthrough-sharing').some(row=>row.member==='alex'),'Project membership was not persisted');
+   check(db.prepare('SELECT member FROM project_members WHERE project=?').all('walkthrough-sharing').map(row=>row.member).sort().join(',')==='alex','Project membership was not persisted');
   }else throw Error('Unknown access page');
   await page.screenshot({path:join(out,screenshot),fullPage:true});return {ok:true,screenshot};
  }catch(error){
