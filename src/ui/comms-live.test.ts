@@ -174,10 +174,12 @@ it('removing the last owner-backed watch returns remaining ownerless registratio
 it('a failed shared publication keeps the cursor and retries its member marker', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-comms-failed-publish-'));
   const owner = new PeriodicOwner(home, () => {}); owner.setEligible(true);
-  const through = Date.now() + 10;
+  const through = 1;
   reads.movedSince.mockReset(); reads.movedSince.mockReturnValue([{ id: 'thread', member: 'jonathan', updated: through }]);
   const off = watchComms(home, () => owner);
   const report = vi.spyOn(console, 'error').mockImplementation(() => {});
+  // The watched cursor must precede the fixture move regardless of setup latency.
+  withLog(home, db => db.prepare('UPDATE comms_scan SET through = 0').run());
   withLog(home, db => db.exec("CREATE TRIGGER reject_move BEFORE INSERT ON comms_member_moves BEGIN SELECT RAISE(ABORT, 'publish failed'); END"));
   try {
     const initial = withLog(home, db => db.prepare('SELECT through FROM comms_scan').get());
