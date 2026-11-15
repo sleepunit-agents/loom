@@ -1,32 +1,43 @@
 import { Conversations } from '../conversations/index.js';
 import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, approvals, conversations, inbox, members, triggerLog, triggers } from '../data/schema.js';
+import { agents, approvals, conversations, inbox, jobs, members, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
-import { createTempo, type TempoConversations } from './tempo.js';
+import { createTempo } from './tempo.js';
+import { tempoSettingsService } from './settings.js';
 
 it('publishes committed dim and mute expiry to subscriptions without an unrelated trigger or inbox write', () => {
   const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
   const at = new Date(clock.now()).toISOString();
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: at }).run();
-  for (const id of ['dimmed', 'muted']) db.insert(inbox).values({ id, toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'unknown', words: id, at, changedAt: at, state: 'waiting' }).run();
+  const mail = new Conversations(db, () => new Date(clock.now()).toISOString());
+  const dimmed = mail.send({ toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'unknown', words: 'Dimmed' });
+  const muted = mail.send({ toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'unknown', words: 'Muted' });
   const snapshots: string[][] = [];
+  const notified: string[][] = [];
   const tempo = createTempo(db, clock, {
-    conversations: { open: () => { throw new Error('No trigger'); }, send: () => { throw new Error('No trigger'); } },
-    admit: () => true, operation: () => { throw new Error('No operation'); },
+    conversations: mail,
+    admit: (who, items) => { expect(who).toEqual({ kind: 'person', id: 'jonathan' }); notified.push(items.map(item => item.id)); return true; },
+    operation: () => { throw new Error('No operation'); },
     changed: () => { snapshots.push(db.select().from(inbox).all().map(item => item.volume)); },
   });
   try {
     const who = { kind: 'person' as const, id: 'jonathan' };
     const until = new Date(clock.now() + 10_000).toISOString();
-    tempo.volume.set(who, 'dimmed', 'dim', until);
-    tempo.volume.set(who, 'muted', 'mute', until);
+    tempo.volume.set(who, dimmed.id, 'dim', until);
+    tempo.volume.set(who, muted.id, 'mute', until);
     tempo.start(); snapshots.length = 0;
     clock.advance(9_999); expect(snapshots).toEqual([]);
     clock.advance(1); expect(snapshots).toEqual([['full', 'full']]);
     expect(db.select().from(inbox).all().every(item => item.quietUntil === null && item.changedAt === at)).toBe(true);
+    // The original dimmed notification remains one line; expiration makes a
+    // new full-volume batch with the previously hidden item after settling.
+    expect(notified).toEqual([[dimmed.id]]);
+    clock.advance(4_999); expect(notified).toHaveLength(1);
+    clock.advance(1); expect(notified).toHaveLength(2);
+    expect(notified[1]).toEqual(expect.arrayContaining([dimmed.id, muted.id]));
     clock.advance(60_000); expect(snapshots).toHaveLength(1);
   } finally { tempo.close(); client.close(); }
 });
@@ -34,20 +45,7 @@ it('composes trigger/sweep delivery through conversations and only admits a sett
   const client = new Database(':memory:');
   const db = createDataSchema(client), clock = new FakeClock(), at = () => new Date(clock.now()).toISOString();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  // Persistence-only adapter: the Conversations implementation owns these writes.
-  const mail: TempoConversations = {
-    open(input) {
-      const old = db.select().from(conversations).where(eq(conversations.place, input.place)).get();
-      if (old) return old;
-      return db.insert(conversations).values({ ...input, id: input.place, turnCount: 0, startedAt: at(), lastAt: at() }).returning().get();
-    },
-    send(input) {
-      const old = db.select().from(inbox).where(and(eq(inbox.source, input.source), eq(inbox.sourceId, input.sourceId))).get();
-      if (old) return old;
-      const { refs: _, ...values } = input;
-      return db.insert(inbox).values({ ...values, id: input.sourceId, state: 'waiting', at: at(), changedAt: at() }).returning().get();
-    },
-  };
+  const mail = new Conversations(db, at);
   const admitted: string[][] = [];
   const tempo = createTempo(db, clock, { conversations: mail, admit: (_, items) => { admitted.push(items.map(i => i.words!)); return true; }, operation: () => { throw new Error('Unknown operation'); } });
   try {
@@ -55,7 +53,9 @@ it('composes trigger/sweep delivery through conversations and only admits a sett
     tempo.start(); clock.advance(10_000); expect(admitted).toEqual([]);
     tempo.triggers.set({ ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: new Date(clock.now() + 1_000).toISOString(), lifespan: 'once', targetKind: 'operation', target: 'tempo.sweep', toKind: 'agent', to: 'art', note: 'Sweep' });
     clock.advance(1_000); expect(admitted).toEqual([]);
-    expect(db.select().from(inbox).all()).toMatchObject([{ source: 'notice', conversation: 'sweep:art', state: 'waiting' }]);
+    expect(db.select().from(inbox).all()).toMatchObject([{ source: 'notice', state: 'waiting' }]);
+    expect(db.select().from(conversations).all()).toMatchObject([{ agent: 'art', venue: 'wake', place: 'sweep:art' }]);
+    expect(db.select().from(inbox).all()[0].conversation).toBe(db.select().from(conversations).all()[0].id);
     clock.advance(5_000); expect(admitted).toHaveLength(1); expect(admitted[0][0]).toContain('Pick a pump');
     tempo.triggers.set({ ownerKind: 'agent', owner: 'art', sourceKind: 'answer', watches: 'approval:1', lifespan: 'once', targetKind: 'inbox', toKind: 'agent', to: 'art', instructions: 'Continue', note: 'Approved work' });
     tempo.triggers.event('answer', 'approval:1', 'allowed'); clock.advance(4_999); expect(admitted).toHaveLength(1);
@@ -94,6 +94,63 @@ it('recovers a committed answer missed by its callback, holds it while paused, a
     tempo.start(); tempo.sources.approval('a');
     expect(deliveries).toHaveLength(1);
     expect(db.select().from(triggerLog).all().filter(row => row.event === 'fired')).toHaveLength(1);
+  } finally { tempo.close(); client.close(); }
+});
+
+it('settles real conversation mail, retries capacity, and takes only audible items after a committed timing change', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
+  const at = () => new Date(clock.now()).toISOString();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const mail = new Conversations(db, at), settings = tempoSettingsService(db, clock);
+  const cv = mail.open({ agent: 'art', venue: 'loom', place: 'pump', label: 'Pump' });
+  let capacity = false, attempts = 0;
+  const taken: string[][] = [];
+  const tempo = createTempo(db, clock, {
+    conversations: mail,
+    operation: () => { throw new Error('No operation'); },
+    admit(who, items) {
+      expect(who).toEqual({ kind: 'agent', id: 'art' });
+      expect(items.every(item => item.conversation === cv.id)).toBe(true);
+      attempts++;
+      if (!capacity) return false;
+      db.insert(jobs).values({ id: 'job', agent: 'art', conversation: cv.id, title: 'Pump', state: 'running', brief: '', model: 'test', startedByKind: 'agent', startedBy: 'art', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: at() }).run();
+      db.update(conversations).set({ job: 'job' }).where(eq(conversations.id, cv.id)).run();
+      taken.push(mail.take(cv.id, 'job').map(item => item.id));
+      // The root publishes claims after committing; this synchronous callback
+      // also exercises settling's reentrant capacity notification boundary.
+      tempo.changed();
+      return true;
+    },
+  });
+  try {
+    const send = (words: string) => mail.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'thread', fromKind: 'person', words });
+    const dim = send('One line'), muted = send('Later');
+    const who = { kind: 'agent' as const, id: 'art' };
+    tempo.volume.set(who, dim.id, 'dim');
+    tempo.volume.set(who, muted.id, 'mute', new Date(clock.now() + 20_000).toISOString());
+    tempo.start(); clock.advance(1_000);
+    const proposal = settings.prepare(who, { settleSeconds: 2 });
+    expect(() => db.transaction(() => { settings.apply(proposal); throw new Error('Rollback'); })).toThrow('Rollback');
+    expect(settings.read(who).settleSeconds).toBe(5);
+    db.transaction(() => settings.apply(proposal)); tempo.changed();
+    clock.advance(1_999); expect(attempts).toBe(0);
+    clock.advance(1); expect(attempts).toBe(1); expect(taken).toEqual([]);
+    capacity = true; tempo.changed();
+    expect(taken).toEqual([[dim.id]]);
+    expect(mail.item(muted.id)).toMatchObject({ state: 'waiting', job: null, volume: 'mute' });
+    expect(mail.item(dim.id)).toMatchObject({ state: 'taken', job: 'job', volume: 'dim' });
+    mail.confirm(dim.id, 'job'); tempo.changed();
+    // A named ask breaks mute in the same transaction as the content change.
+    db.transaction(() => {
+      db.update(inbox).set({ words: 'Art, answer now', changedAt: at() }).where(eq(inbox.id, muted.id)).run();
+      tempo.volume.changed(who, muted.id, true);
+    });
+    tempo.changed();
+    expect(mail.item(muted.id)).toMatchObject({ volume: 'full', quietUntil: null });
+    // The running job consumes the newly audible item through the real API.
+    expect(mail.take(cv.id, 'job').map(item => item.id)).toEqual([muted.id]);
+    tempo.changed(); clock.advance(30_000);
+    expect(attempts).toBe(2); expect(taken).toHaveLength(1);
   } finally { tempo.close(); client.close(); }
 });
 

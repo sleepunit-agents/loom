@@ -349,6 +349,44 @@ it('stops late authentication database reads when the root withdraws admission d
   } finally { release(); spy.mockRestore(); }
 });
 
+it('ships the Tempo selection through the generated door and withdraws it after project revocation', async () => {
+  const f = await setup();
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(s.triggers).values({ id:'tempo-pond',ownerKind:'household',sourceKind:'answer',watches:'approval:example',lifespan:'once',
+    targetKind:'inbox',toKind:'person',to:'owner',project:'pond',note:'Wait for answer',enabled:true,state:'standing',createdAt:at,changedAt:at }).run();
+  f.db.insert(s.triggerLog).values({seq:1,trigger:'tempo-pond',at,event:'set',note:''}).run();
+  const { tempoQuery } = await import('../web/src/pieces/tempo/query.js');
+  const request = () => f.data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({query:tempoQuery})});
+  const first = await (await request()).json();
+  expect(first.errors).toBeUndefined();
+  expect(first.data.triggers).toMatchObject([{id:'tempo-pond',note:'Wait for answer'}]);
+  expect(first.data.triggerLog).toMatchObject([{trigger:'tempo-pond',event:'set'}]);
+  const socket = await f.open();
+  const initial = await read(socket,()=>socket.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:tempoQuery}}})));
+  expect(initial.payload.data.observe.patches[0].value).toEqual(first.data);
+  const withdrawn = await read(socket,()=>{f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'"));});
+  expect(withdrawn.payload.data.observe.patches).toEqual(expect.arrayContaining([
+    {path:['triggers',0],removed:true,value:null}, {path:['triggerLog',0],removed:true,value:null},
+  ]));
+  const removed = await (await request()).json();
+  expect(removed.errors).toBeUndefined();
+  expect(removed.data).toEqual({triggers:[],triggerLog:[],agentPauses:[]});
+});
+
+it('withdraws selected Tempo instructions when project access changes during a sibling await',async()=>{
+ const {GraphQLString}=await import('graphql/index.js');let entered!:()=>void,release!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const f=await setup({held:{type:GraphQLString,async resolve(){entered();await gate;return 'ready';}}}),at=new Date(f.clock.now()).toISOString();
+ f.db.insert(s.triggers).values({id:'private-frame-trigger',ownerKind:'household',sourceKind:'answer',watches:'question:pending',lifespan:'once',targetKind:'inbox',toKind:'person',to:'owner',project:'pond',instructions:'PRIVATE TEMPO WORDS',note:'Private instruction',enabled:true,state:'standing',createdAt:at,changedAt:at}).run();
+ const pending=f.data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({query:'{ triggers { id instructions } held }'})});
+ try{
+  await ready;f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'"));release();
+  const response=await pending,text=await response.text();expect(text).not.toContain('PRIVATE TEMPO WORDS');expect(text).not.toContain('private-frame-trigger');
+  if(response.status===200)expect(JSON.parse(text).data.triggers).toEqual([]);
+  else expect([401,403,503]).toContain(response.status);
+ }finally{release();await pending;}
+});
+
 it.each(['http', 'socket', 'observe'])('fences an already-selected private Task after owner demotion (%s)', async mode => {
   let began!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
