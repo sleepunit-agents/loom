@@ -33,6 +33,13 @@ export function dataSocket(options: {
       auth.activity?.();
       return dataSubscriptions(options.schema(auth.viewer), options.live, () => auth.valid());
     },
+    context(ctx) {
+      const auth = admitted.get(ctx.extra.socket);
+      if (!auth?.valid()) throw new Error('Authentication ended');
+      // The same server-resolved principal feeds direct reads and every live
+      // execution. Neither variables nor connectionParams supply this context.
+      return Object.freeze({ viewer: auth.viewer });
+    },
     // Never include database/driver errors or query-generated values in errors.
     onError() { return [{ message: 'Data subscription could not complete' }]; },
   }, ws, 0);
