@@ -2,7 +2,7 @@
  * this module neither grants access nor invents a second authentication model. */
 import { and, asc, eq, is, sql, SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import type { Viewer } from '../../core/index.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
 const day = 86400_000;

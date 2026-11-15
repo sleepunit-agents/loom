@@ -2,7 +2,7 @@
  * authenticated executor. No Comms encryption or independent identity door. */
 import { eq } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import type { Viewer } from '../../core/index.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { household, members } from '../../core/data/schema.js';
 export function bridgeSecretsReaderFields(db: DataDatabase): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
