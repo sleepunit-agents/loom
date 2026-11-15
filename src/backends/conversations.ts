@@ -792,7 +792,7 @@ export function openNeeds(contextDir: string, selection?: MemorySelection): Arra
 /**
  * How a Needs you was answered: done (it's handled), dismissed (not theirs), replied (their words went to the
  * agent), or yes or no (their Yes or No went to the agent, with the ask's own line for it), by the owner; or resolved,
- * by core, when what it waits on was (src/needs-resolve.ts: `reason` says how).
+ * by a legacy caller when its waiting target was resolved (`reason` says how).
  */
 export type NeedsVerdict = 'done' | 'dismissed' | 'replied' | 'yes' | 'no' | 'resolved';
 export const NEEDS_VERDICTS: readonly NeedsVerdict[] = ['done', 'dismissed', 'replied', 'yes', 'no', 'resolved'];

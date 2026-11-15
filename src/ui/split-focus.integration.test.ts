@@ -11,7 +11,7 @@ describe.runIf(chrome && existsSync(`${root}web/node_modules/react`))('Split foc
     const result = await build({ stdin: { contents: `
       import React, { useState } from 'react';
       import { createRoot } from 'react-dom/client';
-      import { Split } from './src/split';
+      import { Split } from './src/kit/split';
       function App() {
         const [open, setOpen] = useState(false);
         window.closeReader = () => setOpen(false);

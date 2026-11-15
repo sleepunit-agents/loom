@@ -25,7 +25,7 @@ import { venueLabel } from './household-store.js';
 import { knowledgeView, householdPersonName } from './ui/household-pages.js';
 import { listProjects } from './tools/project.js';
 import { Notes, notesDbPath } from './notes.js';
-import { pieceWithRole } from './needs-resolve.js';
+import { pieceWithRole } from './legacy-piece-checkers.js';
 import { pieceApi, type PieceInfo } from './ui/pieces.js';
 import { owns, type Thread } from './comms.js';
 import type { WorkItem } from './comms-work.js';

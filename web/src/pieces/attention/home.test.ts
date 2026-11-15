@@ -105,7 +105,7 @@ it('shows generated current jobs independently of reports and preserves server o
   const panel=tree!.root.findByProps({'aria-label':'Art runtime jobs'});
   expect(words(panel)).toContain('Runtime jobs · 4');expect(panel.findAllByType('li')).toHaveLength(4);
   expect(panel.findAllByType('h4').map(words)).toEqual(['Same work','Same work','Runtime queued','Runtime starting']);
-  expect(words(panel)).toContain('running · Box worker');expect(words(panel)).toContain(' CT');
+  expect(words(panel)).toContain('running · Assigned machine');expect(words(panel)).toContain(' CT');
   expect(words(panel)).not.toContain('Runtime foreign');expect(words(panel)).not.toContain('Runtime failed');
   expect(f.call).not.toHaveBeenCalled();
   await publish('generated.jobs',live([{...runtimeJob('new',{title:'New authoritative work'}),queuedAt:new Date(1).toISOString()}]));
