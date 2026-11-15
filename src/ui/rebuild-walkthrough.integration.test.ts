@@ -46,6 +46,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Home'){const result=step.value.report.actions?.homeMessage;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();}
   if(title==='Your account')expect(step.value.report.actions.modelsMachines,JSON.stringify(step.value.report.actions.modelsMachines)).toMatchObject({ok:true});
   if(title==='Knowledge')expect(app.action,JSON.stringify(app.action)).toMatchObject({ok:true,provisional:true,rechecked:true,verified:true,persistedAfterReload:true,connection:'existing /graphql'});
+  if(title==='Tempo')expect(app.actions.resumed.facts).toMatchObject({sourceKind:'answer',watches:'approval:'+step.value.report.example.approval,lifespan:'once',enabled:false,stillOnceAfterLaterDeadline:true});
   if(title==='Tempo'){expect(app.error).toBeUndefined();expect(app.actions).toMatchObject({held:{ok:true},resumed:{ok:true},settled:{ok:true},cancelled:{ok:true}});for(const name of ['held','resumed','settled','cancelled'])expect(readFileSync(join(out,app.actions[name].screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));}
  });
  it('measures Inbox answer variants and retained history',{retry:0,timeout:20_000},async()=>{
@@ -94,7 +95,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    const measured=JSON.parse(readFileSync(join(out,'report.json'),'utf8'));
    expect(measured.pages).toHaveLength(19);
    const tempo=measured.pages.find((page:{page:string})=>page.page==='tempo');
-   const observed=tempo.promises.filter((entry:{probe?:{kind:string;action?:string}})=>entry.probe?.kind==='action'&&entry.probe.action?.startsWith('tempo'));expect(observed).toHaveLength(4);expect(observed.map((entry:{status:string})=>entry.status)).toEqual(['met','met','met','met']);
+   const observed=tempo.promises.filter((entry:{probe?:{kind:string;action?:string}})=>entry.probe?.kind==='action'&&entry.probe.action?.startsWith('tempo'));expect(observed).toHaveLength(5);expect(observed.map((entry:{status:string})=>entry.status)).toEqual(['met','met','met','met','met']);
    for(const name of ['tempoHeld','tempoResumed','tempoSettled','tempoCancelled'])expect(report.actions[name]).toMatchObject({ok:true,screenshot:expect.any(String)});
    expect(measured.counts['not checkable yet']).toBeGreaterThan(0);
    expect(measured.pages.every((page:{promises:unknown[]})=>page.promises.length>0)).toBe(true);

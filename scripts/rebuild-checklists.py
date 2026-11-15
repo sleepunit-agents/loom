@@ -79,6 +79,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
   add(text,'',probe)
  if f.stem=='tempo':
+  for row in rows:
+   if row['promise'].startswith('Waiting on an approval is a once-only trigger on that answer.'):row['probe']={'kind':'action','action':'tempoResumed'}
   for check,text in [('held','An answer arriving while the agent is paused does not fire its trigger.'),('resumed','Resuming fires the held once-only answer trigger exactly once.'),('settled','Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.'),('cancelled','Cancelling a future trigger prevents delivery beyond its deadline.')]:add(text,'',{'kind':'action','action':'tempo'+check.capitalize()})
  if f.stem=='conversations':
   add('Sending in Comms persists the message after reload and creates one Inbox delivery item.','',{'kind':'action','action':'commsSend'})
