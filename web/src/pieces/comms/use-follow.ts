@@ -29,7 +29,7 @@ export function useReplyFollow(scroller:RefObject<HTMLDivElement|null>,rows:read
    if(following.current)down();
    drawn.current=measure(el);
   });
-  observer.observe(el);observer.observe(content);return()=>observer.disconnect();
+  observer.observe(el);observer.observe(content);el.addEventListener('scroll',onScroll);return()=>{observer.disconnect();el.removeEventListener('scroll',onScroll);};
  },[live,scroller]);
- return {unread:live?unread:0,down,onScroll};
+ return {unread:live?unread:0,down,onScroll,atLatest:()=>following.current};
 }

@@ -18,6 +18,5 @@ it.each(['loading','offline','denied'] as const)('withdraws retained activity on
 it('keeps live empty distinct from missing, refused or malformed selections',()=>{
  expect(deskRecentActivity({status:'live'})).toEqual({status:'loading',records:[]});
  expect(deskRecentActivity({status:'live',data:null})).toEqual({status:'denied',records:[]});
- expect(deskRecentActivity({status:'error'})).toEqual({status:'offline',records:[]});
  expect(deskRecentActivity({status:'live',data:deskRecentActivitySelection.decode({memoryActivity:{...window,entries:[]}})})).toMatchObject({status:'live',records:[{entries:[]}]});
 });

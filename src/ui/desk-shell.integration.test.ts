@@ -134,6 +134,15 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     await expect.poll(()=>b.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBeGreaterThan(0);
     await b.screenshot({path:join(shots,`new-work-${look}-${width}.png`),animations:'disabled'});
     if(width>=1024){await expect.poll(()=>b.locator('.desk-rail-card').count()).toBe(1);await b.locator('.next-rail').screenshot({path:join(shots,`new-rail-${look}-${width}.png`),animations:'disabled'});}
+    await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
+    const screen=b.getByRole('region',{name:"Art's comm screen",exact:true});
+    await expect.poll(()=>screen.count()).toBe(1);
+    await expect.poll(()=>screen.getAttribute('data-location')).toBe(width>=1280?'rail':'inline');
+    const glass=await screen.locator('.desk-comms-glass').boundingBox();expect(glass?.width).toBe(194);expect(glass?.height).toBe(194);
+    if(width>=1280){await expect.poll(()=>b.locator('.desk-agent-rail > [data-companion=true]').getAttribute('data-agent')).toBe('art');expect(await b.locator('.next-rail .desk-comms-screen').count()).toBe(1);}
+    expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await b.screenshot({path:join(shots,`new-comms-${look}-${width}.png`),animations:'disabled'});
+    await b.goto(app.url+'/p/agents-preview/agent/art');await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);
     await b.getByRole('button',{name:'All apps',exact:true}).first().click();
     await expect.poll(()=>b.getByRole('textbox',{name:'Find an app',exact:true}).isVisible()).toBe(true);
     await b.screenshot({path:join(shots,`new-launcher-${look}-${width}.png`),animations:'disabled'});await b.keyboard.press('Escape');
@@ -141,6 +150,12 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);await b.screenshot({path:join(shots,`new-agent-${look}-${width}.png`),animations:'disabled'});
    }
   }
+  // A narrow desktop keeps the full-size screen inline; minimizing clears
+  // selection even though the reader component remains mounted in the tile.
+  await b.setViewportSize({width:1024,height:900});await b.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(thread.id.replace(/^th:/,'')));
+  await expect.poll(()=>b.getByRole('region',{name:"Art's comm screen",exact:true}).getAttribute('data-location')).toBe('inline');
+  await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
+  await expect.poll(()=>b.locator('.desk-comms-screen').count()).toBe(0);expect(await b.locator('[data-companion=true]').count()).toBe(0);
   // Shell behavior uses actual registered apps on the same shared program.
   // Paths survive reload; minimizing and Home retain the existing tile state.
   await b.setViewportSize({width:1440,height:900});await b.goto(app.url+'/p/agents-preview/agent/art');
@@ -201,7 +216,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // status rows remain visible. This is an actual same-root write + socket read.
   await b.goto(app.url);app.writes.run(()=>db.delete(memberAgents).run());
   await expect.poll(()=>b.getByText('No agents of your own',{exact:true}).count()).toBe(1);expect(db.select().from(agents).all()).toHaveLength(5);
-  expect(faceRequests).toBe(0);expect(maximumConnections).toBe(1);expect(connections.get(a)).toBe(1);expect(connections.get(b)).toBe(1);
+  expect(legacyConnections).toBe(0);expect(faceRequests).toBe(0);expect(maximumConnections).toBe(1);expect(connections.get(a)).toBe(1);expect(connections.get(b)).toBe(1);
   expect((await fetch(app.url+'/manifest.webmanifest')).status).toBe(200);expect((await fetch(app.url+'/sw.js')).headers.get('service-worker-allowed')).toBe('/');
   app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).where(eq(tokens.fingerprint,fingerprint)).run());
   for(const page of [a,b])await expect.poll(()=>page.getByText('OK to run the backup now?',{exact:true}).count()).toBe(0);

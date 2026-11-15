@@ -98,7 +98,7 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
   const cleanupMs = deadline(fixed.container.cleanupTimeoutMs, 30_000);
   return {
-    build: (job, signal) => { runner(job); return builder.build(job, signal); },
+    build: (job, signal, repositoryInput) => { runner(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job), plan = runner(assignment);
       if (!plan || signal.aborted) throw new Error('Container runner unavailable');

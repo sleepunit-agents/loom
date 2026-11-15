@@ -4,6 +4,7 @@
  * and before committing. This service does not authenticate a machine. */
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { household, inbox, inboxRefs, messages, threads } from '../data/schema.js';
+import { mailWords } from './volume.js';
 import { CommsMessages } from './messages.js';
 
 type Item = typeof inbox.$inferSelect;
@@ -26,7 +27,8 @@ export class ConversationMail {
   /** Preparation has no durable effects. The returned commit is synchronous
    * and can join the caller's transaction after its current auth check. Mail
    * arriving later is left waiting for the next preparation. */
-  async prepareTake(conversation: string, job: string): Promise<() => Delivery[]> {
+  async prepareTake(conversation: string, job: string, limit = 50): Promise<() => Delivery[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid mail batch size');
     const { db, key, now, threads: { conversations } } = this.comms;
     if (db.$client.inTransaction) throw new Error('Prepare mail outside a transaction');
     const keepDays = () => db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
@@ -35,7 +37,7 @@ export class ConversationMail {
       return !!message.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
         && Date.parse(message.keepUntil) > Date.parse(now()) && Date.parse(message.at) + days * 86400000 > Date.parse(now());
     };
-    const items = conversations.pending(conversation, job), privateRows = this.privateMessages(items);
+    const items = conversations.pending(conversation, job).slice(0,limit), privateRows = this.privateMessages(items);
     const refs = () => items.length ? db.select().from(inboxRefs).where(inArray(inboxRefs.item, items.map(item => item.id)))
       .orderBy(asc(inboxRefs.item), asc(inboxRefs.ref)).all() : [];
     const beforeRefs = refs();
@@ -64,7 +66,7 @@ export class ConversationMail {
           || JSON.stringify({ ...after.message, words: null }) !== JSON.stringify({ ...before.message, words: null }))
           throw new Error('Private message changed; prepare again');
       }
-      return conversations.take(conversation, job, items.map(item => item.id)).map(item => ({ item, words: words.get(item.id) ?? null }));
+      return conversations.take(conversation, job, items.map(item => item.id)).map(item => ({ item, words: mailWords(item.volume,words.get(item.id) ?? null) }));
     });
   }
 
@@ -75,6 +77,7 @@ export class ConversationMail {
       conversations.pending(conversation, job); // also validates done-item retries
       const item = conversations.item(itemId), cv = conversations.conversation(conversation);
       if (item.conversation !== conversation || item.toKind !== 'agent' || item.to !== cv.agent) throw new Error('Mail differs from conversation');
+      if(item.thread){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
       const result = conversations.confirm(itemId, job);
       if (item.thread && item.messageSeq !== null) db.update(messages).set({ delivery: 'delivered' })
         .where(and(eq(messages.thread, item.thread), eq(messages.seq, item.messageSeq), eq(messages.inboxItem, item.id), eq(messages.kind, 'message'))).run();

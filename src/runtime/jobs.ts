@@ -1,5 +1,6 @@
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
+import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -51,7 +52,7 @@ export class Jobs {
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms words are delivered ephemerally by ConversationMail, never copied
         // into the durable worker job. Other venues keep their ordinary brief.
-        state: 'queued', brief: conversation.venue === 'loom' ? '' : mail.map(item => item.words ?? '').join('\n\n'), model: model.model,
+        state: 'queued', brief: conversation.venue === 'loom' ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,

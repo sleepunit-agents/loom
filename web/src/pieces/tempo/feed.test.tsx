@@ -38,3 +38,8 @@ it('clears rows on a new live selection and treats a missing payload as loading'
   await act(async () => tree.update(h(TempoApp, { timezone: 'UTC' })));
   expect(tree.root.findByType('tempo').props.snapshot.status).toBe('loading');
 });
+it('uses the household timezone from the shared selection rather than the browser fallback', async () => {
+ state.feed={status:'live',data:{...data,tempoTimezone:'America/Chicago'}};
+ await act(async()=>{tree=create(h(TempoApp,{timezone:'Asia/Tokyo'}));});
+ expect(tree.root.findByType('tempo').props.snapshot.timezone).toBe('America/Chicago');
+});

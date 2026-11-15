@@ -24,6 +24,28 @@ function fixture() {
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 describe('worker work plane', () => {
+  it.each([false, true])('hands repository bytes privately to build and erases them after settlement (failure=%s)', async failed => {
+    const f = fixture(), bytes = Buffer.from('PRIVATE_REPOSITORY_INPUT');
+    const input = deferred<Uint8Array | undefined>();
+    f.control.repositoryInput = vi.fn(() => input.promise);
+    const run = f.run(); await flush();
+    expect(f.executor.build).not.toHaveBeenCalled();
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting');
+    input.resolve(bytes); await flush();
+    expect(f.executor.build).toHaveBeenCalledWith(job, expect.any(AbortSignal), bytes);
+    expect(bytes.toString()).toBe('PRIVATE_REPOSITORY_INPUT');
+    expect(JSON.stringify(job)).not.toContain('PRIVATE_REPOSITORY_INPUT');
+    if (failed) f.built.reject(new Error('private build failure'));
+    else { f.built.resolve('image'); f.spawned.resolve(); await flush(); f.exited.resolve({ exitCode: 0, logTail: '' }); }
+    expect(await run).toBe('finished'); expect(bytes.every(byte => byte === 0)).toBe(true);
+  });
+  it('erases late repository input after cancellation without building', async () => {
+    const f = fixture(), input = deferred<Uint8Array | undefined>(), bytes = Buffer.from('PRIVATE');
+    f.control.repositoryInput = vi.fn(() => input.promise);
+    const run = f.run(); await flush(); f.abort.abort(); input.resolve(bytes);
+    expect(await run).toBe('abandoned'); expect(bytes.every(byte => byte === 0)).toBe(true);
+    expect(f.executor.build).not.toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled();
+  });
   it('builds before launching, acknowledges actual spawn, reports real exit and bounds logs', async () => {
     const f = fixture(), run = f.run(); await flush();
     expect(f.executor.start).not.toHaveBeenCalled();

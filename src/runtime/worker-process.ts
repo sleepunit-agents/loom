@@ -150,7 +150,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
     throw new Error('Invalid worker build deadline');
   const runner = workerRunner(config);
   return {
-    async build(job, signal) {
+    async build(job, signal, repositoryInput) {
       runner(job);
       const abort = new AbortController();
       const cancel = () => abort.abort();
@@ -161,7 +161,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       try {
         attempt = launch(buildPlan, abort.signal, runtime);
         await attempt.spawned;
-        await attempt.release({ job: job.id, house: job.house });
+        await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
         const result = await attempt.exited;
         if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
         const output: unknown = JSON.parse(attempt.output());

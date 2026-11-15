@@ -11,7 +11,7 @@ export function useTempoSnapshot(timezone: string): TempoSnapshot {
   return {
     status: feed.status === 'live' && !data ? 'loading' : feed.status,
     triggers: data?.triggers ?? [], events: data?.triggerLog ?? [],
-    pauses: data?.agentPauses ?? [], timezone,
+    pauses: data?.agentPauses ?? [], timezone: data?.tempoTimezone ?? timezone,
   };
 }
 export function TempoApp({ timezone, actions }: { timezone: string; actions?: TempoActions }) {

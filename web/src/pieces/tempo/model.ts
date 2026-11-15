@@ -36,8 +36,8 @@ export function rows(triggers: readonly Trigger[], folder: Folder, search = '', 
     && [title(trigger), trigger.id, trigger.to, trigger.owner, trigger.project, trigger.watches,
       trigger.instructions, trigger.file].join(' ').toLocaleLowerCase().includes(query))
     .sort((a, b) => folder === 'history'
-      ? b.changedAt.localeCompare(a.changedAt) || a.id.localeCompare(b.id)
-      : (a.nextDueAt ?? '\uffff').localeCompare(b.nextDueAt ?? '\uffff') || a.id.localeCompare(b.id));
+      ? Date.parse(b.changedAt) - Date.parse(a.changedAt) || a.id.localeCompare(b.id)
+      : (a.nextDueAt ? Date.parse(a.nextDueAt) : Infinity) - (b.nextDueAt ? Date.parse(b.nextDueAt) : Infinity) || a.id.localeCompare(b.id));
 }
 
 export function source(trigger: Trigger): string {
@@ -47,7 +47,7 @@ export function source(trigger: Trigger): string {
 export const target = (trigger: Trigger) => trigger.targetKind === 'operation'
   ? `Operation: ${trigger.target}` : `An item in ${trigger.to}'s inbox`;
 export function history(events: readonly TriggerEvent[], trigger: string): TriggerEvent[] {
-  return events.filter(event => event.trigger === trigger).sort((a, b) => b.seq - a.seq);
+  return events.filter(event => event.trigger === trigger && event.event !== 'source-snapshot').sort((a, b) => b.seq - a.seq);
 }
 export function status(trigger: Trigger, pauses: readonly AgentPause[]): string {
   return !terminal(trigger) && trigger.toKind === 'agent' && pauses.some(pause => pause.agent === trigger.to)
