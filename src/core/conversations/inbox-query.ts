@@ -114,7 +114,7 @@ export class InboxQueries {
       const state = item.thread ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
-      else {
+      {
         const answerState = item.thread ? privateState(item, true) : undefined;
         const answer = await this.answerText(viewer, item.id);
         if (answer?.toLocaleLowerCase().includes(query)) matches.push({ item, state: answerState, fromAnswer: true });
@@ -131,7 +131,16 @@ export class InboxQueries {
         && Number.isInteger(after.keep) && after.keep >= 1 && after.keep <= 14
         && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
     });
-    const page = current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
+    // One item may match both its question and its independently retained
+    // answer. Keep the longest still-valid witness, once, before paging.
+    const unique = new Map<string, typeof current[number]>();
+    const deadline = (match: typeof current[number]) => match.metadata || !match.state?.message
+      ? Infinity : wordsDeadline(match.state.message, match.state.keep);
+    for (const match of current) {
+      const prior = unique.get(match.item.id);
+      if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
+    }
+    const page = [...unique.values()].slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
     for (const match of page) if (!match.metadata && match.state?.message) {
       const message = match.state.message;
       retainedUntil?.(wordsDeadline(message, match.state.keep));

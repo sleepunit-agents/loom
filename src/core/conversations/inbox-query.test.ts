@@ -443,3 +443,11 @@ it.each(['revoke','expiry','cipher','link'] as const)('rechecks earlier private 
  f.onOpen(()=>{if(++opens!==3)return;if(change==='revoke')f.revoke();if(change==='expiry')f.time('2026-11-29T18:00:00Z');if(change==='cipher')f.db.update(messages).set({words:Buffer.from('Replaced answer')}).where(eq(messages.seq,answer.seq)).run();if(change==='link')f.db.update(inbox).set({sourceId:'different-question'}).where(eq(inbox.sourceId,f.ask.inboxItem!)).run();});
  expect(await f.service.search(alice,{search:'needle',folder:'answered'})).toEqual([]);expect(opens).toBeGreaterThanOrEqual(3);
 });
+it('keeps one answer match when matching question words expire during a later decrypt, using the surviving answer deadline',async()=>{
+ const f=await fixture();await f.comms.answer(f.ask.inboxItem!,'alice','words','Private answer remains');const originalAnswer=f.db.select().from(messages).all().find(row=>row.kind==='answer')!;
+ const other=await f.comms.ask(f.thread.id,'art','other-ask',{words:'Different question',answers:'yes-no'});await f.comms.answer(other.inboxItem!,'alice','words','Different response');
+ f.db.update(inbox).set({at:'2026-11-14T18:01:00Z'}).where(eq(inbox.id,f.ask.inboxItem!)).run();f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).where(eq(messages.seq,f.ask.seq)).run();f.db.update(messages).set({keepUntil:'2026-11-14T18:00:02Z'}).where(eq(messages.seq,originalAnswer.seq)).run();
+ const firstLeases:number[]=[];expect((await f.service.search(alice,{search:'private',folder:'answered',limit:1},at=>firstLeases.push(at))).map(row=>row.id)).toEqual([f.ask.inboxItem]);expect(firstLeases).toEqual([Date.parse('2026-11-14T18:00:02Z')]);
+ let opens=0;f.onOpen(()=>{if(++opens===3)f.time('2026-11-14T18:00:01Z');});const leases:number[]=[];
+ expect((await f.service.search(alice,{search:'private',folder:'answered',limit:1},at=>leases.push(at))).map(row=>row.id)).toEqual([f.ask.inboxItem]);expect(leases).toEqual([Date.parse('2026-11-14T18:00:02Z')]);expect(opens).toBeGreaterThanOrEqual(3);
+});
