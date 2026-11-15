@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { commandUsageProvider, commandWorkerExecutor, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
+import { commandUsageProvider, commandWorkerExecutor, commandOutput, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
 import type { WorkerAssignment } from './worker.js';
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'custom-model', account: 'sub', harness: 'custom-runner', brief: 'private brief', house: { repository: 'repo', file: 'Containerfile', branch: 'main' } };
@@ -358,4 +358,42 @@ it('selects each distinct harness within the same account', async () => {
     expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/'+harness, env: { PROFILE: harness+'-only' } }));
     f.children[index].child.emit('spawn'); await body.spawned; f.children[index].child.emit('close', 0, null); await body.stop();
   }
+});
+
+it('passes a credential only to an explicitly opted-in fixed child stdin and discards both output streams', async () => {
+  const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)), raw = token.toString(), executor = commandWorkerExecutor({ build: plan, runners: { 'custom-runner': { ...plan, bodyBootstrap: true } } }, f.runtime);
+  const body = executor.start(job, 'image', new AbortController().signal), child = f.children[0];
+  child.child.emit('spawn'); await body.spawned; expect(child.input()).toBe(''); expect(body.acceptsBootstrap).toBe(true);
+  child.child.stdout.emit('data', 'early diagnostic');
+  await body.release({ origin: 'https://loom.example', job: job.id, token });
+  expect(JSON.parse(child.input())).toEqual({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: job.id, token: raw } });
+  expect(JSON.stringify(vi.mocked(f.runtime.spawn).mock.calls)).not.toContain(raw);
+  child.child.stdout.emit('data', raw); child.child.stderr.emit('data', raw); child.child.emit('close', 0);
+  expect(await body.exited).toEqual({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
+});
+it('never sends a bootstrap to an ordinary envelope child', async () => {
+  const f = fixture(), body = f.executor.start(job, 'image', new AbortController().signal), child = f.children[0]; child.child.emit('spawn'); await body.spawned;
+  expect(body.acceptsBootstrap).toBe(false);
+  await expect(async () => body.release({ origin: 'https://loom.example', job: job.id, token: Buffer.from('body_'+'a'.repeat(64)) })).rejects.toThrow('Private body input mode differs');
+  expect(child.input()).toBe(''); await body.stop();
+});
+
+it('selects private bootstrap from the exact account and harness rather than a shared default', async () => {
+  const f = fixture(), executor = commandWorkerExecutor({ build: plan, runners: { 'custom-runner': { ...plan, bodyBootstrap: true } }, accountRunners: {
+    sub: { 'custom-runner': { ...plan, bodyBootstrap: true }, other: { ...plan, bodyBootstrap: false } }, ordinary: { 'custom-runner': plan },
+  } }, f.runtime);
+  for (const [account, harness, privateMode] of [['sub', 'custom-runner', true], ['sub', 'other', false], ['ordinary', 'custom-runner', false]] as const) {
+    const assignment = { ...job, account, harness }, body = executor.start(assignment, 'image', new AbortController().signal), child = f.children.at(-1)!; child.child.emit('spawn'); await body.spawned;
+    expect(body.acceptsBootstrap).toBe(privateMode);
+    const token = Buffer.from('body_'+'a'.repeat(64)); if (privateMode) await body.release({ origin: 'https://loom.example', job: assignment.id, token }); else await body.release();
+    const value = JSON.parse(child.input()); expect(value.job).toEqual(assignment); expect(Boolean(value.bootstrap)).toBe(privateMode); await body.stop(); token.fill(0);
+  }
+});
+
+it('clears retained stdout and both tails, then disables private output capture', () => {
+  const retained = commandOutput(); retained.stdout('before', 6); retained.stderr('diagnostic');
+  expect(retained.value()).toBe('before'); expect(retained.tail()).toBe('beforediagnostic'); retained.discard();
+  expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
+  retained.stdout('PRIVATE_BODY_TOKEN', 18); retained.stderr('PRIVATE_BODY_TOKEN');
+  expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
 });
