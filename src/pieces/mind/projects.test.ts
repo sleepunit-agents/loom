@@ -3,8 +3,6 @@ import BetterSqlite3 from 'better-sqlite3';
 import {mkdtempSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {once} from 'node:events';
-import {WebSocket} from 'ws';
 import {startLoom} from '../../foundation.js';
 import {FakeClock,type Sharing,type Viewer} from '../../core/index.js';
 import {ProjectsStore} from '../../backends/projects.js';
@@ -12,9 +10,8 @@ import {PeopleStore} from '../../backends/people.js';
 import {installTouched} from '../../core/touched/index.js';
 import {installTasks} from '../tasks/index.js';
 import {tasksRole} from '../tasks/role.js';
-import {mindRole} from './role.js';
-import {installMindPeople} from './people.js';
-import {installMindProjects,type ProjectRecord} from './projects.js';
+import {peopleReader} from './people.js';
+import {createProjectsReader} from './projects.js';
 import {projectTasks,type ProjectSectionRole} from './projects-roles.js';
 const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
 const dir=()=>{const h=mkdtempSync(join(tmpdir(),'mind-projects-'));homes.push(h);return h;};
@@ -24,23 +21,24 @@ const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:fals
 function source(){const path=join(dir(),'memories.db');const store=new ProjectsStore({dbPath:path,now:()=>Date.parse('2026-11-12T12:00:00Z')});const database=new BetterSqlite3(path);closes.push(()=>store.close(),()=>database.close());return {write:store.write.bind(store),database};}
 async function fixture(a:string,b?:string,roles:{notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}={}){
  const clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
+ let projects!:ReturnType<typeof createProjectsReader>;
  const app=await startLoom({home:dir(),clock,authenticate:req=>({viewer:req.url?.includes('partial')?partial:owner,valid:()=>true}),install(app){
   installTasks(app.db,app.operations,app.live,()=>sharing);
   const agents=[{agent:'art',memories:a},...(b?[{agent:'other',memories:b}]:[])];
-  const people=installMindPeople(app.operations,app.live,{agents,sharing:()=>sharing});app.onClose(()=>people.close());
-  const projects=installMindProjects(app.operations,app.live,{agents,sharing:()=>sharing,people:mindRole(app.operations),tasks:projectTasks(tasksRole(app.operations)),...roles});app.onClose(()=>projects.close());
+  const people=peopleReader({agents,sharing:()=>sharing,now:()=>clock.now()});app.onClose(()=>people.close());
+  projects=createProjectsReader(clock,{agents,sharing:()=>sharing,people,tasks:projectTasks(tasksRole(app.operations)),...roles});app.onClose(()=>projects.close());
   installTouched(app.operations,(v,c)=>v.kind==='agent'&&v.id==='art'?c:undefined);
- }});closes.push(()=>app.close());return app;
+ }});closes.push(()=>app.close());return {...app,projects};
 }
-function read(app:Awaited<ReturnType<typeof fixture>>,id:string,v=owner){const r=app.operations.call('direct',v,'mind.projectRead',{id});if(!r.ok)throw Error(r.message);return r.value as ProjectRecord;}
+function read(app:Awaited<ReturnType<typeof fixture>>,id:string,v=owner){const row=app.projects.read(id,v);if(!row)throw Error('Project absent');return row;}
 it('keeps private agent project selection and each content type independently authorized',async()=>{
  const a=source(),b=source();a.write({slug:'pond',name:'Art Pond'});b.write({slug:'pond',name:'Other Pond'});
  const app=await fixture(a.database.name,b.database.name);
- expect(app.operations.call('direct',partial,'mind.projectsList',{})).toMatchObject({value:[{id:'art:pond',name:'Art Pond'}]});
- expect(app.operations.call('direct',{kind:'member',id:'outsider'},'mind.projectsList',{})).toMatchObject({value:[]});
- expect(app.operations.call('direct',partial,'mind.projectRead',{id:'other:pond'})).toMatchObject({code:'denied'});
+ expect(app.projects.list(partial)).toMatchObject([{id:'art:pond',name:'Art Pond'}]);
+ expect(app.projects.list({kind:'member',id:'outsider'})).toMatchObject([]);
+ expect(app.projects.read('other:pond',partial)).toBeUndefined();
  expect(read(app,'art:pond',{kind:'service',id:'cards'}).sections.find(s=>s.key==='people')).toMatchObject({available:true,items:[]});
- expect(app.operations.call('direct',{kind:'agent',id:'other'},'mind.projectsList',{})).toMatchObject({value:[{id:'other:pond'}]});
+ expect(app.projects.list({kind:'agent',id:'other'})).toMatchObject([{id:'other:pond'}]);
 });
 it('selects newest twenty plus ten salient memories by aliases, excludes archived/expired, and keeps section failures separate',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond',links:{aliases:['on-pond']}});
@@ -74,17 +72,17 @@ it('projects the tasks role first: epic descendants, outside names, waiting, rea
 it('does not create missing sources; quiet index skips roles and scoped hubs still compute them',async()=>{
  const missing=join(dir(),'missing.db'),a=source();a.write({slug:'quiet',name:'Quiet',status:'paused'});let calls=0;
  const app=await fixture(a.database.name,missing,{notes:{read(){calls++;return {available:true,items:[]};}}});
- expect(app.operations.call('direct',owner,'mind.projectsList',{})).toMatchObject({value:[{sections:[]}]});expect(calls).toBe(0);
+ expect(app.projects.list(owner)).toMatchObject([{sections:[]}]);expect(calls).toBe(0);
  expect(read(app,'art:quiet').sections.length).toBeGreaterThan(0);expect(calls).toBe(1);expect(existsSync(missing)).toBe(false);
 });
-it('updates two windows after outside project writes, and removes expired memory at the precise clock deadline',async()=>{
+it('rereads outside project writes and excludes memory at its exact expiry',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond'});
  a.database.exec(`CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT,salience REAL); INSERT INTO memories VALUES(1,'m-one','project','Brief','Temporary','2026-11-13T00:00:00Z',NULL,'pond',0,'2026-11-14T12:00:00.000Z',1)`);
  const app=await fixture(a.database.name);
- const windows=await Promise.all(['','?partial'].map(async suffix=>{const ws=new WebSocket(app.url.replace('http:','ws:')+'/live'+suffix);closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'project.hub',scope:'art:pond'}));expect(JSON.parse((await initial)[0].toString()).records[0].name).toBe('Pond');return ws;}));
- let next=windows.map(w=>once(w,'message'));a.write({slug:'pond',name:'Changed pond'});app.operations.call('direct',{kind:'agent',id:'art'},'core.touched',{type:'project',id:'art:pond'});
- for(const p of next)expect(JSON.parse((await p)[0].toString()).record.name).toBe('Changed pond');
- const expired=windows.map(w=>new Promise<void>(resolve=>{const onMessage=(raw:Buffer)=>{const frame=JSON.parse(raw.toString());if(frame.record?.sections.find((s:{key:string})=>s.key==='memories')?.total===0){w.off('message',onMessage);resolve();}};w.on('message',onMessage);}));(app.operations.clock as FakeClock).advance(86400000);await Promise.all(expired);
+ expect(read(app,'art:pond').sections.find(s=>s.key==='memories')?.total).toBe(1);
+ a.write({slug:'pond',name:'Changed pond'});expect(read(app,'art:pond').name).toBe('Changed pond');
+ (app.operations.clock as FakeClock).advance(86400000);
+ expect(read(app,'art:pond').sections.find(s=>s.key==='memories')?.total).toBe(0);
 });
 it('passes note selectors and original viewer through the new role, preserving bounded metadata and deadlines',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond',links:{notes:['pond','field/research']}});let asked:unknown;
@@ -112,10 +110,10 @@ it('preserves readiness with hidden blockers, done-since cutoff, and complete ep
 it('links and fully reads an authorized memory, denying project-only members and expiring direct reads',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond'});a.database.exec(`CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT);INSERT INTO memories VALUES(1,'m-test','project','Full memory','The complete body','2026-11-12T12:00:00Z',NULL,'pond',0,'2026-11-14T12:00:00Z')`);
  const app=await fixture(a.database.name),item=read(app,'art:pond').sections.find(s=>s.key==='memories')!.items![0];expect(item.href).toBe('/p/projects-preview/project/art%3Apond/memory/m-test');
- expect(app.operations.call('direct',partial,'mind.projectMemoryRead',{id:'art:m-test'})).toMatchObject({value:{title:'Full memory',content:'The complete body'}});
- expect(app.operations.call('direct',{kind:'member',id:'outsider'},'mind.projectMemoryRead',{id:'art:m-test'})).toMatchObject({code:'denied'});
- expect(app.operations.call('direct',{kind:'service',id:'cards'},'mind.projectMemoryRead',{id:'art:m-test'})).toMatchObject({code:'denied'});
- (app.operations.clock as FakeClock).advance(86400000);expect(app.operations.call('direct',owner,'mind.projectMemoryRead',{id:'art:m-test'})).toMatchObject({code:'not-found'});
+ expect(app.projects.memoryRead('art:m-test',partial)).toMatchObject({title:'Full memory',content:'The complete body'});
+ expect(app.projects.memoryRead('art:m-test',{kind:'member',id:'outsider'})).toBeUndefined();
+ expect(app.projects.memoryRead('art:m-test',{kind:'service',id:'cards'})).toBeUndefined();
+ (app.operations.clock as FakeClock).advance(86400000);expect(app.projects.memoryRead('art:m-test',owner)).toBeUndefined();
 });
 it('supplies the default note prefix and derives Lately, waiting and a seven-day activity line without promoting role timestamps to card activity',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond'});let prefixes:string[]=[];
@@ -133,9 +131,9 @@ it('orders and deduplicates people as agent, People cards, feed authors, then co
 });
 it('refreshes checked/not-checked/stale wording at the exact field deadline',async()=>{
  const a=source();a.write({slug:'pond',name:'Pond',where:{now:{value:'On track',verified_at:'2026-11-12T12:00:00Z',stale_after_days:2},next:{value:'Review'}}});const app=await fixture(a.database.name);
- const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'project.hub',scope:'art:pond'}));const before=JSON.parse((await initial)[0].toString()).records[0];expect(before.fields.find((f:{key:string})=>f.key==='now').state).toBe('checked 1 day ago');expect(before.fields.find((f:{key:string})=>f.key==='next').state).toBe('not checked');
+ const before=read(app,'art:pond');expect(before.fields.find(f=>f.key==='now')?.state).toBe('checked 1 day ago');expect(before.fields.find(f=>f.key==='next')?.state).toBe('not checked');
  (app.operations.clock as FakeClock).advance(86400000);expect(read(app,'art:pond').fields.find(f=>f.key==='now')?.state).toBe('checked 2 days ago');
- const stale=new Promise<void>(resolve=>{const changed=(raw:Buffer)=>{if(JSON.parse(raw.toString()).record?.fields.some((f:{state:string})=>f.state==='stale for 2 days')){ws.off('message',changed);resolve();}};ws.on('message',changed);});(app.operations.clock as FakeClock).advance(1);await stale;
+ (app.operations.clock as FakeClock).advance(1);expect(read(app,'art:pond').fields.find(f=>f.key==='now')?.state).toBe('stale for 2 days');
 });
 
 it('passes only the new conversation owner’s filed ids to Tasks',async()=>{

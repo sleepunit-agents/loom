@@ -80,12 +80,13 @@ it('preserves the labels and exact proposal and records the answerer and allowan
   expect(service.record(row.id)[1]).toMatchObject({ event: 'allow', note: 'jonathan', at });
 });
 
-it('keeps reported steps as named facts and lists them in time order', () => {
-  const step = service.report({ agent: 'art', kind: 'command', target: 'worker:one', what: 'Rebuilt the test image' });
-  expect(step).toMatchObject({ agent: 'art', kind: 'command', target: 'worker:one', what: 'Rebuilt the test image', at });
-  at = '2026-11-14T20:01:00.000Z';
-  const second = service.report({ agent: 'art', kind: 'merge', target, what: 'Merged the pump script' });
-  expect(service.notices()).toEqual([step, second]);
+it('keeps non-private tell-rule reported steps as named facts and lists them in time order', () => {
+  const report=(kind:'merge'|'command',target:string,what:string)=>{
+    const row=service.request({...proposal(),kind,target});service.allow(row.id,'jonathan','Standing tell rule fixture for household owner, set by jonathan');service.use(row.id,'art',kind,target);service.reportUsed(row.id,'art',what);return service.notices().at(-1)!;
+  };
+  const step=report('command','worker:one','Rebuilt the test image');
+  expect(step).toMatchObject({agent:'art',kind:'command',target:'worker:one',what:'Rebuilt the test image',at});
+  at='2026-11-14T20:01:00.000Z';const second=report('merge',target,'Merged the pump script');expect(service.notices()).toEqual([step,second]);
 });
 
 it('withdraws an allowed request and permanently records refusal of a later spend', () => {

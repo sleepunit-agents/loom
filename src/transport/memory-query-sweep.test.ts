@@ -16,10 +16,10 @@ it('uses the actual Memory query reader for the shared Tempo sweep without legac
  const home=mkdtempSync(join(tmpdir(),'memory-query-sweep-')),client=new Database(':memory:'),db=createDataSchema(client);
  const clock=new FakeClock(Date.parse('2026-11-14T13:16:59Z')),path=join(home,'knowledge.db'),knowledge=new SqliteKnowledgeBackend({dbPath:path});
  await knowledge.writePage({slug:'fictional-pump',title:'Fictional pump',domain:'fiction',body:'Fictional fact',verified_at:'2020-01-01T00:00:00Z'});
- db.insert(household).values({id:'fiction-house',name:'Fictional household',timezone:'America/Chicago'}).run();
+ db.insert(household).values({singleton:1,timezone:'America/Chicago'}).run();
  db.insert(agents).values({id:'checker',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
  const tables=()=>client.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all();const before=tables();
- const queries=memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:path,people:join(home,'absent.db')},agents:[]},sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{},services:{}}),now:()=>clock.now(),mind:{call(){throw Error('Unexpected Projects read');}},activity:{window(){throw Error('Unexpected Activity read');},read(){throw Error('Unexpected Activity read');}},conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
+ const queries=memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:path,people:join(home,'absent.db')},agents:[]},sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{},services:{}}),now:()=>clock.now(),projects:{list(){throw Error('Unexpected Projects read');},read(){throw Error('Unexpected Projects read');},memoryRead(){throw Error('Unexpected Projects read');},access(){throw Error('Unexpected Projects read');}},activity:{window(){throw Error('Unexpected Activity read');},read(){throw Error('Unexpected Activity read');}},conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
  const tempo=createTempo(db,clock,{conversations:new Conversations(db,()=>new Date(clock.now()).toISOString()),admit:()=>false,operation(){throw Error('Unexpected operation');}});
  let unregister:(()=>void)|undefined;
  const source=new Database(path,{readonly:true});

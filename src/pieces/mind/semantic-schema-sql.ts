@@ -1,0 +1,3 @@
+// Generated from semantic-tables.ts by scripts/generate-memory-command-schema.ts.
+export const commandSql="CREATE TABLE `memory_command_preparations` (\n\t`viewer` text NOT NULL,\n\t`id` text NOT NULL,\n\t`name` text NOT NULL,\n\t`input_hash` text NOT NULL,\n\t`expires` integer NOT NULL,\n\tPRIMARY KEY(`viewer`, `id`)\n);\n\nCREATE TABLE `memory_command_receipts` (\n\t`viewer` text NOT NULL,\n\t`id` text NOT NULL,\n\t`name` text NOT NULL,\n\t`input_hash` text NOT NULL,\n\t`expires` integer NOT NULL,\n\t`result` text NOT NULL,\n\tPRIMARY KEY(`viewer`, `id`)\n);\n";
+export const schemaSql="CREATE TABLE `memory_command_schema` (\n\t`number` integer PRIMARY KEY NOT NULL,\n\t`sql` text NOT NULL\n);\n";
