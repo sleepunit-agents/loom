@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { sendWorkAnswer, type WorkAnswer } from './work-answer';
 const answer: WorkAnswer = {piece:'approvals',id:'a-1',answer:'allow'};
@@ -27,4 +28,13 @@ it('does not treat denial, malformed JSON or another target acknowledgement as c
   for (let n=0;n<3;n++) await expect(sendWorkAnswer(answer,request)).rejects.toThrow('Could not confirm your answer. Try again.');
   expect(request).toHaveBeenCalledTimes(3);
   expect(new Set(request.mock.calls.map(([,init])=>JSON.parse(String(init!.body)).id)).size).toBe(1);
+});
+
+it('preserves immutable answer IDs on plain HTTP where crypto.subtle is unavailable',async()=>{
+ const cryptoSource=globalThis.crypto;vi.stubGlobal('crypto',{getRandomValues:cryptoSource.getRandomValues.bind(cryptoSource)});
+ try{
+  const request=vi.fn<typeof fetch>(success);await sendWorkAnswer(answer,request);
+  const id='work-'+createHash('sha256').update(JSON.stringify(['approvals',{id:'a-1',answer:'allow'}])).digest('hex');
+  expect(JSON.parse(String(request.mock.calls[0][1]!.body)).id).toBe(id);
+ }finally{vi.unstubAllGlobals();}
 });
