@@ -65,13 +65,15 @@ it('keeps prior done mail out of a fresh job and includes newly waiting mail onl
   expect(workerPolicy(f.db, job).people).toEqual([]);
 });
 
-it('does not select either configured tier when receipt keys conflict', () => {
-  const f = fixture(), other = f.receive('second', 'second');
-  const originalItem = f.db.select().from(inbox).where(eq(inbox.job, f.job.id)).get()!.id;
-  const otherItem = f.db.select().from(inboxRefs).where(eq(inboxRefs.ref, other.id)).get()!.item;
-  f.db.update(bridgeIncoming).set({ conversation: f.job.conversation }).where(eq(bridgeIncoming.id, other.id)).run();
-  f.db.update(inbox).set({ conversation: f.job.conversation, volume: 'mute' }).where(eq(inbox.id, otherItem)).run();
-  f.db.insert(inboxRefs).values({ item: originalItem, ref: other.id }).run();
+it('does not select either configured tier when matching receipt keys conflict', () => {
+  const f = fixture();
+  const original = f.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, f.row.id)).get()!;
+  const connection = f.db.select().from(bridgeConnections).get()!;
+  f.db.insert(bridgeConnections).values({ ...connection, id: 'duplicate' }).run();
+  const duplicate = { ...original, id: `bi:${JSON.stringify(['duplicate', 'stranger'])}`, connection: 'duplicate', user: 'second' };
+  f.db.insert(bridgeIncoming).values(duplicate).run();
+  const item = f.db.select().from(inbox).where(eq(inbox.job, f.job.id)).get()!.id;
+  f.db.insert(inboxRefs).values({ item, ref: duplicate.id }).run();
   f.db.insert(agentPeople).values([{ agent: 'art', person: f.key, tier: 3 }, { agent: 'art', person: JSON.stringify(['discord', 'w', 'second']), tier: 3 }]).run();
   expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
 });
@@ -79,12 +81,12 @@ for (const fromKind of ['agent', 'schedule'] as const) it(`does not turn a known
   const f = fixture(); f.db.update(inbox).set({ fromKind, fromId: 'mark' }).run();
   expect(f.read().people).toEqual([]);
 });
-for (const guard of ['state', 'member', 'agent', 'platform'] as const) it(`requires matching receipt ${guard} before using an outside tier`, () => {
+for (const guard of ['state', 'member', 'channel', 'message'] as const) it(`requires matching receipt ${guard} before using an outside tier`, () => {
   const f = fixture(); f.db.insert(agentPeople).values({ agent: 'art', person: f.key, tier: 3 }).run();
   if (guard === 'state') f.db.update(bridgeIncoming).set({ state: 'held' }).run();
   if (guard === 'member') f.db.update(bridgeIncoming).set({ member: 'owner' }).run();
-  if (guard === 'agent') f.db.update(bridgeConnections).set({ agent: 'mark' }).run();
-  if (guard === 'platform') f.db.update(bridgeConnections).set({ platform: 'slack' }).run();
+  if (guard === 'channel') f.db.update(bridgeIncoming).set({ channel: 'different' }).run();
+  if (guard === 'message') f.db.update(inbox).set({ sourceId: JSON.stringify(['w', 'room', 'different-message']) }).run();
   expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
 });
 it('keeps a linked thread sender key and configured tier across venues', () => {
@@ -122,3 +124,19 @@ it('uses the assigned inbox item conversation when resolving its stored receipt'
   expect(f.read().people).toHaveLength(2);
   expect(f.read().people).toContainEqual({ kind: 'outside', person, tier: 2 });
 });
+
+it('retains historical workspace and platform when a connection is retargeted', () => {
+  const f = fixture();
+  f.db.insert(agentPeople).values([{ agent: 'art', person: f.key, tier: 1 }, { agent: 'art', person: JSON.stringify(['discord', 'new-workspace', 'stranger']), tier: 3 }]).run();
+  f.db.update(bridgeConnections).set({ workspace: 'new-workspace' }).run();
+  expect(f.read().people).toEqual([{ kind: 'outside', person: f.key, tier: 1 }]);
+  f.db.update(bridgeConnections).set({ platform: 'slack', agent: 'mark' }).run();
+  expect(f.read().people).toEqual([{ kind: 'outside', person: f.key, tier: 1 }]);
+});
+for (const sourceId of [null, 'not-json', '{}', '["w","room"]', '["w","room","m",4]', '["w","room",3]', '["","room","stranger"]']) {
+  it('does not infer an outside key from malformed stored source identity', () => {
+    const f = fixture(); f.db.update(inbox).set({ sourceId }).run();
+    f.db.insert(agentPeople).values({ agent: 'art', person: f.key, tier: 3 }).run();
+    expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
+  });
+}
