@@ -2,7 +2,7 @@
  * homes belong to the separate data move and are never inferred or converted. */
 import Database from 'better-sqlite3';
 import {generateX25519Identity} from 'age-encryption';
-import {constants,openSync,closeSync,fstatSync,writeFileSync,fsyncSync,lstatSync,unlinkSync,readdirSync,mkdirSync} from 'node:fs';
+import {constants,openSync,closeSync,fstatSync,writeFileSync,fsyncSync,lstatSync,unlinkSync,readdirSync,mkdirSync,mkdtempSync,renameSync,linkSync,rmdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {userInfo} from 'node:os';
 import type {Clock} from './core/clock.js';
@@ -45,7 +45,26 @@ export async function initializeSharedHome(home:string,clock:Clock){
   // No listener or caller has been admitted. Roll back only this attempt's
   // unpublished generated files, preserving replacements and all prior data.
   if(client?.open)client.close();client=undefined;
-  for(const [path,owned] of [...created].reverse())try{const stat=lstatSync(path);if(stat.isFile()&&stat.dev===owned.dev&&stat.ino===owned.ino)unlinkSync(path);}catch{/* Preserve ambiguous state. */}
+  let quarantine:string|undefined;
+  if(created.size)try{
+   quarantine=mkdtempSync(join(home,'.shared-init-rollback-'));
+   let index=0;
+   for(const [path,owned] of [...created].reverse())try{
+    const claimed=join(quarantine,String(index++));
+    // Claim the directory entry atomically before inspecting it. A writer at
+    // the original path can no longer substitute the target of our deletion.
+    renameSync(path,claimed);
+    const stat=lstatSync(claimed);
+    if(stat.isFile()&&stat.dev===owned.dev&&stat.ino===owned.ino)unlinkSync(claimed);
+    else{
+     // Restore a foreign entry only without clobbering a newer original path.
+     // Keep the quarantined entry too: it is not ours to delete, even if the
+     // restored name is subsequently replaced. Directories remain retained.
+     try{linkSync(claimed,path);}catch{/* Both entries remain preserved. */}
+    }
+   }catch{/* Preserve ambiguous state. */}
+  }catch{/* Cleanup failure never authorizes deleting an unknown entry. */}
+  if(quarantine)try{rmdirSync(quarantine);}catch{/* Retained foreign entries. */}
   throw error;
  }finally{try{if(client?.open)client.close();}finally{await release();}}
 }

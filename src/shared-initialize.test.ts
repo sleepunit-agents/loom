@@ -12,10 +12,10 @@ import * as schema from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
 import {initializeSharedHome} from './shared-initialize.js';
 import {startSharedHome} from './shared-startup.js';
-vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,unlinkSync:vi.fn(real.unlinkSync)};});
+vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,unlinkSync:vi.fn(real.unlinkSync),renameSync:vi.fn(real.renameSync)};});
 vi.mock('age-encryption',async original=>{const real=await original<typeof import('age-encryption')>();return {...real,generateX25519Identity:vi.fn(real.generateX25519Identity)};});
 const clean:Array<()=>void|Promise<void>>=[];
-afterEach(async()=>{vi.restoreAllMocks();vi.mocked(fs.unlinkSync).mockImplementation((await vi.importActual<typeof import('node:fs')>('node:fs')).unlinkSync);for(const close of clean.splice(0).reverse())await close();});
+afterEach(async()=>{vi.restoreAllMocks();const real=await vi.importActual<typeof import('node:fs')>('node:fs');vi.mocked(fs.unlinkSync).mockImplementation(real.unlinkSync);vi.mocked(fs.renameSync).mockImplementation(real.renameSync);for(const close of clean.splice(0).reverse())await close();});
 function fixture(){const home=mkdtempSync(join(tmpdir(),'empty-shared-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));return home;}
 it('first install publishes a private prepared inventory and the ordinary startup link admits HTTP and GraphQL',async()=>{
  const home=fixture(),webRoot=fixture(),clock=new FakeClock();writeFileSync(join(webRoot,'next.html'),'Shared app');let link='';
@@ -63,4 +63,13 @@ it('rollback preserves unrelated files and a replacement for a generated databas
  renameSync(join(home,'loom.db'),join(home,'retained.db'));writeFileSync(join(home,'loom.db'),'REPLACEMENT BYTES');writeFileSync(join(home,'unrelated-memory.md'),'UNRELATED PRECIOUS WORDS');
  const before=readFileSync(join(home,'retained.db'));reject();await failed;
  expect(readFileSync(join(home,'loom.db'),'utf8')).toBe('REPLACEMENT BYTES');expect(readFileSync(join(home,'unrelated-memory.md'),'utf8')).toBe('UNRELATED PRECIOUS WORDS');expect(readFileSync(join(home,'retained.db'))).toEqual(before);
+});
+
+it('rollback cannot delete a replacement created at the original path after its atomic claim',async()=>{
+ const home=fixture();let entered!:()=>void,reject!:()=>void;const began=new Promise<void>(ok=>{entered=ok;}),held=new Promise<string>((_ok,no)=>{reject=()=>no(Error('Synthetic key failure'));});
+ vi.mocked(age.generateX25519Identity).mockImplementationOnce(()=>{entered();return held;});
+ const pending=initializeSharedHome(home,new FakeClock()),failed=expect(pending).rejects.toThrow('Synthetic key failure');await began;
+ const actual=(await vi.importActual<typeof import('node:fs')>('node:fs')).renameSync;let replaced=false;
+ vi.mocked(fs.renameSync).mockImplementation((from,to)=>{actual(from,to);if(from===join(home,'loom.db')){replaced=true;writeFileSync(from,'CONCURRENT REPLACEMENT');}});
+ reject();await failed;expect(replaced).toBe(true);expect(readFileSync(join(home,'loom.db'),'utf8')).toBe('CONCURRENT REPLACEMENT');
 });
