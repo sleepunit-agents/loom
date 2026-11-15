@@ -19,7 +19,7 @@ function fixture(){
   if(path==='startup'){notifyPlan();return Response.json({aliases:[{alias:'GITHUB_TOKEN'}],...(pending?{pending:true}:{})});}
   if(path==='read')return new Response(new Blob([privateValue]),{headers:{'content-type':'application/octet-stream','x-loom-secret-use':'use-input-'+'a'.repeat(64)}});
   if(path==='confirm'&&String(url).includes('/secrets/'))return Response.json({confirmed:true});
-  const values={status:{saved:true,stopRequested:stop},take:{job:'job',conversation:'cv',stopRequested:stop,items:[{id:'mail',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:'2026-11-15T00:00:00.000Z',words:'ACCEPTED_MAIL',keepUntil:null,verdict:null,refs:[]}]},confirm:{saved:true},message:{saved:true,seq:2}};
+  const values={status:{saved:true,stopRequested:stop},take:{job:'job',conversation:'cv',stopRequested:stop,items:[{id:'mail',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:'2026-11-15T00:00:00.000Z',words:'ACCEPTED_MAIL',keepUntil:null,verdict:null,refs:[]}]},confirm:{saved:true},message:{saved:true,seq:2},digest:{saved:true,digest:'digest',revision:1,item:null}};
   return Response.json({ok:true,value:values[path as keyof typeof values]});
  });
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
