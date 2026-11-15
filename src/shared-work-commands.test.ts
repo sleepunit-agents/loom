@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, tokens, sessions, projects, changes, approvalRecord, operationResults, inbox, projectMembers, memberAgents, approvalRules } from './core/data/schema.js';
+import { members, agents, tokens, sessions, projects, changes, approvals, approvalRecord, operationResults, inbox, projectMembers, memberAgents, approvalRules } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { sharedSharing } from './shared-sharing.js';
 import { mayAct, type RecordScope } from './policy.js';
@@ -14,7 +14,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const cookie = 'b'.repeat(64), token = 'a'.repeat(64), head = 'a'.repeat(40), changeId = 'github:house/pond#1';
-function fixture(install = true, permissive = false) {
+function fixture(install = true, permissive = false, rawGates = false) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -29,8 +29,8 @@ function fixture(install = true, permissive = false) {
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {},
     approvedOperations: new Map([['fixture.change', () => {}]]),
     workAnswerAuthority: install ? {
-      approval: (viewer, row) => restrictions.approval && (permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household')),
-      change: (viewer, row, approval) => restrictions.change && (permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household')),
+      approval: (viewer, row) => rawGates ? restrictions.approval : restrictions.approval && (permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household')),
+      change: (viewer, row, approval) => rawGates ? restrictions.change : restrictions.change && (permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household')),
     } : undefined,
   });
   cleanup.push(() => root.close());
@@ -222,4 +222,15 @@ it('projects only the current caller owner status through the real query door an
   expect(await read()).toEqual({data:{workAnswerOwner:false}});
   f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
+});
+
+it.each(['approvals','changes'])('requires explicit true from configured %s answer gates, including receipt replay',async piece=>{
+ for(const gate of ['approval','change'] as const)for(const value of [undefined,null,1,'yes'] as const){
+  const f=fixture(true,true,true),card=f.request(),input=piece==='approvals'?{id:card.id,answer:'allow'}:{id:changeId,head,approval:card.id,answer:'yes'};
+  const snapshot=()=>({cards:f.db.select().from(approvals).all(),changes:f.db.select().from(changes).all(),audit:f.db.select().from(approvalRecord).all(),rules:f.db.select().from(approvalRules).all(),receipts:f.db.select().from(operationResults).all(),inbox:f.db.select().from(inbox).all()});
+  (f.restrictions as Record<string,unknown>)[gate]=value;const before=snapshot();
+  expect((await f.send(piece,input)).status).toBe(403);expect(snapshot()).toEqual(before);
+  f.restrictions[gate]=true;expect((await f.send(piece,input)).status).toBe(200);
+  const committed=snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;expect((await f.send(piece,input)).status).toBe(403);expect(snapshot()).toEqual(committed);
+ }
 });

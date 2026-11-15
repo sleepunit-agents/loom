@@ -87,7 +87,7 @@ export async function bodyProgram(input: {
     if(bridge&&!incoming.length)throw new Error();
     if(!input.native)tools=await bodySecretTools({url:bootstrap.origin,token:parsed.bootstrap.token,job:job.id,conversation:job.conversation,signal,clock:input.clock,fetch:input.fetch,waiting:value=>{state=value?'waiting':'working';work=value?'Waiting for a Secret decision':'Working on accepted mail';}});
     if(signal.aborted)throw new Error();
-    const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config });
+    const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
