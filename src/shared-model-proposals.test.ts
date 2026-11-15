@@ -48,6 +48,7 @@ it('rolls back proposal and Allow with failed receipts, and notifies capacity on
  expect((await f.propose('failed-proposal')).status).toBe(503);expect(f.db.select().from(s.approvals).all()).toEqual([]);expect(f.read()).toEqual(['first']);expect(observed).toEqual([]);
  expect((await f.propose()).status).toBe(200);const card=f.db.select().from(s.approvals).get()!;expect(observed).toEqual([]);
  expect((await f.answer(card.id,'allow','failed-answer')).status).toBe(503);expect(f.read()).toEqual(['first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');expect(observed).toEqual([]);
+ f.root.writes.run(()=>f.db.update(s.boxes).set({lastSeenAt:new Date(f.clock.now()).toISOString()}).run());expect(observed).toEqual([]);
  expect((await f.answer(card.id)).status).toBe(200);expect(observed).toEqual([false]);expect(f.read()).toEqual(['second','first']);
  expect((await f.answer(card.id)).status).toBe(200);expect(observed).toEqual([false]);changed.mockRestore();
 });
@@ -59,4 +60,20 @@ it('retains a pending typed card across Root restart and applies after the reque
  const root=sharedRoot({db:f.db,clock:f.clock,originAllowed:()=>true,commsKey:f.key,reportError:error=>{throw error;},modelRoles:()=>['first','second'].map(model=>({model,provider:'provider',harness:'codex',series:'series'}))});clean.push(()=>root.close());
  const response=await root.http.request('/api/approvals/answer',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.member,'content-type':'application/json'},body:JSON.stringify({input:{id:card.id,answer:'allow'},id:'after-restart'})});
  expect(response.status).toBe(200);expect(f.read()).toEqual(['second','first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('used');
+});
+
+it('checks the requesting member ownership separately from the authorized deciding owner',async()=>{
+ const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;
+ const token=f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run();return f.root.services.signin.issue({kind:'owner',member:'bob',label:'Deciding owner fixture'}).token;}).value;
+ expect((await f.post('approvals/answer',{id:card.id,answer:'allow'},'other-decider',token)).status).toBe(403);expect(f.read()).toEqual(['first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
+});
+it('refuses an ordinary member answer and modified target or acting-for fields',async()=>{
+ const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;
+ const token=f.root.writes.run(()=>f.root.services.signin.issue({kind:'owner',member:'bob',label:'Ordinary member fixture'}).token).value;
+ expect((await f.post('approvals/answer',{id:card.id,answer:'allow'},'ordinary-decider',token)).status).toBe(403);
+ for(const extra of [{target:'runtime:agent-models:mark'},{actingFor:'bob'}]){
+  f.db.update(s.approvals).set({...extra}).run();expect((await f.answer(card.id)).status).toBe(403);expect(f.read()).toEqual(['first']);
+  f.db.update(s.approvals).set({target:card.target,actingFor:card.actingFor}).run();
+ }
+ expect((await f.propose('unchanged',{agent:'art',models:['first']})).status).toBe(400);
 });

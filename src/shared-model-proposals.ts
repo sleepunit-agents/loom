@@ -10,25 +10,24 @@ import {bodyOperationDefaults,type conversationBodyScope} from './core/conversat
 import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
 import type {ModelRole} from './runtime/placement.js';
+import {agentModelList,agentModelsInput,validateAgentModels,applyAgentModels} from './shared-agent-models.js';
+// Short local schema names describe one small boundary; arrays compare by exact ordered JSON.
 const operation='runtime.agentModels';
-const models=z.array(z.string().min(1).max(200)).max(64).refine(values=>new Set(values).size===values.length);
-const input=z.object({agent:z.string().min(1).max(200),models:models.refine(values=>values.length>0)}).strict();
-const details=z.object({agent:input.shape.agent,before:models,after:input.shape.models}).strict();
+const input=agentModelsInput;
+const details=z.object({agent:input.shape.agent,before:agentModelList,after:input.shape.models}).strict();
 const target=(agent:string)=>'runtime:agent-models:'+agent;
 const summary=(value:z.infer<typeof details>)=>'Models for '+value.agent+': '+JSON.stringify(value.before)+' → '+JSON.stringify(value.after);
 export function sharedModelProposals(db:DataDatabase,roles:()=>readonly ModelRole[]){
  const pending=new Set<string>();
  const read=(agent:string)=>db.select().from(agentModels).where(eq(agentModels.agent,agent)).orderBy(asc(agentModels.position)).all().map(row=>row.model);
  const allowed=(member:string,agent:string)=>mayAct({kind:'member',id:member},{type:'runtime.agent-models',agent},sharedSharing(db),'agent-setup');
- const validate=(values:readonly string[])=>{const configured=new Set(roles().map(role=>role.model));if(values.some(value=>!configured.has(value)))throw new OperationError('invalid','Choose configured models');};
+ const validate=(values:readonly string[])=>validateAgentModels(values,roles());
  const apply=(card:Approval)=>{
   if(card.kind!=='setting'||card.operation!==operation)throw new OperationError('conflict','Wrong model settings card');
   const value=details.parse(JSON.parse(card.details));
   if(card.target!==target(value.agent)||card.changeSummary!==summary(value)||card.member===null||card.actingFor!==card.member||!allowed(card.member,value.agent))throw new OperationError('denied','Model settings authority changed');
-  validate(value.after);
   if(JSON.stringify(read(value.agent))!==JSON.stringify(value.before))throw new OperationError('conflict','Model settings changed; ask for a fresh card');
-  db.delete(agentModels).where(eq(agentModels.agent,value.agent)).run();
-  db.insert(agentModels).values(value.after.map((model,position)=>({agent:value.agent,model,position}))).run();
+  applyAgentModels(db,{agent:value.agent,models:value.after},roles());
   pending.add(card.id);
  };
  return{
