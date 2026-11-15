@@ -108,7 +108,7 @@ it('rolls back a person card when the current body ends during its preparation',
 });
 it('keeps existing semantic-only preparation usable without silently preparing private card references',async()=>{
  const f=await fixture();f.source.exec('DROP TABLE memory_card_references; DROP TABLE memory_card_schema');const before=f.source.serialize();await prepareSharedMemorySources(f.memory);expect(f.source.serialize()).toEqual(before);
- for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const)expect((await f.call(verb,value,'older-'+verb)).status).toBe(503);
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){expect((await f.call(verb,value,'older-'+verb)).status).toBe(503);expect(f.source.serialize().equals(before)).toBe(true);}
  expect(f.source.serialize()).toEqual(before);expect((await f.call('remember',input,'older-semantic')).status).toBe(200);
 });
 it('binds commands to the actual body, publishes committed content, and reads opaque results through current GraphQL authority',async()=>{
