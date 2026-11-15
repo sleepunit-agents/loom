@@ -23,6 +23,8 @@ afterEach(() => vi.restoreAllMocks());
 
 it.each(['discord', 'slack'] as const)('fetches raw %s metadata with the exact fixed endpoint and fresh token each time', async platform => {
   const f = fixture(platform);
+  let generation = 0;
+  f.secrets.withValue = vi.fn(async (_name, use) => use(++generation === 1 ? 'synthetic-token' : 'replacement-token'));
   expect(await f.api.channel(f.id)).toEqual(f.raw);
   expect(await f.api.channel(f.id)).toEqual(f.raw);
   expect(f.secrets.withValue).toHaveBeenCalledTimes(2);
@@ -31,6 +33,7 @@ it.each(['discord', 'slack'] as const)('fetches raw %s metadata with the exact f
   expect(options).toMatchObject({ method: platform === 'discord' ? 'GET' : 'POST', redirect: 'error',
     headers: { Authorization: platform === 'discord' ? 'Bot synthetic-token' : 'Bearer synthetic-token' } });
   if (platform === 'slack') expect(String(options?.body)).toBe('channel=CROOM&team_id=TWORK');
+  expect(f.request.mock.calls[1][1]?.headers).toMatchObject({ Authorization: platform === 'discord' ? 'Bot replacement-token' : 'Bearer replacement-token' });
 });
 
 it.each(['../token', '123?url=elsewhere', '', 'https://example.test'])('rejects path input before token acquisition: %s', async id => {
@@ -70,11 +73,14 @@ it.each([{ ok: false, error: 'private upstream words' }, { ok: true, channel: { 
 it.each([403, 404, 429, 500])('retains retry eligibility for HTTP %s without reflecting upstream text', async status => {
   const f = fixture(); f.request.mockResolvedValue(new Response('private-token', { status }));
   expect(await f.api.channel(f.id)).toBeUndefined();
+  f.clock.advance(60_000); await Promise.resolve();
+  expect(f.request).toHaveBeenCalledTimes(1); expect(f.secrets.withValue).toHaveBeenCalledTimes(1);
 });
 it('rejects malformed JSON and hides holder and network exceptions', async () => {
   const f = fixture(); f.request.mockResolvedValue(new Response('not JSON private-token'));
   expect(await f.api.channel(f.id)).toBeUndefined();
   f.request.mockRejectedValue(Error('private-token')); expect(await f.api.channel(f.id)).toBeUndefined();
+  f.clock.advance(60_000); await Promise.resolve(); expect(f.request).toHaveBeenCalledTimes(2);
   f.secrets.withValue = async () => { throw Error('private-token'); };
   expect(await f.api.channel(f.id)).toBeUndefined();
 });
