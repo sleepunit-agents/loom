@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
+import { touched } from './core/touched/index.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,8 +27,8 @@ const credentials = {owner:'a'.repeat(64), peer:'b'.repeat(64), short:'c'.repeat
 const cookie = 'd'.repeat(64);
 const query = '{ tasks { id title } memoryKnowledgePage(slug:"pump") { title body history { body } } memoryPerson(id:"fiction:friend") { name conversations { available rows { title } } } memoryProjects { id name } memoryActivity { entries { title } } }';
 type Message = {type: string; id?: string; payload?: {data?: Record<string, unknown>; errors?: unknown[]}};
-async function message(ws: WebSocket, action: () => void): Promise<Message> {
-  const pending = once(ws, 'message'); action(); return JSON.parse(String((await pending)[0]));
+async function message(ws: WebSocket, action: () => unknown): Promise<Message> {
+  const pending = once(ws, 'message'); await action(); return JSON.parse(String((await pending)[0]));
 }
 const observe = (ws: WebSocket) => message(ws, () => ws.send(JSON.stringify({id:'live',type:'subscribe',payload:{
   query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }', variables:{query},
@@ -66,7 +67,7 @@ async function setup(host?: string[]) {
     expect(await message(ws,()=>ws.send(JSON.stringify({type:'connection_init',payload:{viewer:{kind:'member',id:'owner'}}})))).toEqual({type:'connection_ack'});
     return ws;
   };
-  return {loom,sharing,clock,knowledge,open,db:dataDatabase(loom.db),async close(){for(const ws of sockets)ws.terminate();await loom.close();knowledge.close();rmSync(home,{recursive:true,force:true});}};
+  return {home,loom,sharing,clock,knowledge,open,db:dataDatabase(loom.db),async close(){for(const ws of sockets)ws.terminate();await loom.close();knowledge.close();rmSync(home,{recursive:true,force:true});}};
 }
 
 it('mounts the same generated and four Memory projections on HTTP, ordinary socket reads and live selections',async()=>{
@@ -94,6 +95,56 @@ it('mounts the same generated and four Memory projections on HTTP, ordinary sock
     expect(JSON.stringify(changed)).toContain('Changed fictional pump');
     expect(JSON.stringify(changed)).toContain('Changed fictional hose');
   } finally {await f.close();}
+});
+
+it('refreshes all four file projections from committed source touches without manual live signals',async()=>{
+  const f=await setup();
+  const path=join(f.home,'agents/fiction/memories.db');
+  const writer=new Database(path);
+  writer.exec("CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)");
+  try {
+    const ws=await f.open();await observe(ws);
+    const changedKnowledge=await message(ws,()=>f.knowledge.writePage({slug:'pump',title:'Touched pump',domain:'pond',body:'Touched hose'}));
+    expect(changedKnowledge).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([
+      {path:['memoryKnowledgePage','title'],removed:false,value:'Touched pump'},
+      {path:['memoryKnowledgePage','body'],removed:false,value:'Touched hose'},
+    ])}}}});
+    const people=new PeopleStore({dbPath:path,actor:'fiction'});
+    try {
+      const changedPerson=await message(ws,()=>people.write({slug:'friend',name:'Touched Friend'}));
+      expect(changedPerson).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryPerson','name'],removed:false,value:'Touched Friend'}]}}}});
+    } finally {people.close();}
+    const projects=new ProjectsStore({dbPath:path});
+    try {
+      const changedProject=await message(ws,()=>projects.write({slug:'pond',name:'Touched pond'}));
+      expect(changedProject).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryProjects',0,'name'],removed:false,value:'Touched pond'}]}}}});
+    } finally {projects.close();}
+    const changedEpisode=await message(ws,()=>{
+      writer.prepare('INSERT INTO memories VALUES(?,?,?,?,NULL,?,NULL,?,0)').run('touched-story','Touched episode','Fictional committed story',new Date(f.clock.now()).toISOString(),'{"where":"terminal"}','episode');
+      touched(join(f.home,'agents/fiction'),'memory','touched-story',f.clock);
+    });
+    expect(JSON.stringify(changedEpisode)).toContain('Touched episode');
+    const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query})});
+    const current=await response.json();expect(current.errors).toBeUndefined();
+    expect(current.data).toMatchObject({memoryKnowledgePage:{title:'Touched pump',body:'Touched hose'},memoryPerson:{name:'Touched Friend'},memoryProjects:[{name:'Touched pond'}],memoryActivity:{entries:expect.arrayContaining([expect.objectContaining({title:'Touched episode'})])}});
+    const archivedPeople=new PeopleStore({dbPath:path,actor:'fiction'});
+    try {
+      const archived=await message(ws,()=>archivedPeople.archive({slug:'friend',reason:'Fictional archive',actor:'fiction'}));
+      expect(archived).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryPerson'],removed:false,value:null}]}}}});
+    } finally {archivedPeople.close();}
+    const archivedProjects=new ProjectsStore({dbPath:path});
+    try {
+      const archived=await message(ws,()=>archivedProjects.archive({slug:'pond',reason:'Fictional archive',actor:'fiction'}));
+      expect(archived).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryProjects',0],removed:true,value:null}]}}}});
+    } finally {archivedProjects.close();}
+    const archivedEpisode=await message(ws,()=>{
+      writer.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('touched-story');
+      touched(join(f.home,'agents/fiction'),'memory','touched-story',f.clock);
+    });
+    expect(JSON.stringify(archivedEpisode)).toContain('memoryActivity');
+    const after=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query})});
+    expect((await after.json()).data).toMatchObject({memoryPerson:null,memoryProjects:[],memoryActivity:{entries:[{title:'Fictional conversation'}]}});
+  } finally {writer.close();await f.close();}
 });
 
 it('keeps simultaneous owner and peer selections separate and removes words after access changes',async()=>{

@@ -408,8 +408,8 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         return authenticateData(new Request('http://localhost/graphql', {headers}));
       },
       schema: viewer => dataReadSchema(sharedData, viewer, fields), originAllowed: sameOrigin});
-    // Existing operation commits include access changes. File-source signals and
-    // time-dependent Memory projections are connected by their own composition.
+    // Private file-source touches commit through core.touched, so they share
+    // this signal with operation and access changes. Clock deadlines are separate.
     stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); });
     routes.all('/graphql', c => data.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
