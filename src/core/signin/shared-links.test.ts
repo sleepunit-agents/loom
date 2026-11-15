@@ -229,3 +229,29 @@ it('keeps confirmation POST origin checks strict and accepts the same-origin bro
   expect(accepted.headers.get('set-cookie')).toContain('HttpOnly');
   expect(f.db.select().from(sessions).all()).toHaveLength(1);
 });
+
+it('limits the origin-only referrer policy to the valid confirmation document', async () => {
+  const f = fixture();
+  const minted = await f.mint();
+  expect(minted.headers.get('referrer-policy')).toBe('no-referrer');
+  const { value: { path } } = await minted.json() as { value: { path: string } };
+  for (const malformed of ['/login/bad', '/login/' + 'g'.repeat(64)]) {
+    const response = await f.root.http.request('http://loom' + malformed);
+    expect(response.status).toBe(404);
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+  }
+  const page = await f.root.http.request('http://loom' + path);
+  expect(page.headers.get('referrer-policy')).toBe('strict-origin');
+  const denied = await f.redeem(path, { origin: 'null' });
+  expect(denied.status).toBe(403);
+  expect(denied.headers.get('referrer-policy')).toBe('no-referrer');
+  const signed = await f.redeem(path, { origin: 'http://loom' });
+  expect(signed.status).toBe(303);
+  expect(signed.headers.get('referrer-policy')).toBe('no-referrer');
+  const cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  const identity = await f.root.http.request('http://loom/auth/session', { headers: { cookie } });
+  expect(identity.headers.get('referrer-policy')).toBe('no-referrer');
+  const logout = await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } });
+  expect(logout.status).toBe(200);
+  expect(logout.headers.get('referrer-policy')).toBe('no-referrer');
+});
