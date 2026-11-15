@@ -1,3 +1,5 @@
+import {installWalkthroughAdapters} from '../scripts/rebuild-walkthrough-adapters.mjs';
+import {holderValueAbsent} from '../scripts/rebuild-secret-holder.mjs';
 import {FakeClock} from './core/clock.js';
 import Database from 'better-sqlite3';
 import * as roots from './shared-root.js';
@@ -83,8 +85,9 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
  const parent=mkdtempSync(join(tmpdir(),'loom-example-approvals-')),home=join(parent,'home');
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
  try{
-  const manifest=await exampleHome(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
+  const manifest=await exampleHome(home);installWalkthroughAdapters(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
   const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  expect(holderValueAbsent(home,'no-such-fictitious-secret')).toBe(true);
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const watched=app.writes.run(()=>app!.services.approvals.request({kind:'command',target:'example:watched',agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Watched example',why:'Prove answer delivery.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes:1})).value;
   const trigger=app.writes.run(()=>app!.services.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue fictitious work.',note:'Watched example'})).value;
@@ -112,5 +115,5 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
    const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow'}})});
    expect(refused.status).toBe(503);expect(app.services.tasks.get(next.id)).toEqual(before);expect(app.services.approvals.get(request.id).state).toBe('pending');expect(app.services.approvals.record(request.id)).toEqual(audit);
   }
- }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
+ }finally{await app?.close();if(app)expect(()=>holderValueAbsent(home,'no-such-fictitious-secret')).toThrow('not active');rmSync(parent,{recursive:true,force:true});}
 });
