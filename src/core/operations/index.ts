@@ -73,6 +73,10 @@ function canonical(value: unknown): string {
 function callerKey(viewer: Viewer): string {
   return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical(viewer);
 }
+/** Shared connection write boundary supplied only by trusted composition. */
+export interface OperationWrites {
+  run<T>(operation: () => T): { value: T; notificationErrors: unknown[] };
+}
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
   private frames: Change[][] = [];
@@ -83,9 +87,18 @@ export class Operations {
    * receipts then commit in one transaction without creating legacy tables.
    * Omit only while using the legacy bootstrap; never mix stores/connections.
    */
-  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence } = {}) {
+  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void } = {}) {
+    if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
     if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
     this.expire();
+  }
+  private transaction<T>(run: () => T, write: boolean): T {
+    if (!write || !this.options.writes) return this.db.transaction(run)();
+    const committed = this.options.writes.run(run);
+    for (const error of committed.notificationErrors) {
+      try { this.options.reportError?.(error); } catch { /* reporting cannot undo a committed effect */ }
+    }
+    return committed.value;
   }
   close() { closeInternalCallers(this); this.stopExpiry?.(); unregisterBuiltinServices(this); }
   private expire() {
@@ -136,7 +149,7 @@ export class Operations {
     this.frames.push(changes);
     let result: Result;
     try {
-      result = this.db.transaction((): Result => {
+      result = this.transaction((): Result => {
         const now = this.clock.now();
         const ctx: Context = {db:this.db, viewer, now, receipt, changed:(type,id)=>changes.push({type,id})};
         this.expireReceipts(now);
@@ -157,7 +170,7 @@ export class Operations {
         this.saveReceipt({ caller: receipt.viewer, id: receipt.id, operation: receipt.name, inputHash: receipt.inputHash,
           result: JSON.parse(serialized) as Result, expires: recovered.expires }, true);
         return JSON.parse(serialized) as Result;
-      })();
+      }, true);
     } catch (e) { result = e instanceof OperationError ? failure(e.code,e.message) : failure('unavailable','Recovery could not complete'); }
     finally { this.frames.pop(); }
     if (result.ok) {
@@ -239,7 +252,7 @@ export class Operations {
     if (this.db.inTransaction && !this.frames.length) return failure('unavailable', 'Operations must own the outer transaction');
     this.frames.push(changes);
     try {
-      result = this.db.transaction((): Result | PreparationNeeded => {
+      result = this.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
         if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
         const who = callerKey(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
@@ -278,12 +291,12 @@ export class Operations {
         if (op.write) this.saveReceipt({ caller: who, id: id!, operation: name, inputHash: body,
           result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + 30 * 86400_000 });
         return JSON.parse(serialized) as Result;
-      })();
+      }, !!op.write);
     } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
     finally { this.frames.pop(); }
     if (result instanceof PreparationNeeded) return result;
     if (!result.ok && op.rejected) {
-      try { this.db.transaction(() => op.rejected!(viewer, parsed.data, result as Failure, this.clock.now()))(); }
+      try { this.transaction(() => op.rejected!(viewer, parsed.data, result as Failure, this.clock.now()), true); }
       catch { /* An audit failure cannot turn a refused action into success. */ }
     }
     if (result.ok && changes.length) {
