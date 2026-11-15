@@ -37,9 +37,11 @@ it('preserves catalog/context and holder ports, closing both once with their own
 }));
 it('preserves inherited accessors and non-enumerable startup ports with their original receiver',()=>fixture(async({file,base})=>{
  base('export default context => context.previous;');
- const order:string[]=[],roles=[{model:'class-model',provider:'class-provider'}],holder={fixture:true},bridge={fixture:true};
+ const order:string[]=[],roles=[{model:'class-model',provider:'class-provider'}],holder={fixture:true},bridge={fixture:true},approvedOperations=new Map([['fixture.discard',()=>{}]]);
  class Previous{
   #roles=roles;
+  #operations=approvedOperations;
+  get approvedOperations(){return this.#operations;}
   get modelRoles(){return()=>this.#roles;}
   close(){order.push('base');}
  }
@@ -50,7 +52,7 @@ it('preserves inherited accessors and non-enumerable startup ports with their or
  }
  const previous=new Previous();Object.defineProperty(previous,'bridges',{value:bridge,enumerable:false});
  const result=await acceptanceAdapter(file,async()=>new Added())({previous});
- expect(result.modelRoles()).toBe(roles);expect(result.bridges).toBe(bridge);expect(result.secretWrites).toBe(holder);
+ expect(result.modelRoles()).toBe(roles);expect(result.approvedOperations).toBe(approvedOperations);expect(result.bridges).toBe(bridge);expect(result.secretWrites).toBe(holder);
  await result.close();expect(order).toEqual(['holder','base']);
 }));
 it('supports a fresh home without an existing adapter',async()=>{
