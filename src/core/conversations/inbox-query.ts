@@ -98,34 +98,47 @@ export class InboxQueries {
     if (!query) return this.list(viewer, filter);
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
     const candidates = this.mailbox(viewer, filter).all();
-    const privateState = (item: Item) => {
-      const message = item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
+    const privateState = (item: Item, fromAnswer = false) => {
+      const answer = fromAnswer ? this.answerState(viewer, item) : undefined;
+      const message = fromAnswer ? answer?.message : item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;
       const keep = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
       const thread = item.thread ? this.db.select().from(threads).where(eq(threads.id, item.thread)).get() : undefined;
-      return { message, keep, thread };
+      return { message, keep, thread, answerMail: answer?.mail };
     };
     const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
-        ...this.refs(viewer, item.id)].some(value => value?.toLocaleLowerCase().includes(query));
-    const matches: { item: Item; metadata?: true; state?: ReturnType<typeof privateState> }[] = [];
+        item.answer, item.answeredBy, item.resolution, ...this.refs(viewer, item.id)].some(value => value?.toLocaleLowerCase().includes(query));
+    const matches: { item: Item; metadata?: true; fromAnswer?: true; state?: ReturnType<typeof privateState> }[] = [];
     for (const item of candidates) {
       if (metadata(item)) { matches.push({ item, metadata: true }); continue; }
       const state = item.thread ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
+      {
+        const answerState = item.thread ? privateState(item, true) : undefined;
+        const answer = await this.answerText(viewer, item.id);
+        if (answer?.toLocaleLowerCase().includes(query)) matches.push({ item, state: answerState, fromAnswer: true });
+      }
     }
     // A later decrypt may yield while earlier matches lose access, change words
     // or expire. Validate every match again synchronously before returning ids.
-    const current = matches.filter(({ item, state, metadata: byMetadata }) => {
+    const current = matches.filter(({ item, state, metadata: byMetadata, fromAnswer }) => {
       if (JSON.stringify(this.current(viewer, item.id)) !== JSON.stringify(item)) return false;
       if (byMetadata) return metadata(item);
       if (!state) return true;
-      const after = privateState(item), message = after.message;
-      return JSON.stringify(after) === JSON.stringify(state) && !!message?.words && !!message.keepUntil
-        && Number.isInteger(after.keep) && after.keep >= 1 && after.keep <= 14
-        && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
+      const after = privateState(item, fromAnswer), message = after.message;
+      return JSON.stringify(after) === JSON.stringify(state) && this.retainedMessage(message, after.keep);
     });
-    const page = current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
+    // One item may match both its question and its independently retained
+    // answer. Keep the longest still-valid witness, once, before paging.
+    const unique = new Map<string, typeof current[number]>();
+    const deadline = (match: typeof current[number]) => match.metadata || !match.state?.message
+      ? Infinity : wordsDeadline(match.state.message, match.state.keep);
+    for (const match of current) {
+      const prior = unique.get(match.item.id);
+      if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
+    }
+    const page = [...unique.values()].slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
     for (const match of page) if (!match.metadata && match.state?.message) {
       const message = match.state.message;
       retainedUntil?.(wordsDeadline(message, match.state.keep));
