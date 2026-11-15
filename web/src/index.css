@@ -379,12 +379,12 @@ main[data-pending]::before { content: ''; position: fixed; inset: 0 0 auto; heig
 @media (display-mode: standalone) { html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); } }
 html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
 
-/* Toasts stay clear of the dock. Desktop's dock reserves 104px; a notice
+/* Toasts stay clear of an actual desk dock. Desktop's dock reserves 104px; a notice
    under the pointer can stay open, so expiry cannot be relied on to unblock
    its keys. Phone notices remain at the top, below the safe area. Unlayered
    placement wins over the component registry's toast defaults. */
 @media (width >= 64rem) {
-  .v-toaster[data-slot="toast-viewport"] { bottom: calc(104px + var(--s-6) + env(safe-area-inset-bottom)); }
+  :root:has(.loom-desk, [data-shell="desk"]) .v-toaster[data-slot="toast-viewport"] { bottom: calc(104px + var(--s-6) + env(safe-area-inset-bottom)); }
 }
 @media (width < 64rem) {
   .v-toaster[data-slot="toast-viewport"] { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; left: 0; right: 0; margin-inline: auto; }
