@@ -62,8 +62,13 @@ it('binds approval answers to the current member, receipts and current supplied 
 it('keeps an exact-head merge answer atomic and refuses stale replay after the head moves', async () => {
   const f = fixture(); f.seedChange(); const request = f.request();
   const input = { id: changeId, head, approval: request.id, answer: 'yes' };
+  expect((await f.send('changes', { ...input, member: 'other' }, 'spoof')).status).toBe(400);
+  expect(f.root.services.approvals.get(request.id).state).toBe('pending');
+  expect(f.db.select().from(operationResults).all()).toEqual([]);
   expect(await (await f.send('changes', input)).json()).toEqual({ ok: true, value: { id: changeId } });
   expect(f.db.select().from(changes).get()?.waitingOn).toBe('agent');
+  expect(f.root.services.approvals.get(request.id).decidedBy).toBe('sam');
+  expect(f.db.select().from(inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({ toKind: 'agent', to: 'art', source: 'answer', fromKind: 'person', fromId: 'sam' })]));
   expect((await f.send('changes', input)).status).toBe(200);
   f.root.writes.run(() => f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run());
   expect((await f.send('changes', input)).status).toBe(403);
@@ -127,4 +132,16 @@ it('rolls the answer, audit, Inbox delivery and change back when saving the oute
   expect(f.db.select().from(approvalRecord).all().map(row => row.event)).toEqual(['request']);
   expect(f.db.select().from(inbox).all()).toEqual(before);
   expect(f.db.select().from(operationResults).all()).toEqual([]);
+});
+
+it('binds the No merge reply, revokes the allowance and preserves a current CI blocker', async () => {
+  const f = fixture(); f.seedChange(); const first = f.request();
+  expect((await f.send('changes', { id: changeId, head, approval: first.id, answer: 'yes' }, 'allow')).status).toBe(200);
+  f.root.writes.run(() => f.db.update(changes).set({ waitingOn: 'ci', checks: 'running' }).run());
+  const denial = f.request();
+  expect((await f.send('changes', { id: changeId, head, approval: denial.id, answer: 'no' }, 'deny')).status).toBe(200);
+  expect(f.root.services.approvals.get(denial.id)).toMatchObject({ state: 'denied', decidedBy: 'sam' });
+  expect(f.root.services.approvals.get(first.id)).toMatchObject({ state: 'denied', overriddenBy: denial.id });
+  expect(f.db.select().from(changes).get()).toMatchObject({ waitingOn: 'ci', checks: 'running' });
+  expect(f.db.select().from(operationResults).all()).toHaveLength(2);
 });
