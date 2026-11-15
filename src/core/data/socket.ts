@@ -2,7 +2,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { useServer } from 'graphql-ws/use/ws';
-import { execute, subscribe, validate, GraphQLError, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
+import { execute, subscribe, validate, GraphQLError, type ExecutionArgs, type ExecutionResult, type GraphQLSchema } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
@@ -55,7 +55,7 @@ export function dataSocket(options: {
     },
     validate: (...args) => run(() => validate(...args)),
     execute: (args: ExecutionArgs) => run(() => execute(executionArguments(args))),
-    subscribe: (args: ExecutionArgs) => run(async () => {
+    subscribe: (args: ExecutionArgs) => run(async (): Promise<ExecutionResult | AsyncIterable<ExecutionResult>> => {
       const result = await subscribe(executionArguments(args));
       if (stopping && Symbol.asyncIterator in result) {
         await result[Symbol.asyncIterator]().return?.();
@@ -65,12 +65,13 @@ export function dataSocket(options: {
       const iterator = result[Symbol.asyncIterator]();
       // graphql-ws pulls after subscribe() returns. Carry the socket admission
       // scope into each pull, so Live child callbacks inherit both lifetimes.
-      return {
+      const scoped: AsyncIterableIterator<ExecutionResult> = {
         [Symbol.asyncIterator]() { return this; },
         next: () => run(() => iterator.next()),
         return: () => executions.run(() => iterator.return?.() ?? Promise.resolve({ done: true as const, value: undefined })),
         throw: (error: unknown) => executions.run(() => iterator.throw ? iterator.throw(error) : Promise.reject(error)),
       };
+      return scoped;
     }),
     // Ordinary execution errors travel in next payloads, not onError. Drop
     // partial data as well: it may contain words from the failed projection.
