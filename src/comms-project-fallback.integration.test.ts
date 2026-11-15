@@ -1,13 +1,10 @@
-/** Project fallback for the still-reachable legacy digest surface. */
+/** Retained legacy project-context readers. */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createLoomServer } from './server.js';
 import { agentDir, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
 import { openThread } from './comms.js';
@@ -61,21 +58,7 @@ describe.skipIf(!hasAge)('Comms: legacy project fallback', () => {
       expect(named.projects).toEqual(['pond']);
     });
 
-    it('conversation_digest itself takes the thread\'s project, through MCP', async () => {
-      const t = thread(8, 'hocket');
-      const db = new BetterSqlite3(join(agentDir(h, 'art'), 'memories.db'));
-      db.prepare('UPDATE projects SET card_json = ? WHERE slug = ?').run(JSON.stringify({ slug: 'pond', name: 'pond', links: { aliases: [], venues: [`loom:${t.id}`] } }), 'pond');
-      db.close();
-      const { server } = createLoomServer({ contextDir: agentDir(h, 'art') });
-      const client = new Client({ name: 'comms-digest-test', version: '1' });
-      const [c, s] = InMemoryTransport.createLinkedPair();
-      await Promise.all([server.connect(s), client.connect(c)]);
-      try {
-        await client.callTool({ name: 'identity', arguments: { conversation: t.conversation, run: 'run-1' } });
-        const r = await client.callTool({ name: 'conversation_digest', arguments: { summary: 'Planned it.' } }) as { content: Array<{ text: string }> };
-        expect((JSON.parse(r.content[0].text) as { projects: string[] }).projects).toEqual(['hocket']);
-      } finally { await client.close(); }
-    });
+
 
     it('the hub lists a thread filed under the project before its first digest', () => {
       const t = thread(3, 'hocket');
