@@ -43,8 +43,9 @@ function fixture(prepare?: () => Promise<unknown>) {
   root.operations.register({ name: 'private.control', write: true, recheckPolicy: true,
     input: z.object({ job: z.string() }).strict(), output: z.object({ ack: z.literal(true) }),
     requiresWindow: (input, viewer) => root.credentials.body(viewer)?.job !== input.job,
-    may: (viewer, input) => root.credentials.body(viewer)?.job === input.job, prepare,
-    run(ctx) { if (ctx.viewer.kind !== 'agent') throw new Error('Body required'); const task = root.services.tasks.create({ title: 'Body control', goal: 'Ack', why: 'Fixture', owner: { kind: 'agent', id: 'art' } }, ctx.viewer); ctx.changed('task', task.id); return { ack: true }; },
+    // Both records are otherwise permitted; requiresWindow must isolate the body exemption.
+    may: viewer => (viewer.kind === 'agent' && viewer.id === 'art') || (viewer.kind === 'member' && viewer.id === 'sam'), prepare,
+    run(ctx) { if (ctx.viewer.kind !== 'agent' && ctx.viewer.kind !== 'member') throw new Error('Person or body required'); const task = root.services.tasks.create({ title: 'Body control', goal: 'Ack', why: 'Fixture', owner: { kind: 'agent', id: 'art' } }, ctx.viewer); ctx.changed('task', task.id); return { ack: true }; },
   });
   const call = (name: 'worker/report' | 'private/control', input: unknown, credential = raw.body, id = 'control', headers: Record<string,string> = {}) => root.http.request('http://loom/api/'+name, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credential, ...headers }, body: JSON.stringify({ input, id }),
@@ -71,11 +72,13 @@ it('binds runner, body and browser scopes to the exact authenticated viewer, nev
   const cookieRunner = f.root.credentials.authenticate(request({ cookie: 'loom_ui='+raw.runnerCookie }))!;
   expect(cookieRunner.viewer).toEqual({ kind: 'runner', id: 'box-1' });
   expect(f.root.credentials.runner(cookieRunner.viewer)).toBeUndefined();
+  expect(f.root.credentials.browser(cookieRunner.viewer)).toBeUndefined();
   expect((await f.root.http.request('http://loom/api/worker/report', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui='+raw.runnerCookie }, body: JSON.stringify({ input: { box: 'box-1' }, id: 'cookie-worker' }) })).status).toBe(403);
   const agent = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.agent }))!;
   expect(f.root.credentials.body(agent.viewer)).toBeUndefined();
   const cookieBody = f.root.credentials.authenticate(request({ cookie: 'loom_ui='+raw.bodyCookie }))!;
   expect(f.root.credentials.body(cookieBody.viewer)).toBeUndefined();
+  expect(f.root.credentials.browser(cookieBody.viewer)).toBeUndefined();
   expect(f.root.credentials.authenticate(request({ authorization: 'Bearer '+hash(raw.body) }))).toBeUndefined();
   expect(await (await f.read()).json()).toEqual({ data: { currentBody: 'job-1' } });
 });
@@ -175,4 +178,16 @@ it('reads binding metadata without selecting or retaining job payload columns', 
   const reads = sql.mock.calls.map(([statement]) => String(statement)).filter(statement => /from "jobs"/i.test(statement));
   expect(reads.length).toBeGreaterThan(0);
   expect(reads.join(' ')).not.toMatch(/brief|log_tail|title|model|harness|account|select\s+\*/i);
+});
+
+it('requires a browser window outside the exact body record even when policy admits both records', async () => {
+  const f = fixture();
+  expect((await f.call('private/control', { job: 'job-1' })).status).toBe(200);
+  expect((await f.call('private/control', { job: 'job-2' }, raw.body, 'other')).status).toBe(403);
+  const page = await f.root.http.request('http://loom/api/private/control', { method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: 'loom_ui='+raw.cookie },
+    body: JSON.stringify({ input: { job: 'job-2' }, id: 'page-other' }) });
+  expect(page.status).toBe(200);
+  expect((await f.call('private/control', { job: 'job-2' }, raw.member, 'member-bearer')).status).toBe(403);
+  expect(f.db.select().from(tasks).all()).toHaveLength(2);
 });
