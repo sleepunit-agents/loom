@@ -183,3 +183,17 @@ it('records scheduled Tempo work by its fixed job name only while Measuring is o
  g.clock.advance(5000);
  expect(g.db.select().from(timingDays).all()).toEqual([]);
 });
+
+it('retries an unconfirmed Run now with the same receipt rather than delivering duplicate work',async()=>{
+ const {tempoActions}=await import('../web/src/pieces/tempo/commands.js');
+ const f=fixture();expect((await f.call('tempo.set',{...f.trigger,times:'23:59',lifespan:'until-stopped'},'standing')).status).toBe(200);
+ let lose=true;const ids:string[]=[];
+ const actions=tempoActions(async(input,init)=>{
+  ids.push(JSON.parse(String(init?.body)).id);const headers=new Headers(init?.headers);headers.set('authorization','Bearer '+credential);
+  const response=await f.root.http.fetch(new Request(new URL(String(input),'http://loom'),{...init,headers}));
+  if(lose){lose=false;throw new Error('Lost reply');}return response;
+ });
+ await expect(actions.runNow('delivery')).rejects.toThrow('Lost reply');expect(f.db.select().from(inbox).all()).toHaveLength(1);
+ await actions.runNow('delivery');expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(ids[1]).toBe(ids[0]);
+ await actions.runNow('delivery');expect(f.db.select().from(inbox).all()).toHaveLength(2);expect(ids[2]).not.toBe(ids[1]);
+});
