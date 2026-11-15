@@ -98,3 +98,13 @@ it('times shared Secrets recovery without passing values into telemetry',async()
  try{await root.ready;await root.services.secrets.reconcile();expect(db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'job',name:'secrets.reconcile',count:1}));expect(holder.hasReceipt).not.toHaveBeenCalled();}
  finally{await root.close();client.close();clock.advance(86400000);}
 });
+
+it('records the shared runtime scheduled sweep with a fixed job name',async()=>{
+ const client=new Database(':memory:'),clock=new FakeClock();
+ const db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
+ db.insert(measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:90}).run();
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError(){}});
+ try{await root.ready;clock.advance(30000);
+  expect(db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'job',name:'runtime.tick',count:1}));
+ }finally{await root.close();client.close();clock.advance(60000);}
+});
