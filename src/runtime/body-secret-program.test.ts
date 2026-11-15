@@ -34,11 +34,18 @@ function fixture(){
  });
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
  const options={args:['config'],read:async()=>JSON.stringify({command:'/native/claude',cwd:'/house'}),stdin:async()=>bytes,env,signal:abort.signal,clock,fetch:fetcher,error:errors,schedule:{every:(ms:number,callback:()=>void)=>{expect(ms).toBe(15000);tick=callback;return cancel;}}};
- return{env,abort,clock,calls,errors,options,bytes,planned,cancel,words:()=>words,stop:()=>{stop=true;tick();},pending:()=>{pending=true;}};
+ return{env,abort,clock,calls,errors,options,bytes,planned,cancel,words:()=>words,stop:()=>{stop=true;tick();},tick:()=>tick(),pending:()=>{pending=true;}};
 }
 it('uses default startup delivery before the actual native constructor and removes its environment on completion',async()=>{
  const f=fixture();expect(await bodyProgram(f.options)).toBe(0);expect(spawn).toHaveBeenCalledOnce();expect(f.words()).toBe('ACCEPTED_MAIL');expect(f.words()).not.toContain(privateValue);expect(f.env).toEqual({PATH:'/bin',ACCOUNT_PROFILE:'/account'});expect(f.errors).not.toHaveBeenCalled();expect(f.bytes.every(b=>b===0)).toBe(true);expect(f.cancel).toHaveBeenCalledOnce();
 });
 it('observes Stop while default startup consent is pending, without launching a model or injecting late values',async()=>{
  const f=fixture();f.pending();const running=bodyProgram(f.options);await f.planned;f.stop();expect(await running).toBe(0);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.calls).not.toContain('take');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.errors).not.toHaveBeenCalled();expect(f.cancel).toHaveBeenCalledOnce();
+});
+
+it.each(['abort','status failure'])('cancels pending default startup on %s without a native launch',async mode=>{
+ const f=fixture();f.pending();const fetcher=f.options.fetch;let fail=false;
+ const running=bodyProgram({...f.options,fetch:async(url,options)=>{if(fail&&String(url).endsWith('/status'))throw new Error(raw);return fetcher(url,options);}});
+ await f.planned;if(mode==='abort')f.abort.abort();else{fail=true;f.tick();}
+ expect(await running).toBe(1);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.cancel).toHaveBeenCalledOnce();expect(f.errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');expect(f.bytes.every(b=>b===0)).toBe(true);
 });
