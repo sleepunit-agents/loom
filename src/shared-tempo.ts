@@ -7,6 +7,8 @@ import type { Operations } from './core/operations/index.js';
 import type { Conversations } from './core/conversations/index.js';
 import type { TempoOptions } from './core/tempo/tempo.js';
 import type { TempoOperationOptions } from './core/tempo/operations.js';
+import type { Viewer } from './policy.js';
+import type { Recipient } from './core/tempo/volume.js';
 import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
 import { tempoCommandAllowed } from './shared-tempo-access.js';
@@ -18,6 +20,7 @@ export interface SharedTempoOptions {
   instructions?: TempoOptions['instructions'];
   changeRevision?: TempoOptions['changeRevision'];
   settings?: TempoOperationOptions['settings'];
+  settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
   contributors?: readonly SweepPart[];
 }
 export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataWrites, operations: Operations,
@@ -36,7 +39,8 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       }),
       operation: options.operation ?? (() => { throw new Error('Unknown Tempo operation'); }),
     },
-    commands: { authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access),
+    commands: { authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access) &&
+      (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who)),
       settings: options.settings ?? (() => { throw new Error('Settings proposal needs authenticated chat context'); }),
     },
   });

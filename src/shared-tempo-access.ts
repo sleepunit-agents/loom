@@ -38,7 +38,9 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
   };
   switch (access.action) {
     case 'volume': return recipient(access.item.toKind, access.item.to);
-    case 'settings': return recipient(access.who.kind, access.who.id);
+    case 'settings': return recipient(access.who.kind, access.who.id) ||
+      (viewer.kind === 'agent' && access.who.kind === 'person' && !!db.select().from(memberAgents)
+        .where(and(eq(memberAgents.agent, viewer.id), eq(memberAgents.member, access.who.id))).get());
     case 'pause': case 'resume': return ownsAgent(access.agent);
     case 'stop': case 'runNow':
       if (access.trigger.targetKind === 'operation' && !access.trigger.toKind && access.trigger.ownerKind === 'agent' && access.trigger.owner && ownsAgent(access.trigger.owner)) return true;
