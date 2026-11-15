@@ -1,9 +1,12 @@
 /** Production worker/Root protocol with in-process receiving programs only. */
 import {afterEach,expect,it,vi} from 'vitest';
 import {createServer} from 'node:http';
+import {randomUUID} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
-import type {ChildProcessWithoutNullStreams} from 'node:child_process';
+import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {claudeBody} from './runtime/claude-body.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
@@ -14,10 +17,13 @@ import {httpWorkerControl} from './runtime/worker-http.js';
 import {commandWorkerExecutor,type ProcessRuntime} from './runtime/worker-process.js';
 import {workOnce} from './runtime/worker.js';
 import * as s from './core/data/schema.js';
-const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-it.each(['fixture','claude'] as const)('builds and runs an in-process %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async harness=>{
+vi.mock('node:child_process',()=>({spawn:vi.fn()}));
+const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
+it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async proof=>{
+ const harness=proof==='tempo'?'claude':proof;
  const f=await bodyFixture(clean,{initialTime:Date.now(),modelRoles:()=>[{model:'requested-model',provider:'provider',harness,series:'series'}]});
  f.root.writes.run(()=>{
+  if(proof==='tempo')f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
   f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();
   f.db.insert(s.boxAgents).values({box:'box',agent:'art',lent:false}).run();f.db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();f.db.insert(s.agentModels).values({agent:'art',model:'requested-model',position:0}).run();
   f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
@@ -42,13 +48,60 @@ it.each(['fixture','claude'] as const)('builds and runs an in-process %s private
    const rows=[{type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content:[{type:'text',text:'PRIVATE WORKER REPLY'}]}},{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
   });}})})as unknown as ChildProcessWithoutNullStreams;return child;
  }});
+ const exerciseTempo=async(command:(operation:string,input:unknown,id:string)=>Promise<unknown>)=>{
+  const who={kind:'person' as const,id:'alice'},timing=()=>f.root.services.tempo.volume.timings(who).settleSeconds;
+  const answer=async(id:string,allow:boolean)=>{
+   const result=await fetch(url+'/api/approvals/answer',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id,answer:allow?'allow':'deny'}})});
+   expect(result.status).toBe(200);expect(await result.json()).toEqual({ok:true,value:{id}});
+  };
+  expect(timing()).toBe(5);
+  for(const [seconds,allow]of [[60,true],[120,false]]as const){
+   const before=timing(),result=await command('tempo.proposeSettings',{who,patch:{settleSeconds:seconds}},randomUUID());
+   expect(result).toEqual({ok:true,value:{id:expect.any(String)}});
+   const id=(result as {value:{id:string}}).value.id,card=f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()!;
+   expect(card).toMatchObject({kind:'setting',operation:'tempo.settings',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice'});
+   expect(JSON.parse(card.details!)).toMatchObject({who,before:{settleSeconds:before},after:{settleSeconds:seconds}});
+   expect(timing()).toBe(before);
+   expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',source:'approval',conversation:f.thread.conversation,waitsOnId:id})]));
+   await answer(id,allow);expect(timing()).toBe(60);
+  }
+  expect(await command('tempo.proposeSettings',{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},randomUUID())).toMatchObject({ok:false,code:'denied'});
+  expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
+ };
+ // The Tempo variant retains bodyProgram's default factory and Claude adapter.
+ // Only its provider process is mocked; MCP and Root remain real loopback HTTP.
+ let nativeFailure:unknown;
+ if(proof==='tempo')vi.mocked(spawn).mockImplementation((_command,args)=>{
+  let words='',connection:{url:string;headers:Record<string,string>}|undefined,started=false,inputEnded=false;
+  const execute=()=>{if(started||!inputEnded||!connection)return;started=true;void(async()=>{
+   const protocol=new Client({name:'tempo-native-fixture',version:'1'},{capabilities:{}});
+   try{
+    expect(words).toBe('PRIVATE WORKER INPUT');expect(acknowledged).toBe(true);
+    expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
+    await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
+    const tools=(await protocol.listTools()).tools;
+    expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
+    // The default native currently exposes only Secrets. Canonical commands
+    // must join that same listener before a model can control Tempo.
+    expect(tools.length).toBeGreaterThan(2);
+   }finally{await protocol.close();}
+  })().then(()=>{
+   const list=args as string[],session=list[list.indexOf('--session-id')+1];
+   const rows=[{type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content:[{type:'text',text:'PRIVATE WORKER REPLY'}]}},{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
+   child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
+  },error=>{nativeFailure=error;child.emit('close',1,null);});};
+  const controlPipe=new Writable({write(bytes,_encoding,done){connection=Object.values(JSON.parse(bytes.toString()).mcpServers)[0] as typeof connection;done();},final(done){done();execute();}});
+  const stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();},final(done){done();inputEnded=true;execute();}});
+  const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,controlPipe],kill:vi.fn(()=>{child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
+  return child;
+ });
  const runtime:ProcessRuntime={spawn(plan){
   const events=new EventEmitter(),parts:Buffer[]=[],bodyAbort=new AbortController();let child:ChildProcessWithoutNullStreams;
   const execute=async()=>{const bytes=Buffer.concat(parts);for(const part of parts)part.fill(0);
    try{
     if(plan.command==='/fake/build'){const value=JSON.parse(bytes.toString());expect(value).toEqual({job:expect.any(String),house:{repository:'fixture',file:'Housefile',branch:'next'}});child.stdout.emit('data',Buffer.from('{"build":"fixture-image"}'));return 0;}
     expect(acknowledged).toBe(true);expect(plan.command).toBe('/fake/recipient');
-    if(harness==='claude')return await bodyProgram({args:['body.json'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/work'}),stdin:async()=>bytes,env:{},signal:bodyAbort.signal,clock:f.clock,schedule:{every:()=>()=>{}},native,error:()=>{}});
+    if(harness==='claude')return await bodyProgram({args:['body.json'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/work'}),stdin:async()=>bytes,env:{},signal:bodyAbort.signal,clock:f.clock,schedule:{every:()=>()=>{}},...(proof==='tempo'?{}:{native}),error:()=>{}});
     const input=JSON.parse(bytes.toString());expect(input.job.brief).toBe('');expect(input.bootstrap.job).toBe(input.job.id);const client=bodyConversationClient({url:input.bootstrap.origin,token:input.bootstrap.token,job:input.job.id,conversation:input.job.conversation,signal:bodyAbort.signal,clock:f.clock});
     try{await client.status({state:'working',work:'Reading fictitious input'});const batch=await client.takeAndAccept(async(item,signal)=>{expect(signal.aborted).toBe(false);expect(item.words).toBe('PRIVATE WORKER INPUT');});expect(batch.accepted).toBe(1);
      const reply=await client.reply({clientId:'reply',words:'PRIVATE WORKER REPLY',model:'fixture-actual-model',outcome:'answered',latencyMs:23});await client.finding({turnSeq:reply.seq,measure:'useful',score:4,text:'Fictitious comparison was useful'});await client.digest({summary:'Completed fictitious worker input',items:[]});await client.status({state:'idle',work:'Fictitious work complete'});child.stdout.emit('data',Buffer.from(input.bootstrap.token+'PRIVATE WORKER INPUT'));child.stderr.emit('data',Buffer.from(input.bootstrap.token+'PRIVATE WORKER INPUT'));return 0;
@@ -63,7 +116,7 @@ it.each(['fixture','claude'] as const)('builds and runs an in-process %s private
  // Retain the production executor; observe its exact release boundary against the real ACK.
  const start=executor.start.bind(executor);executor.start=(...args)=>{const body=start(...args),release=body.release.bind(body);body.release=(...input)=>{expect(acknowledged).toBe(true);return release(...input);};return body;};
  const running=workOnce({box:'box',control,executor,signal:abort.signal,schedule:{every:()=>()=>{}}});clean.push(async()=>{abort.abort();await running.catch(()=>{});});
- expect(await running).toBe('finished');const job=f.db.select().from(s.jobs).get()!;
+ const outcome=await running;if(nativeFailure)throw nativeFailure;expect(outcome).toBe('finished');const job=f.db.select().from(s.jobs).get()!;
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
  // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
