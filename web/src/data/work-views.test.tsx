@@ -25,12 +25,14 @@ async function selectRow() { await act(async () => tree.root.findByType('Row').p
 it('the registered lazy tiles actually render the generated shared rows', async () => {
   fixture();
   await draw(h(Suspense, { fallback: 'Opening' }, h(approvalsApp.Screen, {})));
+  await act(async () => { await vi.dynamicImportSettled(); });
   expect(words()).toContain('Change measuring');
   await selectRow();
   expect(words()).toContain('Keep one day?');
   expect(words()).toContain('Measuring settings change');
   expect(tree.root.findAllByType('Button')).toHaveLength(0);
   await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
+  await act(async () => { await vi.dynamicImportSettled(); });
   expect(words()).toContain('Current change');
   await selectRow();
   expect(words()).toContain('first-head');
