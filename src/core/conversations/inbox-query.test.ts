@@ -3,7 +3,7 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, household, inbox, members, messages } from '../data/schema.js';
+import { actionResults, agents, household, inbox, members, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { InboxQueries, inboxQueryFields } from './inbox-query.js';
 const clients: Database.Database[] = [];
@@ -152,4 +152,83 @@ it('withholds words if time passes their unchanged stored or household deadline 
     expect(await f.service.body(alice, f.ask.inboxItem!), expiry).toBeNull();
     expect(f.opens()).toBe(1);
   }
+});
+
+it('searches the whole mailbox before paging, across sources and references, through GraphQL', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  const wanted = cvs.send({ toKind: 'person', to: 'alice', source: 'task', member: 'alice', fromKind: 'agent', words: 'Needle older question', refs: ['t-987'] });
+  f.time('2026-11-14T19:00:00.000Z');
+  for (let i = 0; i < 105; i++) cvs.send({ toKind: 'person', to: 'alice', source: 'notice', member: 'alice', fromKind: 'agent', words: `Unrelated ${i}` });
+  expect(f.service.list(alice).map(i => i.id)).not.toContain(wanted.id);
+  expect((await f.service.search(alice, { search: '  NEEDLE  ', limit: 1 })).map(i => i.id)).toEqual([wanted.id]);
+  expect(await f.service.search(alice, { search: 'Needle', offset: 1 })).toEqual([]);
+  expect((await f.service.search(alice, { search: 't-987' })).map(i => i.id)).toEqual([wanted.id]);
+  expect(await f.service.search(alice, { search: 'Needle', source: 'notice' })).toEqual([]);
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: inboxQueryFields(f.service) }) });
+  const result = await graphql({ schema, source: '{ inboxItems(search: "needle", limit: 1) { id } }', contextValue: { viewer: alice } });
+  expect(result.errors).toBeUndefined();
+  expect(JSON.parse(JSON.stringify(result.data))).toEqual({ inboxItems: [{ id: wanted.id }] });
+});
+it('searches retained private wording without persisting it and never searches another recipient', async () => {
+  const f = await fixture();
+  expect((await f.service.search(alice, { search: 'PRIVATE REASON' })).map(i => i.id)).toEqual([f.ask.inboxItem]);
+  expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('Private reason');
+  expect(await f.service.search({ kind: 'member', id: 'bob' }, { search: 'private' })).toEqual([]);
+  f.time('2026-11-29T18:00:00.000Z');
+  const opened = f.opens();
+  expect(await f.service.search(alice, { search: 'private' })).toEqual([]);
+  expect(f.opens()).toBe(opened);
+});
+it('withdraws earlier matches when later decrypts revoke access or let private matches expire', async () => {
+  for (const change of ['policy', 'expiry', 'ciphertext', 'linkage', 'household', 'deadline'] as const) {
+    const f = await fixture();
+    await f.comms.ask(f.thread.id, 'art', 'ask-2', { words: 'Another private question', answers: 'yes-no' });
+    let count = 0;
+    f.onOpen(() => {
+      if (++count !== 2) return;
+      if (change === 'policy') f.revoke();
+      if (change === 'expiry') f.time('2026-11-29T18:00:00.000Z');
+      if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
+      if (change === 'deadline') f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00.000Z' }).run();
+      if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Changed') }).run();
+      if (change === 'linkage') f.db.update(threads).set({ conversation: f.comms.threads.conversations.open({ agent: 'art', venue: 'loom', place: 'other', member: 'alice', label: 'Other' }).id }).where(eq(threads.id, f.thread.id)).run();
+    });
+    expect(await f.service.search(alice, { search: 'private' }), change).toEqual([]);
+  }
+});
+it('validates search and paging bounds and treats metacharacters literally', async () => {
+  const f = await fixture();
+  expect(await f.service.search(alice, { search: 'x'.repeat(501) })).toEqual([]);
+  await expect(f.service.search(alice, { search: 'private', limit: 101 })).rejects.toThrow('Invalid Inbox page');
+  await expect(f.service.search(alice, { search: 'private', offset: -1 })).rejects.toThrow('Invalid Inbox page');
+  expect(await f.service.search(alice, { search: '%_' })).toEqual([]);
+  const literal = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: 'Contains %_ literally' });
+  expect((await f.service.search(alice, { search: '%_' })).map(i => i.id)).toEqual([literal.id]);
+  expect(await f.service.search(alice, { search: '  ' })).toEqual(f.service.list(alice));
+});
+
+it('searches answered items and individual metadata fields, without crossing field boundaries or recipients', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  const first = cvs.send({ toKind: 'person', to: 'alice', source: 'task', sourceId: 'unique-source', fromKind: 'agent', fromId: 'author', member: 'alice', agent: 'art', words: 'Matched question', answers: 'yes-no', refs: ['alpha', 'beta'] });
+  // Linked task answers arrive from the task's own operation.
+  f.db.update(inbox).set({ state: 'answered', answer: 'yes', answeredBy: 'alice', answeredAt: '2026-11-14T18:00:00.000Z' }).where(eq(inbox.id, first.id)).run();
+  const second = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: 'Matched notice' });
+  cvs.send({ toKind: 'person', to: 'bob', source: 'notice', fromKind: 'agent', member: 'alice', words: 'Matched other mailbox' });
+  const all = await f.service.search(alice, { search: 'matched' });
+  expect(all.map(i => i.id).sort()).toEqual([first.id, second.id].sort());
+  expect((await f.service.search(alice, { search: 'matched', limit: 1 })).map(i => i.id)).toEqual([all[0].id]);
+  expect((await f.service.search(alice, { search: 'matched', limit: 1, offset: 1 })).map(i => i.id)).toEqual([all[1].id]);
+  expect((await f.service.search(alice, { search: 'matched', state: 'answered' })).map(i => i.id)).toEqual([first.id]);
+  for (const search of [first.id, 'task', 'unique-source', 'author']) expect((await f.service.search(alice, { search })).map(i => i.id)).toContain(first.id);
+  expect(await f.service.search(alice, { search: 'alpha beta' })).toEqual([]);
+});
+
+it('searches each remaining question body field and a long literal passage', async () => {
+  const f = await fixture();
+  for (const search of ['Order it', 'Skip it', 'https://example.test/private-question']) {
+    expect((await f.service.search(alice, { search })).map(i => i.id)).toEqual([f.ask.inboxItem]);
+  }
+  const passage = 'a'.repeat(501);
+  const item = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: passage });
+  expect((await f.service.search(alice, { search: passage })).map(i => i.id)).toEqual([item.id]);
 });
