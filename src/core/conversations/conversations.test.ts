@@ -103,3 +103,18 @@ it('revises digests by run, replaces lists, resolves old questions and rolls bac
   expect(db.select().from(digestItems).all()).toEqual([{ digest: first.id, kind: 'decision', text: 'Middle model' }]);
   expect(() => service.digest({ conversation: cv.id, run: 'run-2', summary: 'x'.repeat(601) })).toThrow('600');
 });
+
+it('records one wordless person turn for an Inbox answer and no extra turn on replay or failed commit', () => {
+  const { db, service } = fixture();
+  const cv = service.open({ agent: 'art', venue: 'wake', place: 'night', label: 'Night' });
+  const question = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', words: 'Private wording?', answers: 'words' });
+  const answer = service.answer(question.id, 'jonathan', 'words', 'Private answer');
+  expect(service.answer(question.id, 'jonathan', 'words', 'Retry')).toEqual(answer);
+  expect(db.select().from(turns).all()).toMatchObject([{ conversation: cv.id, seq: 1, kind: 'message', fromKind: 'person', fromId: 'jonathan' }]);
+  expect(JSON.stringify(db.select().from(turns).all())).not.toContain('Private');
+  const second = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', words: 'Another?', answers: 'yes-no' });
+  expect(() => db.transaction(() => { service.answer(second.id, 'jonathan', 'yes'); throw new Error('rollback'); })).toThrow('rollback');
+  expect(service.item(second.id).state).toBe('waiting');
+  expect(service.conversation(cv.id).turnCount).toBe(1);
+  expect(db.select().from(turns).all()).toHaveLength(1);
+});
