@@ -65,11 +65,12 @@ jobs:
         # ever turned back on, also tests 22. Only
         # "CI results" is a required check, so the queue doesn't wait on a matrix name a PR never ran.
         node-version: ${{ github.event_name == 'merge_group' && fromJSON('["22.x", "24.x"]') || fromJSON('["24.x"]') }}
-        # A pull request to next runs one job: the whole-program build (type check) and only the tests
-        # that the changed files reach (vitest --changed). Its pull requests are small and many, and the
-        # full suite on each cost about 26 runner-minutes. The full suite, in four shards, runs on every
-        # push to next and on anything headed to main: that is where a cross-break shows.
-        shard: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' && fromJSON('[1]') || fromJSON('[1, 2, 3, 4]') }}
+        # A pull request to next runs the whole-program build (type check) and only the tests that the
+        # changed files reach (vitest --changed), still cut into four shards: a leaf change finishes each
+        # shard in about a minute, and a change to a shared file, which reaches half the suite, does not
+        # run that half on one machine (measured 2026-11-14: 11 to 25 minutes unsharded). The full suite
+        # runs on every push to next and on anything headed to main: that is where a cross-break shows.
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -138,14 +139,14 @@ jobs:
 
       - name: Test
         env:
-          LOOM_CI_SHARD: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' && 'affected' || format('{0}/4', matrix.shard) }}
+          LOOM_CI_SHARD: ${{ matrix.shard }}/4
           AFFECTED_ONLY: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' }}
         run: |
           reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
           if [ "$AFFECTED_ONLY" = true ]; then
             echo "Affected tests only, against $(git rev-parse --short HEAD^1):"
             git diff --name-only HEAD^1 HEAD | sed 's/^/  /' | head -60 || true
-            npm test -- --changed HEAD^1 --passWithNoTests "${reporters[@]}"
+            npm test -- --changed HEAD^1 --shard=${{ matrix.shard }}/4 --passWithNoTests "${reporters[@]}"
           else
             npm test -- --shard=${{ matrix.shard }}/4 "${reporters[@]}"
           fi
