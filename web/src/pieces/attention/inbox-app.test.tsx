@@ -18,11 +18,12 @@ vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Lo
 import InboxApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); });
+afterEach(async () => { await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.read.mockReset(); f.records.mockReset(); vi.unstubAllGlobals(); });
 function row(extra: Partial<InboxItem> = {}): InboxItem {
   return { id: 'in-1', source: 'thread', agent: 'art', at: '2026-11-14T18:00:00.000Z', state: 'waiting', volume: 'full', answers: 'yes-no', refs: [], read: false, body: { words: 'Buy the pump?', ifYes: 'Order it', ifNo: 'Skip it' }, ...extra };
 }
 function setup(item = row(), items = [item]) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => { const result = await f.call(url.replace('/api/','').replace('/','.'),JSON.parse(String(init.body)).input).result; return {ok:result.ok,json:async()=>result}; }));
   f.read.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
   f.status = 'live'; f.requests = []; f.records.mockClear(); f.call.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
   f.data = { inboxItems: items, inboxItem: item, inboxFolders: { needs: 130, alerts: 3, answered: 12, fyi: 8, all: 150, agents: [{ id: 'art', count: 149 }, { id: 'mark', count: 1 }] },
@@ -37,7 +38,7 @@ it('mounts shared Inbox, server folder totals and actual authenticated read/answ
   expect(tree.root.findByType('Split').props.folders).toContainEqual({ id: 'needs', label: 'Needs you', count: 130 });
   expect(tree.root.findByType('Split').props.folders).toContainEqual({ id: 'agent:mark', label: 'mark', count: 1 });
   expect(f.records).not.toHaveBeenCalled();
-  expect(f.read).toHaveBeenCalledWith('inbox.read', { item: 'in-1' });
+  expect(f.call).toHaveBeenCalledWith('inbox.read', { item: 'in-1' });
   await act(async () => { button('Yes').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('inbox.answer', { item: 'in-1', answer: 'yes' });
   expect(f.requests.at(-1)?.variables).toMatchObject({ folder: 'needs', offset: 0, search: '', id: 'in-1', hasItem: true });
@@ -90,19 +91,6 @@ it.each(['denied','offline'])('withdraws still-retained private words immediatel
   expect(tree.root.findAllByType('Row')).toHaveLength(0);
 });
 
-it('queues an opening read while the operation socket is still connecting', async () => {
-  const { DataStore } = await import('../../data/store');
-  const socket = { readyState: 0, send: vi.fn(), close: vi.fn(), onopen: null, onmessage: null, onclose: null, onerror: null };
-  const store = new DataStore({ socket: () => socket, id: () => 'read-opening', after: () => () => {} });
-  f.read.mockImplementation((name, input) => store.call(name, input));
-  setup(); f.read.mockImplementation((name, input) => store.call(name, input));
-  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go: vi.fn() })); });
-  expect(text()).toContain('Buy the pump?'); expect(socket.send).not.toHaveBeenCalled();
-  await act(async () => { socket.readyState = 1; (socket.onopen as (() => void) | null)?.(); });
-  expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ kind: 'call', request: 'read-opening', name: 'inbox.read', input: { item: 'in-1' }, id: 'read-opening' }));
-  await act(async () => { store.close(); });
-});
-
 it('opens the Alerts folder using the shared notice projection', async () => {
   setup(row({ source: 'notice', answers: null, body: { words: 'Alert from Loom' } }));
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview', go: vi.fn() })); });
@@ -110,4 +98,11 @@ it('opens the Alerts folder using the shared notice projection', async () => {
   await act(async () => { tree.root.findByType('Split').props.onFolder('alerts'); });
   expect(f.requests.at(-1)?.variables).toMatchObject({ folder: 'alerts', offset: 0 });
   expect(text()).toContain('Alert from Loom');
+});
+
+it('records opening reads over the current cookie HTTP door without a separate write connection', async () => {
+  setup();
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go: vi.fn() })); });
+  expect(fetch).toHaveBeenCalledWith('/api/inbox/read', expect.objectContaining({method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'}}));
+  expect(f.read).not.toHaveBeenCalled();
 });

@@ -1,3 +1,4 @@
+import { memberOperation } from '../../data/operation';
 import { stamp } from './time';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { call, callOnce, type Call, type CallState, type Snapshot } from '../../data';
@@ -131,12 +132,10 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
     return () => clearTimeout(timer);
   }, [data, now]);
   const current = data?.item ? retainedInboxItem(data.item, Math.max(now, Date.now())) : null;
-  const mutate = async (name: string, input: object) => {
-    const result = await callOnce(name, input).result;
-    if (!result.ok) throw new globalThis.Error(result.message);
-  };
+  const mutate = memberOperation;
+
   const actions: InboxActions | undefined = live ? {
-    read: async id => { const result = await call('inbox.read', { item: id }).result; if (!result.ok) throw new globalThis.Error(result.message); },
+    read: id => mutate('inbox.read', { item: id }),
     answer: (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }),
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
   } : undefined;
