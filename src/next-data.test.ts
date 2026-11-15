@@ -386,3 +386,48 @@ it('withdraws selected Tempo instructions when project access changes during a s
   else expect([401,403,503]).toContain(response.status);
  }finally{release();await pending;}
 });
+
+it.each(['http', 'socket', 'observe'])('fences an already-selected private Task after owner demotion (%s)', async mode => {
+  let began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const f = await setup({ heldPublic: { type: GraphQLString, async resolve() { began(); await held; return 'public'; } } });
+  f.data.writes.run(() => {
+    f.client.exec("UPDATE members SET role='owner' WHERE id='sam'; UPDATE tasks SET project=NULL,title='PRIVATE TASK LABEL' WHERE id='pump'");
+  });
+  const selectionQuery = '{ tasks { id title } heldPublic }';
+  try {
+    if (mode === 'http') {
+      const response = f.data.http.request('/graphql', { method: 'POST', headers: {
+        authorization: 'Bearer '+token, 'content-type': 'application/json',
+      }, body: JSON.stringify({ query: selectionQuery }) });
+      await started;
+      f.data.writes.run(() => f.client.exec("UPDATE members SET role='member' WHERE id='sam'"));
+      release();
+      const result = await response;
+      expect(result.status).toBe(503);
+      expect(await result.text()).not.toContain('PRIVATE TASK LABEL');
+    } else {
+      const ws = await f.open(), frames: string[] = [];
+      ws.on('message', frame => frames.push(String(frame)));
+      const ended = Promise.race([
+        once(ws, 'close').then(args => ({ kind: 'closed' as const, code: args[0] })),
+        once(ws, 'message').then(args => ({ kind: 'message' as const, frame: JSON.parse(String(args[0])) })),
+      ]);
+      ws.send(JSON.stringify(mode === 'socket'
+        ? { type: 'subscribe', id: 'private-task', payload: { query: selectionQuery } }
+        : { ...selection, payload: { ...selection.payload, variables: { query: selectionQuery } } }));
+      await started;
+      f.data.writes.run(() => f.client.exec("UPDATE members SET role='member' WHERE id='sam'"));
+      release();
+      const result = await ended;
+      if (result.kind === 'closed') expect(result.code).toBe(1012);
+      else {
+        expect(mode).toBe('observe');
+        expect(result.frame.payload.data.observe).toMatchObject({ revision: 1, patches: [{ path: [], value: { tasks: [], heldPublic: 'public' } }] });
+      }
+      expect(frames.join('')).not.toContain('PRIVATE TASK LABEL');
+    }
+    expect(await (await f.post({ authorization: 'Bearer '+token })).json()).toEqual({ data: { tasks: [] } });
+  } finally { release(); }
+});

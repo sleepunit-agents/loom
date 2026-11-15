@@ -117,3 +117,10 @@ describe('authenticated Slack message normalisation', () => {
     }
   });
 });
+
+it('carries authenticated group-DM classification without accepting a claimed private/group flag from message data', () => {
+ expect(normalizeDiscord(discord, dc({guild_id:undefined}), {id:'channel',kind:'dm',group:true})).toMatchObject({isDm:true,groupDm:true});
+ expect(normalizeDiscord(discord, dc({guild_id:undefined,groupDm:true}), {id:'channel',kind:'dm'})).not.toHaveProperty('groupDm');
+ expect(normalizeSlack(slack, sl({channel_type:'mpim'}))).toMatchObject({isDm:true,groupDm:true});
+ expect(normalizeSlack(slack, sl({channel_type:'im',groupDm:true}))).not.toHaveProperty('groupDm');
+});

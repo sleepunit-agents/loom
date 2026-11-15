@@ -42,7 +42,7 @@ export class BridgeChannels implements BridgeChannelCache {
           let value: DiscordChannel;
           if ([1, 3].includes(raw.type)) {
             if (raw.guild_id != null) throw Error('Discord DM has a guild');
-            value = { id: channel, kind: 'dm' };
+            value = { id: channel, kind: 'dm', ...(raw.type === 3 ? { group: true } : {}) };
           } else {
             if (raw.guild_id !== life.workspace) throw Error('Discord channel workspace mismatch');
             if ([0, 5].includes(raw.type)) value = { id: channel, guild: life.workspace, kind: 'channel' };
