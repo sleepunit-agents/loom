@@ -53,6 +53,7 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
 }
 
 export async function approvalPreparedChanges({page,tile,app,example,out,clock}){
+ const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
  const screenshot='action-approvalPreparedChanges.png',s=app.services,write=fn=>app.writes.run(fn).value,who={kind:'person',id:'alex'};
  const check=(v,m)=>{if(!v)throw Error(m);};
  try{
@@ -61,12 +62,12 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
    const active=tile.getByRole('article',{name:card.ask,exact:true}).filter({has:page.getByRole('button',{name:button,exact:true})}).last();
    await active.getByRole('heading',{name:card.ask,exact:true}).first().waitFor({timeout:4000});
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-   await active.getByRole('button',{name:button,exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
+   await activate(active.getByRole('button',{name:button,exact:true}));const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
   };
   const beforeCards=s.approvals.list().length,ordinary='Ordinary fictitious note without an approval.';
   await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(ordinary);
   const ordinaryReply=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:4000});void ordinaryReply.catch(()=>{});
-  await tile.getByRole('button',{name:'Send',exact:true}).click();const ordinaryResponse=await ordinaryReply;check(ordinaryResponse.ok()&&(await ordinaryResponse.json()).ok===true&&s.approvals.list().length===beforeCards,'Ordinary conversation work required an approval');
+  await activate(tile.getByRole('button',{name:'Send',exact:true}));const ordinaryResponse=await ordinaryReply;check(ordinaryResponse.ok()&&(await ordinaryResponse.json()).ok===true&&s.approvals.list().length===beforeCards,'Ordinary conversation work required an approval');
   await tile.getByText(ordinary,{exact:true}).waitFor();
   const before=s.tempo.volume.timings(who).settleSeconds;clock.advance(1);
   const deniedSetting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},context));
@@ -87,6 +88,6 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
   const merge=write(()=>s.approvals.request({...context,kind:'merge',target:`${example.change}@${s.changes.get(example.change).headCommit}`,what:'Fictitious exact-head merge',ask:'Merge the fictitious head?',ifYes:'Fern merges it.',ifNo:'Leave it open.'}));
   check(['command','merge','setting','dangerous'].every(kind=>s.approvals.list().some(card=>card.kind===kind)),'Not all four approval kinds were represented');
   write(()=>s.approvals.withdraw(merge.id,'fern'));check(s.approvals.get(merge.id).state==='withdrawn','Merge request was not withdrawn');
-  await page.screenshot({path:join(out,screenshot),fullPage:true});return {approvalPreparedChanges:{ok:true,screenshot}};
+  await tile.screenshot({path:join(out,screenshot)});return {approvalPreparedChanges:{ok:true,screenshot}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {approvalPreparedChanges:{ok:false,error:String(error),screenshot}};}
 }
