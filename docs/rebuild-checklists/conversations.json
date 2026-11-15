@@ -124,22 +124,38 @@
     {
       "id": "conversations-022",
       "promise": "A conversation belongs to one agent, and optionally to a project or privately to one member.conversations.agent, project, member",
-      "source": "docs/how-it-works/site/conversations.html#con-h"
+      "source": "docs/how-it-works/site/conversations.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationLabels"
+      }
     },
     {
       "id": "conversations-023",
       "promise": "a Three labels. Each conversation carries its agent, its project if it has one, and a member when it is private to one person.",
-      "source": "docs/how-it-works/site/conversations.html#see-h"
+      "source": "docs/how-it-works/site/conversations.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationLabels"
+      }
     },
     {
       "id": "conversations-024",
       "promise": "b Who sees it. A household owner sees everything, including another member's private thread. Anyone else sees conversations in their projects and conversations of agents they own.",
-      "source": "docs/how-it-works/site/conversations.html#see-h"
+      "source": "docs/how-it-works/site/conversations.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "conversationVisibility"
+      }
     },
     {
       "id": "conversations-025",
       "promise": "c Private. A thread in loom is private to its member. Private to a member means that member plus household owners.",
-      "source": "docs/how-it-works/site/conversations.html#see-h"
+      "source": "docs/how-it-works/site/conversations.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "commsPrivacy"
+      }
     },
     {
       "id": "conversations-026",

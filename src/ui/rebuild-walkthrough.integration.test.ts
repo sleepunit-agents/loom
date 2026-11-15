@@ -67,6 +67,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
 
 
  });
+ it('checks owner and member conversation privacy through normal browser sign-in',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('visibility');
+  for(const name of ['conversationLabels','conversationVisibility','commsPrivacy','inboxVisibility','inboxRecipients'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,isolation:{http:'blocked',websocket:'blocked'},cleanup:{restored:true,contextClosed:true,credentialAbsent:true}});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;
