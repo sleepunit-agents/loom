@@ -29,6 +29,10 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    if(!ready)return;
    const step=await steps?.next();expect(step?.done).toBe(true);const report=step?.value;
    expect(report.fatal).toBeUndefined();expect(report.live.dataFrames).toBeGreaterThan(0);
+   const measured=JSON.parse(readFileSync(join(out,'report.json'),'utf8'));
+   expect(measured.pages).toHaveLength(19);
+   expect(measured.counts['not checkable yet']).toBeGreaterThan(0);
+   expect(measured.pages.every((page:{promises:unknown[]})=>page.promises.length>0)).toBe(true);
    expect(JSON.stringify(report)).not.toMatch(/AGE-SECRET-KEY-|\/login\/[a-zA-Z0-9_-]{24,}/);
   }finally{await steps?.return();if(out&&!process.env.LOOM_TEST_SHOTS)rmSync(out,{recursive:true,force:true});}
  });
