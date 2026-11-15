@@ -12,9 +12,9 @@ export function evaluate(promise,run){
  if(p.kind==='live')return {status:run.live?.dataFrames>0&&!run.live.errors.length?'met':'not met',reason:`GraphQL data frames: ${run.live?.dataFrames??0}; GraphQL errors: ${run.live?.errors?.length??0}.`,evidence:'walkthrough.json#live'};
  if(p.kind==='launcher')return {status:run.inventory?.length&&run.apps.length===run.inventory.length&&run.apps.every(app=>app.opened)?'met':'not met',reason:`${run.apps.filter(app=>app.opened).length} of ${run.inventory?.length??0} launcher apps opened.`,evidence:'walkthrough.json#apps'};
  if(p.kind==='action'){
-  const app=run.apps.find(app=>app.title===p.app),check=app?.actions?.[p.check];
-  if(!check)return {status:run.fatal?'not checkable yet':'not met',reason:app?.error??run.fatal??`No completed ${p.check} observation from ${p.app}.`};
-  return {status:check.ok===true?'met':'not met',reason:check.ok===true?JSON.stringify(check.facts):check.error??'The action did not complete.',evidence:check.evidence};
+  const action=run.actions?.[p.action];
+  if(!action)return {status:'not checkable yet',reason:run.fatal??'The browser action did not run.'};
+  return {status:action.ok===true?'met':'not met',reason:action.ok===true?'The browser action and its persisted result were verified.':action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
  }
  if(p.kind==='ui'){
   const app=run.apps.find(app=>app.title===p.app);

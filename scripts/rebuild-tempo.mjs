@@ -14,7 +14,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
  const inbox=async()=> (await query('{inboxItems(limit:100){id toKind to source sourceId refs state volume body{words}}}')).inboxItems;
  const notice=async()=> (await query('{settledInboxNotice{id count}}')).settledInboxNotice;
  const observe=async(name,work)=>{
-  try{const facts=await work(),evidence=await capture(name);checks[name]={ok:true,facts,evidence};}
+  try{const facts=await work(),screenshot=await capture(name);checks[name]={ok:true,facts,screenshot};}
   catch(error){checks[name]={ok:false,error:String(error)};throw error;}
  };
  await observe('held',async()=>{
@@ -22,8 +22,8 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   await tile.getByRole('button',{name:'Resume agent',exact:true}).waitFor();
   const response=await page.request.post(url+'/api/approvals/answer',{headers:{origin:url},data:{id:randomUUID(),input:{id:example.approval,answer:'allow'}},maxRedirects:0});
   assert.equal(response.status(),200);assert.equal((await response.json()).ok,true);
-  const current=await trigger(example.trigger);assert.equal(current.row.state,'held');assert.equal(current.row.lastFiredAt,null);assert.equal(current.events.filter(event=>event==='fired').length,0);
-  return {state:current.row.state,firedEvents:0,source:'An actual owner answer arrived while the agent was paused.'};
+  const current=await trigger(example.trigger);assert.equal(current.row.state,'held');assert.equal(current.row.lastFiredAt,null);assert.equal(current.events.filter(event=>event==='observed').length,1);assert.equal(current.events.filter(event=>event==='fired').length,0);
+  return {state:current.row.state,observedAnswers:1,firedEvents:0,source:'An actual owner answer arrived while the agent was paused.'};
  });
  await observe('resumed',async()=>{
   await tile.getByRole('button',{name:'Resume agent',exact:true}).click();

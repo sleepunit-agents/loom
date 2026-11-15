@@ -25,11 +25,16 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(title==='Tempo'){expect(app.error).toBeUndefined();expect(app.actions).toMatchObject({held:{ok:true},resumed:{ok:true},settled:{ok:true},cancelled:{ok:true}});}
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
  });
+ it('sends and answers through the real Comms and Inbox controls',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('actions');
+  for(const name of ['commsSend','inboxAnswer','commsAnswer'])expect(step.value.actions?.[name],JSON.stringify(step.value.actions)).toMatchObject({ok:true});
+ });
  afterAll(async()=>{
   try{
    if(!ready)return;
    const step=await steps?.next();expect(step?.done).toBe(true);const report=step?.value;
-   expect(report.fatal).toBeUndefined();expect(report.live.dataFrames).toBeGreaterThan(0);
+   expect(report.fatal).toBeUndefined();
+   expect(report.live.dataFrames).toBeGreaterThan(0);
    const measured=JSON.parse(readFileSync(join(out,'report.json'),'utf8'));
    expect(measured.pages).toHaveLength(19);
    expect(measured.counts['not checkable yet']).toBeGreaterThan(0);

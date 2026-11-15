@@ -1,5 +1,6 @@
 /** Worker-child native adapter. No Root credential enters argv, environment or
  * model input. The outer worker owns the process group, including this child. */
+import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { z } from 'zod';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -26,7 +27,7 @@ export function claudeBody(input: {
   return async (job: WorkerAssignment, words: string, signal: AbortSignal): Promise<ClaudeReply> => {
     if(control&&used)throw unavailable();used=true;
     if (signal.aborted || job.harness !== 'claude' || !modelPattern.test(job.model)
-      || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > limit){control?.fill(0);throw unavailable();}
+      || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES){control?.fill(0);throw unavailable();}
     const guest = job.run?.policy?.people.some(person => person.kind !== 'person' && person.tier !== 3) ?? false;
     const denied = [...new Set((job.run?.policy?.deniedTools ?? []).filter(rule => !rule.guestsOnly || guest).map(rule => rule.pattern))];
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw unavailable();}
