@@ -61,6 +61,7 @@ it('leaves muted mail waiting when a running job takes other mail in the same co
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
   db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([dim.id]);
+  expect(service.item(dim.id).volume).toBe('dim');
   expect(service.item(muted.id)).toMatchObject({ state: 'waiting', job: null, takenAt: null });
   db.update(inbox).set({ volume: 'full' }).where(eq(inbox.id, muted.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([muted.id, dim.id]);

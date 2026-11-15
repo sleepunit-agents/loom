@@ -41,8 +41,9 @@ it('deduplicates outages across restarts, resolves recovery, and alerts for a la
   const restarted = new Machines(db, now);
   expect(restarted.sweep()[0].id).toBe(first.id);
   expect(db.select().from(inbox).all()).toHaveLength(1);
+  db.update(inbox).set({volume:'dim',quietUntil:'2026-11-15T18:00:00.000Z'}).where(eq(inbox.id,first.id)).run();
   expect(restarted.heartbeat('worker').lastSeenAt).toBe(now());
-  expect(db.select().from(inbox).where(eq(inbox.id, first.id)).get()).toMatchObject({ state: 'resolved', resolution: 'Machine is reporting again', changedAt: now() });
+  expect(db.select().from(inbox).where(eq(inbox.id, first.id)).get()).toMatchObject({ state: 'resolved', resolution: 'Machine is reporting again', changedAt: now(), volume:'full', quietUntil:null });
   expect(restarted.sweep()).toEqual([]);
   advance(120_001);
   const second = restarted.sweep()[0];

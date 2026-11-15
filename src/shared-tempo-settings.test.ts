@@ -164,3 +164,18 @@ it('denies through HTTP without applying timings, and rolls back an Allow whose 
  expect(f.db.select().from(approvalRecord).where(eq(approvalRecord.approval,card.id)).all().map(row=>row.event)).toEqual(['request','deny']);
  expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
 });
+
+it('keeps quiet volume atomic with the source decision and its receipt',async()=>{
+ const f=fixture();await f.call();const card=f.db.select().from(approvals).get()!;
+ const question=f.db.select().from(inbox).where(eq(inbox.waitsOnId,card.id)).get()!;
+ f.root.services.tempo.volume.set({kind:'person',id:'owner'},question.id,'dim');
+ const before=f.root.services.conversations.item(question.id);
+ f.client.exec("CREATE TRIGGER refuse_volume_answer BEFORE INSERT ON operation_results WHEN NEW.operation='approvals.answer' BEGIN SELECT RAISE(ABORT,'no receipt'); END");
+ const answer=()=>f.root.http.request('/api/approvals/answer',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+ownerToken},body:JSON.stringify({input:{id:card.id,answer:'deny'},id:'quiet-decision'})});
+ expect((await answer()).status).toBe(503);
+ expect(f.root.services.conversations.item(question.id)).toEqual(before);
+ f.client.exec('DROP TRIGGER refuse_volume_answer');
+ expect((await answer()).status).toBe(200);
+ expect(f.root.services.conversations.item(question.id)).toMatchObject({state:'resolved',volume:'full',quietUntil:null});
+ expect(f.root.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(5);
+});

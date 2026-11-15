@@ -1,5 +1,6 @@
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
+import { changedInboxContent, type Recipient } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, max, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
@@ -124,7 +125,7 @@ export class Conversations {
       if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
       if ((answer === 'words' || answer === 'replied') && !words?.trim()) throw new Error('Answer needs words');
       const at = this.now();
-      const updated = this.db.update(inbox).set({ state: 'answered', answer, answerText: words ?? null, answeredBy: member, answeredAt: at, changedAt: at }).where(eq(inbox.id, itemId)).returning().get()!;
+      const updated = this.db.update(inbox).set({ ...changedInboxContent(), state: 'answered', answer, answerText: words ?? null, answeredBy: member, answeredAt: at, changedAt: at }).where(eq(inbox.id, itemId)).returning().get()!;
       if (item.conversation) {
         const conversation = this.conversation(item.conversation);
         const outcome = answer === 'yes' ? item.ifYes : answer === 'no' ? item.ifNo : null;
@@ -141,8 +142,8 @@ export class Conversations {
   }
 
   /** Called by tasks/approvals when their durable outcome is committed. */
-  resolve(kind: 'task' | 'approval', id: string, reason: string): Item[] {
-    return this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.waitsOnKind, kind), eq(inbox.waitsOnId, id), eq(inbox.state, 'waiting'))).returning().all();
+  resolve(kind: 'task' | 'approval', id: string, reason: string, named?: Recipient): Item[] {
+    return this.db.update(inbox).set({ ...changedInboxContent(named), state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.waitsOnKind, kind), eq(inbox.waitsOnId, id), eq(inbox.state, 'waiting'))).returning().all();
   }
 
   digest(input: DigestInput, questionItem?: string): typeof digests.$inferSelect {
@@ -158,7 +159,7 @@ export class Conversations {
         || raised.words !== null || raised.why !== null || raised.ifYes !== null || raised.ifNo !== null || raised.link !== null)) throw new Error('Private digest question needs encrypted message reference');
       const old = this.db.select().from(digests).where(and(eq(digests.conversation, input.conversation), eq(digests.run, input.run))).get();
       // A rewrite retires its old pending question; answered questions stay as history.
-      if (old?.inboxItem && old.inboxItem !== raised?.id) this.db.update(inbox).set({ state: 'resolved', resolution: 'Digest rewritten', changedAt: this.now() }).where(and(eq(inbox.id, old.inboxItem), eq(inbox.state, 'waiting'))).run();
+      if (old?.inboxItem && old.inboxItem !== raised?.id) this.db.update(inbox).set({ ...changedInboxContent(), state: 'resolved', resolution: 'Digest rewritten', changedAt: this.now() }).where(and(eq(inbox.id, old.inboxItem), eq(inbox.state, 'waiting'))).run();
       const revision = (old?.revision ?? 0) + 1;
       const question = input.question ? this.send({ ...input.question, toKind: 'person', conversation: conversation.id, source: 'thread', sourceId: `digest:${input.run}:${conversation.id}:${revision}`, fromKind: 'agent', fromId: conversation.agent }) : undefined;
       if (question) this.turn({conversation:conversation.id,kind:'note',fromKind:'agent',fromId:conversation.agent,run:input.run});
