@@ -43,7 +43,9 @@ export function sharedRoot(options: {
     conversations: new Conversations(db, now),
   };
   installTaskCommands(operations, db, services.tasks, options.taskConversationVisible ?? (() => false));
-  const tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo);
+  let tempo: ReturnType<typeof installSharedTempo>;
+  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
+  catch (error) { operations.close(); void data.close(); throw error; }
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
