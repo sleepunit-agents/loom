@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { createElement as h } from '../../web/node_modules/react/index.js';
+import { createElement as h, type ReactNode } from '../../web/node_modules/react/index.js';
 import { act, create } from '../../web/node_modules/react-test-renderer/index.js';
 import type { DataQuerySnapshot } from '../../web/src/data/graphql';
 import type { TasksSelection, TaskSelection } from '../../web/src/pieces/tasks/query';
@@ -8,6 +8,7 @@ const f = vi.hoisted(() => ({snapshot: {status:'loading'} as DataQuerySnapshot<T
 vi.mock('../../web/src/data/graphql', () => ({useDataQuery: (query: string) => { f.read(query); return f.snapshot; }}));
 vi.mock('../../web/src/pieces/tasks/shared-view', () => ({SharedTasks: (props: unknown) => h('Tasks',props)}));
 vi.mock('../../web/src/pieces/tasks/shared-form', () => ({SharedTaskForm: (props: unknown) => h('Form',props)}));
+vi.mock('../../web/src/components/ui/dialog', () => Object.fromEntries(['Dialog','DialogContent','DialogTitle'].map(name => [name, (props: {children?: ReactNode; open?: boolean}) => name === 'Dialog' && !props.open ? null : h(name, props, props.children)])));
 import TasksApp from '../../web/src/pieces/tasks';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;

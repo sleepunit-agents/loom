@@ -94,3 +94,11 @@ it('places current action outcomes in FYI and Errors and hides them with the mai
   await act(async () => { tree.update(h(InboxView, { ...props, snapshot: { ...snapshot, status: 'denied' } })); });
   expect(tree.root.findAllByType('article')).toHaveLength(0);
 });
+it('shows dim items as one-line entries, keeps mute hidden, and opens the complete question', async () => {
+ const select=vi.fn(),dim={...item,volume:'dim' as const};
+ const current:InboxSnapshot={status:'live',items:[dim,{...item,id:'muted',volume:'mute'}]};
+ await act(async()=>{tree=create(h(InboxView,{snapshot:current,select}));});
+ const entries=tree.root.findAllByType('Row');expect(entries).toHaveLength(1);expect(entries[0].props.title).toBe(item.body!.words);expect(entries[0].props.meta).toBeUndefined();expect(entries[0].props.status).toBeUndefined();
+ await act(async()=>{entries[0].props.onClick();});expect(select).toHaveBeenCalledWith(item.id);
+ await act(async()=>{tree.update(h(InboxView,{snapshot:current,selected:item.id,select}));});expect(JSON.stringify(tree.toJSON())).toContain('In stock today');
+});
