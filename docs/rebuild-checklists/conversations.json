@@ -1,0 +1,134 @@
+{
+  "page": "conversations",
+  "title": "Conversations",
+  "ownerTask": "t-2237",
+  "sourceSha256": "b6b6a306f9e15ec6efed52791543dd2a12cf689ced946c3dd8c4f9dc1785fb76",
+  "promises": [
+    {
+      "id": "conversations-001",
+      "promise": "A conversation is one agent talking in one place. Loom keeps one record for each, whatever the place, so a chat in loom, a Discord channel, a scheduled run and a handoff all look the same to every other part.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-002",
+      "promise": "Each thing said or done is a turn: a message, a reply, an action, a wake, a note or a refusal. Loom records who it came from, when, and how it went. A turn holds no words.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-003",
+      "promise": "When an agent finishes a stretch of work it writes a digest: a summary, what was decided, the tasks and projects it touched, and anything it needs from its owner.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-004",
+      "promise": "That need becomes a question in the inbox, addressed to a person, with what happens on each answer. The answer, who gave it and when are recorded on the same item, and loom adds a new item for the agent, with answer as its source, so the agent learns of it.",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-005",
+      "promise": "Every inbox item names its conversation, and a digest points at the question it raised.inbox.conversation · digests.inbox_item",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-006",
+      "promise": "A trigger drops an item into the conversation's inbox, and a non-empty inbox starts the agent.inbox.source = trigger",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-007",
+      "promise": "A job works in one conversation, and a conversation points at the job working in it now.jobs.conversation · conversations.job",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-008",
+      "promise": "A session leaves a short note for the next one, and Activity builds each day from them.in the agent's own files",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-009",
+      "promise": "A conversation belongs to one agent, and optionally to a project or privately to one member.conversations.agent, project, member",
+      "source": "docs/how-it-works/site/conversations.html"
+    },
+    {
+      "id": "conversations-010",
+      "promise": "a Three labels. Each conversation carries its agent, its project if it has one, and a member when it is private to one person.",
+      "source": "docs/how-it-works/site/conversations.html#see-h"
+    },
+    {
+      "id": "conversations-011",
+      "promise": "b Who sees it. A household owner sees everything, including another member's private thread. Anyone else sees conversations in their projects and conversations of agents they own.",
+      "source": "docs/how-it-works/site/conversations.html#see-h"
+    },
+    {
+      "id": "conversations-012",
+      "promise": "c Private. A thread in loom is private to its member. Private to a member means that member plus household owners.",
+      "source": "docs/how-it-works/site/conversations.html#see-h"
+    },
+    {
+      "id": "conversations-013",
+      "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/conversations.html#see-h"
+    },
+    {
+      "id": "conversations-014",
+      "promise": "e Words. Message words are kept for the household's keep time, 14 days at most, then removed. They are encrypted where they are stored.",
+      "source": "docs/how-it-works/site/conversations.html#see-h"
+    },
+    {
+      "id": "conversations-015",
+      "promise": "The private thread displays the person message and agent reply.",
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Comms",
+        "contains": [
+          "Please compare replacement pumps",
+          "Three fit. The quiet model"
+        ]
+      }
+    },
+    {
+      "id": "conversations-016",
+      "promise": "A question appears inline with Allow and Deny.",
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Comms",
+        "contains": [
+          "Spend up to 180",
+          "Allow",
+          "Deny"
+        ]
+      }
+    },
+    {
+      "id": "conversations-017",
+      "promise": "Work made in the conversation is listed.",
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Comms",
+        "contains": [
+          "Work",
+          "Compare garden pumps",
+          "Order the selected pump"
+        ]
+      }
+    }
+  ],
+  "modelTables": [
+    "conversations",
+    "conversation_people",
+    "turns",
+    "inbox",
+    "digests",
+    "digest_items",
+    "threads",
+    "messages",
+    "thread_refs",
+    "agent_status",
+    "conversation_days",
+    "findings",
+    "deleted_threads"
+  ]
+}

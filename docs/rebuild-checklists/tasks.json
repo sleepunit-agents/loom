@@ -1,0 +1,140 @@
+{
+  "page": "tasks",
+  "title": "Tasks",
+  "ownerTask": "t-2239",
+  "sourceSha256": "48d0260353e64fe1fa872f7f1214f0b6c22711d65ef824a53d2fdf9d7b181427",
+  "promises": [
+    {
+      "id": "tasks-001",
+      "promise": "Shows what is ready to pick up, most urgent first.",
+      "source": "docs/how-it-works/site/tasks.html"
+    },
+    {
+      "id": "tasks-002",
+      "promise": "Lets a person or an agent claim work, comment on it and close it.",
+      "source": "docs/how-it-works/site/tasks.html"
+    },
+    {
+      "id": "tasks-003",
+      "promise": "Groups work under a parent and holds back what is blocked.",
+      "source": "docs/how-it-works/site/tasks.html"
+    },
+    {
+      "id": "tasks-004",
+      "promise": "Carries a question to a person when the work needs a decision.",
+      "source": "docs/how-it-works/site/tasks.html"
+    },
+    {
+      "id": "tasks-005",
+      "promise": "Every task has an owner. Its project, or else its owner, decides who sees it.",
+      "source": "docs/how-it-works/site/tasks.html#con-h"
+    },
+    {
+      "id": "tasks-006",
+      "promise": "A task names the conversation it came from.",
+      "source": "docs/how-it-works/site/tasks.html#con-h"
+    },
+    {
+      "id": "tasks-007",
+      "promise": "The question also appears in that person's Inbox.",
+      "source": "docs/how-it-works/site/tasks.html#con-h"
+    },
+    {
+      "id": "tasks-008",
+      "promise": "Other tasks. One parent at most, any number of blockers.",
+      "source": "docs/how-it-works/site/tasks.html#con-h"
+    },
+    {
+      "id": "tasks-009",
+      "promise": "A pull request that mentions the task is linked to it.",
+      "source": "docs/how-it-works/site/tasks.html#con-h"
+    },
+    {
+      "id": "tasks-010",
+      "promise": "A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress. Closing it takes a reason, and the reason cancelled marks it cancelled.",
+      "source": "docs/how-it-works/site/tasks.html#how-h"
+    },
+    {
+      "id": "tasks-011",
+      "promise": "A task sits under one parent at most. An epic groups other tasks and is never ready itself. A blocked task waits until the task blocking it closes.",
+      "source": "docs/how-it-works/site/tasks.html#how-h"
+    },
+    {
+      "id": "tasks-012",
+      "promise": "People and agents leave comments as work moves. Loom keeps them in order, oldest first, each with who wrote it and when.",
+      "source": "docs/how-it-works/site/tasks.html#how-h"
+    },
+    {
+      "id": "tasks-013",
+      "promise": "A task can carry one question, with what happens on yes and on no. The person answers yes or no, or in words. The question also appears in that person's Inbox.",
+      "source": "docs/how-it-works/site/tasks.html#how-h"
+    },
+    {
+      "id": "tasks-014",
+      "promise": "a Every task has an owner. A member, an agent or the household. There is no task without one.",
+      "source": "docs/how-it-works/site/tasks.html#see-h"
+    },
+    {
+      "id": "tasks-015",
+      "promise": "b Who sees it. Its project's people when it has a project. Otherwise its owner, and for an agent's task, that agent's owners. Household owners always.",
+      "source": "docs/how-it-works/site/tasks.html#see-h"
+    },
+    {
+      "id": "tasks-016",
+      "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read tasks without asking.",
+      "source": "docs/how-it-works/site/tasks.html#see-h"
+    },
+    {
+      "id": "tasks-017",
+      "promise": "Status, priority, project, owner and assignee are columns, so the ready queue, a project's task list and a person's assignments are each one query.",
+      "source": "docs/how-it-works/site/tasks.html"
+    },
+    {
+      "id": "tasks-018",
+      "promise": "Ready work is listed in the Tasks tile.",
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Tasks",
+        "contains": [
+          "Ready",
+          "Measure the hose"
+        ]
+      }
+    },
+    {
+      "id": "tasks-019",
+      "promise": "A task detail displays its title, goal, reason and owner.",
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Tasks",
+        "contains": [
+          "Measure the hose",
+          "Goal",
+          "Why",
+          "Owner: agent fern"
+        ]
+      }
+    },
+    {
+      "id": "tasks-020",
+      "promise": "The task detail offers claim, close and comment.",
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Tasks",
+        "contains": [
+          "Claim",
+          "Close",
+          "Comment"
+        ]
+      }
+    }
+  ],
+  "modelTables": [
+    "tasks",
+    "task_links",
+    "task_comments"
+  ]
+}

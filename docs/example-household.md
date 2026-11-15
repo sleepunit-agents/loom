@@ -41,3 +41,9 @@ Screenshots and `walkthrough.json` are uploaded by the Rebuild walkthrough CI jo
 App failures are measurements in that report; fatal startup/sign-in failures fail
 the command. A green walkthrough job means evidence was collected, not that all
 product promises are fulfilled.
+
+The walkthrough also regenerates `report.md` and `report.json` from the 18 page
+checklists plus the front page in `docs/rebuild-checklists/`. Each promise is
+**met**, **not met**, or **not checkable yet**, with the evidence or the precise
+limit. Untested behavior is never silently treated as working. Page hashes make
+a report flag changed approved pages instead of measuring stale checklists.
