@@ -211,3 +211,29 @@ it('uses the upgrade viewer for context-based reads and observe reruns despite c
   const changed = await read(ws, () => { title = 'Second'; f.live.changed(); });
   expect(changed.payload.data.observe).toEqual({ revision: 2, patches: [{ path: ['title'], removed: false, value: 'sam:Second' }] });
 });
+
+it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLite may close', async mode => {
+  const f = await setup(), ws = await f.open();
+  let began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const events: string[] = [];
+  clean.push(() => release());
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: GraphQLString, async resolve() {
+      began(); await held;
+      f.client.prepare('SELECT title FROM tasks').all(); events.push('read'); return 'done';
+    } },
+  } }) }));
+  ws.send(JSON.stringify(mode === 'query' ? { type: 'subscribe', id: 'slow', payload: { query: '{ slow }' } } : { ...selection, payload: { ...selection.payload, variables: { query: '{ slow }' } } }));
+  await started;
+  const ended = once(ws, 'close');
+  const draining = f.socket.close();
+  expect(f.socket.close()).toBe(draining);
+  const closing = draining.then(() => { events.push('closed'); });
+  try {
+    await ended;
+    release(); await closing;
+    expect(events).toEqual(['read', 'closed']);
+  } finally { release(); }
+});
