@@ -5,6 +5,7 @@ import type { Clock } from './core/clock.js';
 import type { Operations } from './core/operations/index.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { mayAct, mayCreate, maySee, type RecordScope } from './policy.js';
+import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { sharedSharing } from './shared-sharing.js';
 import { CommsMessages } from './core/conversations/messages.js';
 import { CommsQueries, commsQueryFields } from './core/conversations/comms-query.js';
@@ -17,7 +18,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   const now = () => new Date(clock.now()).toISOString();
   const service = new CommsMessages(db, key, now);
   const policy = (viewer: Parameters<typeof workVisibility>[0], fields: Parameters<NonNullable<ReturnType<typeof workVisibility>['approvals']>>[0]) => workVisibility(viewer).approvals!(fields);
-  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, policy, now);
+  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, policy, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }));
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({
     type: 'conversation', member: row.member ?? undefined, project: row.project ?? undefined, agent: row.agent ?? undefined,

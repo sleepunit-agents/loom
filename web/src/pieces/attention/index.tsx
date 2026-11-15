@@ -137,6 +137,7 @@ export default function InboxApp({ path: shellPath, go, visible = true }: { path
   const mutate = memberOperation;
 
   const actions: InboxActions | undefined = live ? {
+    volume: current?.canSetVolume ? (id, volume) => mutate('inbox.volume', { item: id, volume }) : undefined,
     read: readingVisible ? id => mutate('inbox.read', { item: id }) : undefined,
     answer: current?.canAnswer ? (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }) : undefined,
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
