@@ -1,4 +1,5 @@
 import type { Span, Tracer } from '@opentelemetry/api';
+import { clock as realClock, type Clock } from '../clock.js';
 
 export type TimingKind = 'request' | 'operation' | 'job';
 export interface TimingTarget { kind: TimingKind; name: string }
@@ -45,6 +46,7 @@ const off: Measuring = Object.freeze({
 export async function createMeasuring(
   settings: Readonly<MeasuringSettings>, targets: readonly TimingTarget[], store?: TimingStore,
   reportError: () => void = () => {},
+  clock: Clock = realClock,
 ): Promise<Measuring> {
   if (!settings.on) return off;
   const keepDays = settings.keep_days;
@@ -67,6 +69,11 @@ export async function createMeasuring(
   let writing = false;
   let prunedDay = '';
   const report = () => { try { reportError(); } catch { /* diagnostics cannot break application work */ } };
+  const prune = (day: string) => {
+    if (!store || day <= prunedDay) return;
+    store.prune(new Date(Date.parse(day) - (keepDays - 1) * 86400_000).toISOString().slice(0, 10));
+    prunedDay = day;
+  };
   if (store) processors.push({
     onStart() {},
     onEnd(span) {
@@ -75,17 +82,15 @@ export async function createMeasuring(
       const name = span.name;
       if (!inventory.has(`${kind}:${name}`)) return;
       const ms = span.duration[0] * 1000 + span.duration[1] / 1e6;
-      const end = span.endTime[0] * 1000 + span.endTime[1] / 1e6;
-      if (!Number.isFinite(ms) || ms < 0 || !Number.isFinite(end)) return;
+      if (!Number.isFinite(ms) || ms < 0) return;
       writing = true;
       try {
-        const day = new Date(end).toISOString().slice(0, 10);
+        // Use the same calendar as retention, including under an injected clock.
+        // OpenTelemetry still supplies the monotonic elapsed duration.
+        const day = new Date(clock.now()).toISOString().slice(0, 10);
         // UTC calendar days, including today. Retention recovers after a long
         // idle interval or restart without issuing a DELETE for every span.
-        if (day > prunedDay) {
-          store.prune(new Date(Date.parse(day) - (keepDays - 1) * 86400_000).toISOString().slice(0, 10));
-          prunedDay = day;
-        }
+        prune(day);
         store.add({ day, kind, name, count: 1, total_ms: ms, slowest_ms: ms, typical_ms: ms });
       } catch { report(); }
       finally { writing = false; }
@@ -100,6 +105,18 @@ export async function createMeasuring(
     }));
   }
   const provider = new sdk.TracerProvider({ spanProcessors: processors, sampler: new sdk.AlwaysOnSampler() });
+  let cancelRetention: (() => void) | undefined;
+  const retain = () => {
+    if (!active || !store) return;
+    const now = clock.now();
+    writing = true;
+    try { prune(new Date(now).toISOString().slice(0, 10)); }
+    catch { report(); }
+    finally { writing = false; }
+    // Expire idle stores too, without a polling interval or a process keepalive.
+    if (active) cancelRetention = clock.at((Math.floor(now / 86400_000) + 1) * 86400_000, retain);
+  };
+  retain();
   const tracer: Tracer = provider.getTracer('loom.measuring');
   const begin = (kind: TimingKind, name: string): Span | undefined =>
     active && !writing && inventory.has(`${kind}:${name}`)
@@ -121,6 +138,7 @@ export async function createMeasuring(
     flush: () => provider.forceFlush({ timeoutMillis: 5000 }),
     close() {
       active = false; // Fence unfinished async work before yielding to SDK shutdown.
+      cancelRetention?.();
       return closing ??= provider.shutdown();
     },
   };

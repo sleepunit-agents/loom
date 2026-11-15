@@ -1,3 +1,13 @@
+import type { GraphQLFieldConfigMap } from 'graphql/index.js';
+import type { Viewer } from './core/index.js';
+import { memoryQueryFields } from './transport/memory-queries.js';
+import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
+import { dataHttp } from './core/data/http.js';
+import { dataReadSchema } from './core/data/read-schema.js';
+import { DataLive } from './core/data/live.js';
+import { dataSocket } from './core/data/socket.js';
+import { dataDatabase } from './core/data/database.js';
+import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
 import { discordApi } from './pieces/bridges/discord-api.js';
 import { runtimeDiscordHistoryPermit } from './pieces/runtime/role.js';
@@ -24,7 +34,7 @@ import { attentionRole } from './pieces/attention/role.js';
 import { conversationRuntime } from './pieces/runtime/conversations.js';
 import { spawnMetadata } from './pieces/runtime/spawn-metadata.js';
 import { MANIFEST, nextWorker } from './next-pwa.js';
-import { installMindActivity } from './pieces/mind/activity.js';
+import { installMindActivity, installedMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
@@ -69,7 +79,7 @@ import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secr
 import { installHouseSecrets } from './pieces/secrets/house.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
-import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
+import { installSecretServices, installedSecretUse, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
 import { githubSecrets } from './pieces/changes/secrets.js';
 import { changesApprovals } from './pieces/changes/approvals.js';
 import { installChangesDaemon, householdAttribution } from './pieces/changes/daemon.js';
@@ -77,7 +87,7 @@ import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
-import { signin, installSignin, sameOrigin } from './core/signin/index.js';
+import { signin, installSignin, sameOrigin, relyingParty } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
@@ -100,6 +110,7 @@ import { approvalAnswers } from './pieces/approvals/role.js';
 import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
+const memoryQueries = new WeakMap<Foundation, GraphQLFieldConfigMap<unknown, { viewer: Viewer }>>();
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
@@ -161,9 +172,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (attentionSources) connectTaskAttention(app.operations, () => attentionSources.tasks());
   if (app.operations.has('tasks.reconcileAttention')) {
+    const caller = app.operations.internal('tasks');
     const reconcile = () => {
-      const pending = app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.attentionPending', {});
-      return !pending.ok || !pending.value ? pending : app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
+      const pending = caller.call('tasks.attentionPending', {});
+      return !pending.ok || !pending.value ? pending : caller.call('tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
     };
     const initial = reconcile();
     if (!initial.ok) console.warn(`Task filing failed (${initial.code})`);
@@ -201,12 +213,12 @@ export async function installNext(app: Foundation, options: NextOptions) {
     },
   });
   if (attentionSources) connectApprovalAttention(app.operations, current => attentionSources.approvals(current));
-  // Keep the small owning-service compare/write sequences explicit: neither
-  // source can accidentally borrow the other's identity or operation names.
+  // Installed modules reconcile directly through the registry's live handle.
   if (app.operations.has('approvals.reconcileAttention')) {
+    const caller = app.operations.internal('approvals');
     const reconcile = () => {
-      const pending = app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.attentionPending', {});
-      return !pending.ok || !pending.value ? pending : app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.reconcileAttention', {}, `approval-filing:${randomUUID()}`);
+      const pending = caller.call('approvals.attentionPending', {});
+      return !pending.ok || !pending.value ? pending : caller.call('approvals.reconcileAttention', {}, `approval-filing:${randomUUID()}`);
     };
     const result = reconcile();
     if (!result.ok) console.warn(`Approval filing failed (${result.code})`);
@@ -220,16 +232,16 @@ export async function installNext(app: Foundation, options: NextOptions) {
     // No default holder, legacy token lookup, or installation-time grant. An
     // unconfigured reader fails before acquiring a value or contacting GitHub.
     const credentials = options.changes;
-    if (credentials) {
-      if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
-    }
     const secrets = githubSecrets(credentials
-      ? secretUseRole(app.db, credentials.source, sharing, {kind: 'service', id: 'changes'}, () => app.operations.clock.now(), app.live)
+      ? installedSecretUse(app.operations, credentials.source, app.live, 'changes')
       : {async withValue() { throw new Error('GitHub credential unavailable'); }}, credentials?.github ?? {});
     installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
       staging: options.staging, interval: credentials?.interval, request: credentials?.request});
   }
   const inventory = mindSources(app.db, options.home);
+  const sharedMemory = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+  const hasSharedConversations = !!app.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get();
+  const conversationHref = (id: string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
   if (!app.operations.has('mind.knowledgeList')) {
     const path = inventory?.commons.knowledge;
     const reader = installMindKnowledge(app.operations, app.live, { path, sharing });
@@ -254,8 +266,17 @@ export async function installNext(app: Foundation, options: NextOptions) {
   }
   if (!app.operations.has('mind.activityList')) {
     const household = new HouseholdDatabase(app.db).household(options.home);
-    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github});
+    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github,conversations:hasSharedConversations?sharedActivityConversations(sharedMemory,{sharing,conversationHref}):undefined});
     app.onClose(() => activity.close());
+  }
+  if (!memoryQueries.has(app)) {
+    const activity = installedMindActivity(app.operations);
+    if (!activity) throw new Error('Memory queries require the installed Activity reader');
+    const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
+      mind: mindRole(app.operations), activity, conversationHref,
+      projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
+    memoryQueries.set(app, queries.fields);
+    app.onClose(() => { queries.close(); memoryQueries.delete(app); });
   }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
@@ -350,68 +371,16 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const sources = mindTransports.get(app) ?? [];
   await prepareTouchSources(sources);
   const stopTouches = await listenForTouchSources(app.operations, sources);
-  const auth = options.authenticate ?? nextSessionResolver(app);
-  const api = httpDoor(app, auth);
-  const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
-  const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
-  routes.route('/', signinRoutes(app));
-  routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
-  routes.all('/mcp', async c => {
-    // A stateless transport per request binds every call to this caller.
-    const authentication = auth(c.env.incoming as IncomingMessage);
-    if (!authentication?.valid()) return c.json({ error: 'Authentication required' }, 401);
-    const server = new McpServer({ name: 'loom-next', version: '1' });
-    for (const op of app.operations.offered('mcp')) server.registerTool(op.name, {
-      inputSchema: z.object({ input: op.input, id: z.string().optional() }),
-    }, async args => {
-      const result = authentication.valid() ? app.operations.call('mcp', authentication.viewer, op.name, args.input, args.id) : { ok: false, code: 'denied', message: 'Authentication ended' };
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], isError: !result.ok };
-    });
-    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    await server.connect(transport);
-    try { return await transport.handleRequest(c.req.raw); }
-    finally { await transport.close(); await server.close(); }
-  });
-  routes.get('/faces/:agent/:file', c => {
-    const authentication = auth(c.env.incoming as IncomingMessage);
-    if (!authentication?.valid()) return c.notFound();
-    const agent = c.req.param('agent'), file = c.req.param('file');
-    if (!new HouseholdDatabase(app.db).household(options.home)?.agents.includes(agent) ||
-      !maySee(authentication.viewer, { agent, type: 'household.agentDisplay' }, new SharingDatabase(app.db, options.home).sharing())) return c.notFound();
-    const sprite = storedSprite(app.db, agent);
-    if (!sprite || (file !== 'manifest.json' && !Object.hasOwn(sprite.sheets, file))) return c.notFound();
-    return new Response(new Uint8Array(Buffer.from(file === 'manifest.json' ? sprite.rawManifest : sprite.sheets[file], 'base64')), {
-      headers: { 'content-type': file === 'manifest.json' ? 'application/json' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
-    });
-  });
-  const publicRoot = resolve(import.meta.dirname, '../assets');
-  const built = existsSync(resolve(root, 'assets')) ? readdirSync(resolve(root, 'assets')).filter(f => /\.(js|css|woff2)$/.test(f)).sort().map(f => `/app/assets/${f}`) : [];
-  routes.get('/manifest.webmanifest', () => new Response(MANIFEST, { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }));
-  routes.get('/sw.js', () => new Response(nextWorker(built), { headers: { 'content-type': 'text/javascript', 'cache-control': 'no-cache', 'service-worker-allowed': '/' } }));
-  routes.get('*', c => {
-    const pathname = new URL(c.req.url).pathname;
-    if (pathname.startsWith('/api/') || pathname === '/events' || pathname.startsWith('/collections') || pathname === '/live') return c.notFound();
-    const asset = pathname.startsWith('/app/');
-    const publicAsset = /^\/(icons|fonts)\//.test(pathname);
-    // A missing resource must never be mistaken for an HTML navigation.
-    if (!asset && !publicAsset && (extname(pathname) || /^\/(assets|faces|pixel-icons)(\/|$)/.test(pathname))) return c.notFound();
-    const base = publicAsset ? publicRoot : root;
-    const file = publicAsset ? resolve(base, '.' + pathname) : asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
-    if (!file.startsWith(base + sep) || !existsSync(file) || !statSync(file).isFile()) return c.notFound();
-    const body = asset || publicAsset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
-    return new Response(body, { headers: {
-      'content-type': ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.png': 'image/png' } as Record<string,string>)[extname(file)] ?? 'application/octet-stream',
-      'cache-control': asset ? 'public, max-age=31536000, immutable' : 'no-store',
-      'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
-    } });
-  });
   const servers: ReturnType<typeof createServer>[] = [];
   const detaches: (() => void)[] = [];
   const sockets = new Set<Socket>();
-  const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
-  let port = options.port ?? 0;
+  let liveData: DataLive | undefined;
+  let socketData: ReturnType<typeof dataSocket> | undefined;
+  let stopDataChanges: (() => void) | undefined;
   const close = async () => {
+    stopDataChanges?.();
+    liveData?.close();
+    await socketData?.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
     await Promise.all(servers.map(http => {
@@ -421,6 +390,82 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     await stopTouches();
   };
   try {
+    const auth = options.authenticate ?? nextSessionResolver(app);
+    const api = httpDoor(app, auth);
+    const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
+    const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
+    // The generated door uses the SAME connection and fresh shared credentials.
+    // Existing homes are deliberately not bootstrapped or migrated here.
+    const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+    const authenticateData = dataAuthentication(sharedData, () => app.operations.clock.now());
+    const fields = memoryQueries.get(app);
+    const data = dataHttp(sharedData, authenticateData, relyingParty(process.env)?.origin, fields);
+    liveData = new DataLive();
+    socketData = dataSocket({live: liveData, clock: app.operations.clock,
+      authenticate(req) {
+        const headers = new Headers();
+        for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+        return authenticateData(new Request('http://localhost/graphql', {headers}));
+      },
+      schema: viewer => dataReadSchema(sharedData, viewer, fields), originAllowed: sameOrigin});
+    // Existing operation commits include access changes. File-source signals and
+    // time-dependent Memory projections are connected by their own composition.
+    stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); });
+    routes.all('/graphql', c => data.fetch(c.req.raw));
+    routes.route('/', signinRoutes(app));
+    routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
+    routes.all('/mcp', async c => {
+      // A stateless transport per request binds every call to this caller.
+      const authentication = auth(c.env.incoming as IncomingMessage);
+      if (!authentication?.valid()) return c.json({ error: 'Authentication required' }, 401);
+      const server = new McpServer({ name: 'loom-next', version: '1' });
+      for (const op of app.operations.offered('mcp')) server.registerTool(op.name, {
+        inputSchema: z.object({ input: op.input, id: z.string().optional() }),
+      }, async args => {
+        const result = authentication.valid() ? app.operations.call('mcp', authentication.viewer, op.name, args.input, args.id) : { ok: false, code: 'denied', message: 'Authentication ended' };
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], isError: !result.ok };
+      });
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await server.connect(transport);
+      try { return await transport.handleRequest(c.req.raw); }
+      finally { await transport.close(); await server.close(); }
+    });
+    routes.get('/faces/:agent/:file', c => {
+      const authentication = auth(c.env.incoming as IncomingMessage);
+      if (!authentication?.valid()) return c.notFound();
+      const agent = c.req.param('agent'), file = c.req.param('file');
+      if (!new HouseholdDatabase(app.db).household(options.home)?.agents.includes(agent) ||
+        !maySee(authentication.viewer, { agent, type: 'household.agentDisplay' }, new SharingDatabase(app.db, options.home).sharing())) return c.notFound();
+      const sprite = storedSprite(app.db, agent);
+      if (!sprite || (file !== 'manifest.json' && !Object.hasOwn(sprite.sheets, file))) return c.notFound();
+      return new Response(new Uint8Array(Buffer.from(file === 'manifest.json' ? sprite.rawManifest : sprite.sheets[file], 'base64')), {
+        headers: { 'content-type': file === 'manifest.json' ? 'application/json' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
+      });
+    });
+    const publicRoot = resolve(import.meta.dirname, '../assets');
+    const built = existsSync(resolve(root, 'assets')) ? readdirSync(resolve(root, 'assets')).filter(f => /\.(js|css|woff2)$/.test(f)).sort().map(f => `/app/assets/${f}`) : [];
+    routes.get('/manifest.webmanifest', () => new Response(MANIFEST, { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }));
+    routes.get('/sw.js', () => new Response(nextWorker(built), { headers: { 'content-type': 'text/javascript', 'cache-control': 'no-cache', 'service-worker-allowed': '/' } }));
+    routes.get('*', c => {
+      const pathname = new URL(c.req.url).pathname;
+      if (pathname.startsWith('/api/') || pathname === '/events' || pathname.startsWith('/collections') || pathname === '/live') return c.notFound();
+      const asset = pathname.startsWith('/app/');
+      const publicAsset = /^\/(icons|fonts)\//.test(pathname);
+      // A missing resource must never be mistaken for an HTML navigation.
+      if (!asset && !publicAsset && (extname(pathname) || /^\/(assets|faces|pixel-icons)(\/|$)/.test(pathname))) return c.notFound();
+      const base = publicAsset ? publicRoot : root;
+      const file = publicAsset ? resolve(base, '.' + pathname) : asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
+      if (!file.startsWith(base + sep) || !existsSync(file) || !statSync(file).isFile()) return c.notFound();
+      const body = asset || publicAsset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
+      return new Response(body, { headers: {
+        'content-type': ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.png': 'image/png' } as Record<string,string>)[extname(file)] ?? 'application/octet-stream',
+        'cache-control': asset ? 'public, max-age=31536000, immutable' : 'no-store',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
+      } });
+    });
+    const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
+    let port = options.port ?? 0;
     if (!hosts.length) throw new Error('next mode needs a bind host');
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -431,13 +476,13 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin));
+      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), socketData.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');
       port = address.port;
     }
+    const host = hosts[0].includes(':') ? `[${hosts[0]}]` : hosts[0];
+    return { url: `http://${host}:${port}`, close };
   } catch (error) { await close(); throw error; }
-  const host = hosts[0].includes(':') ? `[${hosts[0]}]` : hosts[0];
-  return { url: `http://${host}:${port}`, close };
 }

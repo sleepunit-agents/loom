@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
-import { agents, members, tempoSettings, projects, conversations } from '../core/data/schema.js';
+import { agents, members, tempoSettings, projects, conversations, inbox, inboxRefs } from '../core/data/schema.js';
+import { Conversations } from '../core/conversations/index.js';
 import { approvalService, type ApprovalRequest } from './approvals.js';
 
 let client: Database.Database, db: DataDatabase, at: string, service: ReturnType<typeof approvalService>;
@@ -103,4 +104,71 @@ it('requires the exact dangerous-action proposal and performs it only on Allow',
   expect(service.allow(row.id, 'jonathan')).toMatchObject({ kind: 'dangerous', state: 'used', usedAt: at });
   expect(db.select().from(tempoSettings).get()?.settleSeconds).toBe(60);
   expect(service.record(row.id).map(r => r.event)).toEqual(['request', 'allow', 'use']);
+});
+
+it('projects approvals to every owner and returns one source answer to the original conversation', () => {
+  db.insert(members).values([
+    { id: 'second-owner', role: 'owner', joinedAt: at },
+    { id: 'guest', role: 'member', joinedAt: at },
+  ]).run();
+  db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
+  db.insert(conversations).values({ id: 'cv-pond', agent: 'art', project: 'pond', member: 'jonathan', venue: 'loom', place: 'pump', label: 'Pump', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const row = service.request({ ...proposal(), project: 'pond', member: 'jonathan', conversation: 'cv-pond' });
+  const questions = db.select().from(inbox).all();
+  expect(questions.map(q => q.to)).toEqual(['jonathan', 'second-owner']);
+  for (const question of questions) {
+    expect(question).toMatchObject({ source: 'approval', sourceId: row.id, fromKind: 'agent', fromId: 'art', answers: 'yes-no', words: row.ask,
+      waitsOnKind: 'approval', waitsOnId: row.id, conversation: 'cv-pond', project: 'pond', agent: 'art', member: 'jonathan', why: row.why, ifYes: row.ifYes, ifNo: row.ifNo });
+    expect(db.select().from(inboxRefs).where(eq(inboxRefs.item, question.id)).all().map(r => r.ref)).toEqual([row.id]);
+    expect(() => new Conversations(db, () => at).answer(question.id, question.to, 'yes')).toThrow('linked source');
+  }
+  service.allow(row.id, 'second-owner');
+  expect(db.select().from(inbox).all().filter(q => q.toKind === 'person').map(q => [q.state, q.resolution])).toEqual([['resolved', 'Allowed'], ['resolved', 'Allowed']]);
+  const answers = db.select().from(inbox).all().filter(q => q.toKind === 'agent');
+  expect(answers).toHaveLength(1);
+  expect(answers[0]).toMatchObject({ source: 'answer', sourceId: questions[0].id, to: 'art', conversation: 'cv-pond', fromId: 'second-owner', words: `Allow\n${row.ask}\n${row.ifYes}` });
+  expect(() => service.allow(row.id, 'jonathan')).toThrow('already answered');
+  expect(db.select().from(inbox).all()).toHaveLength(3);
+});
+
+it('settles denial and withdrawal while preserving question history and notifying later revocation', () => {
+  const denied = service.request(proposal());
+  service.deny(denied.id, 'jonathan');
+  expect(db.select().from(inbox).all()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ toKind: 'person', waitsOnId: denied.id, state: 'resolved', resolution: 'Denied' }),
+    expect.objectContaining({ toKind: 'agent', fromId: 'jonathan', conversation: null, words: `Deny\n${denied.ask}\n${denied.ifNo}` }),
+  ]));
+  const withdrawn = service.request(proposal());
+  service.withdraw(withdrawn.id, 'art');
+  expect(db.select().from(inbox).where(eq(inbox.waitsOnId, withdrawn.id)).get()).toMatchObject({ state: 'resolved', resolution: 'Withdrawn' });
+  const allowed = service.request(proposal()); service.allow(allowed.id, 'jonathan');
+  service.deny(allowed.id, 'jonathan');
+  expect(db.select().from(inbox).all()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ toKind: 'agent', source: 'approval', sourceId: `${allowed.id}:denied`, words: `Deny\n${allowed.ask}\n${allowed.ifNo}` }),
+  ]));
+  expect(service.use(allowed.id, 'art', 'merge', target).ok).toBe(false);
+});
+
+it('rolls back the request and permanent record if question delivery fails', () => {
+  client.exec("CREATE TRIGGER fail_question BEFORE INSERT ON inbox WHEN NEW.to_kind = 'person' BEGIN SELECT RAISE(ABORT, 'question unavailable'); END");
+  expect(() => service.request(proposal())).toThrow('question unavailable');
+  expect(service.list()).toEqual([]);
+  expect(db.select().from(inbox).all()).toEqual([]);
+  expect(client.prepare('SELECT * FROM approval_record').all()).toEqual([]);
+});
+
+it('rolls back the answer, operation, audit and question resolution if answer delivery fails', () => {
+  service = approvalService(db, new Map([['setting', () => { db.insert(tempoSettings).values({ whoKind: 'person', who: 'jonathan' }).run(); }]]), () => at);
+  const row = service.request({ ...proposal(), kind: 'setting', operation: 'setting', changeSummary: 'Before: unset. After: defaults.' });
+  client.exec("CREATE TRIGGER fail_answer BEFORE INSERT ON inbox WHEN NEW.to_kind = 'agent' BEGIN SELECT RAISE(ABORT, 'answer unavailable'); END");
+  expect(() => service.allow(row.id, 'jonathan')).toThrow('answer unavailable');
+  expect(service.get(row.id).state).toBe('pending');
+  expect(service.record(row.id).map(r => r.event)).toEqual(['request']);
+  expect(db.select().from(tempoSettings).all()).toEqual([]);
+  expect(db.select().from(inbox).all()).toEqual([expect.objectContaining({ state: 'waiting', waitsOnId: row.id })]);
+  expect(() => service.deny(row.id, 'jonathan')).toThrow('answer unavailable');
+  expect(service.get(row.id).state).toBe('pending');
+  client.exec('DROP TRIGGER fail_answer');
+  expect(service.allow(row.id, 'jonathan').state).toBe('used');
+  expect(db.select().from(inbox).all()).toHaveLength(2);
 });

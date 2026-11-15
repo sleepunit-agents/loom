@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { approvals, approvalRecord, approvalNotices } from '../core/data/schema.js';
+import { approvals, approvalRecord, approvalNotices, members } from '../core/data/schema.js';
+import { Conversations } from '../core/conversations/index.js';
 
 export type Approval = typeof approvals.$inferSelect;
 const request = z.object({
@@ -26,6 +27,16 @@ export type ApprovedOperations = ReadonlyMap<string, (approval: Approval) => voi
  * the external door; this service still binds a spend to agent, kind and target.
  */
 export function approvalService(db: DataDatabase, operations: ApprovedOperations = new Map(), now: () => string = () => new Date().toISOString()) {
+  const mail = new Conversations(db, now);
+  const answer = (row: Approval, member: string, allowed: boolean) => {
+    const questions = mail.resolve('approval', row.id, allowed ? 'Allowed' : 'Denied');
+    // One answer returns to the asking agent, even if several owners saw it.
+    // A later denial of an allowance is a new event, not a replay of its answer.
+    mail.send({ toKind: 'agent', to: row.agent, conversation: row.conversation,
+      source: questions.length ? 'answer' : 'approval', sourceId: questions[0]?.id ?? `${row.id}:denied`,
+      fromKind: 'person', fromId: member, words: [allowed ? 'Allow' : 'Deny', row.ask, allowed ? row.ifYes : row.ifNo].join('\n'),
+      project: row.project, agent: row.agent, member: row.member, refs: [row.id, ...questions.map(q => q.id)] });
+  };
   const get = (id: string) => {
     const row = db.select().from(approvals).where(eq(approvals.id, id)).get();
     if (!row) throw new Error('Approval not found');
@@ -50,6 +61,12 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
       if (value.operation && !operations.has(value.operation)) throw new Error('Unknown approved operation');
       return db.transaction(() => {
         const row = db.insert(approvals).values({ ...value, id: `a-${randomUUID()}`, state: 'pending', askedAt: now() }).returning().get();
+        const owners = db.select().from(members).where(eq(members.role, 'owner')).orderBy(asc(members.id)).all();
+        if (!owners.length) throw new Error('No household owner can answer this approval');
+        for (const owner of owners) mail.send({ toKind: 'person', to: owner.id, source: 'approval', sourceId: row.id,
+          fromKind: 'agent', fromId: row.agent, conversation: row.conversation, project: row.project, agent: row.agent, member: row.member,
+          words: row.ask, why: row.why, answers: 'yes-no', ifYes: row.ifYes, ifNo: row.ifNo,
+          waitsOnKind: 'approval', waitsOnId: row.id, refs: [row.id] });
         record(row, 'request'); return row;
       });
     },
@@ -71,6 +88,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
           db.update(approvals).set({ state: 'used', usedAt: at }).where(eq(approvals.id, id)).run();
           record(row, 'use', row.operation);
         }
+        answer(row, member, true);
         return get(id);
       });
     },
@@ -85,6 +103,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
           db.update(approvals).set({ state: 'denied', overriddenBy: id, expiresAt: null }).where(eq(approvals.id, previous.id)).run();
           record(previous, 'deny', `Overridden by ${id}`);
         }
+        answer(row, member, false);
         return get(id);
       });
     },
@@ -93,6 +112,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         const row = expire(get(id));
         if (row.agent !== agent || !['pending', 'allowed'].includes(row.state)) throw new Error('Approval cannot be withdrawn');
         db.update(approvals).set({ state: 'withdrawn', expiresAt: null }).where(eq(approvals.id, id)).run();
+        mail.resolve('approval', id, 'Withdrawn');
         record(row, 'withdraw'); return get(id);
       });
     },

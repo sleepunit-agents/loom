@@ -2,9 +2,8 @@
 
 *2026-10-19. Status: **proposed**. Taskstore t-1376 (parent t-179, the people
 model). Design doc in the `docs/specs/` sense: it says what loom will build and
-the acceptance criteria the implementation's vitest suite must pin. Per
-`docs/archive/felag-specs/README.md`, loom's contract is `npm test`; this doc
-is the agreement that precedes those tests, not a substitute for them.*
+the acceptance criteria the implementation's vitest suite must pin. Loom's
+executable checks run with `npm test`; this doc is the agreement that precedes those tests, not a substitute for them.*
 
 ## Why
 

@@ -35,6 +35,17 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
+    const diagnostics:string[]=[];
+    for(const [name,page] of [['desktop',a],['phone',b]] as const){
+      page.on('pageerror',error=>diagnostics.push(`${name}: ${error.message}`));
+      page.on('websocket',socket=>{
+        socket.on('close',()=>diagnostics.push(`${name}: websocket closed`));
+        socket.on('framereceived',({payload})=>{
+          try{const frame=JSON.parse(String(payload));if(frame.ok===false)diagnostics.push(`${name}: ${frame.code}: ${frame.message}`);}catch{/* not JSON */}
+        });
+      });
+    }
+    try {
     const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});if(!link.ok)throw Error('Fixture sign-in failed');
     await a.goto(app.url+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');
     await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
@@ -61,7 +72,32 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     relationship.write({slug:'jonathan',summary:'Updated from outside the app'});
     await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
     await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
+    // Bounded fixture trace: distinguish a missed press from a rejected route.
+    // No text, HTML, input values, sign-in URLs or history payloads are retained.
+    await b.evaluate(()=>{
+      const button=document.querySelector('.loom-split__back');
+      const trace:object[]=[];
+      (window as unknown as {peopleBackTrace:object[]}).peopleBackTrace=trace;
+      const snapshot=(type:string,event:Event)=>{
+        if(trace.length>=32)return;
+        const target=event.target instanceof Element ? event.target : null;
+        const rect=button?.getBoundingClientRect(),split=button?.closest('.loom-split');
+        const reader=button?.closest('.loom-split__reader');
+        trace.push({type,back:target?.closest('button')===button,connected:!!button?.isConnected,
+          prevented:event.defaultPrevented,point:event instanceof MouseEvent?[event.clientX,event.clientY]:null,
+          rect:rect?[rect.x,rect.y,rect.width,rect.height]:null,
+          readerScroll:reader?.scrollTop,pageScroll:scrollY,
+          target:target===reader?'reader':target?.closest('[data-split-row]')?'row':target?.closest('article')?'article':'other',
+          focused:document.activeElement===button,open:split?.hasAttribute('data-open')});
+      };
+      for(const type of ['pointerdown','mousedown','focusin','pointerup','mouseup','click','scroll'])
+        document.addEventListener(type,event=>{
+          snapshot(type,event);
+          if(type==='pointerdown'||type==='click')queueMicrotask(()=>snapshot(`after ${type}`,event));
+        },{capture:true});
+    });
     await b.getByRole('button',{name:'Contacts',exact:true}).last().click();
+    await expect.poll(()=>b.locator('.loom-split').getAttribute('data-open')).toBe(null);
     await b.getByRole('searchbox',{name:'Search people',exact:true}).fill('Casey');
     await expect.poll(()=>row(b,'Jonathan Barket').count()).toBe(0);expect(await row(b,'Casey Smith').count()).toBe(1);
     await b.getByRole('searchbox',{name:'Search people',exact:true}).fill('');
@@ -78,5 +114,24 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     expect(await b.getByText('Helps with the workshop',{exact:true}).count()).toBe(1);
     directory.archive({slug:'casey',reason:'fixture archive',actor:'owner'});
     await expect.poll(()=>row(a,'Casey Smith').count()).toBe(0);
+    }catch(error){
+      // Fixture-only content; omit addresses, sign-in links, cookies and input values.
+      for(const [name,page] of [['desktop',a],['phone',b]] as const){
+        const state=await page.evaluate(()=>{
+          const knownPath=(value:unknown)=>typeof value==='string' && /^\/p\/people-preview(?:\/person\/(?:jonathan|casey|art))?$/.test(value)?value:'other';
+          const tile=document.querySelector('[data-tile="people"]'),split=tile?.querySelector('.loom-split');
+          const saved=history.state?.loomNext;
+          const savedTile=Array.isArray(saved?.tiles)?saved.tiles.find((t:{id?:string})=>t.id==='people'):undefined;
+          return {backTrace:(window as unknown as {peopleBackTrace?:object[]}).peopleBackTrace,
+            path:knownPath(location.pathname),route:knownPath(savedTile?.trail?.[savedTile?.at]),
+            tile:!!tile,hidden:tile?.hasAttribute('hidden'),inert:!!tile?.closest('[inert]'),focused:tile?.hasAttribute('data-focused'),
+            mode:split?.getAttribute('data-mode'),open:split?.hasAttribute('data-open'),
+            rows:tile?.querySelectorAll('[data-split-row]').length??0,
+            backButtons:tile?.querySelectorAll('.loom-split__back').length??0};
+        }).catch(()=>({unavailable:true}));
+        diagnostics.push(`${name} People view: ${JSON.stringify(state)}`);
+      }
+      console.error('People fixture diagnostics',diagnostics);throw error;
+    }
   } finally {await browser.close();await app.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
 },60_000);

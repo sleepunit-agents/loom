@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest';
-import { DeskRouter, readRoute, writeRoute, currentPath } from '../../web/src/shell/router.js';
+import { DeskRouter, readRoute, writeRoute, currentPath, presentedTiles } from '../../web/src/shell/router.js';
 import { layout, admit, type AppTile } from '../../web/src/tiling/layout.js';
 const apps = [
   {id:'tasks',title:'Tasks',path:'/p/tasks-preview',fit:{min:[520,320] as [number,number],ideal:1040,max:null,big:true,why:'list'}},
@@ -18,9 +18,9 @@ it('one router restores both app paths, focused/minimized/pinned states, and rej
   expect(restored.tiles.map(t=>[t.id,currentPath(t)])).toEqual([['tasks','/p/tasks-preview/task/t-12'],['example','/_dev/live-example/sub?filter=a']]);
   expect(restored.tiles[0].pinned).toBe(true);expect(restored.focused).toBe('example');
   r.remove('tasks',true);expect(readRoute(b.location.href,apps).tiles.find(t=>t.id==='tasks')?.minimized).toBe(true);
-  r.open('tasks');expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview/task/t-12');
-  r.travel('tasks',-1);expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview');
-  r.travel('tasks',1);expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview/task/t-12');
+  r.open('tasks');expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='tasks')!)).toBe('/p/tasks-preview/task/t-12');
+  r.travel('tasks',-1);expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='tasks')!)).toBe('/p/tasks-preview');
+  r.travel('tasks',1);expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='tasks')!)).toBe('/p/tasks-preview/task/t-12');
   b.pop('/?t=alien,*example&paths=%7B%22example%22%3A%22https%3A%2F%2Fevil%22%7D');
   expect(r.getSnapshot().tiles.map(t=>t.id)).toEqual(['example']);expect(currentPath(r.getSnapshot().tiles[0])).toBe('/_dev/live-example');r.close();
 });
@@ -41,4 +41,38 @@ it('cross-app links admit beside their source using the actual screen cap',()=>{
   expect(r.getSnapshot().tiles.filter(t=>!t.minimized).map(t=>t.id)).toEqual(['example','third']);
   expect(r.getSnapshot().tiles.find(t=>t.id==='tasks')?.minimized).toBe(true);
   expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='third')!)).toBe('/third/detail');r.close();
+});
+
+it('one window keeps other apps and their paths while opening and following links on a small desk',()=>{
+  const all=[...apps,{...apps[1],id:'third',path:'/third'}];
+  const b=browser();const r=new DeskRouter(all,b as never);
+  const area={x:0,y:0,w:976,h:600};
+  r.fit(area,1024,true);
+  r.open('tasks');r.go('tasks','/p/tasks-preview/task/t-12');r.big('tasks');
+  r.open('example');r.go('example','/third/detail');
+  expect(r.getSnapshot().tiles.filter(t=>!t.minimized).map(t=>t.id)).toEqual(['tasks','example','third']);
+  expect(r.getSnapshot().focused).toBe('third');
+  expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview/task/t-12');
+  expect(presentedTiles(r.getSnapshot(),true).map(t=>t.id)).toEqual(['third']);
+  expect(layout(r.asTiles(presentedTiles(r.getSnapshot(),true)),area,1024).apps.third).toEqual(area);
+  r.focus('tasks');expect(r.getSnapshot().focused).toBe('tasks');
+  expect(presentedTiles(r.getSnapshot(),true).map(t=>t.id)).toEqual(['tasks']);
+  // Returning to tiling applies its usual capacity rule without losing any app's address.
+  r.fit(area,1024,false);
+  expect(r.getSnapshot().tiles.filter(t=>!t.minimized).length).toBeLessThanOrEqual(2);
+  expect(r.getSnapshot().tiles).toHaveLength(3);
+  r.close();
+});
+
+it('resize docks the least recently used tile even after it was made big, and navigation counts as use',()=>{
+  const all=[...apps,{...apps[1],id:'third',path:'/third'}];
+  const b=browser();const r=new DeskRouter(all,b as never);
+  r.fit({x:0,y:0,w:1800,h:1000},1920);
+  r.open('tasks');r.big('tasks');r.open('example');r.open('third');
+  r.go('example','/_dev/live-example/detail');
+  r.fit({x:0,y:0,w:1052,h:720},1100);
+  expect(r.getSnapshot().tiles.filter(t=>!t.minimized).map(t=>t.id)).toEqual(['example','third']);
+  expect(r.getSnapshot().tiles.find(t=>t.id==='tasks')).toMatchObject({minimized:true,pinned:false});
+  expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='example')!)).toBe('/_dev/live-example/detail');
+  r.close();
 });

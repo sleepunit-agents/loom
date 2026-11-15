@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createMeasuring, DEFAULT_MEASURING, type Measuring, type TimingDay, type TimingStore } from './index.js';
+import { FakeClock } from '../clock.js';
 
 const sent = vi.hoisted(() => ({ spans: [] as unknown[], options: [] as unknown[] }));
 vi.mock('@opentelemetry/exporter-trace-otlp-proto', () => ({
@@ -19,6 +20,23 @@ function storage() {
 }
 
 describe('optional OpenTelemetry measuring', () => {
+  it('assigns completion days and retention from the same injected UTC clock', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 10, 14, 23));
+    const {store, rows, prune} = storage();
+    const m = await createMeasuring({...enabled, keep_days: 2}, targets, store, undefined, clock);
+    let finish!: (value: number) => void;
+    const pending = m.runAsync('job', 'github.read', () => new Promise<number>(resolve => {finish = resolve;}));
+    m.run('request', 'tasks', () => 1);
+    expect(rows.map(row => row.day)).toEqual(['2026-11-14']);
+    expect(prune.mock.calls).toEqual([['2026-11-13']]);
+    clock.advance(3600_000);
+    finish(2);
+    expect(await pending).toBe(2);
+    expect(rows.map(row => row.day)).toEqual(['2026-11-14', '2026-11-15']);
+    expect(prune.mock.calls).toEqual([['2026-11-13'], ['2026-11-14']]);
+    await m.close();
+  });
+
   it('off does not inspect destinations or touch storage, and preserves values and errors', async () => {
     const {store,rows,prune} = storage();
     const m = await createMeasuring({...DEFAULT_MEASURING, outside_address:'invalid', send_outside:true}, targets, store);
@@ -78,8 +96,57 @@ describe('optional OpenTelemetry measuring', () => {
     const m=await createMeasuring(enabled,targets,{prune(){throw new Error('disk full');},add(){throw new Error('unreachable');}},report);
     expect(m.run('request','tasks',()=>9)).toBe(9);
     await expect(m.runAsync('job','github.read',async()=>10)).resolves.toBe(10);
-    expect(report).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenCalledTimes(3); // startup retention and both completions
     await m.close();
+  });
+
+  it('expires an idle local store on startup and each UTC midnight, and stops on close', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 10, 14, 23));
+    const {store, rows, prune} = storage();
+    const m = await createMeasuring({...enabled, keep_days: 2}, targets, store, undefined, clock);
+    expect(prune.mock.calls).toEqual([['2026-11-13']]);
+    clock.advance(3600_000);
+    expect(prune.mock.calls).toEqual([['2026-11-13'], ['2026-11-14']]);
+    clock.advance(86400_000);
+    expect(prune.mock.calls.at(-1)).toEqual(['2026-11-15']);
+    expect(rows).toEqual([]);
+    await m.close();
+    clock.advance(3 * 86400_000);
+    expect(prune).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries idle retention after a storage failure without breaking the timer', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 10, 14));
+    const report = vi.fn();
+    const prune = vi.fn().mockImplementationOnce(() => { throw new Error('busy'); });
+    const m = await createMeasuring(enabled, targets, {add(){}, prune}, report, clock);
+    expect(report).toHaveBeenCalledTimes(1);
+    clock.advance(86400_000);
+    expect(prune).toHaveBeenCalledTimes(2);
+    await m.close();
+  });
+
+  it('does not access a clock when off or when using only the outside destination', async () => {
+    const clock = {now: vi.fn(() => {throw new Error('clock touched');}), at: vi.fn(() => {throw new Error('timer touched');})};
+    const m = await createMeasuring(DEFAULT_MEASURING, targets, undefined, undefined, clock);
+    await m.close();
+    const outside = await createMeasuring({...enabled, send_outside:true, outside_address:'http://localhost:4318/v1/traces'}, targets, undefined, undefined, clock);
+    await outside.close();
+    expect(clock.now).not.toHaveBeenCalled();
+    expect(clock.at).not.toHaveBeenCalled();
+  });
+
+  it('does not rearm retention when diagnostics close measuring during expiry', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 10, 14));
+    const schedule = vi.spyOn(clock, 'at');
+    let closing: Promise<void> | undefined;
+    const prune = vi.fn().mockImplementationOnce(() => {}).mockImplementation(() => {throw new Error('busy');});
+    const m = await createMeasuring(enabled, targets, {add(){}, prune}, () => {closing = m.close();}, clock);
+    clock.advance(86400_000);
+    await closing;
+    expect(schedule).toHaveBeenCalledTimes(1);
+    clock.advance(86400_000);
+    expect(prune).toHaveBeenCalledTimes(2);
   });
 
   it('uses one span for local and OTLP destinations, with bounded batches and no application payload', async () => {
