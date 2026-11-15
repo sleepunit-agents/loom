@@ -100,6 +100,8 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   /** Canonical persistent program marker/grants, supplied by the schema owner. */
   programGrants?: ProgramGrantReader;
+  /** Writable setup and outside enforcement share this exact reader; it
+   * takes precedence over the read-only programGrants test/adapter port. */
   programStore?: ProgramGrantStore;
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
