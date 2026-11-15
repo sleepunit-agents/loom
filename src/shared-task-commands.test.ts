@@ -137,3 +137,24 @@ it.each(['dim','mute'] as const)('a fresh named task ask lifts %s only for its r
  expect((await f.call(ask,'sam','named-again')).status).toBe(200);
  expect(f.db.select().from(inbox).all()).toEqual(before);
 });
+
+it.each(['yes','no','words'] as const)('answers a task question as its recipient, once, via the actual command door (%s)',async answer=>{
+ const f=fixture(),s=f.root.services.tasks,task=s.create(f.input,{kind:'agent',id:'art'});
+ s.ask(task.id,{to:{kind:'member',id:'sam'},ask:'Order the pump?',ifYes:'Buy it.',ifNo:'Wait.',answers:answer==='words'?'words':'yes-no'},{kind:'agent',id:'art'});
+ const question=f.db.select().from(inbox).where(eq(inbox.waitsOnId,task.id)).get()!;
+ const command={action:'answer',id:task.id,question:question.id,answer,...(answer==='words'?{text:'Choose the smaller pump.'}:{})};
+ expect((await f.call(command,'owner','other-owner')).status).toBe(403);
+ expect((await f.call(command,'art','asking-agent')).status).toBe(403);
+ expect((await f.call(command,'sam','answer')).status).toBe(200);
+ expect((await f.call(command,'sam','answer')).status).toBe(200);
+ expect(s.get(task.id)).toMatchObject({ask:null,assigneeKind:'agent',assignee:'art'});
+ expect(s.get(task.id).comments).toHaveLength(1);
+ expect(s.get(task.id).comments[0]).toMatchObject({actorKind:'member',actor:'sam',text:answer==='words'?'Choose the smaller pump.':`${answer==='yes'?'Yes':'No'}, to: Order the pump?\n${answer==='yes'?'Buy it.':'Wait.'}`});
+ expect(f.root.services.conversations.item(question.id).state).toBe('resolved');
+ expect(f.db.select().from(inbox).all().filter(row=>row.source==='answer'&&row.sourceId===question.id)).toHaveLength(1);
+ s.ask(task.id,{to:{kind:'member',id:'sam'},ask:'Order the pump?',ifYes:'Buy it.',ifNo:'Wait.'},{kind:'agent',id:'art'});
+ expect((await f.call(command,'sam','stale-new-intent')).status).toBe(409);
+ expect((await f.call(command,'sam','answer')).status).toBe(200);
+ expect(s.get(task.id).ask).toBe('Order the pump?');
+ expect(s.get(task.id).comments).toHaveLength(1);
+});
