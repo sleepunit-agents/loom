@@ -16,6 +16,8 @@ import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive, type MeasureRead } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
+import { tempoVisibility } from './core/tempo/visibility.js';
+import { tempoQueryFields } from './core/tempo/queries.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
@@ -54,12 +56,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables, ...conversationTables,
-      'timingDays', 'measuringSettings'],
+      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'],
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
-      ...measuringVisibility(viewer),
+      ...measuringVisibility(viewer), ...tempoVisibility(viewer),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields, ...accounts.fields,
+  }), { ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // Jobs carry the same agent/project/private-member labels as Approvals.
     // Reuse its canonical SQL rather than maintain another sharing policy.
     ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),

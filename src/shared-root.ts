@@ -1,3 +1,4 @@
+import { settledNotices } from './core/tempo/notices.js';
 import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
 import { SecretStartup } from './pieces/secrets/shared-startup.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
@@ -65,6 +66,7 @@ export function sharedRoot(options: {
   const chat = new AsyncLocalStorage<TempoChatAuthentication>();
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
+  const notices = settledNotices(db, () => data.changed());
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
   let measuringReady: ReturnType<typeof installMeasuring>;
   const stops: (() => void)[] = [];
@@ -78,7 +80,7 @@ export function sharedRoot(options: {
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...options.fields }, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...notices.fields, ...options.fields }, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
@@ -145,10 +147,10 @@ export function sharedRoot(options: {
 
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
-  catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  catch (error) { notices.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
@@ -222,6 +224,7 @@ export function sharedRoot(options: {
       runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
+      notices.close();
       cancelSecretRecovery?.(); values?.close(); startup?.close();
       const deliveryStopped = delivery?.close();
       const stopped = data.close();
