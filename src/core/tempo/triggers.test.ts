@@ -185,3 +185,13 @@ it.each(['time', 'answer'] as const)('stops a %s scan when its first operation c
   f.clock.advance(86_400_000);
   expect(calls).toEqual(['first']);
 });
+it('rejects half-specified operation recipients and holds a recipient-free operation for its owning agent',()=>{
+ const f=fixture();
+ for(const pair of [{toKind:null,to:'art'},{toKind:'agent' as const,to:null}]){
+  expect(()=>f.engine.set({...f.base,targetKind:'operation',target:'test',...pair})).toThrow('both kind and id');
+ }
+ expect(f.db.select().from(triggers).all()).toEqual([]);
+ const t=f.engine.set({...f.base,targetKind:'operation',target:'test',toKind:null,to:null});
+ f.engine.pause('art');expect(f.row(t.id).state).toBe('held');
+ f.engine.resume('art');expect(f.row(t.id).state).toBe('standing');
+});
