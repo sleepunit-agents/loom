@@ -1,3 +1,4 @@
+import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
@@ -48,6 +49,7 @@ import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
+import { workLifetime } from './shared-work-lifetime.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
@@ -89,7 +91,7 @@ export function sharedRoot(options: {
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
-  changes?: {rule:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
+  changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
   workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
@@ -218,6 +220,7 @@ export function sharedRoot(options: {
       return result.value;
     }),
     household: householdService(db, now),
+    signin: sharedTokens(db, clock),
     approvalRules: approvalRulesService(db,now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
@@ -226,6 +229,7 @@ export function sharedRoot(options: {
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
+  registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
@@ -248,6 +252,8 @@ export function sharedRoot(options: {
   }, db).then(value => { meter = value; return value; });
   const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
+  const workLife=workLifetime(db,clock,data.writes,options.reportError);
+  startupCleanups.push(()=>workLife.close());
   const authenticate = credentials.authenticate;
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -327,7 +333,7 @@ export function sharedRoot(options: {
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       stopMemoryWrites();memorySignals?.close();
       accountReports.close();
-      commsLifetime?.close();
+      commsLifetime?.close();workLife.close();
       runtime.close();
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
