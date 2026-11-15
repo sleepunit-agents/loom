@@ -11,7 +11,7 @@ import {eq} from 'drizzle-orm';
 import {generateX25519Identity} from 'age-encryption';
 import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
-import {agents,agentStatus,members,memberAgents,tokens} from '../core/data/schema.js';
+import {agents,agentStatus,household,members,memberAgents,tokens} from '../core/data/schema.js';
 import {workVisibility} from '../core/data/work-visibility.js';
 import {CommsMessages} from '../core/conversations/messages.js';
 import {CommsQueries,commsQueryFields} from '../core/conversations/comms-query.js';
@@ -25,6 +25,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  const client=new Database(':memory:'),clock=new FakeClock(Date.now()),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now);
  const raw='d'.repeat(64),fingerprint=createHash('sha256').update(raw).digest('hex');
  db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();
+ db.insert(household).values({timezone:'America/Chicago'}).run();
  const ids=['art','birch','cedar','elm','fern'];
  db.insert(agents).values(ids.map((id,position)=>({id,position,about:id==='art'?'Keeps the household moving.':'',markBg:'#B8A6FF',markFg:'#ffffff',faceShape:'pebble' as const,faceEyes:'dot' as const}))).run();
  db.insert(memberAgents).values(ids.map(agent=>({member:'owner',agent}))).run();
@@ -42,8 +43,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  try {
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block'});
-  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[],connections=new Map<Page,number>();let maximumConnections=0;
-  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())connections.set(page,0);});page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/graphql'){const count=(connections.get(page)??0)+1;connections.set(page,count);maximumConnections=Math.max(maximumConnections,count);}});}
+  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[],connections=new Map<Page,number>();let maximumConnections=0,legacyConnections=0;
+  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())connections.set(page,0);});page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/graphql'){const count=(connections.get(page)??0)+1;connections.set(page,count);maximumConnections=Math.max(maximumConnections,count);}else if(new URL(socket.url()).pathname==='/live')legacyConnections++;});}
   const issued=await app.http.request(app.url+'/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+raw}});
   expect(issued.status).toBe(200);const link=await issued.json() as {ok:boolean;value:{path:string}};
   await a.goto(app.url+link.value.path);
@@ -71,6 +72,9 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   }
   app.writes.run(()=>db.update(agents).set({about:'Keeps the shared desk readable.'}).where(eq(agents.id,'art')).run());
   for(const page of [a,b]){await page.goto(app.url+'/p/agents-preview/agent/art');await expect.poll(()=>page.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(0);}
+  expect(legacyConnections).toBe(0);
+  const clockTitle=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',hour:'numeric',minute:'2-digit',hourCycle:'h12'}).format(clock.now())+', America/Chicago time';
+  await expect.poll(()=>b.locator('.next-system-clock').getAttribute('title')).toBe(clockTitle);
   const shots=resolve('artifacts/desk-shell');mkdirSync(shots,{recursive:true});
   for(const look of ['neon','lowlight','daylight']){
    await set({look},'look-'+look);

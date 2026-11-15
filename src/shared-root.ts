@@ -14,6 +14,7 @@ import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { nextData } from './next-data.js';
+import { deskTimeFields, startDeskTime } from './desk-time.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
 class BodyTooLarge extends Error {}
@@ -32,7 +33,8 @@ export function sharedRoot(options: {
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing);
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...deskTimeFields(db, clock), ...options.fields }, () => !closing, credentials.authenticate);
+  const stopDeskTime = startDeskTime(clock, data.changed, options.reportError);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
@@ -101,6 +103,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
+      stopDeskTime();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
