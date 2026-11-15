@@ -1,6 +1,6 @@
 /** The executable's shared home. No interim tables, credential copies or /live. */
 import Database from 'better-sqlite3';
-import { constants, openSync, closeSync, fchmodSync, fstatSync, mkdirSync } from 'node:fs';
+import { constants, openSync, closeSync, fchmodSync, fstatSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
@@ -24,6 +24,9 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async()=>{try {await server?.close();} finally {try {client?.close();} finally {await release();}}})();
   try {
+    const entries = readdirSync(home);
+    if (!entries.includes('loom.db') && entries.length)
+      throw new Error('A nonempty home needs the separate data move');
     // Set the file mode before SQLite creates its WAL/SHM files. Never follow
     // a DB symlink, or create the old foundation's migration tables here.
     for (const suffix of ['', '-wal', '-shm']) {
@@ -34,6 +37,7 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
     }
     client = new Database(join(home,'loom.db'));
     const fresh = !client.prepare('SELECT name FROM sqlite_schema LIMIT 1').get();
+    if (fresh && entries.some(name=>name!=='loom.db')) throw new Error('A nonempty home needs the separate data move');
     const db = fresh ? createDataSchema(client,()=>new Date(clock.now()).toISOString()) : dataDatabase(client,()=>new Date(clock.now()).toISOString());
     if (!fresh && !client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='migrations'").get())
       throw new Error('This home needs the separate data move before starting the shared program');
