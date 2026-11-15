@@ -5,6 +5,7 @@ import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectT
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { actionResults, household, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
+import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 
 type Item = typeof inbox.$inferSelect;
@@ -77,7 +78,7 @@ export class InboxQueries {
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
    * only through body(), and is never indexed or written back to the database. */
-  async search(viewer: Viewer, filter: InboxFilter = {}): Promise<Item[]> {
+  async search(viewer: Viewer, filter: InboxFilter = {}, retainedUntil?: (at: number) => void): Promise<Item[]> {
     const query = filter.search?.trim().toLocaleLowerCase() ?? '';
     // Validate the same page bounds even for an empty or unauthorized mailbox.
     this.list(viewer, filter);
@@ -111,7 +112,12 @@ export class InboxQueries {
         && Number.isInteger(after.keep) && after.keep >= 1 && after.keep <= 14
         && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + after.keep * 86400000 > Date.parse(this.now());
     });
-    return current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50)).map(({ item }) => item);
+    const page = current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
+    for (const match of page) if (!match.metadata && match.state?.message) {
+      const message = match.state.message;
+      retainedUntil?.(Math.min(Date.parse(message.keepUntil!), Date.parse(message.at) + match.state.keep * 86400000));
+    }
+    return page.map(({ item }) => item);
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
@@ -156,7 +162,7 @@ export class InboxQueries {
   }
   /** Private answers live only in their retained encrypted thread message.
    * Resolve them on selection, never copy them into the question or receipts. */
-  async answerText(viewer: Viewer, id: string): Promise<string | null> {
+  async answerText(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<string | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
     if (!item.thread) return item.answerText;
@@ -164,13 +170,13 @@ export class InboxQueries {
     const answer = () => this.answerState(viewer, item);
     const before = answer(), keep = this.keepDays();
     if (!before) return null;
-    const body = await this.body(viewer, before.mail.id);
+    const body = await this.body(viewer, before.mail.id, retainedUntil);
     const after = answer(), days = this.keepDays();
     if (JSON.stringify(this.current(viewer, id)) !== JSON.stringify(item) || JSON.stringify(after) !== JSON.stringify(before)
       || days !== keep || !this.retainedMessage(after?.message, days)) return null;
     return body?.words ?? null;
   }
-  async body(viewer: Viewer, id: string): Promise<Body | null> {
+  async body(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<Body | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
     if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
@@ -187,7 +193,8 @@ export class InboxQueries {
     if (!current || JSON.stringify(current) !== JSON.stringify(item) || !retained(after, days()) || days() !== keep
       || !after?.message.words || after.message.at !== before.message.at || after.message.kind !== before.message.kind
       || after.message.keepUntil !== before.message.keepUntil || !after.message.words.equals(before.message.words)) return null;
-    if (before.message.kind !== 'ask') return { words };
+    const deadline = Math.min(Date.parse(after.message.keepUntil!), Date.parse(after.message.at) + keep * 86400000);
+    if (before.message.kind !== 'ask') { retainedUntil?.(deadline); return { words }; }
     // Private questions are the existing Comms encrypted envelope, not a JSON
     // database column. Parse only the named display fields, never arbitrary keys.
     try {
@@ -199,6 +206,7 @@ export class InboxQueries {
         if (text !== undefined && text !== null && typeof text !== 'string') return null;
         result[field] = text as string | null | undefined;
       }
+      retainedUntil?.(deadline);
       return result;
     } catch { return null; }
   }
@@ -215,8 +223,8 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     seq: { type: GraphQLInt },
     bodyKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.bodyKeepUntil(context.viewer, row.id) },
     answerKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.answerKeepUntil(context.viewer, row.id) },
-    answerText: { type: GraphQLString, resolve: (row, _args, context) => service.answerText(context.viewer, row.id) },
-    body: { type: body, resolve: (row, _args, context) => service.body(context.viewer, row.id) },
+    answerText: { type: GraphQLString, resolve: (row, _args, context) => service.answerText(context.viewer, row.id, until => keepReadUntil(context, until)) },
+    body: { type: body, resolve: (row, _args, context) => service.body(context.viewer, row.id, until => keepReadUntil(context, until)) },
     refs: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))), resolve: (row, _args, context) => service.refs(context.viewer, row.id) },
     read: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.read(context.viewer, row.id) },
   } });
@@ -242,6 +250,6 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
     args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
-    resolve: (_row, args, context) => args.search === undefined ? service.list(context.viewer, args) : service.search(context.viewer, args),
+    resolve: (_row, args, context) => args.search === undefined ? service.list(context.viewer, args) : service.search(context.viewer, args, until => keepReadUntil(context, until)),
   } };
 }

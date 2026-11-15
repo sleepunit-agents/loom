@@ -5,6 +5,7 @@ import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectT
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { agents, memberAgents, members, conversations, household, messages, threadRefs, threads } from '../data/schema.js';
+import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 type Message = typeof messages.$inferSelect;
 type MessageView = Omit<Message, 'words'> & Pick<typeof conversations.$inferSelect, 'agent' | 'project' | 'member'> & { conversation: string };
@@ -87,7 +88,7 @@ export class CommsQueries {
       .where(and(eq(threads.id, thread), this.allowed(viewer)))
       .orderBy(desc(threadRefs.messageSeq), asc(threadRefs.ref)).limit(count).all();
   }
-  async words(viewer: Viewer, expected: MessageView): Promise<string | null> {
+  async words(viewer: Viewer, expected: MessageView, retainedUntil?: (at: number) => void): Promise<string | null> {
     const row = () => this.db.select({ message: messages, agent: conversations.agent, project: conversations.project, member: conversations.member, conversation: conversations.id })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
@@ -104,6 +105,7 @@ export class CommsQueries {
     if (!retained(after, days()) || days() !== keep || !after?.message.words || !same(after.message) || !scope(after)
       || after.agent !== before.agent || after.project !== before.project || after.member !== before.member || after.conversation !== before.conversation
       || !after.message.words.equals(before.message.words)) return null;
+    retainedUntil?.(Math.min(Date.parse(after.message.keepUntil!), Date.parse(after.message.at) + keep * 86400000));
     return words;
   }
 }
@@ -119,7 +121,7 @@ export function commsQueryFields(service: CommsQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['thread', 'kind', 'sender', 'at'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['keepUntil', 'delivery', 'inboxItem', 'verdict', 'run', 'tool', 'cardState', 'clientId'].map(name => [name, { type: GraphQLString }])),
     wordsKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.wordsKeepUntil(context.viewer, row) },
-    seq: { type: new GraphQLNonNull(GraphQLInt) }, words: { type: GraphQLString, resolve: (row, _args, context) => service.words(context.viewer, row) },
+    seq: { type: new GraphQLNonNull(GraphQLInt) }, words: { type: GraphQLString, resolve: (row, _args, context) => service.words(context.viewer, row, until => keepReadUntil(context, until)) },
   } });
   const ref = new GraphQLObjectType({ name: 'CommsReferenceView', fields: { ref: { type: new GraphQLNonNull(GraphQLString) }, messageSeq: { type: new GraphQLNonNull(GraphQLInt) } } });
   const many = (type: GraphQLObjectType<any, any>) => new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));

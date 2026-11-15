@@ -9,11 +9,12 @@ import { agents, household, inbox, memberAgents, members, messages, operationRes
 import { DataLive } from './core/data/live.js';
 import { DataWrites } from './core/data/writes.js';
 import { sharedRoot } from './shared-root.js';
+import { GraphQLScalarType } from 'graphql/index.js';
 import { wordsKey } from './pieces/comms/crypto.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-async function fixture() {
+async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
   const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(Date.parse('2026-11-14T18:00:00Z')), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
@@ -26,10 +27,10 @@ async function fixture() {
     db.insert(sessions).values({ id: hash(cookie), token: hash(token), device: 'Browser', via: 'token', isAgent: false, issuedAt: now(), seenAt: now(), provedAt: now() }).run();
     return [member, { token, cookie }];
   }));
-  let seal: (() => Promise<void>) | undefined;
+  let seal: (() => Promise<void>) | undefined, open: (() => Promise<void>) | undefined;
   const key = wordsKey(await generateX25519Identity());
   const errors: unknown[] = [];
-  const root = sharedRoot({ db, clock, originAllowed: () => true, commsKey: { ...key, async seal(words) { await seal?.(); return key.seal(words); } }, reportError: error => errors.push(error) });
+  const root = sharedRoot({ db, clock, fields, originAllowed: () => true, commsKey: { ...key, async seal(words) { await seal?.(); return key.seal(words); }, async open(blob) { await open?.(); return key.open(blob); } }, reportError: error => errors.push(error) });
   cleanup.push(() => root.close());
   const post = (name: string, input: object, id: string, person = 'alice', bearer = false) => root.http.request(`/api/${name.replace('.','/')}`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(bearer ? { authorization: `Bearer ${credentials[person].token}` } : { cookie: `loom_ui=${credentials[person].cookie}` }) }, body: JSON.stringify({ input, id }),
@@ -38,7 +39,7 @@ async function fixture() {
     const response = await root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: `loom_ui=${credentials[person].cookie}` }, body: JSON.stringify({ query: source }) });
     return { response, body: await response.json() as { data?: Record<string, unknown>; errors?: unknown[] } };
   };
-  return { client, db, clock, root, errors, credentials, post, query, gate: (fn: () => Promise<void>) => { seal = fn; } };
+  return { client, db, clock, root, errors, credentials, post, query, gate: (fn: () => Promise<void>) => { seal = fn; }, openGate: (fn: () => Promise<void>) => { open = fn; } };
 }
 it('mounts actual shared private reads and cookie writes with metadata-only receipts and current ownership', async () => {
   const f = await fixture();
@@ -57,6 +58,10 @@ it('mounts actual shared private reads and cookie writes with metadata-only rece
   expect(f.db.select().from(threads).all()).toMatchObject([{id:'th:pump',title:'Pump'}]);
   for (const id of ['bob-open','owner-change']) expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
   expect((await f.post('comms.send', { ...input, clientId:'bearer' }, 'bearer','alice',true)).status).toBe(403);
+  f.root.writes.run(() => f.db.insert(memberAgents).values({member:'bob',agent:'art'}).run());
+  const hidden = await f.query(`{commsThread(id:"th:pump"){id title} commsMessages(thread:"th:pump"){seq words} inboxItem(id:"${sent.value.item}"){body{words}}}`,'bob');
+  expect(hidden.body.errors).toBeUndefined(); expect(hidden.body.data).toEqual({commsThread:null,commsMessages:[],inboxItem:null});
+
   expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('PRIVATE PERSON MESSAGE');
   expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain('PRIVATE PERSON MESSAGE');
   expect(f.db.select().from(messages).all()).toHaveLength(1);
@@ -149,4 +154,59 @@ it('unsubscribes and cancels the lifecycle timer before downstream query shutdow
   expect(activeObservers).toBe(0); expect(activeTimers.size).toBe(0);
   expect(events.indexOf('observer-stop')).toBeLessThan(events.indexOf('data-close'));
   expect(events.indexOf('timer-cancel')).toBeLessThan(events.indexOf('data-close'));
+});
+
+it('withholds private metadata when read authority changes while a sibling decrypt yields', async () => {
+  const f=await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'PRIVATE THREAD LABEL'},'open')).status).toBe(200);
+  expect((await f.post('comms.send',{thread:'th:pump',clientId:'one',words:'PRIVATE WORDS'},'send')).status).toBe(200);
+  let entered!:()=>void,release!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  f.openGate(()=>{entered();return new Promise<void>(resolve=>{release=resolve;});});
+  const pending=f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}','owner');
+  await started; f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run()); release();
+  const read=await pending;
+  expect(read.response.status).toBe(503); expect(JSON.stringify(read.body)).not.toContain('PRIVATE THREAD LABEL'); expect(JSON.stringify(read.body)).not.toContain('PRIVATE WORDS');
+  const retry=await f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}','owner');
+  expect(retry.response.status).toBe(200); expect(retry.body.data).toEqual({commsThread:null,commsMessages:[]});
+});
+
+it.each(['comms','inbox','answer','summary','search'])('withholds %s wording at its actual deadline after buffering, before the expiry timer runs', async kind => {
+  const now=Date.parse('2026-11-14T18:00:00Z');let time=now,advanced=false;
+  const clockStep=new GraphQLScalarType({name:'DeadlineClockStep',serialize:()=>({toJSON(){advanced=true;time=now+1000;return 'public';}})});
+  const f=await fixture({lateClock:{type:clockStep,resolve:()=>true}});
+  vi.spyOn(f.clock,'now').mockImplementation(()=>time);
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'Pump'},'open')).status).toBe(200);
+  const comms=f.root.services.comms!;
+  const question=await comms.ask('th:pump','art','ask',{words:'PRIVATE FINAL WORDS',answers:'words'});
+  if(kind==='answer') expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE FINAL WORDS'},'answer')).status).toBe(200);
+  if(kind==='summary') await comms.send({thread:'th:pump',kind:'reply',sender:'art',words:'PRIVATE FINAL WORDS'});
+  f.root.writes.run(()=>f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run());
+  const source=kind==='comms'?'{commsMessages(thread:"th:pump"){words}}'
+    :kind==='summary'?'{recentConversations(agent:"art"){lastAnswer{words}}}'
+    :kind==='search'?'{inboxItems(search:"PRIVATE FINAL WORDS"){id}}'
+    :`{inboxItem(id:"${question.inboxItem}"){${kind==='answer'?'answerText':'body{words}'}}}`;
+  const read=await f.query(source.slice(0,-1)+' lateClock}');expect(advanced).toBe(true);expect(read.response.status).toBe(503);
+  expect(JSON.stringify(read.body)).not.toContain('PRIVATE FINAL WORDS');
+  expect(f.db.select().from(messages).get()?.words).not.toBeNull();
+  const retry=await f.query(source);expect(retry.response.status).toBe(200);expect(JSON.stringify(retry.body)).not.toContain('PRIVATE FINAL WORDS');
+});
+
+it('withdraws a returned but unread HTTP response after the owner loses read access', async () => {
+  const f=await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'PRIVATE BUFFERED LABEL'},'open')).status).toBe(200);
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.owner.cookie}`},body:JSON.stringify({query:'{commsThread(id:"th:pump"){title}}'})});
+  expect(response.status).toBe(200);
+  f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
+  await expect(response.text()).rejects.toThrow('Data access ended');
+});
+it('withdraws a returned but unread HTTP word response at its deadline without a data commit', async () => {
+  const f=await fixture(),now=f.clock.now();let time=now;
+  vi.spyOn(f.clock,'now').mockImplementation(()=>time);
+  const comms=f.root.services.comms!,thread=comms.threads.open({member:'alice',agent:'art',title:'Pump'});
+  await comms.send({thread:thread.id,kind:'reply',sender:'art',words:'PRIVATE BUFFERED WORDS'});
+  f.root.writes.run(()=>f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run());
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.alice.cookie}`},body:JSON.stringify({query:`{commsMessages(thread:"${thread.id}"){words}}`})});
+  expect(response.status).toBe(200);time=now+1000;
+  await expect(response.text()).rejects.toThrow('Data access ended');
 });
