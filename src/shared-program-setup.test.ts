@@ -8,15 +8,15 @@ import {createDataSchema} from './core/data/database.js';
 import {members,tokens,agents,boxes} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import {sharedProgramSetup} from './shared-program-setup.js';
-import type {ProgramGrants} from './shared-program-access.js';
+import type {ProgramGrants,ProgramGrantStore} from './shared-program-access.js';
 const cleanup:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 function fixture(){
  const client=new Database(':memory:');cleanup.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  for(const id of ['owner','sam'])db.insert(members).values({id,role:id==='owner'?'owner':'member',joinedAt:at}).run();
  // This is only the explicit persistence test port, not a production fallback.
- const values=new Map<string,ProgramGrants>(),write=vi.fn((id:string,value:ProgramGrants)=>{expect(client.inTransaction).toBe(true);values.set(id,value);}),store={read:(id:string)=>values.get(id),write};
- let choices:ProgramGrants={records:['tasks','projects'],operations:['tasks.command','household.setProject','runtime.boxRevoke','token.revoke','account.read','program.grantsSet']};
+ const values=new Map<string,ProgramGrants>(),write=vi.fn((id:string,value:ProgramGrants)=>{expect(client.inTransaction).toBe(true);values.set(id,value);return undefined;}),store={read:(id:string)=>values.get(id),write};
+ let choices:ProgramGrants={records:['tasks','projects'],operations:['tasks.command','household.setProject','runtime.boxRevoke','token.revoke','account.read','signin.rotate','sessions.revoke','program.grantsSet']};
  const service=sharedProgramSetup(db,clock,store,()=>choices);
  const root=sharedRoot({db,clock,programGrants:store.read,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>root.close());
  return{client,clock,db,at,values,write,store,service,root,choose:(value:ProgramGrants)=>{choices=value;}};
@@ -31,12 +31,12 @@ it('issues a real restricted bearer under a transaction, then keeps an empty mar
  expect((await(await request('{ tasks { id } }')).json()).errors).toBeDefined();
  expect(JSON.stringify(f.db.select().from(tokens).all())).not.toContain(issued.token);
 });
-it.each([{records:['tokens'],operations:[]},{records:[],operations:['token.revoke']},{records:[],operations:['program.grantsSet']},{records:[],operations:['missing.operation']}])('refuses unsupported or credential-administration grants before minting: %j',grant=>{
+it.each([{records:['tokens'],operations:[]},{records:[],operations:['token.revoke']},{records:[],operations:['signin.rotate']},{records:[],operations:['sessions.revoke']},{records:[],operations:['program.grantsSet']},{records:[],operations:['missing.operation']}])('refuses unsupported records or reserved operations before minting: %j',grant=>{
  const f=fixture();expect(()=>f.service.issue({member:'sam',label:'Invalid tool',...grant})).toThrow();expect(f.db.select().from(tokens).all()).toEqual([]);expect(f.write).not.toHaveBeenCalled();
 });
 it('rolls back issuance rather than releasing an ordinary token when the marker writer does nothing',()=>{
  const f=fixture();f.write.mockImplementation(()=>{});
- expect(()=>f.service.issue({member:'sam',label:'Missing marker',records:['tasks'],operations:[]})).toThrow('Program grants were not persisted exactly');expect(f.db.select().from(tokens).all()).toEqual([]);
+ expect(()=>f.service.issue({member:'sam',label:'Missing marker',records:['tasks'],operations:[]})).toThrow('Program permissions could not be saved');expect(f.db.select().from(tokens).all()).toEqual([]);
 });
 it('rolls back issuance if grant persistence throws and does not turn ordinary tokens into programs',()=>{
  const f=fixture();f.write.mockImplementation(()=>{throw Error('Fixture persistence failed');});
@@ -60,8 +60,8 @@ it('never lets an owner-subject program grant itself wider credential authority'
  expect(f.service.catalogue().operations).toEqual(['household.setProject','runtime.boxRevoke','tasks.command']);
 });
 it.each([{records:['projects','tasks'],operations:[]},{records:[],operations:[]}])('rolls back issuance if stored grants differ from the requested set: %j',stored=>{
- const f=fixture();f.write.mockImplementation((id)=>{f.values.set(id,stored);});
- expect(()=>f.service.issue({member:'sam',label:'Wrong stored scope',records:['tasks'],operations:[]})).toThrow('Program grants were not persisted exactly');expect(f.db.select().from(tokens).all()).toEqual([]);
+ const f=fixture();f.write.mockImplementation((id)=>{f.values.set(id,stored);return undefined;});
+ expect(()=>f.service.issue({member:'sam',label:'Wrong stored scope',records:['tasks'],operations:[]})).toThrow('Program permissions could not be saved');expect(f.db.select().from(tokens).all()).toEqual([]);
 });
 it('rejects editing an expired program and follows the current catalogue rather than a construction-time copy',()=>{
  const f=fixture(),issued=f.service.issue({member:'sam',label:'Expired tool',records:['tasks'],operations:[]});
@@ -89,4 +89,17 @@ it('allows explicitly granted ordinary lifecycle operations, not a retired legac
  const issued=f.service.issue({member:'owner',label:'Machine lifecycle',records:[],operations:['runtime.boxRevoke']});
  const response=await f.root.http.request('http://loom/api/runtime/boxRevoke',{method:'POST',headers:{authorization:'Bearer '+issued.token,'content-type':'application/json'},body:JSON.stringify({input:{box:'box'},id:'lifecycle'})});
  expect(response.status).toBe(200);expect(f.db.select().from(boxes).where(eq(boxes.id,'box')).get()?.revokedAt).toBe(f.at);
+});
+it('rejects an untyped asynchronous writer before invoking it or minting a token',()=>{
+ const f=fixture();let called=false;
+ const bad={read:f.store.read,write:async()=>{called=true;}} as unknown as ProgramGrantStore;
+ expect(()=>sharedProgramSetup(f.db,f.clock,bad,()=>({records:[],operations:[]}))).toThrow('Program persistence must be synchronous SQLite');expect(called).toBe(false);expect(f.db.select().from(tokens).all()).toEqual([]);
+});
+it('rejects a promise returned by an untyped synchronous wrapper and rolls back the token',()=>{
+ const f=fixture(),bad={read:f.store.read,write:()=>Promise.resolve()} as unknown as ProgramGrantStore;
+ const service=sharedProgramSetup(f.db,f.clock,bad,()=>({records:[],operations:[]}));
+ expect(()=>service.issue({member:'sam',label:'Async wrapper',records:[],operations:[]})).toThrow('Program permissions could not be saved');expect(f.db.select().from(tokens).all()).toEqual([]);
+});
+it('does not advertise a non-member credential as an owner-managed program',()=>{
+ const f=fixture();f.db.insert(agents).values({id:'art',about:'Fixture',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();const issued=f.root.services.signin.issue({kind:'agent',agent:'art',label:'Agent marker'});f.values.set(issued.fingerprint,{records:[],operations:[]});expect(f.service.list()).toEqual([]);
 });
