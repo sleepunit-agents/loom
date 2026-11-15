@@ -1,0 +1,28 @@
+import { expect, it, vi } from 'vitest';
+import { sendWorkAnswer, type WorkAnswer } from './work-answer';
+const answer: WorkAnswer = {piece:'approvals',id:'a-1',answer:'allow'};
+const success = vi.fn<typeof fetch>(async (_url,init) => Response.json({ok:true,value:{id:JSON.parse(String(init!.body)).input.id}}));
+it('uses the actual same-origin envelope, omits actor metadata and reuses one immutable answer ID after an unknown response', async () => {
+  const request = vi.fn<typeof fetch>(success).mockRejectedValueOnce(new Error('Response lost'));
+  await expect(sendWorkAnswer({...answer,actor:'not-sent'} as WorkAnswer,request)).rejects.toThrow('Could not confirm');
+  expect(request).toHaveBeenCalledTimes(1);
+  await sendWorkAnswer(answer,request);
+  const bodies = request.mock.calls.map(([,init])=>JSON.parse(String(init!.body)));
+  expect(bodies[0]).toEqual({input:{id:'a-1',answer:'allow'},id:expect.stringMatching(/^work-[a-f0-9]{64}$/)});
+  expect(bodies[1]).toEqual(bodies[0]);
+  expect(request.mock.calls[0].slice(0,1)).toEqual(['/api/approvals/answer']);
+  expect(request.mock.calls[0][1]).toMatchObject({method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'}});
+});
+it('distinguishes another card, answer, head and merge request', async () => {
+  const request = vi.fn<typeof fetch>(success), base = {piece:'changes' as const,id:'github:house/pond#1',head:'a'.repeat(40),approval:'a-merge',answer:'yes' as const};
+  for (const command of [answer,{...answer,id:'a-2'},{...answer,answer:'deny' as const},base,{...base,head:'b'.repeat(40)},{...base,approval:'a-other'}]) await sendWorkAnswer(command,request);
+  expect(new Set(request.mock.calls.map(([,init])=>JSON.parse(String(init!.body)).id)).size).toBe(6);
+  expect(request.mock.calls[3][0]).toBe('/api/changes/answer');
+});
+it('does not treat denial, malformed JSON or another target acknowledgement as confirmation', async () => {
+  const request = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ok:false,message:'private detail'},{status:403}))
+    .mockResolvedValueOnce(new Response('not json')).mockResolvedValueOnce(Response.json({ok:true,value:{id:'a-other'}}));
+  for (let n=0;n<3;n++) await expect(sendWorkAnswer(answer,request)).rejects.toThrow('Could not confirm your answer. Try again.');
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(new Set(request.mock.calls.map(([,init])=>JSON.parse(String(init!.body)).id)).size).toBe(1);
+});

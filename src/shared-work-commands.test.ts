@@ -207,3 +207,14 @@ it('honors restrictive approval and change callbacks for fresh answers and cache
     expect(f.db.select().from(operationResults).all()).toEqual(receipts);
   }
 });
+
+it('projects only the current caller owner status through the real query door and observes role changes', async () => {
+  const f = fixture(false);
+  f.root.writes.run(() => f.db.insert(members).values({id:'lee',role:'owner',joinedAt:'2026-11-14T00:00:00.000Z'}).run());
+  const read = async () => (await (await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({query:'{ workAnswerOwner }'})})).json());
+  expect(await read()).toEqual({data:{workAnswerOwner:true}});
+  f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
+  expect(await read()).toEqual({data:{workAnswerOwner:false}});
+  f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
+  expect(await read()).toEqual({data:{workAnswerOwner:true}});
+});

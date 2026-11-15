@@ -3,15 +3,15 @@ import { createElement as h, Suspense, type ReactNode } from 'react';
 // @ts-expect-error The renderer dependency has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
-const feed = vi.hoisted(() => ({ status: 'live', approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
-vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: feed.status, data: query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
+const feed = vi.hoisted(() => ({ status: 'live', owner:false, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
+vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
 vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.list, props.reader] : []))])));
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; });
+afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; vi.unstubAllGlobals(); });
 function fixture() {
   const before = { on: true, send_outside: false, outside_address: '', keep_days: 7 };
   const after = { ...before, keep_days: 1 };
@@ -208,4 +208,29 @@ it('restores Changes folder selection on browser back and forward without a shel
     await act(async () => tree.unmount());
     expect(removeEventListener).toHaveBeenCalledWith('popstate', pop);
   } finally { await act(async () => tree.unmount()); vi.unstubAllGlobals(); }
+});
+
+it('binds actual default approval answers only for current live owner metadata and hides them on demotion', async () => {
+  fixture(); const request=vi.fn<typeof fetch>(async (_url,init)=>Response.json({ok:true,value:{id:JSON.parse(String(init!.body)).input.id}})); vi.stubGlobal('fetch',request);
+  feed.owner=true; await draw(h(LiveApprovalCard,{id:'a-one'}));
+  await act(async () => tree.root.findAllByType('Button').find((button: {props:{children:string}})=>button.props.children==='Allow').props.onClick());
+  await expect.poll(()=>request.mock.calls.length).toBe(1);
+  await expect.poll(async()=>{await act(async()=>{});return tree.root.findAllByType('Button').find((button:{props:{children:string;disabled:boolean}})=>button.props.children==='Allow')?.props.disabled;}).toBe(false);
+  expect(words()).toContain('pending'); expect(tree.root.findAllByType('Error')).toHaveLength(0);
+  expect(request.mock.calls[0][0]).toBe('/api/approvals/answer');
+  expect(JSON.parse(String(request.mock.calls[0][1]!.body)).input).toEqual({id:'a-one',answer:'allow'});
+  feed.owner=false; await act(async () => tree.update(h(LiveApprovalCard,{id:'a-one'})));
+  expect(tree.root.findAllByType('Button')).toHaveLength(0);
+});
+it('offers merge answers only for the current head, agent and project request and never invents a refresh operation', async () => {
+  fixture(); feed.owner=true;
+  await draw(h(ChangesApp,{})); await selectRow();
+  expect(tree.root.findAllByType('Button')).toHaveLength(0);
+  const change=feed.changes.changes[0];
+  feed.approvals.approvals=[{...feed.approvals.approvals[0],id:'a-merge',kind:'merge',target:`${change.id}@${change.headCommit}`,agent:change.agent!,project:change.project,operation:null} as typeof feed.approvals.approvals[number]];
+  await act(async () => tree.update(h(ChangesApp,{})));
+  expect(tree.root.findAllByType('Button').map((button:{props:{children:string}})=>button.props.children)).toEqual(['Yes, merge it','Not yet']);
+  feed.approvals.approvals[0]={...feed.approvals.approvals[0],target:`${change.id}@other-head`};
+  await act(async () => tree.update(h(ChangesApp,{})));
+  expect(tree.root.findAllByType('Button')).toHaveLength(0);
 });

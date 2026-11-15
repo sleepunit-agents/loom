@@ -22,6 +22,7 @@ import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { pollChanges } from './apps/changes-polling.js';
+import { workQueryFields } from './shared-work-queries.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
@@ -63,7 +64,7 @@ export function sharedRoot(options: {
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing);
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...options.fields,...workQueryFields(db)}, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
