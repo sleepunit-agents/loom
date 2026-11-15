@@ -174,6 +174,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   // Home's two-phase composer uses real shared cookie HTTP operations and
   // returns to current query facts; navigation alone is not a successful send.
+  clock.advance(1); // Distinguish the new thread's lastAt from the seeded one.
   await b.goto(app.url);
   const compose=b.getByRole('region',{name:'Message Art',exact:true}),draftWords='Disposable shared desk composer message';
   await compose.getByRole('textbox',{name:'Message',exact:true}).fill(draftWords);
