@@ -2,6 +2,7 @@
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
+import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
@@ -98,6 +99,7 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
