@@ -99,6 +99,7 @@ it('refuses missing and revoked machines',async()=>{
  const f=fixture();expect((await f.settings({box:'missing'})).status).toBe(403);f.root.writes.run(()=>f.db.update(boxes).set({revokedAt:f.now()}).where(eq(boxes.id,'worker')).run());expect((await f.settings()).status).toBe(403);
 });
 it('commits settings and their receipt together, without notifying on rollback or replay',async()=>{
+ // Keep this receipt/job predicate local; record here and assert after dispatch.
  const f=fixture();expect((await f.call('health',{facts:['cpu:amd']},'prior-health')).status).toBe(200);expect((await f.settings({agents:[{agent:'art',lent:false}],facts:['rack:old']})).status).toBe(200);const before={boxes:f.db.select().from(boxes).all(),agents:f.db.select().from(boxAgents).all(),facts:f.db.select().from(boxFacts).all()},observed:{transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.capacityChanged.bind(f.root.services.tempo),changed=vi.spyOn(f.root.services.tempo,'capacityChanged').mockImplementation(()=>{observed.push({transaction:f.client.inTransaction,receipt:f.db.select().from(operationResults).all().some(row=>row.id==='once'||row.id==='later')});notify();});
  f.client.exec("CREATE TEMP TRIGGER fail_settings_receipt BEFORE INSERT ON operation_results WHEN NEW.id='rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
  const extra={name:'Changed',agents:[{agent:'art',lent:false}],facts:['rack:attic']};

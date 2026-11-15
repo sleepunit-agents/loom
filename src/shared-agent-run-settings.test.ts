@@ -86,6 +86,7 @@ it('preserves the existing Secrets-owned repository reference and rejects overpo
  expect((await f.settings()).status).toBe(200);expect(f.db.select().from(agentRunSettings).get()?.repositorySecret).toBe('repository-key');expect((await f.settings({repositorySecret:'another'})).status).toBe(400);
 });
 it('rolls back all configuration and only wakes capacity after the settings receipt commits',async()=>{
+ // Keep this receipt/job predicate local; record here and assert after dispatch.
  const f=fixture(),before={settings:f.db.select().from(agentRunSettings).all(),boxes:f.db.select().from(agentBoxes).all(),ports:f.db.select().from(agentHousePorts).all()},observed:{transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.capacityChanged.bind(f.root.services.tempo),changed=vi.spyOn(f.root.services.tempo,'capacityChanged').mockImplementation(()=>{observed.push({transaction:f.client.inTransaction,receipt:f.db.select().from(operationResults).all().some(row=>row.id==='once'||row.id==='later')});notify();});
  f.client.exec("CREATE TEMP TRIGGER fail_run_settings BEFORE INSERT ON operation_results WHEN NEW.id='rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
  const extra={boxes:['other','worker'],ports:[{address:'127.0.0.1',port:9000}],nestedContainers:true};expect((await f.settings(extra,ownerCredential,'rollback')).status).toBe(503);expect({settings:f.db.select().from(agentRunSettings).all(),boxes:f.db.select().from(agentBoxes).all(),ports:f.db.select().from(agentHousePorts).all()}).toEqual(before);expect(changed).not.toHaveBeenCalled();

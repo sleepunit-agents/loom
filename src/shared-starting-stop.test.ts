@@ -55,6 +55,7 @@ it('does not consume another conversation Stop while the same agent prepares thi
  expect(await worker.heartbeat(f.job.id,'starting')).toBe(true);expect(f.db.select().from(s.threads).where(eq(s.threads.id,other.id)).get()?.stopRequested).toBe(true);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()?.state).toBe('starting');
 });
 it('commits stopped state and observed Stop with its heartbeat receipt before notifying Tempo; rollback and replay do not notify',async()=>{
+ // Keep this receipt/job predicate local; record here and assert after dispatch.
  const f=await fixture(),worker=control(f);await worker.next();await f.member('stop');
  const observed:{id:string;transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.sources.job.bind(f.root.services.tempo.sources),ended=vi.spyOn(f.root.services.tempo.sources,'job').mockImplementation(id=>{observed.push({id,transaction:f.db.$client.inTransaction,receipt:f.db.select().from(s.operationResults).all().some(row=>row.id==='heartbeat-stop'&&row.operation==='runtime.heartbeat')});notify(id);});
  f.db.$client.exec("CREATE TEMP TRIGGER fail_stop_receipt BEFORE INSERT ON operation_results WHEN NEW.id='heartbeat-rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
