@@ -2,6 +2,7 @@
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
+import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
@@ -108,6 +109,8 @@ export async function* walkthroughSteps(output) {
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
    if(title==='Inbox'&&row.opened)report.actions={...report.actions,...await taskQuestions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await taskInlineQuestion({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
+   if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
+   if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
