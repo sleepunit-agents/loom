@@ -134,8 +134,8 @@ describe('loom token, loom sessions: --help creates nothing', () => {
 const MUTATING: string[][] = [
   ['token', 'create'], ['token', 'revoke'], ['token', 'link'],
   ['sessions', 'revoke'],
-  ['household', 'init'], ['household', 'add'], ['household', 'sprite'], ['household', 'commons'],
-  ['household', 'icons', 'install'], ['household', 'icons', 'use'], ['household', 'icons', 'set'],
+  ['household', 'setMember'], ['household', 'setAgent'], ['household', 'setAgentAccounts'], ['household', 'setProject'],
+  ['account', 'removePasskey'], ['account', 'revokeSession'],
   ['backup', 'set'], ['backup', 'off'], ['backup', 'run'],
   ['export'], ['restore'],
   ['store', 'p', 'put', 'c', 'k'], ['store', 'p', 'del', 'c', 'k'], ['store', 'p', 'revert', 'c', 'k', '1'],

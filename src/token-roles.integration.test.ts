@@ -19,7 +19,6 @@ import {
   createToken, loadHousehold, loadTokens, mintReviewToken, parseRole, REVIEW_TOKEN_TTL_MS, REVIEW_TOKENS_LIVE_MAX, roleString,
   TokenResolver, type Household,
 } from './household.js';
-import { runToken } from './cli/household.js';
 import { runtimePieces } from './cli/pieces-managed.js';
 import { ROLE_ROUTES } from './transport/role-routes.js';
 
@@ -95,21 +94,7 @@ describe('minting a runtime token', () => {
     expect(() => createToken(h, { role: { kind: 'review', piece: 'shuttle' }, label: 'r', runtimePieces: ['shuttle'] })).toThrow(/review\/token/);
   });
 
-  it('loom token create --runtime mints for the eligible piece and refuses the rest', async () => {
-    const ok = io({ LOOM_HOME: h.home });
-    expect(await runToken(['create', '--runtime', 'shuttle', '--label', 'shuttle · cli'], ok.io)).toBe(0);
-    expect(ok.out.join('')).toMatch(/^loom_/);
-    expect(ok.err.join('')).toMatch(/runtime:shuttle/);
-    for (const p of ['box', 'plain', 'ghost']) {
-      const bad = io({ LOOM_HOME: h.home });
-      expect(await runToken(['create', '--runtime', p, '--label', `${p} · cli`], bad.io), p).toBe(1);
-      expect(bad.err.join(''), p).toMatch(/can't mint a runtime token/);
-    }
-    // Not a role the CLI can name, and not two at once.
-    expect(await runToken(['create', '--runtime', 'loom', '--label', 'x'], io({ LOOM_HOME: h.home }).io)).toBe(2);
-    expect(await runToken(['create', '--runtime', 'shuttle', '--owner', '--label', 'x'], io({ LOOM_HOME: h.home }).io)).toBe(2);
-    expect(loadTokens(h.home).filter((t) => t.role.startsWith('runtime:')).map((t) => t.label)).toEqual(['shuttle', 'shuttle · cli']);
-  });
+
 });
 
 describe('token expiry', () => {

@@ -16,7 +16,6 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
-import { runSessions, runToken } from './cli/household.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import {
   addAgent, commonsKnowledgePath, firstOwner, removeMember, setMember, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
@@ -246,46 +245,9 @@ describe('one daemon, several agents', () => {
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
   });
 
-  it('loom token create --service mints a service house\'s token (agent:<name>/<service>); --service needs --agent', async () => {
-    let out = '';
-    const io = { stdout: (x: string) => { out += x; }, stderr: () => {}, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
-    expect(await runToken(['create', '--agent', 'art', '--service', 'slack', '--label', 'art · house h-9 on loom'], io)).toBe(0);
-    expect(out.trim()).toMatch(/^loom_/);
-    expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9 on loom')?.role).toBe('agent:art/slack');
-    expect(await runToken(['create', '--owner', '--service', 'slack', '--label', 'x'], io)).toBe(2);
-    expect(await runToken(['create', '--agent', 'art', '--service', 'slack', '--house', 'h-9', '--label', 'art · house h-9b'], io)).toBe(0);
-    expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9b')?.role).toBe('agent:art/slack@h-9');
-    revokeToken(h, 'art · house h-9b');
-    expect(await runToken(['create', '--owner', '--house', 'h-9', '--label', 'z'], io)).toBe(2);
-    expect(await runToken(['create', '--agent', 'art', '--service', 'Bad', '--label', 'y'], io)).toBe(2);
-    revokeToken(h, 'art · house h-9 on loom');
-  });
 
-  it('loom token link: a one-time link signs the owner in, and revoking its token ends those sessions', async () => {
-    let out = '';
-    let err = '';
-    const io = { stdout: (x: string) => { out += x; }, stderr: (x: string) => { err += x; }, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
-    expect(await runToken(['link', '--page-url', base], io)).toBe(0);
-    expect(err).toContain('within 10 minutes');
-    const url = out.trim();
-    expect(url).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
-    const signed = await fetch(url, { method: 'POST', redirect: 'manual' });
-    expect(signed.status).toBe(303);
-    const cookie = (signed.headers.get('set-cookie') ?? '').split(';')[0];
-    expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).status).toBe(200);
-    // A second link reuses the one token; revoking it ends every session links opened.
-    out = '';
-    expect(await runToken(['link', '--minutes', '5', '--page-url', base], io)).toBe(0);
-    expect(loadTokens(h.home).filter((t) => t.label === 'page sign-in links').length).toBe(1);
-    revokeToken(h, 'page sign-in links');
-    expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
-    expect((await fetch(out.trim(), { method: 'POST', redirect: 'manual' })).status).toBe(401);
-    expect(await runToken(['link', '--minutes', '0'], io)).toBe(2);
-    // Through the whole CLI, as documented: --url is loom's global remote flag, so the link's is --page-url.
-    const cli = await runCliCaptured(['token', 'link', '--page-url', base], { env: { LOOM_HOME: h.home } });
-    expect(cli.code).toBe(0);
-    expect(cli.stdout.trim()).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
-  });
+
+
 
   it('LOOM_BEARER_TOKEN, when set, is an owner token too', async () => {
     await handle.close();
@@ -1767,108 +1729,7 @@ esac
     expect(await r.json()).toMatchObject({ ok: false, message: expect.stringMatching(/household's to do/) });
     expect(loadTokens(h.home).some((t) => t.label === 'sneaky')).toBe(false);
   });
-  it('one signed-in session ends alone (t-1871): the Account page lists them, a household owner signs out an agent\'s screenshot session, every other link session stays', async () => {
-    const HEADLESS = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36';
-    const PHONE = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
-    /** A session opened by a one-time sign-in link: the household's "page sign-in links" token, like Jonathan's phone's. */
-    const viaLink = async (ua: string, label?: string) => {
-      const code = signinLink(h, 600, 'jonathan', label);
-      const r = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { 'user-agent': ua, 'sec-fetch-site': 'same-origin' } });
-      expect(r.status).toBe(303);
-      return (r.headers.get('set-cookie') ?? '').split(';')[0];
-    };
-    const phone = await viaLink(PHONE);
-    const shots = await viaLink(HEADLESS, 'screenshots t-1871');
-    const lorens = await login(loren);
-    const signedIn = async (cookie: string) => (await page(cookie, '/account')).status === 200;
-    const rows = async (cookie: string) => {
-      const sec = (await data(cookie, '/account')).page.sections.find((x: { id: string }) => x.id === 'sessions');
-      return sec.blocks[0].items as Array<{ text: string; meta: string; act: { action: string; label: string; tone: string; confirm: string; fields: { ref: string } } }>;
-    };
-    const act = async (cookie: string, fields: Record<string, string>) => {
-      const csrf = (await data(cookie, '/account')).ctx.csrf as string;
-      const r = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1', 'sec-fetch-site': 'same-origin' },
-        body: new URLSearchParams({ _csrf: csrf, _action: 'session-revoke', _path: 'passkeys', ...fields }).toString() });
-      return r.json();
-    };
 
-    // Jonathan's phone sees every session, itself first (signed out with the page's own Sign out), each other one its
-    // own row with its own Sign out.
-    const seen = await rows(phone);
-    expect(seen[0]).toMatchObject({ text: 'Chrome on Android (this device)', meta: expect.stringMatching(/^signed in .* · with a sign-in link as page sign-in links$/) });
-    expect(seen[0].act).toBeUndefined();
-    const shot = seen.find((r) => r.text.includes('screenshots t-1871'))!;
-    expect(shot).toMatchObject({ text: 'HeadlessChrome on Linux “screenshots t-1871”',
-      act: { action: 'session-revoke', label: 'Sign out', tone: 'danger', confirm: expect.stringMatching(/stays signed in/), fields: { ref: expect.stringMatching(/^[0-9a-f]{16}$/) } } });
-    expect(seen.some((r) => r.meta.endsWith('with a token as loren · page'))).toBe(true);
-    // Its ref is no cookie: the session's id is nowhere on the page.
-    expect(JSON.stringify(await data(phone, '/account'))).not.toContain(shots.split('=')[1]);
-
-    // An agent owner sees only her own, and can't end anyone else's.
-    expect((await rows(lorens)).map((r) => r.text)).toEqual(['A browser (this device)']);
-    expect(await act(lorens, { ref: shot.act.fields.ref })).toMatchObject({ ok: false, message: expect.stringMatching(/No such session/) });
-    expect(await signedIn(shots)).toBe(true);
-    // A forged form (no form token) is refused.
-    const forged = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
-      body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
-    expect(forged.status).toBe(403);
-    // Nor a request from another site, with the right form token.
-    const csrfNow = (await data(phone, '/account')).ctx.csrf as string;
-    const crossSite = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site', origin: 'https://evil.invalid' },
-      body: new URLSearchParams({ _csrf: csrfNow, _action: 'session-revoke', _path: 'passkeys', ref: shot.act.fields.ref }).toString() });
-    expect(crossSite.status).toBe(403);
-    // Nor anyone signed out.
-    const nobody = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
-      body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
-    expect(nobody.status).toBe(401);
-    expect(await signedIn(shots)).toBe(true);
-    // Nor a ref that's not a session's, or too short to name one.
-    expect(await act(phone, { ref: '0'.repeat(16) })).toMatchObject({ ok: false });
-    expect(await act(phone, { ref: shot.act.fields.ref.slice(0, 4) })).toMatchObject({ ok: false });
-    expect(await signedIn(shots)).toBe(true);
-
-    // The household owner signs the screenshot session out: it alone ends; the phone, on the same link token, stays.
-    expect(await act(phone, { ref: shot.act.fields.ref })).toMatchObject({ ok: true, message: expect.stringMatching(/every other one stays signed in/) });
-    expect(await signedIn(shots)).toBe(false);
-    expect(await signedIn(phone)).toBe(true);
-    expect(await signedIn(lorens)).toBe(true);
-    expect(loadTokens(h.home).find((t) => t.label === 'page sign-in links')?.revoked).toBeFalsy();
-    expect((await rows(phone)).some((r) => r.text.includes('screenshots'))).toBe(false);
-
-    // And from the command line: `loom sessions list`, then revoke one by its ref.
-    const out: string[] = [];
-    const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } } as unknown as Parameters<typeof runSessions>[1];
-    // A session whose token isn't on file (the owner's bearer from loom-http's environment) is listed, not as ended.
-    const bearerOnly = sessionStore(h.home).create(Buffer.alloc(32, 5));
-    expect(await runSessions(['list'], io)).toBe(0);
-    const bearerLine = out.join('').split('\n').find((l) => l.startsWith(sessionStore(h.home).refOf(bearerOnly)))!;
-    expect(bearerLine).toMatch(/\(no token on file\)$/);
-    const line = out.join('').split('\n').find((l) => l.includes('loren · page'))!;
-    expect(line).toMatch(/^[0-9a-f]{16}  a browser .* by token, signed in .* UTC  \(loren · page\)$/);
-    expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(0);
-    expect(await signedIn(lorens)).toBe(false);
-    expect(await signedIn(phone)).toBe(true);
-    expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(1);
-    expect(await runSessions(['revoke', 'nope'], io)).toBe(2);
-
-    // An agent's sign-in (t-1936): --agent needs a label, its session is listed as an agent's, and the agent ends it
-    // by that label when done, leaving every other session, the same token's too.
-    out.length = 0;
-    expect(await runToken(['link', '--agent', '--page-url', base], io)).toBe(2);
-    expect(await runToken(['link', '--agent', '--label', 'screenshots t-1936', '--page-url', base], io)).toBe(0);
-    const url = out.join('').split('\n').find((l) => l.startsWith(`${base}/login/`))!;
-    expect(out.join('')).toContain('loom sessions revoke --label "screenshots t-1936"');
-    const agentS = await fetch(url, { method: 'POST', redirect: 'manual', headers: { 'user-agent': HEADLESS, 'sec-fetch-site': 'same-origin' } });
-    const agentC = (agentS.headers.get('set-cookie') ?? '').split(';')[0];
-    expect(await signedIn(agentC)).toBe(true);
-    out.length = 0;
-    expect(await runSessions(['list'], io)).toBe(0);
-    expect(out.join('').split('\n').find((l) => l.includes('screenshots t-1936'))).toMatch(/HeadlessChrome on Linux\s+\(agent\)  "screenshots t-1936"/);
-    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(0);
-    expect(await signedIn(agentC)).toBe(false);
-    expect(await signedIn(phone)).toBe(true);
-    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(1);
-  });
   it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
     const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } }) });

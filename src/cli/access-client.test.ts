@@ -122,8 +122,24 @@ it('uses the same API for the primary loom CLI, including links, personal Accoun
 it('never retries a lost link reply, refuses target identity input and validates the returned path',async()=>{
  const f=fixture();
  expect(await f.invoke('token',['link','{"member":"sam"}'])).toMatchObject({code:2,calls:0});
- for(const request of [async()=>{throw Error('PRIVATE LINK');},async()=>Response.json({ok:true,value:{path:'https://other.example/PRIVATE',expiresAt:'now'}})]){
+ for(const request of [async()=>new Response('PRIVATE LINK',{status:503}),async()=>{throw Error('PRIVATE LINK');},async()=>Response.json({ok:true,value:{path:'https://other.example/PRIVATE',expiresAt:'now'}})]){
   const result=await f.invoke('token',['link'],'sam',request);expect(result).toMatchObject({code:1,calls:1,out:''});expect(result.err).toContain('outcome unknown');expect(result.err).not.toContain('PRIVATE');
  }
  expect(await f.invoke('household',['setMember','{"id":"other","role":"member","agents":[]}'],'sam')).toMatchObject({code:1});
+});
+
+it('keeps roster metadata private and validates both agent administration outputs',async()=>{
+ const f=fixture();expect(await f.invoke('household',['read'],'sam')).toMatchObject({code:1,out:''});
+ const valid=JSON.parse((await f.invoke('household',['read'])).out);
+ const extra=await f.invoke('household',['read'],'owner',async()=>Response.json({data:{householdSetup:{...valid,privateKey:'PRIVATE ROSTER'}}}));expect(extra).toMatchObject({code:1,out:''});expect(extra.err).not.toContain('PRIVATE');
+ const agent={id:'art',about:'Fixture',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'};
+ expect(await f.invoke('household',['setAgent',JSON.stringify(agent)])).toMatchObject({code:0,paths:['/api/household/setAgent']});
+ expect(await f.invoke('household',['setAgentAccounts',JSON.stringify({agent:'art',github:['art-bot']})])).toMatchObject({code:0,paths:['/api/household/setAgentAccounts']});
+ const link=await f.invoke('token',['link'],'sam');expect(link.code).toBe(0);
+ const redeemed=await f.root.http.request(link.out.trim(),{method:'POST'});expect(redeemed.status).toBe(303);const cookie=redeemed.headers.get('set-cookie')!.split(';')[0];
+ const session=await f.root.http.request('http://loom/auth/session',{headers:{cookie}});expect(await session.json()).toEqual({viewer:{kind:'member',id:'sam'}});
+});
+it('answers help and invalid JSON without touching transport even when a live connection is configured',async()=>{
+ const f=fixture();
+ for(const [piece,args] of [['household',['setMember','--help']],['household',['setAgent','[]']],['account',['revokeSession','--help']],['token',['link','--help']]] as const){expect((await f.invoke(piece,[...args])).calls).toBe(0);}
 });
