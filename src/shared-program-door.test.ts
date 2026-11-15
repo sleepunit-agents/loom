@@ -31,6 +31,7 @@ it('issues only for an actual owner and uses the written marker for subsequent o
  expect((await(await f.request('/graphql',{query:'{ projects { id } }'},value.token)).json()).errors).toBeDefined();
  expect((await f.request('/api/signin/program',{...input,label:'Self escape'},value.token)).status).toBe(403);
  expect((await f.request('/api/program/setGrants',{input:{fingerprint:value.fingerprint,records:['projects'],operations:[]},id:'self'},value.token)).status).toBe(403);
+ expect((await f.request('/api/program/setGrants',{input:{fingerprint:value.fingerprint,records:['projects'],operations:[]},id:'nonowner'},'sam')).status).toBe(403);
  const owner=await(await f.request('/graphql',{query:'{ programSetup { owner catalogue { records operations } tokens { fingerprint label member records operations } } }'})).json();
  expect(owner.data.programSetup.owner).toBe('owner');expect(owner.data.programSetup.tokens).toEqual([{fingerprint:value.fingerprint,label:'Task reader',member:'sam',records:['tasks'],operations:[]}]);expect(owner.data.programSetup.catalogue.operations).not.toContain('program.setGrants');
  expect((await(await f.request('/graphql',{query:'{ programSetup { owner } }'},'sam')).json()).data.programSetup).toBeNull();
@@ -87,4 +88,9 @@ it.each([false,true])('withdraws a held program owner socket read after demotion
 it('withholds a program credential when publication closes admission',async()=>{
  const f=fixture();let closing:Promise<void>|undefined;const stop=f.root.writes.observe(()=>{if(!closing&&f.db.select().from(tokens).where(eq(tokens.label,'Closed issuance')).get())closing=f.root.close();});clean.push(stop);
  const response=await f.request('/api/signin/program',{member:'sam',label:'Closed issuance',records:[],operations:[]});expect(closing).toBeDefined();expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});await closing;
+});
+
+it('withholds a program credential after publication revokes its issuer',async()=>{
+ const f=fixture();let changed=false;const stop=f.root.writes.observe(()=>{if(changed||!f.db.select().from(tokens).where(eq(tokens.label,'Revoked issuer')).get())return;changed=true;f.db.update(tokens).set({revokedAt:f.at}).where(eq(tokens.fingerprint,hash(raw.owner))).run();});clean.push(stop);
+ const response=await f.request('/api/signin/program',{member:'sam',label:'Revoked issuer',records:[],operations:[]});expect(changed).toBe(true);expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Household owner required'});
 });

@@ -58,7 +58,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   const routes = new Hono();
   const rp=options.publicOrigin?new URL(options.publicOrigin):undefined;
   const passkeys=rp&&(rp.protocol==='https:'||rp.hostname==='localhost')?sharedPasskeys(options.db,options.clock,{origin:rp.origin,rpId:rp.hostname}):undefined;
-  for(const path of ['/api/signin/link','/api/signin/token','/api/signin/program','/login/*','/passkeys','/passkeys/options','/logout'])routes.use(path,bodyLimit({maxSize:32768,onError:c=>c.json({error:'Request too large'},413)}));
+  for(const path of ['/api/signin/link','/api/signin/token','/api/signin/program','/login/*','/passkeys','/passkeys/options','/logout'])routes.use(path,bodyLimit({maxSize:32768,...(path==='/api/signin/program'?{onError:(c:Context)=>c.json({error:'Request too large'},413)}:{})}));
   const guard: MiddlewareHandler = async (c, next) => {
     c.header('cache-control', 'no-store'); c.header('referrer-policy', 'no-referrer');
     c.header('x-content-type-options', 'nosniff');
