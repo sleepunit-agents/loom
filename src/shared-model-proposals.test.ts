@@ -28,7 +28,7 @@ it('files a bound inline before/after card and changes model order only on actua
 it('keeps owner commands forbidden to bodies and rejects forged, public or stale proposal provenance',async()=>{
  const f=await fixture();expect((await f.post('runtime/agentModelsSet',{agent:'art',models:['second']},'direct')).status).toBe(403);
  expect((await f.propose('unbound',undefined,bodyCredentials.agent)).status).toBe(403);
- for(const extra of [{member:'alice'},{conversation:f.thread.conversation},{operation:'other'},{actingFor:'alice'}])expect((await f.propose('forged',{agent:'art',models:['second'],...extra})).status).toBe(400);
+ for(const [index,extra]of [{member:'alice'},{conversation:f.thread.conversation},{operation:'other'},{actingFor:'alice'}].entries())expect((await f.propose('forged-'+index,{agent:'art',models:['second'],...extra})).status).toBe(400);
  expect((await f.propose('other',{agent:'mark',models:['second']})).status).toBe(403);
  expect((await f.propose()).status).toBe(200);f.db.update(s.conversations).set({job:null}).run();expect((await f.propose()).status).toBe(403);
  f.db.update(s.conversations).set({job:'job',member:null}).run();f.db.update(s.jobs).set({member:null}).run();expect((await f.propose('public')).status).toBe(403);
@@ -76,4 +76,20 @@ it('refuses an ordinary member answer and modified target or acting-for fields',
   f.db.update(s.approvals).set({target:card.target,actingFor:card.actingFor}).run();
  }
  expect((await f.propose('unchanged',{agent:'art',models:['first']})).status).toBe(400);
+});
+
+it.each([{what:'Keep current models'},{ask:'Keep current models?'},{ifYes:'Keep everything'},{ifNo:'Change everything'},{member:null},{member:'bob'},{agent:'mark'},{conversation:null},{askedFrom:'other'},{project:null}])('refuses inconsistent visible card or provenance %j',async extra=>{
+ const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;if(extra.member==='bob')f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.update(s.approvals).set(extra).run();
+ expect((await f.answer(card.id)).status).toBe(403);expect(f.read()).toEqual(['first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
+});
+it('isolates a reused request id from a later job for the same private conversation',async()=>{
+ const f=await fixture();await f.propose();const old=f.db.select().from(s.jobs).get()!;
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).run();f.db.insert(s.jobs).values({...old,id:'later-job',state:'running'}).run();f.db.update(s.conversations).set({job:'later-job'}).run();f.db.update(s.tokens).set({job:'later-job'}).where(eq(s.tokens.job,'job')).run();});
+ const response=await f.propose();expect(response.status).toBe(409);expect(f.db.select().from(s.approvals).all()).toHaveLength(1);expect((await f.propose('later-request')).status).toBe(200);expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
+});
+
+it('refuses changed payload and matching hidden summary when its displayed promise differs',async()=>{
+ const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;
+ f.db.update(s.approvals).set({details:JSON.stringify({agent:'art',before:['first'],after:['second']}),changeSummary:'Models for art: ["first"] → ["second"]'}).run();
+ expect((await f.answer(card.id)).status).toBe(403);expect(f.read()).toEqual(['first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
 });

@@ -8,7 +8,7 @@ import { agentModels } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import type { ModelRole } from './runtime/placement.js';
 export const agentModelList=z.array(z.string().min(1).max(200)).max(64).refine(models=>new Set(models).size===models.length);
-export const agentModelsInput=z.object({agent:z.string().min(1).max(200),models:agentModelList.refine(models=>models.length>0)}).strict();
+export const agentModelsInput=z.object({agent:z.string().min(1).max(200),models:agentModelList.min(1)}).strict();
 export function validateAgentModels(models:readonly string[],roles:readonly ModelRole[]){
  const configured=new Set(roles.map(role=>role.model));
  if(models.some(model=>!configured.has(model)))throw new OperationError('invalid','Choose configured models');
