@@ -4,11 +4,11 @@ import { createElement as h, type ReactNode } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { InboxItem } from '../inbox-view/model';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { variables: Record<string, unknown> }[], call: vi.fn(), read: vi.fn(), records: vi.fn() }));
-vi.mock('../../data/query', () => ({ useQuery(selection: { variables: Record<string, unknown>; decode(value: Record<string, unknown>): unknown }) {
-  f.requests.push(selection);
-  return { status: f.status, data: f.status === 'live' ? selection.decode({ ...f.data,
-    inboxItems: selection.variables.onlyErrors ? undefined : f.data.inboxItems,
-    inboxItem: selection.variables.hasItem ? f.data.inboxItem : null }) : undefined };
+vi.mock('../../data/graphql', () => ({ useDataQuery(_query: string, variables: Record<string, unknown>) {
+  f.requests.push({ variables });
+  return { status: f.status, data: f.status === 'live' ? { ...f.data,
+    inboxItems: variables.onlyErrors ? undefined : f.data.inboxItems,
+    inboxItem: variables.hasItem ? f.data.inboxItem : null } : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.read(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
