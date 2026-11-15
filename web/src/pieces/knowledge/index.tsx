@@ -1,6 +1,8 @@
 import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { useRecords, call, type Call } from '../../data';
+import { call, type Call } from '../../data';
 import { Split, List, Row, Empty, Loading, Error, Input, Textarea, Button, Markdown, type SplitFolder } from '../../kit';
+import {useMemoryQuery} from '../../memory/query';
+import {memoryQueries} from '../../memory/queries';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
@@ -44,11 +46,12 @@ export default function KnowledgeApp({ path: shellPath, go }: { path?: string; g
   const [draft, setDraft] = useState({ title: '', domain: '', body: '', source: '' });
   const addRequest = requests.get('$add');
   const addAnswer = useSyncExternalStore(addRequest?.subscribe ?? noop, addRequest?.getSnapshot ?? (() => idle));
-  const access = useRecords<{ id: string; canAdd: boolean; allowed: boolean; canVerify: boolean; canRecheck: boolean }>('knowledge.access');
-  const permission = access.status === 'live' ? access.records[0] : undefined;
-  const feed = useRecords<Page>('knowledge');
-  // A direct URL or cited-by target can lie beyond the bounded list.
-  const detail = useRecords<Page>('knowledge', selected ?? '');
+  const access = useMemoryQuery(memoryQueries.knowledgeAccess());
+  const permission = access.status === 'live' ? access.value : undefined;
+  const index = useMemoryQuery(memoryQueries.knowledge());
+  const feed = {status:index.status,records:(index.value?.pages??[]).map(page=>({...page,id:page.slug}))};
+  const selectedPage = useMemoryQuery(selected?memoryQueries.page(selected):undefined);
+  const detail = {status:selectedPage.status,records:selectedPage.value?[{...selectedPage.value,id:selectedPage.value.slug}]:[]};
   const [folder, setFolder] = useState('all'), [query, setQuery] = useState('');
   const current = feed.status === 'live' && detail.status === 'live' ? detail.records.find(p => p.id === selected) : undefined;
   const shown = shownPages(feed.records, folder, query);
