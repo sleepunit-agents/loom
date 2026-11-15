@@ -16,7 +16,7 @@ import type { DataWrites } from '../data/writes.js';
 
 const fingerprint = (secret: string) => createHash('sha256').update(secret).digest('hex');
 const secret = () => randomBytes(32).toString('hex');
-const LINK_MS = 5 * 60_000;
+const LINK_MS = 5 * 60_000, PROOF_MS = 10 * 60_000;
 const PERSON_MS = 30 * 86400_000, AGENT_MS = 6 * 3600_000;
 function browserDevice(ua: string): { device: string; isAgent: boolean } {
   const isAgent = /HeadlessChrome\//.test(ua);
@@ -88,10 +88,14 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const auth = authenticate(c.req.raw);
     if (!auth?.valid() || !sharedTokenOwner(options.db, auth.viewer)) return c.json({ error: 'Household owner required' }, 403);
     if (!input.success) return c.json({ error: 'Invalid token request' }, 400);
-    try { return c.json({ ok: true, value: write(() => {
+    try { const value = write(() => {
       if(!auth.valid() || !sharedTokenOwner(options.db, auth.viewer))throw new OperationError('denied','Household owner required');
       return sharedTokens(options.db, options.clock).issue(input.data);
-    }) }); }
+    });
+      if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
+      if(!auth.valid() || !sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
+      return c.json({ok:true,value});
+    }
     catch (error) {
       if (error instanceof OperationError) return c.json({ error: error.message }, error.code === 'denied' ? 403 : error.code === 'conflict' ? 409 : 400);
       throw error;
@@ -104,8 +108,23 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const cookie = c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
     const token = bearer ? fingerprint(bearer) : cookie ? options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,fingerprint(cookie))).get()?.token : undefined;
     if(!token)return c.json({error:'Member authentication required'},401);
+    // A browser cookie is not a new proof of identity. It must not turn an
+    // aged or automated session into a fresh passkey-enrollment session.
+    const freshBrowser = () => {
+      if (bearer) return true;
+      const session = cookie ? options.db.select().from(sessions).where(eq(sessions.id, fingerprint(cookie))).get() : undefined;
+      const proved = session ? Date.parse(session.provedAt) : NaN;
+      return !!session && session.token === token && !session.isAgent && Number.isFinite(proved)
+        && proved <= options.clock.now() && proved + PROOF_MS > options.clock.now();
+    };
+    if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
     // Request input cannot choose a token/member or impersonate an agent.
-    return c.json({ ok: true, value: write(() => { if(!auth.valid())throw Error('Authentication ended'); return signin.makeLink(token); }) });
+    const value=write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token); });
+    // Publication hooks can end this caller after the transaction committed.
+    if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
+    if(!auth.valid())return c.json({error:'Member authentication required'},401);
+    if(!freshBrowser())return c.json({error:'Sign in again before making a sign-in link'},403);
+    return c.json({ok:true,value});
   });
   routes.get('/auth/session', c => {
     const auth = authenticate(c.req.raw);
