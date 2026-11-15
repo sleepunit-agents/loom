@@ -59,7 +59,8 @@ export async function runAccessClient(piece: 'token'|'sessions'|'account', argv:
         continue;
       }
       if(!response.ok){await response.body?.cancel().catch(()=>{});return fail(response.status>=500?(issuance?unknownIssuance:'loom daemon is unavailable'):'Request refused');}
-      const answer:unknown=await response.json();
+      let answer:unknown;
+      try { answer=await response.json(); } catch { return fail(issuance?unknownIssuance:'Invalid daemon response'); }
       if(read){
         const parsed=z.object({data:z.record(z.string(),z.unknown()),errors:z.unknown().optional()}).safeParse(answer);
         if(!parsed.success||parsed.data.errors)return fail('Invalid daemon response');
