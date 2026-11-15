@@ -33,6 +33,7 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
  const realFetch=globalThis.fetch,requests=vi.fn<typeof fetch>(async(input,init)=>{
   if(String(input).startsWith('http://127.0.0.1:'))return realFetch(input,init);
   expect(input).toBe('https://api.github.com/graphql');expect(init?.redirect).toBe('error');expect(new Headers(init?.headers).get('authorization')).toBe('Bearer '+token);
+  expect(JSON.parse(String(init?.body)).query.trim()).toMatch(/^query\(/);
   if(hold){began();await new Promise<void>(yes=>{release=yes;});}
   if(fail)throw Error(token);
   const states=JSON.parse(String(init?.body)).variables.states;
@@ -43,7 +44,8 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
  let next=once(socket,'message');socket.send(JSON.stringify({type:'connection_init'}));await next;
  next=once(socket,'message');socket.send(JSON.stringify({type:'subscribe',id:'changes',payload:{query:'subscription { observe(query:"{ changes { id title project } }") { revision patches { path value removed } } }'}}));await next;
  next=once(socket,'message');
- clock.advance(0);expect(await command(app,cookie,'changes/refresh',{})).toMatchObject({ok:true});
+ clock.advance(0);const shared=app.refreshChanges!();expect(app.refreshChanges!()).toBe(shared);await shared;
+ expect(requests.mock.calls.filter(([url])=>String(url)==='https://api.github.com/graphql')).toHaveLength(2);
  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toContainEqual({path:['changes',0],value:{id:'github:acme/app#1',title:'Passing, approved',project:'app'},removed:false});
  const read=async()=>{const response=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({query:'{ changes { id title project } changeSync { failed } }'})});return response.json();};
  expect((await read()).data).toMatchObject({changes:[{project:'app',title:'Passing, approved'}],changeSync:[{failed:false}]});
@@ -79,6 +81,13 @@ it('fails closed when bindings have neither an explicit adapter nor a holder sou
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
  delete program.secretHolder;program.githubBindings={acme:'FORGE'};writeFileSync(file,JSON.stringify(program),{mode:0o600});
  await expect(startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}})).rejects.toThrow('GitHub credential source unavailable');expect(wire.start).not.toHaveBeenCalled();
+});
+it.each(['missing-secret','missing-owner'])('records a safe failed read for %s without any provider request',async missing=>{
+ const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
+ program.githubBindings=missing==='missing-owner'?{elsewhere:'FORGE'}:{acme:'FORGE'};writeFileSync(file,JSON.stringify(program),{mode:0o600});
+ const request=vi.fn(async()=>{throw Error('Unexpected provider request');});vi.stubGlobal('fetch',request);
+ const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());app.writes.run(()=>app.services.projects.save({id:'app',name:'App',members:[],agents:[],repositories:['github:acme/app']}));
+ await expect(app.refreshChanges!()).rejects.toThrow(/^GitHub read unavailable$/);expect(app.services.changes.syncStatus()?.failed).toBe(true);expect(app.services.changes.list()).toEqual([]);expect(request).not.toHaveBeenCalled();
 });
 it.each([{'bad/owner':'FORGE'},{acme:'bad/name'},{acme:'FORGE',ACME:'OTHER'}])('rejects invalid bindings before starting the holder: %j',async bindings=>{
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));program.githubBindings=bindings;writeFileSync(file,JSON.stringify(program),{mode:0o600});
