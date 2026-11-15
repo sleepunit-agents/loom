@@ -67,7 +67,11 @@
     {
       "id": "tasks-009",
       "promise": "A pull request that mentions the task is linked to it.",
-      "source": "docs/how-it-works/site/tasks.html#con-h"
+      "source": "docs/how-it-works/site/tasks.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeInline"
+      }
     },
     {
       "id": "tasks-010",
