@@ -53,11 +53,9 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
-import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
 import { runBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
-const NEEDS_TICK_MS = 60_000;
 import { forgetPiecePages, pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { stopPieceServers } from '../ui/piece-server.js';
 import { closePieceSockets } from '../ui/piece-socket.js';
@@ -72,7 +70,7 @@ import { nudge as collectionsNudge } from '../collections/pull.js';
 import { configureCollectionBackground, pullPieceSoon } from '../collections/subs.js';
 import { memberViewer, type Viewer } from '../collections/viewer.js';
 import { writeTurn } from '../conversations.js';
-import { ConversationError, foldConversations } from '../backends/conversations.js';
+import { ConversationError } from '../backends/conversations.js';
 import { bindHouseConversation, HouseBindingError, syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { sweepComms } from '../comms.js';
@@ -420,23 +418,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     maintaining.set(name, run);
     return run;
   };
-  // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
-  // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
-  // start and daily. Neither ever stops the daemon.
-  const foldAll = () => maintain('conversations fold', async () => {
-    if (!backgroundActive || closing) return;
-    const h = live?.();
-    const dirs = h ? h.agents.map((a) => agentDir(h, a)) : opts.createServer ? [] : [opts.contextDir];
-    for (const d of dirs) {
-      await waitForLocks({ write: [resolveSqliteDbPath(d)], budgetMs: WRITE_WAIT_MS });
-      if (!backgroundActive || closing) return;
-      try { stalls.timed('conversations fold', () => foldConversations(d)); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
-    }
-  });
+  // Retained legacy venue registration; current conversation maintenance belongs to the shared program.
   if (household && backgroundActive) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
-  foldAll();
-  const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
-  foldTimer.unref();
   // The audit log's sweep (docs/specs/conversations.md, "The audit log"): every entry older
   // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
   // measures on the scorecards. Neither ever stops the daemon.
@@ -1096,17 +1079,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`))));
   }, WATCH_S * 1000);
   pushTimer?.unref();
-  // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
-  // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
-  const resolveAll = () => {
-    if (!backgroundActive || !live) return;
-    void periodic?.run('needs resolve', () => backgroundJob('needs resolve', () => resolveNeeds(live!(), pieceCheckers(process.env))
-      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`))));
-  };
-  const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
-  needsTimer?.unref();
-  const needsFirst = needsTimer ? setTimeout(resolveAll, 2_000) : undefined;
-  needsFirst?.unref();
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
   // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
@@ -1353,7 +1325,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     backgroundActive = true;
     stalls.timed('worker activation', () => {
       if (household) stalls.timed('venues sync', () => syncVenuesQuietly(process.env));
-      void foldAll(); void sweepAll();
+      void sweepAll();
       if (live && !opts.createServer) { void commsSweep(); void refsBackfill(); }
     });
   });
@@ -1383,11 +1355,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       await stopManifests?.();
       stalls.stop();
       if (pushTimer) clearInterval(pushTimer);
-      if (needsTimer) clearInterval(needsTimer);
       if (backupTimer) clearInterval(backupTimer);
       if (backupFirst) clearTimeout(backupFirst);
-      if (needsFirst) clearTimeout(needsFirst);
-      clearInterval(foldTimer);
       clearInterval(sweepTimer);
       if (commsTimer) { clearInterval(commsTimer); stopComms?.(); }
       stopPieceServers();

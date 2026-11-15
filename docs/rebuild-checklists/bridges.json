@@ -1,0 +1,131 @@
+{
+  "page": "bridges",
+  "title": "Discord and Slack",
+  "ownerTask": "t-2242",
+  "sourceSha256": "a1ec10ee7d6db079f6fdda59d1c107d7cd4b056d092a3960892147f6bde69d8c",
+  "promises": [
+    {
+      "id": "bridges-001",
+      "promise": "How agents talk to people in other apps. A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent.",
+      "source": "docs/how-it-works/site/bridges.html"
+    },
+    {
+      "id": "bridges-002",
+      "promise": "Connects a bot to a server or workspace for one agent.",
+      "source": "docs/how-it-works/site/bridges.html"
+    },
+    {
+      "id": "bridges-003",
+      "promise": "Decides which agent answers in a channel when nobody is addressed.",
+      "source": "docs/how-it-works/site/bridges.html"
+    },
+    {
+      "id": "bridges-004",
+      "promise": "Links an outside user to the household member they are.",
+      "source": "docs/how-it-works/site/bridges.html"
+    },
+    {
+      "id": "bridges-005",
+      "promise": "Records whether each reply arrived, and says so when it cannot tell.",
+      "source": "docs/how-it-works/site/bridges.html"
+    },
+    {
+      "id": "bridges-006",
+      "promise": "The bot's token is a stored secret.",
+      "source": "docs/how-it-works/site/bridges.html#con-h"
+    },
+    {
+      "id": "bridges-007",
+      "promise": "A person link says which household member an outside user is.",
+      "source": "docs/how-it-works/site/bridges.html#con-h"
+    },
+    {
+      "id": "bridges-008",
+      "promise": "The message goes into one conversation: the agent in that channel.",
+      "source": "docs/how-it-works/site/bridges.html#con-h"
+    },
+    {
+      "id": "bridges-009",
+      "promise": "It arrives in the inbox with discord or slack as its source.",
+      "source": "docs/how-it-works/site/bridges.html#con-h"
+    },
+    {
+      "id": "bridges-010",
+      "promise": "An agent's run settings give each outside person a tier.",
+      "source": "docs/how-it-works/site/bridges.html#con-h"
+    },
+    {
+      "id": "bridges-011",
+      "promise": "A message from outside is kept as an incoming message, matched to a person and a channel rule, and passed into the right conversation. It can be held or dropped, with a reason.",
+      "source": "docs/how-it-works/site/bridges.html#how-h"
+    },
+    {
+      "id": "bridges-012",
+      "promise": "The agent's reply goes out as a send. Loom records whether it arrived. Uncertain means loom could not confirm it, and a person reviews it. A held send waits for a person to release or dismiss it.",
+      "source": "docs/how-it-works/site/bridges.html#how-h"
+    },
+    {
+      "id": "bridges-013",
+      "promise": "A channel rule names the agent that answers in a channel. A connection can listen only to some channels, or ignore some.",
+      "source": "docs/how-it-works/site/bridges.html#how-h"
+    },
+    {
+      "id": "bridges-014",
+      "promise": "A connection is one bot signed in to one Discord server or Slack workspace, speaking for one agent. Attachments fetched from Slack are kept for 14 days.",
+      "source": "docs/how-it-works/site/bridges.html#how-h"
+    },
+    {
+      "id": "bridges-015",
+      "promise": "a Household things. Connections, channel rules and person links belong to the household. Household owners manage them and see them all.",
+      "source": "docs/how-it-works/site/bridges.html#see-h"
+    },
+    {
+      "id": "bridges-016",
+      "promise": "b An agent's owners. An agent's owners see their agent's connections.",
+      "source": "docs/how-it-works/site/bridges.html#see-h"
+    },
+    {
+      "id": "bridges-017",
+      "promise": "c Messages. An incoming message follows the labels of the conversation it goes into. A household owner sees everything, including what is private to another member.",
+      "source": "docs/how-it-works/site/bridges.html#see-h"
+    },
+    {
+      "id": "bridges-018",
+      "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/bridges.html#see-h"
+    },
+    {
+      "id": "bridges-019",
+      "promise": "The Bridges tile has connections, channel rules, person links and pending sends.",
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Bridges",
+        "contains": [
+          "Connections",
+          "Channel rules",
+          "Person links",
+          "Pending sends"
+        ]
+      }
+    },
+    {
+      "id": "bridges-020",
+      "promise": "The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.",
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeSettings"
+      }
+    }
+  ],
+  "modelTables": [
+    "bridge_connections",
+    "bridge_channel_filters",
+    "bridge_channels",
+    "bridge_people",
+    "bridge_incoming",
+    "bridge_sends",
+    "bridge_files"
+  ]
+}

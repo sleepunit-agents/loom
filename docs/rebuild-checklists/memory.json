@@ -1,0 +1,138 @@
+{
+  "page": "memory",
+  "title": "Memory",
+  "ownerTask": "t-2243",
+  "sourceSha256": "7ae904cfb516284f498e6abe5d179e43c70458fbd03ff5518d6569064dddde40",
+  "promises": [
+    {
+      "id": "memory-001",
+      "promise": "What an agent remembers and knows. Memories, knowledge pages, people cards and project cards. This is the one kind of data loom treats as precious.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-002",
+      "promise": "Keeps each agent's memories in that agent's own files.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-003",
+      "promise": "Recalls by meaning, and keeps what is used most at the top of mind.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-004",
+      "promise": "Keeps knowledge pages with where each fact came from, and re-checks them.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-005",
+      "promise": "Shows what happened each day in Activity.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-006",
+      "promise": "A memory belongs to one agent. The agent, its owners and household owners see it.",
+      "source": "docs/how-it-works/site/memory.html#con-h"
+    },
+    {
+      "id": "memory-007",
+      "promise": "A session leaves a short note for the next one. Activity builds each day from them.",
+      "source": "docs/how-it-works/site/memory.html#con-h"
+    },
+    {
+      "id": "memory-008",
+      "promise": "Activity lists the tasks and pull requests each conversation touched.",
+      "source": "docs/how-it-works/site/memory.html#con-h"
+    },
+    {
+      "id": "memory-009",
+      "promise": "Memories, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household.",
+      "source": "docs/how-it-works/site/memory.html#how-h"
+    },
+    {
+      "id": "memory-010",
+      "promise": "Each memory has a temperature. Writing it heats it fully, recalling it adds heat, and it cools with time: an episode within a day, what an agent knows about a person over months. The hottest fill the agent's top of mind. Recall finds memories by meaning.",
+      "source": "docs/how-it-works/site/memory.html#how-h"
+    },
+    {
+      "id": "memory-011",
+      "promise": "A change saves the earlier version first. Loom keeps the newest ten versions of each memory, knowledge page and person card, and any of them can be restored.",
+      "source": "docs/how-it-works/site/memory.html#how-h"
+    },
+    {
+      "id": "memory-012",
+      "promise": "A knowledge page is a fact about the world that says where it came from. Without a source it stays provisional. Pages are re-checked every 30 days.",
+      "source": "docs/how-it-works/site/memory.html#how-h"
+    },
+    {
+      "id": "memory-013",
+      "promise": "a Memories and cards. The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories.",
+      "source": "docs/how-it-works/site/memory.html#see-h"
+    },
+    {
+      "id": "memory-014",
+      "promise": "b Knowledge. Knowledge pages are shared by the household. Household owners see them.",
+      "source": "docs/how-it-works/site/memory.html#see-h"
+    },
+    {
+      "id": "memory-015",
+      "promise": "c Precious. Agents' memories are the only data loom treats as precious.",
+      "source": "docs/how-it-works/site/memory.html#see-h"
+    },
+    {
+      "id": "memory-016",
+      "promise": "Memory is not in loom's database. It lives in files, and it is the one kind of data loom treats as precious.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-017",
+      "promise": "each agent's folder Its memories and their history, drafts awaiting ratification, people cards, project cards, and its identity files.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-018",
+      "promise": "shared by the household Knowledge pages and the people directory.",
+      "source": "docs/how-it-works/site/memory.html"
+    },
+    {
+      "id": "memory-019",
+      "promise": "Knowledge offers search and freshness folders.",
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Knowledge",
+        "contains": [
+          "Search knowledge",
+          "Recently verified",
+          "Due a check"
+        ]
+      }
+    },
+    {
+      "id": "memory-020",
+      "promise": "Activity shows a day and the conversation turns.",
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Activity",
+        "contains": [
+          "Shown day",
+          "Repair the garden pump"
+        ],
+        "patterns": [
+          "Repair the garden pump\\s+[^\\n]*\\b[1-9][0-9]* turns\\b"
+        ]
+      }
+    },
+    {
+      "id": "memory-021",
+      "promise": "Create a provisional Knowledge fact, manually mark it due, verify it with Still true, then retain its words and Fresh state after reload.",
+      "source": "docs/how-it-works/site/memory.html",
+      "probe": {
+        "kind": "action",
+        "app": "Knowledge"
+      }
+    }
+  ],
+  "modelTables": []
+}

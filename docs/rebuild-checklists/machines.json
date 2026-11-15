@@ -1,0 +1,111 @@
+{
+  "page": "machines",
+  "title": "Machines and jobs",
+  "ownerTask": "t-2241",
+  "sourceSha256": "daaa6f6ba5541c288501a62d4acd3c58a59a31abd1e38028fb3d5722ace3a46e",
+  "promises": [
+    {
+      "id": "machines-001",
+      "promise": "Where agents run and what they are running. There are always two programs: loom and a worker. A worker runs agents' bodies and builds, on the same machine as loom or on another. Nothing runs inside loom itself.",
+      "source": "docs/how-it-works/site/machines.html"
+    },
+    {
+      "id": "machines-002",
+      "promise": "Records each machine with a worker, who owns it and which agents may run there.",
+      "source": "docs/how-it-works/site/machines.html"
+    },
+    {
+      "id": "machines-003",
+      "promise": "Starts a job when an agent's inbox has something waiting.",
+      "source": "docs/how-it-works/site/machines.html"
+    },
+    {
+      "id": "machines-004",
+      "promise": "Retries a job that fails to start, up to three times.",
+      "source": "docs/how-it-works/site/machines.html"
+    },
+    {
+      "id": "machines-005",
+      "promise": "Shows each agent's current jobs on its card on Home.",
+      "source": "docs/how-it-works/site/machines.html"
+    },
+    {
+      "id": "machines-006",
+      "promise": "The agent it runs, the project it is for, and a member when the work is private.",
+      "source": "docs/how-it-works/site/machines.html#con-h"
+    },
+    {
+      "id": "machines-007",
+      "promise": "A job works in one conversation and takes that agent's inbox items there.",
+      "source": "docs/how-it-works/site/machines.html#con-h"
+    },
+    {
+      "id": "machines-008",
+      "promise": "A non-empty inbox starts a job. Triggers are one of the things that fill it.",
+      "source": "docs/how-it-works/site/machines.html#con-h"
+    },
+    {
+      "id": "machines-009",
+      "promise": "An agent's body carries a token, and one can belong to a single job.",
+      "source": "docs/how-it-works/site/machines.html#con-h"
+    },
+    {
+      "id": "machines-010",
+      "promise": "A grant can be for one job only, and each use names the job.",
+      "source": "docs/how-it-works/site/machines.html#con-h"
+    },
+    {
+      "id": "machines-011",
+      "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be waiting, stopped or lost.",
+      "source": "docs/how-it-works/site/machines.html#how-h"
+    },
+    {
+      "id": "machines-012",
+      "promise": "A job that fails to start is tried again, up to three times. Each retry is a new job that points back at the one before.",
+      "source": "docs/how-it-works/site/machines.html#how-h"
+    },
+    {
+      "id": "machines-013",
+      "promise": "A box is a machine with a worker on it. A member owns it. A worker can share a machine with loom or sit on another one. Facts such as gpu:5090 match work to a machine.",
+      "source": "docs/how-it-works/site/machines.html#how-h"
+    },
+    {
+      "id": "machines-014",
+      "promise": "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given.",
+      "source": "docs/how-it-works/site/machines.html#how-h"
+    },
+    {
+      "id": "machines-015",
+      "promise": "a Jobs. A job carries its agent, the project it is for, and a member when the work is private.",
+      "source": "docs/how-it-works/site/machines.html#see-h"
+    },
+    {
+      "id": "machines-016",
+      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees jobs in their projects and jobs of agents they own. Private to a member means that member plus household owners.",
+      "source": "docs/how-it-works/site/machines.html#see-h"
+    },
+    {
+      "id": "machines-017",
+      "promise": "c Boxes. A box belongs to the member who owns it, and lists the agents allowed to run there.",
+      "source": "docs/how-it-works/site/machines.html#see-h"
+    },
+    {
+      "id": "machines-018",
+      "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/machines.html#see-h"
+    }
+  ],
+  "modelTables": [
+    "boxes",
+    "box_agents",
+    "box_facts",
+    "jobs",
+    "job_needs",
+    "agent_run_settings",
+    "agent_boxes",
+    "agent_house_secrets",
+    "agent_house_ports",
+    "agent_people",
+    "agent_denied_tools"
+  ]
+}

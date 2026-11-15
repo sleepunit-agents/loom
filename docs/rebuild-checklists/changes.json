@@ -1,0 +1,174 @@
+{
+  "page": "changes",
+  "title": "Changes",
+  "ownerTask": "t-2239",
+  "sourceSha256": "6c1401f25246cc2e096db205f7550a3aee1cd18491c3cc5e7b0cdf7f3ed9d287",
+  "promises": [
+    {
+      "id": "changes-001",
+      "promise": "Pull requests the household cares about. A change is one pull request, read from GitHub and kept as a copy.",
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-002",
+      "promise": "Lists pull requests across the household's projects.",
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
+    },
+    {
+      "id": "changes-003",
+      "promise": "Says who each one is waiting on.",
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-004",
+      "promise": "Shows its checks, its review and the tasks it mentions.",
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-005",
+      "promise": "Takes your answer on a merge. The agent does the merging.",
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-006",
+      "promise": "Its repository files it under a project. An agent's GitHub login says which agent opened it.",
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-007",
+      "promise": "Linked to the tasks its title, branch or description mention.",
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-008",
+      "promise": "Merging needs an approval, or a merge rule that already answers it.",
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-009",
+      "promise": "A thread that mentions the pull request shows it as a card.",
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeInline"
+      }
+    },
+    {
+      "id": "changes-010",
+      "promise": "For each change loom works out who it is waiting on: you, an agent, the checks, a reviewer or its author. The list is ordered that way, with finished ones last.",
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-011",
+      "promise": "Loom reads the pull requests in each project's repositories and keeps a copy, so the desk shows what is waiting without asking GitHub each time.",
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-012",
+      "promise": "Loom keeps the state of a change's checks and review, plus the names of the checks that are failing or still running.",
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-013",
+      "promise": "A change lists the GitHub logins on it and the part each plays.",
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-014",
+      "promise": "a Two labels. A change gets its project from its repository, and its agent when an agent opened it.",
+      "source": "docs/how-it-works/site/changes.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
+    },
+    {
+      "id": "changes-015",
+      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees changes in their projects and changes opened by agents they own.",
+      "source": "docs/how-it-works/site/changes.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
+    },
+    {
+      "id": "changes-016",
+      "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/changes.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
+    },
+    {
+      "id": "changes-017",
+      "promise": "The PR detail shows checks, review, head commit and linked task.",
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Changes",
+        "contains": [
+          "Checks",
+          "Review",
+          "Commit:",
+          "Compare garden pumps"
+        ]
+      }
+    }
+  ],
+  "modelTables": [
+    "changes",
+    "change_checks",
+    "change_people",
+    "change_tasks",
+    "change_sync"
+  ]
+}
