@@ -1,3 +1,4 @@
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 /** Conversations at the shared outside boundary. Current household facts and
  * the existing ordered policy decide every read/write; services own no policy. */
 import type { DataDatabase } from './core/data/database.js';
@@ -18,13 +19,14 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   const now = () => new Date(clock.now()).toISOString();
   const service = new CommsMessages(db, key, now);
   const policy = (viewer: Parameters<typeof workVisibility>[0], fields: Parameters<NonNullable<ReturnType<typeof workVisibility>['approvals']>>[0]) => workVisibility(viewer).approvals!(fields);
-  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, policy, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }));
+  const questionPolicy=conversationQuestionPolicy(db);
+  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }));
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({
     type: 'conversation', member: row.member ?? undefined, project: row.project ?? undefined, agent: row.agent ?? undefined,
   });
   return {
-    service, queries, inbox, summaries,
+    service, queries, inbox, summaries, authorizeQuestion:questionPolicy.ask,
     fields: { ...commsQueryFields(queries), ...inboxQueryFields(inbox), ...conversationSummaryFields(summaries) },
     install(operations: Operations) {
       registerConversationOperations(operations, service, { authorize(viewer, access) {
@@ -34,7 +36,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
           const record = scope(access);
           return access.member === viewer.id && mayCreate(viewer, record, sharing) && mayAct(viewer, record, sharing, 'give-work');
         }
-        if ('item' in access) return maySee(viewer, scope(access.item), sharing)
+        if ('item' in access) return !!inbox.item(viewer,access.item.id)
           && (access.action === 'read' || access.item.toKind === 'person' && access.item.to === viewer.id);
         // Household owners can read another person's private thread; its member
         // remains the only person who can send or manage it.

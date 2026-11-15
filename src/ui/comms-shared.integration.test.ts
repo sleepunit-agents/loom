@@ -92,6 +92,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     const bodyToken='comms-browser-settings-body-'.repeat(4);
     const ownerToken='comms-settings-owner-token-'.repeat(4),ownerCookie='comms-settings-owner-cookie-'.repeat(4);
     db.insert(members).values({id:'settings-owner',role:'owner',joinedAt:now()}).run();
+    db.insert(memberAgents).values({member:'settings-owner',agent:'art'}).run();
     const settingsThread=composition.services.comms!.threads.open({id:'th:tempo-settings',agent:'art',member:'settings-owner',title:'Tempo settings'});
     composition.writes.run(()=>{
       db.insert(tokens).values({fingerprint:hash(ownerToken),label:'Settings owner',kind:'owner',member:'settings-owner',createdAt:now()}).run();
