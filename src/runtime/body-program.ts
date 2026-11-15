@@ -9,6 +9,8 @@ import { claudeBody } from './claude-body.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
+import {bodyCommandClient} from './body-command-client.js';
+import {bodyMemoryIdentity} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1) }).strict();
@@ -21,12 +23,15 @@ export async function bodyProgram(input: {
   fetch?: typeof fetch; clock?: Clock; schedule?: WorkerSchedule; native?: ReturnType<typeof claudeBody>;
   /** Runs inside the receiving child, before any model sees startup aliases. */
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
+  /** Trusted in-process seam; production reads the current body's declared Memory. */
+  loadMemory?: (agent:string,signal:AbortSignal)=>Promise<string|null>;
   error: (text: string) => void;
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
+  let memoryClient:ReturnType<typeof bodyCommandClient>|undefined;
   const context: string[] = [], incoming:string[]=[];
   const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
@@ -34,7 +39,7 @@ export async function bodyProgram(input: {
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
   let retirement:Promise<void>|undefined;
-  const retire=()=>retirement??=(async()=>{nativeAbort.abort();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
+  const retire=()=>retirement??=(async()=>{nativeAbort.abort();memoryClient?.close();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
@@ -77,6 +82,9 @@ export async function bodyProgram(input: {
     if (batch.stopRequested) { await retire(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
+    memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
+    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent));
+    if(signal.aborted)throw new Error();if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
