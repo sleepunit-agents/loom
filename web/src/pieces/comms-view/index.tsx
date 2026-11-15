@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
+import { useCommsDraft } from '../comms/drafts';
 import { useReplyFollow } from '../comms/use-follow';
 import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot, type ThreadChange } from './model';
 export type { CommsActions, CommsDetail, CommsSnapshot } from './model';
@@ -7,12 +8,13 @@ const time = (at: string) => `${new Date(at).toLocaleString('en-US', { timeZone:
 type MessageNavigation = { earlier(): void; latest(): void; hasEarlier: boolean; before?: number };
 type Navigation = { archived: boolean; search: string; offset: number; hasNext: boolean; folder(value: boolean): void; query(value: string): void; previous(): void; next(): void };
 type Cards = { screen?: ReactNode; question?(id: string): ReactNode; work?(refs: CommsDetail['refs'], conversation: string): ReactNode };
-function ThreadReader({ detail, actions, cards, navigation, readVisible = true }: { readVisible?: boolean; detail: CommsDetail; actions?: CommsActions; cards?: Cards; navigation?: MessageNavigation }) {
+function ThreadReader({ member, detail, actions, cards, navigation, readVisible = true }: { member: string; readVisible?: boolean; detail: CommsDetail; actions?: CommsActions; cards?: Cards; navigation?: MessageNavigation }) {
   const thread = detail.thread!;
-  const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
+  const composer=useCommsDraft(member,thread.id,thread.member===member),draft=composer.value;
+  const [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [renaming, setRenaming] = useState(false), [title, setTitle] = useState(thread.title);
-  const retry = useRef<{ words: string; id: string } | undefined>(undefined), lock = useRef(false), mounted = useRef(true);
+  const lock = useRef(false), mounted = useRef(true);
   const scroller = useRef<HTMLDivElement | null>(null);
   const messages = detail.messages.filter(message => message.thread === thread.id).sort((a, b) => a.seq - b.seq);
   const follow = useReplyFollow(scroller, messages, true);
@@ -28,11 +30,12 @@ function ThreadReader({ detail, actions, cards, navigation, readVisible = true }
   };
   const change = (value: ThreadChange) => void run(() => actions!.change(thread.id, value));
   const send = () => {
-    if (!draft.trim() || lock.current || !actions) return;
-    const words = draft;
-    const message = retry.current?.words === words ? retry.current : { words, id: crypto.randomUUID() };
-    retry.current = message;
-    void run(async () => { await actions.send(thread.id, words, message.id); if (mounted.current) { setDraft(''); retry.current = undefined; } });
+    if (!draft.text.trim() || lock.current || !actions) return;
+    const sent = draft;
+    void run(async () => {
+      await actions.send(thread.id, sent.text, sent.id);
+      composer.acknowledged(sent);
+    });
   };
   return <article ref={node => { scroller.current = node?.closest<HTMLDivElement>('.loom-split__reader') ?? null; }} className="grid gap-4 p-4" aria-label="Conversation">
     {cards?.screen}
@@ -48,7 +51,7 @@ function ThreadReader({ detail, actions, cards, navigation, readVisible = true }
     </li>)}</ol>
     {follow.unread > 0 && <Button onClick={follow.down}>{follow.unread} new messages</Button>}
     {cards?.work && <section aria-label="Work in this conversation"><h3>Work</h3>{cards.work(detail.refs, thread.conversation)}</section>}
-    {actions && !thread.archivedAt && <div><label>Message {thread.agent}<Textarea aria-label={`Message ${thread.agent}`} value={draft} maxLength={100000} rows={3} disabled={busy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send(); } }} /></label><Button disabled={busy || !draft.trim()} onClick={send}>Send</Button></div>}
+    {actions && !thread.archivedAt && <div><label>Message {thread.agent}<Textarea aria-label={`Message ${thread.agent}`} value={draft.text} maxLength={100000} rows={3} disabled={busy} onChange={event => composer.edit(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send(); } }} /></label><Button disabled={busy || !draft.text.trim()} onClick={send}>Send</Button></div>}
     {failed && <Error text="Could not save. Try again." />}
   </article>;
 }
@@ -85,6 +88,6 @@ export function CommsView({ snapshot, detail, selected, select, actions, cards, 
     search={<Input aria-label="Search conversations" value={live ? query : ''} disabled={!live} onChange={event => navigation ? navigation.query(event.target.value) : setQuery(event.target.value)} />}
     listTop={<>{navigation && <nav aria-label="Conversation pages"><Button disabled={!live || navigation.offset === 0} onClick={navigation.previous}>Previous page</Button><Button disabled={!live || !navigation.hasNext} onClick={navigation.next}>Next page</Button></nav>}{live && actions && <div><details><summary>New conversation</summary>{snapshot.agents.map(agent => <Button key={agent.id} disabled={opening} onClick={() => void open(agent.id)}>Chat with {agent.name}</Button>)}</details>{failed && <Error text="Could not start the conversation. Try again." />}</div>}</>}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Conversations are unavailable" /> : shown.length ? shown.map(thread => <Row key={thread.id} title={thread.title} meta={`${thread.agent}${thread.project ? ` · ${thread.project}` : ''}`} status={thread.working ? 'Working' : thread.pinned ? 'Pinned' : 'Ready'} selected={thread.id === selected} onClick={() => select(thread.id)} />) : <Empty title="No conversations here" />}
-    reader={current ? <ThreadReader key={current.thread!.id} detail={current} actions={current.thread!.member === snapshot.member ? actions : undefined} cards={cards} navigation={messageNavigation} readVisible={readVisible} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
+    reader={current ? <ThreadReader key={JSON.stringify([snapshot.member, current.thread!.id])} member={snapshot.member} detail={current} actions={current.thread!.member === snapshot.member ? actions : undefined} cards={cards} navigation={messageNavigation} readVisible={readVisible} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to conversations" blank={<Empty title="Choose a conversation" />} />;
 }

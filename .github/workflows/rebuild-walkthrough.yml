@@ -36,12 +36,20 @@ jobs:
           test ! -e "$LOOM_TEST_SHOTS/report.json"
           nice -n 19 npx vitest run src/ui/rebuild-walkthrough.integration.test.ts --maxWorkers=1
           test -s "$LOOM_TEST_SHOTS/report.json"
+          LOOM_DESK_EVIDENCE=1 nice -n 19 npx vitest run src/ui/account-next.integration.test.ts --maxWorkers=1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/rebuild-walkthrough-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
+      - name: Preserve required sign-in evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: required-signin-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: artifacts/household-account/
+          if-no-files-found: warn
       - name: Show per-page results in this run
         if: always()
         run: node scripts/rebuild-ci-summary.mjs "${{ runner.temp }}/rebuild-walkthrough-${{ github.run_id }}-${{ github.run_attempt }}/report.json" >> "$GITHUB_STEP_SUMMARY"

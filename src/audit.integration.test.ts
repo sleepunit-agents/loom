@@ -762,7 +762,7 @@ describe('criterion 9: one decrypt path', () => {
     // Backup configuration only validates public recipients with Encrypter. None
     // may name the review key or import the audit module; keep the allowlist exact.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    expect(library).toEqual(['../scripts/rebuild-retention.mjs', '../scripts/rebuild-secret-holder.mjs', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
+    expect(library).toEqual(['../scripts/rebuild-retention.mjs', '../scripts/rebuild-secret-holder.mjs', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts', 'shared-holder-storage.ts']);
     // Acceptance-only expiry checks use their fresh home's Comms identity, never review keys.
     const retentionProof=code(join(repoRoot,'scripts/rebuild-retention.mjs'));
     expect(retentionProof).toMatch(/readKey\(join\(home,\s*['"]comms\.key['"]\)\)/);
@@ -772,6 +772,8 @@ describe('criterion 9: one decrypt path', () => {
     expect(acceptanceHolder).toMatch(/import\s*\{\s*generateIdentity\s*\}\s*from\s*['"]age-encryption['"]/);
     expect(acceptanceHolder.match(/['"]age-encryption['"]/g)).toHaveLength(1);
     expect(acceptanceHolder).not.toMatch(/\b(?:Encrypter|Decrypter|decrypt|addIdentity|identityToRecipient|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
+    expect(code(join(srcDir, 'shared-holder-storage.ts'))).not.toMatch(/\b(?:Decrypter|decrypt|addIdentity|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
+
     expect(code(join(repoRoot, 'test/fixtures/shared-ui-program.ts'))).not.toMatch(/\b(?:Decrypter|decrypt|addIdentity|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
     expect(code(join(srcDir, 'core/household/backup-image.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|node:crypto|\bgenerate[A-Z]\w*\b/);
     expect(code(join(srcDir, 'core/household/backup-bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|\bgenerate[A-Z]\w*\b/);

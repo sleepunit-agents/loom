@@ -1,12 +1,13 @@
+import {startSharedHolder} from './shared-holder-process.js';
 import { notificationKey } from './core/signin/notification-key.js';
 /** Default web startup from an explicit, already prepared shared household.
  * No importer, discovery, schema upgrade, or legacy database fallback. */
 import Database from 'better-sqlite3';
 import {initializeSharedHome} from './shared-initialize.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
-import {isAbsolute,join,resolve,relative,sep} from 'node:path';
+import {dirname,isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {realpathSync} from 'node:fs';
+import {constants,openSync,closeSync,fsyncSync,realpathSync} from 'node:fs';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
@@ -22,7 +23,7 @@ import {serveShared} from './shared-serve.js';
 import type {sharedRoot} from './shared-root.js';
 const path=z.string().refine(isAbsolute,'Use an absolute path');
 const programSchema=z.object({
- database:path,commsKey:path,signinMember:z.string().min(1),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
+ secretHolder:z.literal(true).optional(),database:path,commsKey:path,signinMember:z.string().min(1),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
  memory:z.object({checkingAgent:z.string().min(1),sources:z.object({
   commons:z.object({directory:path,knowledge:path,people:path}).strict(),
   agents:z.array(z.object({agent:z.string().min(1),directory:path,memories:path}).strict()),
@@ -51,7 +52,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  const webRoot=resolve(options.webRoot??program.webRoot??resolve(import.meta.dirname,'../dist/web'));
  const canonical=(path:string):string=>{try{return realpathSync(path);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const parent=resolve(path,'..');if(parent===path)throw error;return resolve(canonical(parent),relative(parent,path));}};
  const inside=(parent:string,child:string)=>{const part=relative(canonical(resolve(parent)),canonical(resolve(child)));return !part||part!=='..'&&!part.startsWith('..'+sep)&&!isAbsolute(part);};
- const directories=[program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
+ const directories=[...(program.secretHolder?[join(home,'secret-holder')]:[]),program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
  const files=[config,program.database,program.commsKey,program.adapters,...[program.memory.sources.commons.knowledge,program.memory.sources.commons.people,...program.memory.sources.agents.map(source=>source.memories)]];
  if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
  checkDatabase(program.database);
@@ -60,19 +61,27 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  prepareOperatorHome(home);
  const release=await ownHome(home);
  let client:Database.Database|undefined,app:Awaited<ReturnType<typeof serveShared>>|undefined,operator:Awaited<ReturnType<typeof listenOperatorLinks>>|undefined;
+ let holder:Awaited<ReturnType<typeof startSharedHolder>>|undefined;
  let closing:Promise<void>|undefined,adapters:SharedStartupAdapters={};
- const close=()=>closing??=(async()=>{try{await operator?.close();}finally{try{await app?.close();}finally{try{await adapters.close?.();}finally{try{client?.close();}finally{await release();}}}}})();
+ const close=()=>closing??=(async()=>{try{await operator?.close();}finally{try{const pending=app?.close();try{await holder?.close();}finally{await pending;}}finally{try{await adapters.close?.();}finally{try{client?.close();}finally{await release();}}}}})();
  try{
+  // First-install publication must be durable before the holder writes values.
+  const parent=openSync(dirname(realpathSync(home)),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+  try{fsyncSync(parent);}finally{closeSync(parent);}
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
+  if(program.secretHolder){
+   if(adapters.secretWrites||adapters.secretInputs)throw Error('Shared Secret holder ports already configured');
+   holder=await startSharedHolder(join(realpathSync(home),'secret-holder'),clock);
+  }
   const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:sameOrigin,publicOrigin,
    changes:adapters.changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
-   secretWrites:adapters.secretWrites,secretInputs:adapters.secretInputs,bridges:adapters.bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,
+   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges:adapters.bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock);

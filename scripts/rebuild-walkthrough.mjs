@@ -21,6 +21,7 @@ import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
+import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
 import {prepareRetention} from './rebuild-retention.mjs';
 import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
@@ -38,7 +39,7 @@ export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>t
 export function localRequest(url,origin){try{return new URL(url).origin===origin||/^(data:|blob:|about:)/.test(url);}catch{return false;}}
 /** A second disposable loopback listener proves both browser guards before
  * the sign-in link is opened. It contains no data and receives no credentials. */
-async function verifyIsolation(page){
+export async function verifyIsolation(page){
  let http=0,websocket=0;
  const trap=createServer((_request,response)=>{http++;response.setHeader('access-control-allow-origin','*');response.end('local isolation trap');});
  const ws=new WebSocketServer({server:trap});ws.on('connection',socket=>{websocket++;socket.close();});
@@ -183,6 +184,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
+  save();yield {phase:'visibility',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

@@ -9,6 +9,12 @@ import { launcherSections, launcherFirst } from './launch-list';
 /** The registrations are the inventory; no legacy Shell or route discovery. */
 export default function Launcher({ apps, open, onOpenChange, launch }: { apps: readonly RegisteredApp[]; open: boolean; onOpenChange(open: boolean): void; launch(id: string): void }) {
   const [query, setQuery] = useState('');
+  const [previousOpen, setPreviousOpen] = useState(open);
+  // Reset before a new opening commits. Autofocus can arrive after typing.
+  if (previousOpen !== open) {
+    setPreviousOpen(open);
+    if (open) setQuery('');
+  }
   const field = useRef<HTMLInputElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const sections = useMemo(() => launcherSections(apps,query), [apps, query]);
@@ -16,7 +22,7 @@ export default function Launcher({ apps, open, onOpenChange, launch }: { apps: r
   const go = (id: string) => { onOpenChange(false); launch(id); };
   return <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal><Dialog.Overlay className="loom-lscrim" />
-      <Dialog.Content className="loom-launcher" aria-describedby={undefined} onOpenAutoFocus={e => { e.preventDefault(); setQuery(''); field.current?.focus(); }} onKeyDown={e => {
+      <Dialog.Content className="loom-launcher" aria-describedby={undefined} onOpenAutoFocus={e => { e.preventDefault(); field.current?.focus(); }} onKeyDown={e => {
         const tiles = [...(body.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
         const at = tiles.indexOf(document.activeElement as HTMLButtonElement);
         if (e.key === 'Enter' && e.target===field.current && first) { e.preventDefault(); go(first.id); }
