@@ -7,7 +7,7 @@ import {
  GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap,
 } from 'graphql/index.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
-import { knowledgeView } from './knowledge.js';
+import { knowledgeView, knowledgeAccess } from './knowledge.js';
 
 /** The outside door supplies the authenticated viewer, never a query argument. */
 export interface MemoryQueryContext { viewer: Viewer }
@@ -25,6 +25,7 @@ const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:r
 const revision = new GraphQLObjectType({ name:'MemoryKnowledgeRevision', fields:{
  id:{type:new GraphQLNonNull(GraphQLInt)},slug:requiredText,body:requiredText,op:requiredText,replacedAt:requiredText,actor:text,
 } });
+const access=new GraphQLObjectType({name:'MemoryKnowledgeAccess',fields:Object.fromEntries(['allowed','canAdd','canVerify','canRecheck'].map(name=>[name,{type:new GraphQLNonNull(GraphQLBoolean)}]))});
 const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
  total:{type:new GraphQLNonNull(GraphQLInt)}, checkDays:{type:new GraphQLNonNull(GraphQLInt)},recentDays:{type:new GraphQLNonNull(GraphQLInt)},
  pages:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(summary)))},
@@ -32,6 +33,7 @@ const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
 
 export function knowledgeQueryFields(options: { path?:string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
+ nextDeadline():number|undefined;
  close():void;
 } {
  let db:Database.Database|undefined,failed=false;
@@ -58,9 +60,26 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
  } });
  return {
   fields:{
+   memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
    memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?read():null},
    memoryKnowledgePage:{type:page,args:{slug:{type:new GraphQLNonNull(GraphQLString)}},
     resolve:(_source,args,context)=>allowed(context)?read(args.slug).open??null:null},
+  },
+  // Metadata only, across every active page, including pages outside a list's
+  // display limit. Invalid legacy dates are already due, never timer inputs.
+  nextDeadline(){
+   if(!db||failed)return;
+   try {
+    const now=options.now();let next:number|undefined;
+    const rows=db.prepare("SELECT updated,verified_at FROM pages WHERE status='active'").all() as Array<{updated:string;verified_at:string|null}>;
+    for(const row of rows){
+     const anchor=Date.parse(row.verified_at??row.updated);
+     const boundaries=[anchor+20*86400_000,anchor+30*86400_000,
+      ...(row.verified_at?[Date.parse(row.verified_at)+7*86400_000]:[])];
+     for(const at of boundaries)if(Number.isFinite(at)&&at>now&&(next===undefined||at<next))next=at;
+    }
+    return next;
+   }catch{return undefined;}
   },
   close(){db?.close();db=undefined;},
  };
