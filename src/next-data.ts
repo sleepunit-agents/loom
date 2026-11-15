@@ -1,4 +1,6 @@
 /** Shared-data transport composition. No schema creation or legacy credentials. */
+import { sql } from 'drizzle-orm';
+import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
@@ -26,8 +28,10 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) },
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences'],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer),
+      memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
+    },
   }), fields);
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
