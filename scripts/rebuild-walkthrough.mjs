@@ -62,7 +62,7 @@ export async function* walkthroughSteps(output) {
   let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
   // Control and persistence evidence must not compete with motion in every retained tile.
-  const context=await browser.newContext({viewport:{width:1600,height:1000},reducedMotion:'reduce',serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
+  const context=await browser.newContext({timezoneId:'Asia/Tokyo',viewport:{width:1600,height:1000},reducedMotion:'reduce',serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
@@ -81,6 +81,10 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
   await page.screenshot({path:join(out,'00-signin.png'),fullPage:true});
   await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.locator('.next-shell').waitFor();report.signin.ok=true;
+  const householdZone=Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  await page.waitForFunction(zone=>document.querySelector('.next-system-clock')?.getAttribute('title')?.endsWith(`, ${zone} time`),householdZone);
+  report.clock={householdZone,browserZone:await page.evaluate(()=>Intl.DateTimeFormat().resolvedOptions().timeZone),title:await page.locator('.next-system-clock').getAttribute('title')};
+
   const browsers=app.services.comms.db.$client.prepare('SELECT s.is_agent, t.member FROM sessions s JOIN tokens t ON t.fingerprint=s.token').all();
   report.signin.personBrowser=browsers.length===1&&browsers[0].is_agent===0&&browsers[0].member==='alex';
   await page.screenshot({path:join(out,'01-desk.png'),fullPage:true});
