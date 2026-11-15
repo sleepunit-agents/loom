@@ -80,6 +80,7 @@ it('recovers the committed private result after shared receipt failure and reser
 it('rolls back a private write if receipt insertion fails, leaving a safe retry reservation',async()=>{
  const f=await fixture();f.source.exec("CREATE TRIGGER fail_memory_source BEFORE INSERT ON memory_command_receipts BEGIN SELECT RAISE(ABORT,'injected'); END");
  expect((await f.call('remember',input,'source-fail')).status).toBe(503);expect(f.count()).toBe(0);
+ expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name IN ('memories','vec_memories')").all()).toEqual([]);
  expect(f.source.prepare('SELECT count(*) AS n FROM memory_command_preparations').get()).toEqual({n:1});expect(f.source.prepare('SELECT count(*) AS n FROM memory_command_receipts').get()).toEqual({n:0});
  f.source.exec('DROP TRIGGER fail_memory_source');expect((await f.call('remember',input,'source-fail')).status).toBe(200);expect(f.count()).toBe(1);
 });
@@ -88,6 +89,7 @@ it('reserves a pending id globally and rolls back when current body authority en
  let writes=0;f.root.operations.register({name:'fixture.write',write:true,input:z.object({}).strict(),output:z.null(),may:()=>true,run(){writes++;return null;}});
  const response=await fetch(f.url+'/api/fixture/write',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{},id:'pending'})});expect(response.status).toBe(409);expect(writes).toBe(0);
  f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect([401,403]).toContain((await pending).status);expect(f.count()).toBe(0);
+ expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name IN ('memories','vec_memories')").all()).toEqual([]);
  embed.gate=undefined;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,'job')).run());expect((await f.call('remember',input,'pending')).status).toBe(200);expect(f.count()).toBe(1);
 });
 

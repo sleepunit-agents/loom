@@ -78,6 +78,8 @@ export interface SqliteVecConfig {
   /** An independently owned command connection publishes only after its receipt. */
   notifyWrites?: boolean;
   busyTimeout?: number;
+  /** A source command includes lazy schema work in its effect transaction. */
+  deferSchema?: boolean;
   /**
    * Observer for the recall observation log. Called once per recall with
    * the search's telemetry; errors it throws are swallowed — a failed
@@ -142,14 +144,14 @@ export class SqliteVecBackend implements MemoryBackend {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
     try{
-    this.db.pragma('journal_mode = WAL');
+    if(!config.deferSchema)this.db.pragma('journal_mode = WAL');
     // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
     // their own connection. A brief write-lock window (checkpoint, concurrent
     // write) retries for up to 5s rather than failing immediately. A genuine
     // second loom instance will still fail — it won't hold the lock that long.
     this.db.pragma(`busy_timeout = ${config.busyTimeout ?? 5000}`);
     sqliteVec.load(this.db);
-    this.initSchema();
+    if(!config.deferSchema)this.initSchema();
     if(config.notifyWrites!==false)notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
     }catch(error){this.db.close();throw error;}
   }
@@ -159,7 +161,7 @@ export class SqliteVecBackend implements MemoryBackend {
   async atomicWrite<T>(run:(db:Database)=>Promise<T>):Promise<T>{
     if(this.db.inTransaction)throw Error('Memory command is already running');
     this.db.exec('BEGIN IMMEDIATE');
-    try{const value=await run(this.db);this.db.exec('COMMIT');return value;}
+    try{if(this.config.deferSchema)this.initSchema();const value=await run(this.db);this.db.exec('COMMIT');return value;}
     catch(error){if(this.db.inTransaction)this.db.exec('ROLLBACK');throw error;}
   }
 

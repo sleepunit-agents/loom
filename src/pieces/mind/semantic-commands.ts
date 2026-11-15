@@ -51,7 +51,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   const source=current(viewer);if(!source||!receipt)throw new OperationError('denied','Current body required');
   // Never use the process-cached helper connection: no other caller can join
   // this command's transaction while its embedding computation awaits.
-  const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,busyTimeout:0},createEmbeddingProvider());
+  const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,busyTimeout:0,deferSchema:true},createEmbeddingProvider());
   try{await backend.atomicWrite(async db=>{
    const done=db.prepare('SELECT name,input_hash,result,expires FROM memory_command_receipts WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as Stored|undefined;
    if(done){check(done,receipt);return;}
