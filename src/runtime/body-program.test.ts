@@ -174,3 +174,14 @@ it('refuses an unknown venue before accepting any mail',async()=>{
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
 });
+
+it.each(['wake','handoff'] as const)('refuses %s without a conversation before accepting mail',async venue=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue=venue;value.job.conversation=null;value.job.thread=null;
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
+});
+it('does not split a supplementary character at the digest limit',async()=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='wake';value.job.thread=null;
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),native:async()=>({text:'a'.repeat(599)+'😀',model:'observed',actions:[]})})).toBe(0);
+ expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'a'.repeat(599),ifAbsent:true});
+});

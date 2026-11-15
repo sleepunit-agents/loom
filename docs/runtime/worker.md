@@ -481,6 +481,7 @@ application; no worker credentials or enrollment are issued by either.
 
 The default receiving program also accepts wake and handoff conversations.
 Their canonical Inbox mail is accepted before native execution. Completion
-records a wordless reply turn with the observed model and a digest summary
-bounded to 600 characters. These venues do not create a Comms thread or message;
+records wordless action and reply turns with their observed models, then a
+digest summary bounded to 600 characters if none was already authored for this
+conversation/job. Authored decisions, task entries and owner questions survive. These venues do not create a Comms thread or message;
 Discord and Slack retain their guarded bridge reply path.

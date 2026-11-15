@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
-import { turns,digests } from '../data/schema.js';
+import { turns } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent:string;member:string|null;project:string|null}>,question:Readonly<{to:string;waitsOnKind?:'task'|'approval';waitsOnId?:string}>)=>boolean;
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority): void {
@@ -45,17 +45,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
   input:z.object({summary:z.string().max(600),ifAbsent:z.boolean().optional(),items:z.array(z.object({kind:z.enum(['decision','ask','task','project']),text:z.string().min(1).max(2000)}).strict()).max(100).optional(),question:question.optional()}).strict(),
   output:z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),
   may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||found.cv.venue==='loom')&&(!found.cv.member||input.question.to===found.cv.member)&&questionAllowed?.(viewer,found.cv,input.question)===true);},
-  async prepare(input,ctx){
-   const {job,cv}=requireCurrent(ctx.viewer);
-   // The receiver may supply a fallback after a model already filed decisions
-   // or a question. Never rewrite that run's authored digest on completion.
-   if(input.ifAbsent){
-    const existing=db.select().from(digests).where(and(eq(digests.conversation,cv.id),eq(digests.run,job.id))).get();
-    if(existing)return ()=>existing;
-   }
-   const {ifAbsent:_fallback,...content}=input;
-   return service.prepareDigest({conversation:cv.id,run:job.id,...content});
-  },
+  async prepare(input,ctx){const {job,cv}=requireCurrent(ctx.viewer);return service.prepareDigest({conversation:cv.id,run:job.id,...input});},
   run(ctx,_input,prepared){const {cv}=requireCurrent(ctx.viewer);const digest=(prepared as Awaited<ReturnType<CommsMessages['prepareDigest']>>)();ctx.changed('digests',digest.id);if(digest.inboxItem)ctx.changed('inbox',digest.inboxItem);ctx.changed('conversations',cv.id);return {saved:true as const,digest:digest.id,revision:digest.revision,item:digest.inboxItem};},
  }));
 }
