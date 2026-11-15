@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, secretGrants, secretRules, secretRequests, secretUses, household, inbox, jobs, agentHouseSecrets } from '../../core/data/schema.js';
+import { agents, members, secrets, secretChanges, secretGrants, secretRules, secretRequests, secretUses, household, inbox, jobs, agentHouseSecrets } from '../../core/data/schema.js';
 import { SecretRequests } from './requests.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -13,7 +13,10 @@ function fixture() {
   const db = createDataSchema(client, now);
   db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: now() }).run();
   for (const id of ['art', 'mark']) db.insert(agents).values({ id, about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  for (const name of ['github-token', 'slack-token']) db.insert(secrets).values({ name, description: '', changedAt: now(), changedBy: 'jonathan' }).run();
+  for (const name of ['github-token', 'slack-token']) {
+    db.insert(secrets).values({ name, description: '', changedAt: now(), changedBy: 'jonathan' }).run();
+    db.insert(secretChanges).values({ id: `initial-${name}`, secret: name, action: 'add', by: 'jonathan', at: now() }).run();
+  }
   const service = new SecretRequests(db, now);
   const job = (id: string, agent = 'art') => db.insert(jobs).values({ id, agent, title: id, queuedAt: now(), state: 'queued', brief: '', model: 'test', startedByKind: 'agent', startedBy: agent, houseRepository: '', houseFile: '', houseBranch: '' }).run();
   job('job-art'); job('job-mark', 'mark');

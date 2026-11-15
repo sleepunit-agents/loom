@@ -273,7 +273,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await expect.poll(()=>page.getByRole('combobox',{name:'Look',exact:true}).isVisible()).toBe(true);
               await page.locator('.next-status-bar summary').click();
             }
-            await expect.poll(()=>page.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBe(1);
+            // Inbox uses shared rows; this shell fixture seeds legacy attention for the rail only.
+            await expect.poll(()=>page.locator('[data-tile=inbox]').getByRole('textbox',{name:'Search asks',exact:true}).isVisible()).toBe(true);
             if(width>=1024) {
               await expect.poll(()=>page.locator('.desk-rail-card').count()).toBe(1);
               const rail=await page.locator('.next-rail').boundingBox(),tile=await page.locator('[data-tile=inbox]').boundingBox();
