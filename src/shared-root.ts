@@ -1,5 +1,3 @@
-import { installMeasuring } from './core/measuring/install.js';
-import { measuringSettingsProposals } from './core/measuring/proposal.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
@@ -30,6 +28,8 @@ import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { registerSharedRuntime } from './shared-runtime.js';
+import { installMeasuring } from './core/measuring/install.js';
+import { measuringSettingsProposals } from './core/measuring/proposal.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
