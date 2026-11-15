@@ -28,6 +28,7 @@ function fixture() {
   ] as const) db.insert(s.tasks).values({ id, title: id, status, type, project, ownerKind: 'household', createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
   db.insert(s.taskLinks).values([
     { task: 'a-blocked', dependsOn: 'secret-blocker', type: 'blocks' },
+    { task: 'a-blocked', dependsOn: 'closed', type: 'blocks' },
     { task: 'b-ready', dependsOn: 'closed', type: 'blocks' },
     { task: 'c-ready', dependsOn: 'epic', type: 'parent-child' },
   ]).run();
@@ -53,7 +54,7 @@ it('rechecks retained schemas on blocker closure, reopening and membership withd
   db.update(s.tasks).set({ status: 'closed' }).where(eq(s.tasks.id, 'secret-blocker')).run();
   expect((await read()).data).toEqual({ readyTasks: [{ id: 'a-blocked' }, { id: 'b-ready' }, { id: 'c-ready' }] });
   db.update(s.tasks).set({ status: 'open' }).where(eq(s.tasks.id, 'closed')).run();
-  expect((await read()).data).toEqual({ readyTasks: [{ id: 'a-blocked' }, { id: 'c-ready' }, { id: 'closed' }] });
+  expect((await read()).data).toEqual({ readyTasks: [{ id: 'c-ready' }, { id: 'closed' }] });
   db.delete(s.projectMembers).run();
   expect((await read()).data).toEqual({ readyTasks: [] });
 });
@@ -70,15 +71,19 @@ it('streams readiness changes after a hidden blocker commits without disclosing 
   const live = new DataLive();
   const writes = new DataWrites(db, { refreshAccess() {}, changed: () => live.changed() });
   const stream = live.watch({ schema, query: '{ selected: readyTasks(where:{id:{eq:"a-blocked"}}) { id } tasks(where:{id:{eq:"a-blocked"}}) { id } }', valid: () => true });
+  const second = live.watch({ schema, query: '{ readyTasks(where:{id:{eq:"a-blocked"}}) { id } }', valid: () => true });
   try {
+    expect((await second.next()).value.patches).toEqual([{ path: [], value: { readyTasks: [] } }]);
     expect((await stream.next()).value.patches).toEqual([{ path: [], value: { selected: [], tasks: [{ id: 'a-blocked' }] } }]);
-    const pending = stream.next();
+    const pending = stream.next(), secondPending = second.next();
     writes.run(() => db.update(s.tasks).set({ status: 'closed' }).where(eq(s.tasks.id, 'secret-blocker')).run());
     expect((await pending).value.patches).toEqual([{ path: ['selected', 0], value: { id: 'a-blocked' } }]);
-    const revoked = stream.next();
+    expect((await secondPending).value.patches).toEqual([{ path: ['readyTasks', 0], value: { id: 'a-blocked' } }]);
+    const revoked = stream.next(), secondRevoked = second.next();
     writes.run(() => db.delete(s.projectMembers).run());
     expect((await revoked).value.patches).toEqual([{ path: ['selected', 0] }, { path: ['tasks', 0] }]);
-  } finally { await stream.return?.(); live.close(); }
+    expect((await secondRevoked).value.patches).toEqual([{ path: ['readyTasks', 0] }]);
+  } finally { await stream.return?.(); await second.return?.(); live.close(); }
 });
 
 it('allows installed services to read readiness with an explicit unrestricted SQL policy', async () => {
