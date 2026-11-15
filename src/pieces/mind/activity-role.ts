@@ -1,17 +1,19 @@
-/** Small synchronous seam until the NEW Conversations/Comms owner is composed.
- * No legacy stores or adapters. The owner filters before bounding, never returns
- * another member's private thread, and emits conversation/digest/comms changes.
- */
+/** Synchronous view of the shared Conversations records. The source applies
+ * central visibility before bounding; household owners see private records. */
 import type {Viewer} from '../../core/index.js';
-export interface ActivityConversation {id:string;agent:string;venue:string;place:string;label:string;people:string[];expires?:number;member?:string}
+export interface ActivityConversation {id:string;agent:string;venue:string;place:string;label:string;people:string[];expires?:number;member?:string;project?:string}
 export interface ActivityRun {
  kind:'digest'|'conversation';key:string;at:string;expires?:number;conversation:ActivityConversation;
  summary?:string;turns?:number;replies?:number;asked:string[];decided:string[];tasks:string[];
+ /** Text from every digest item kind, for task/PR reference extraction. */
+ references?:string[];
  links:Array<{label:string;href?:string}>;steps?:Array<{label:string;state:string;tool:string}>;
  needs?:string;needsHref?:string;needsForMember?:string;
  more:Array<{id:string;at:string;title:string}>;
 }
 export interface ActivityConversations {
+ /** Agents with visible shared conversations, including through a project. */
+ agents?(viewer:Viewer):string[];
  /** [from,until), newest first, <=601 per agent. Digests replace moved conversations
   * in the same window. No prompt titles. read() uses the same visibility rules. */
  list(viewer:Viewer,query:{agent:string;from:number;until:number;limit:number}):{available:boolean;rows:ActivityRun[];expires?:number};

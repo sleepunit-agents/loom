@@ -87,3 +87,23 @@ it('a future window observation cannot fence out the next valid provider reading
   expect(recordAccountWindows(db, identity, [window], now)).toBe(true);
   expect(currentAccountCapacity(db, 'shared', now).hasRoom).toBe(true);
 });
+
+it('an identical successful refresh supersedes an older provider failure', async () => {
+  const db = fixture(); recordAccountWindows(db, identity, [window], now);
+  let reject!: (error: Error) => void;
+  const old = refreshAccountWindows(db, 'shared', () => new Promise((_, fail) => { reject = fail; }), () => now);
+  expect(await refreshAccountWindows(db, 'shared', async () => [window], () => now)).toEqual({ refreshed: true });
+  reject(Error('late failure'));
+  expect(await old).toEqual({ refreshed: false });
+  expect(currentAccountCapacity(db, 'shared', now).hasRoom).toBe(true);
+});
+it('an identical successful refresh supersedes an older changed response', async () => {
+  const db = fixture(); recordAccountWindows(db, identity, [window], now);
+  let resolve!: (rows: typeof window[]) => void;
+  const old = refreshAccountWindows(db, 'shared', () => new Promise(done => { resolve = done; }), () => now);
+  expect(await refreshAccountWindows(db, 'shared', async () => [window], () => now)).toEqual({ refreshed: true });
+  resolve([{ ...window, usage: 1 }]);
+  expect(await old).toEqual({ refreshed: false });
+  expect(readAccountWindows(db, 'shared')[0]?.usage).toBe(0.2);
+  expect(currentAccountCapacity(db, 'shared', now).hasRoom).toBe(true);
+});
