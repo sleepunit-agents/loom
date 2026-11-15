@@ -9,6 +9,7 @@ import { HouseholdDatabase } from '../../core/household/document.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { migrateHouseholdTables } from '../../core/household/schema.js';
 import { installAttentionMaintenance } from './daemon.js';
+import { isInternalCaller } from '../../core/internal.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanups.splice(0)) await close(); });
@@ -42,20 +43,20 @@ async function setup(staging = false, denied?: { value: boolean; fold?: boolean 
   const turns = () => app.db.prepare('SELECT record FROM attention_turns').all().map(r => JSON.parse((r as {record: string}).record));
   return { app, clock, home, write, turns };
 }
-it.each([false, true])('next mode folds authorized old metadata on the next tick and daily, including staging=%s', async staging => {
+it.each([false, true])('next mode folds old metadata including private records on the next tick and daily, including staging=%s', async staging => {
   const { app, clock, write, turns } = await setup(staging);
   write('old'); write('private', 'owner'); write('recent', undefined, '2026-11-13T10:00:00Z');
   expect(turns()).toHaveLength(3);
   clock.advance(0);
-  expect(turns()).toHaveLength(2);
-  expect(turns().some(t => t.member === 'owner')).toBe(true);
-  expect(app.db.prepare('SELECT count(*) AS n FROM attention_days').get()).toEqual({ n: 1 });
-  write('next-day'); clock.advance(86_400_000 - 1);
-  expect(turns()).toHaveLength(3);
-  clock.advance(1); expect(turns()).toHaveLength(2);
+  expect(turns()).toHaveLength(1);
+  expect(turns().some(t => t.member === 'owner')).toBe(false);
   expect(app.db.prepare('SELECT count(*) AS n FROM attention_days').get()).toEqual({ n: 2 });
+  write('next-day'); clock.advance(86_400_000 - 1);
+  expect(turns()).toHaveLength(2);
+  clock.advance(1); expect(turns()).toHaveLength(1);
+  expect(app.db.prepare('SELECT count(*) AS n FROM attention_days').get()).toEqual({ n: 3 });
 });
-it('uses the registered service, reports no private refusal wording and retries tomorrow', async () => {
+it('uses an installed caller, reports no private refusal wording and retries tomorrow', async () => {
   const { app, clock, home, write, turns } = await setup();
   const services = new SharingDatabase(app.db, home).sharing().services;
   expect(services.attention.operations).toEqual(expect.arrayContaining(['attention.retain', 'attention.fold']));
@@ -96,32 +97,32 @@ it('installs one maintenance schedule and cancels it before the foundation close
   expect(call).toHaveBeenCalledTimes(count);
 });
 
-it('rechecks real central service grants on every sweep without impersonating a member', async () => {
+it('keeps installed maintenance running when outside service grants are removed', async () => {
   const denied = { value: false };
   const { clock, write, turns } = await setup(false, denied);
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   clock.advance(0); write('old');
   denied.value = true; clock.advance(86_400_000);
-  expect(turns()).toHaveLength(1);
-  expect(warning.mock.calls.filter(([message]) => message === 'Attention retention failed (denied)')).toHaveLength(1);
+  expect(turns()).toHaveLength(0);
+  expect(warning).not.toHaveBeenCalled();
   expect(warning.mock.calls.every(([message]) => ['Attention retention failed (denied)', 'Attention wait inventory failed (denied)'].includes(message))).toBe(true);
   denied.value = false; clock.advance(86_400_000);
   expect(turns()).toHaveLength(0);
 });
 
-it('household owner retention folds all private metadata after service retention', async () => {
+it('installed retention folds private metadata while outside read visibility still applies', async () => {
   const { app, clock, write, turns } = await setup();
   write('public'); write('owner-private', 'owner');
   expect(app.operations.call('direct', { kind: 'member', id: 'other' }, 'attention.recordTurn', {
     agent: 'art', member: 'other', turn: { venue: 'loom', place: 'other-private', at: '2026-07-01T09:00:00Z', from: { kind: 'person', slug: 'other' }, kind: 'message' },
   }, 'other-private-turn')).toMatchObject({ ok: true });
   clock.advance(0);
-  expect(turns().map(t => t.member).sort()).toEqual(['other', 'owner']);
+  expect(turns()).toEqual([]);
   const changed = vi.spyOn(app.live, 'changed');
   const result = app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain');
-  expect(result).toEqual({ ok: true, value: { days: 2, turns: 2 } });
+  expect(result).toEqual({ ok: true, value: { days: 0, turns: 0 } });
   expect(turns()).toEqual([]);
-  expect(changed).toHaveBeenCalledOnce();
+  expect(changed).not.toHaveBeenCalled();
   const days = app.db.prepare('SELECT record FROM attention_days').all().map(r => JSON.parse((r as { record: string }).record));
   expect(days).toHaveLength(3);
   const own = days.find(d => d.member === 'owner');
@@ -166,13 +167,25 @@ it.each(['continue', 'revoke', 'fold', 'stop'] as const)('yields retention inven
     await stopClose;
     expect(cancellations).toHaveLength(1);
     expect(cancellations[0]).toHaveBeenCalledTimes(1);
-  } else expect(count()).toBe(mode === 'continue' ? 2001 : 1000);
+  } else expect(count()).toBe(2001);
   const sweeps = calls.mock.calls.filter(c => c[2] === 'attention.retain');
-  expect(sweeps.map(c => c[3])).toEqual(mode === 'continue' || mode === 'fold' ? [{}, { after: 1000 }, { after: 2000 }] : mode === 'revoke' ? [{}, { after: 1000 }] : [{}]);
+  expect(sweeps.map(c => c[3])).toEqual(mode === 'stop' ? [{}] : [{}, { after: 1000 }, { after: 2000 }]);
   if (mode === 'revoke' || mode === 'fold') {
-    if (mode === 'revoke') expect(warning).toHaveBeenCalledWith('Attention retention failed (denied)');
-    else expect(warning).not.toHaveBeenCalled();
+    expect(warning).not.toHaveBeenCalled();
     denied.value = false; denied.fold = false; clock.advance(86_400_000);
     expect(count()).toBe(2001);
   }
+});
+
+it('runs installed maintenance without outside service grants while a same-name caller remains outside', async () => {
+  const denied = { value: true };
+  const { app, clock, write, turns } = await setup(false, denied);
+  write('private-old', 'owner');
+  const call = vi.spyOn(app.operations, 'call');
+  clock.advance(0);
+  expect(turns()).toEqual([]);
+  const retention = call.mock.calls.find(entry => entry[2] === 'attention.retain');
+  expect(retention).toBeDefined();
+  expect(isInternalCaller(retention![1], app.operations)).toBe(true);
+  expect(app.operations.call('direct', { kind: 'service', id: 'attention' }, 'attention.retain', {}, 'outside-copy')).toMatchObject({ ok: false, code: 'denied' });
 });
