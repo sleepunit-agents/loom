@@ -188,3 +188,22 @@ sharing facts. HTTP buffers and live socket publication use the same existing
 freshness fence as other shared selections. This field is available to the Home
 UI; its rendering is a separate consumer.
 The projection does not grant write or worker authority.
+
+## Machine-reported facts
+
+An optional `facts` array in the worker configuration reports capability labels,
+for example `"facts":["gpu:5090","os:linux"]`. These are explicit local worker
+configuration; the worker does not probe a GPU or infer facts from a model name.
+Each poll sends the configured snapshot through `runtime.next`. Loom derives the
+machine from the current bearer runner proof, records the report, refreshes
+health and uses the facts for placement in that same committed operation.
+Report-only machines can report facts and health but receive no job.
+
+Reports replace only that machine's previous `from_owner=false` facts. Labels set
+by its owner survive, including labels also reported by the worker. Omitting
+`facts` preserves the previous report; an explicit empty array clears only the
+machine-reported labels. No other machine's labels change. A report accepts at
+most 128 distinct trimmed nonempty single-line labels, each up to 256 characters.
+Invalid configuration is refused before token reads or execution. Poll replay is
+still refused, so an old receipt cannot overwrite newer facts; receipt failure
+rolls back facts and health along with any job claim.

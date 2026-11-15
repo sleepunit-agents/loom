@@ -57,9 +57,9 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
   };
   return {
     admit,
-    next(box: string) {
+    next(box: string, facts?: readonly string[]) {
       available();
-      try { return dispatcher.next(box); }
+      try { return dispatcher.next(box, facts); }
       finally { options.changed(); }
     },
     started(box: string, job: string, build: string) {

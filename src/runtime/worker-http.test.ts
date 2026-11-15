@@ -137,3 +137,10 @@ it.each([30000,60000])('bounds stalled private input to fifteen seconds under wo
  vi.useFakeTimers();const fetch=vi.fn<typeof globalThis.fetch>(()=>new Promise<Response>(()=>{}));const control=httpWorkerControl({url:'https://loom.example',token:'synthetic',signal:new AbortController().signal,timeoutMs,fetch});
  try{let settled=false;const pending=control.repositoryInput!('job',new AbortController().signal);void pending.then(()=>{settled=true;},()=>{settled=true;});const refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);await vi.advanceTimersByTimeAsync(14999);expect(settled).toBe(false);await vi.advanceTimersByTimeAsync(1);await refused;expect(fetch).toHaveBeenCalledOnce();}finally{vi.useRealTimers();}
 });
+
+it('snapshots configured machine facts for each poll without caller-supplied machine identity', async () => {
+  const facts = ['gpu:5090'], fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response(null));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
+  facts[0] = 'changed'; await control.next(); await control.next();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
+});
