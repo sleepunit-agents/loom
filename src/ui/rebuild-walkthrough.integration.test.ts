@@ -18,7 +18,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('measures encrypted private-word expiry on the program clock',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
-  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true}});
+  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
  });
  for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase).toBe('app');const app=step.value.row;
