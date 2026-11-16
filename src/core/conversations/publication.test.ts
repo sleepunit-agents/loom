@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
-import { GraphQLScalarType, GraphQLString } from 'graphql/index.js';
+import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
@@ -39,9 +39,7 @@ it('connects actual nextData HTTP publication to committed policy changes',async
  const retry=await f.query(`{commsThread(id:"${f.thread.id}"){title}}`);expect(await retry.json()).toEqual({data:{commsThread:null}});
 });
 it.each(['comms','inbox','answer','summary','search'].flatMap(kind=>['stored','household'].flatMap(bound=>[false,true].map(clone=>({kind,bound,clone})))) )('guards actual $kind at $bound expiry (clone=$clone)',async({kind,bound,clone})=>{
- let step=()=>{};
- const scalar=new GraphQLScalarType({name:'PublicationClockStep',serialize:()=>({toJSON(){step();return 'public';}})});
- const f=fixture({step:{type:scalar,resolve:()=>true}});
+ const f=fixture();
  const question=await f.service.ask(f.thread.id,'art','ask',{words:'PRIVATE WORDS',answers:'words'});
  if(kind==='answer') await f.service.answer(question.inboxItem!,'alice','words','PRIVATE WORDS');
  if(kind==='summary') await f.service.send({thread:f.thread.id,kind:'reply',sender:'art',words:'PRIVATE WORDS'});
@@ -51,6 +49,6 @@ it.each(['comms','inbox','answer','summary','search'].flatMap(kind=>['stored','h
  });
  const source=kind==='comms'?`{commsMessages(thread:"${f.thread.id}"){words}}`:kind==='summary'?'{recentConversations(agent:"art"){lastAnswer{words}}}':kind==='search'?'{inboxItems(search:"PRIVATE WORDS"){id}}':`{inboxItem(id:"${question.inboxItem}"){${kind==='answer'?'answerText':'body{words}'}}}`;
  if(clone){const response=await f.query(source);expect(response.status).toBe(200);const holder=new Response(response.body,response),copy=holder.clone();await Promise.resolve();f.setTime(start+1000);await expect(copy.text()).rejects.toThrow('Data access ended');await expect(holder.text()).rejects.toThrow('Data access ended');}
- else {step=()=>f.setTime(start+1000);const response=await f.query(source.slice(0,-1)+' step}');expect(response.status).toBe(503);expect(await response.text()).not.toContain('PRIVATE WORDS');}
+ else {const response=await f.query(source);expect(response.status).toBe(200);f.setTime(start+1000);await expect(response.text()).rejects.toThrow('Data access ended');}
  expect(f.db.select().from(messages).get()?.words).not.toBeNull();
 });

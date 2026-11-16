@@ -1,6 +1,8 @@
+import { readAll } from '../data/execution.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
+import {privateInboxAnswer,hasPrivateInboxPayload,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion,isPrivateInboxQuestion} from './private-inbox-words.js';
 import { wordsDeadline } from './retention.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
@@ -76,7 +78,7 @@ export class InboxQueries {
     const permissions=fields.has('canSetVolume')?this.volumeBatch?.(viewer,items):undefined;
     const deadlines:number[]=[];
     const retain=(at:number)=>deadlines.push(at);
-    const rows=await Promise.all(items.map(async row=>{
+    const rows=await readAll(items.map(async row=>{
       const values:Record<string,unknown>={};
       const readers:Record<string,()=>unknown>={
         refs:()=>service.refs(viewer,row.id),read:()=>service.read(viewer,row.id),
@@ -85,7 +87,7 @@ export class InboxQueries {
         bodyKeepUntil:()=>service.bodyKeepUntil(viewer,row.id),answerKeepUntil:()=>service.answerKeepUntil(viewer,row.id),
         body:()=>service.body(viewer,row.id,retain),answerText:()=>service.answerText(viewer,row.id,retain),
       };
-      await Promise.all(Object.entries(readers).filter(([name])=>fields.has(name)).map(async([name,read])=>{values[name]=await read();}));
+      await readAll(Object.entries(readers).filter(([name])=>fields.has(name)).map(async([name,read])=>{values[name]=await read();}));
       return Object.assign({...row},{[projected]:values});
     }));
     // Even unchanged ciphertext may no longer be visible after open() yields.
@@ -154,7 +156,8 @@ export class InboxQueries {
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;
       const keep = this.keepDays();
       const thread = item.thread ? this.readSet?this.readSet.thread(item.thread):this.db.select().from(threads).where(eq(threads.id,item.thread)).get():undefined;
-      return { message, keep, thread, answerMail: answer?.mail };
+      const standalone=fromAnswer?this.standaloneAnswer(viewer,item):hasPrivateInboxPayload(this.db,item)?item:undefined;
+      return { message, keep, thread, answerMail: answer?.mail,standalone };
     };
     const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
         item.answer, item.answeredBy, item.resolution, ...this.refs(viewer, item.id)].some(value => value?.toLocaleLowerCase().includes(query));
@@ -164,11 +167,11 @@ export class InboxQueries {
       // Handoffs are agent mail. Their wording is delivered only by take,
       // while this personal mailbox search can match their metadata.
       if(item.source==='handoff')continue;
-      const state = item.thread ? privateState(item) : undefined;
+      const state = item.thread||hasPrivateInboxPayload(this.db,item) ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
       {
-        const answerState = item.thread ? privateState(item, true) : undefined;
+        const answerState = item.thread||isPrivateInboxQuestion(item) ? privateState(item, true) : undefined;
         const answer = await this.answerText(viewer, item.id);
         if (answer?.toLocaleLowerCase().includes(query)) matches.push({ item, state: answerState, fromAnswer: true });
       }
@@ -180,21 +183,24 @@ export class InboxQueries {
       if (byMetadata) return metadata(item);
       if (!state) return true;
       const after = privateState(item, fromAnswer), message = after.message;
-      return JSON.stringify(after) === JSON.stringify(state) && this.retainedMessage(message, after.keep);
+      return JSON.stringify(after) === JSON.stringify(state) && (after.standalone?privateInboxDeadline(after.standalone,after.keep)>Date.parse(this.now()):this.retainedMessage(message, after.keep));
     });
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
     const unique = new Map<string, typeof current[number]>();
-    const deadline = (match: typeof current[number]) => match.metadata || !match.state?.message
-      ? Infinity : wordsDeadline(match.state.message, match.state.keep);
+    const deadline = (match: typeof current[number]) => {
+      if(match.metadata)return Infinity;
+      if(match.state?.standalone)return privateInboxDeadline(match.state.standalone,match.state.keep);
+      if(match.state?.message)return wordsDeadline(match.state.message,match.state.keep);
+      return Infinity;
+    };
     for (const match of current) {
       const prior = unique.get(match.item.id);
       if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
     }
     const page = [...unique.values()].slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
-    for (const match of page) if (!match.metadata && match.state?.message) {
-      const message = match.state.message;
-      retainedUntil?.(wordsDeadline(message, match.state.keep));
+    for (const match of page) if (!match.metadata && match.state) {
+      const until=deadline(match);if(Number.isFinite(until))retainedUntil?.(until);
     }
     return page.map(({ item }) => item);
   }
@@ -230,8 +236,10 @@ export class InboxQueries {
         eq(inbox.conversation, item.conversation!), eq(inbox.thread, item.thread!), eq(inbox.fromKind, 'person'), eq(inbox.fromId, item.answeredBy!),
         eq(messages.kind, 'answer'), eq(messages.sender, item.answeredBy!), eq(threads.conversation, item.conversation!), this.allowed(viewer))).get();
   }
+  private standaloneAnswer(viewer:Viewer,item:Item){const answer=privateInboxAnswer(this.db,item);return answer&&this.current(viewer,answer.id)?answer:undefined;}
   bodyKeepUntil(viewer: Viewer, id: string): string | null {
     const item = this.current(viewer, id);
+    if(item&&hasPrivateInboxPayload(this.db,item)){const until=viewer.kind==='member'?privateInboxDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
     if(item?.source==='handoff'){const until=viewer.kind==='member'?handoffDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
     if (!item?.thread || !item.conversation) return null;
     const message = this.readSet?this.readSet.thread(item.thread)?.conversation===item.conversation?this.readSet.message(item):undefined:this.db.select({ at: messages.at, keepUntil: messages.keepUntil }).from(messages)
@@ -241,6 +249,7 @@ export class InboxQueries {
   }
   answerKeepUntil(viewer: Viewer, id: string): string | null {
     const item = this.current(viewer, id);
+    const standalone=item?this.standaloneAnswer(viewer,item):undefined;if(standalone)return this.bodyKeepUntil(viewer,standalone.id);
     return item ? this.deadline(this.answerState(viewer, item)?.message) : null;
   }
   /** Private answers live only in their retained encrypted thread message.
@@ -248,6 +257,12 @@ export class InboxQueries {
   async answerText(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<string | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
+    if(isPrivateInboxQuestion(item)){
+      if(!['words','replied'].includes(item.answer??''))return null;
+      const before=this.standaloneAnswer(viewer,item);if(!before)return null;
+      const body=await this.body(viewer,before.id,retainedUntil);
+      return JSON.stringify(this.current(viewer,id))===JSON.stringify(item)&&JSON.stringify(this.standaloneAnswer(viewer,item))===JSON.stringify(before)?body?.words??null:null;
+    }
     if (!item.thread) return item.answerText;
     if (item.state !== 'answered' || !['words', 'replied'].includes(item.answer ?? '') || !item.answeredBy || !item.answeredAt) return null;
     const answer = () => this.answerState(viewer, item);
@@ -262,6 +277,13 @@ export class InboxQueries {
   async body(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<Body | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
+    if(hasPrivateInboxPayload(this.db,item)){
+      if(viewer.kind!=='member')return null;
+      const days=this.keepDays(),until=privateInboxDeadline(item,days);if(!(until>Date.parse(this.now())))return null;
+      const envelope=privateInboxEnvelope(item.words)!;const words=await this.key.open(Buffer.from(envelope.cipher,'base64'));
+      const current=this.current(viewer,id);if(!current||JSON.stringify(current)!==JSON.stringify(item)||this.keepDays()!==days||privateInboxDeadline(current,days)<=Date.parse(this.now()))return null;
+      retainedUntil?.(until);return item.source==='thread'&&item.answers?privateInboxQuestion(words):{words};
+    }
     if(item.source==='handoff'){
       if(viewer.kind!=='member')return null;
       const days=this.keepDays(),until=handoffDeadline(item,days);

@@ -22,7 +22,7 @@ function fixture(){
  for(const member of ['owner','sam'] as const){db.insert(members).values({id:member,role:member==='owner'?'owner':'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member,createdAt:at}).run();writeFileSync(join(home,member),raw[member],{mode:0o600});}
  db.insert(sessions).values({id:hash('c'.repeat(64)),token:hash(raw.sam),device:'Sam browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  const programGrants=new Map<string,{records:readonly string[];operations:readonly string[]}>();
- const root=sharedRoot({db,clock,programStore:{read:id=>programGrants.get(id),write:(id,value)=>{programGrants.set(id,value);return undefined;}},originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
+ const root=sharedRoot({db,clock,programStore:{read:id=>programGrants.get(id),readMany:ids=>new Map([...programGrants].filter(([id])=>ids.includes(id))),write:(id,value)=>{programGrants.set(id,value);return undefined;}},originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
  const transport:typeof fetch=async(input,init)=>await root.http.fetch(new Request(input,init));
  const invoke=async(piece:'token'|'program'|'sessions'|'account'|'household',args:string[],actor:'owner'|'sam'='owner',request:typeof fetch=transport,env?:NodeJS.ProcessEnv)=>{
   let out='',err='',time=0,calls=0;const bodies:string[]=[],paths:string[]=[];

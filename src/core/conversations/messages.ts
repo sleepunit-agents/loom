@@ -1,4 +1,5 @@
 import {handoffExpiries} from './handoff-words.js';
+import {privateInboxExpiries,hasPrivateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
 import { inboxContentChanged } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 /** Trusted private-message service. External doors authenticate and authorize;
@@ -135,6 +136,17 @@ export class CommsMessages {
       if(JSON.stringify(currentDigest)!==JSON.stringify(before))throw new Error('Digest changed during preparation');
       return undefined;
     };
+    if(input.question&&cv.member&&!privateThread){
+      const question=input.question;
+      if(question.to!==cv.member)throw Error('Private question needs its member');
+      const words=await sealPrivateInbox(this.key,JSON.stringify({words:question.words,why:question.why??null,ifYes:question.ifYes??null,ifNo:question.ifNo??null,link:question.link??null}),this.now(),this.db.select({days:household.commsDays}).from(household).get()?.days??14);
+      return ()=>this.db.transaction(()=>{
+        const kept=validate();if(kept)return kept;
+        const item=cvs.send({conversation:cv.id,toKind:'person',to:question.to,source:'thread',sourceId:`digest:${randomUUID()}`,fromKind:'agent',fromId:cv.agent,words,answers:question.answers,waitsOnKind:question.waitsOnKind,waitsOnId:question.waitsOnId,refs:question.refs});
+        cvs.turn({conversation:cv.id,kind:'note',fromKind:'agent',fromId:cv.agent,run:input.run});
+        return cvs.digest({...input,question:undefined},item.id);
+      });
+    }
     if (!input.question || !privateThread) return () => this.db.transaction(() => { const kept=validate(); return kept??cvs.digest(input); });
     const question = input.question;
     const ask = await this.prepareAsk(thread!.id, cv.agent, `digest:${randomUUID()}`, {
@@ -189,6 +201,30 @@ export class CommsMessages {
     });
   }
 
+  async prepareInboxAnswer(itemId:string,member:string,answer:Answer,text?:string):Promise<()=>typeof inbox.$inferSelect>{
+    const cvs=this.threads.conversations;
+    const check=()=>{
+      const item=cvs.item(itemId),cv=item.conversation?cvs.conversation(item.conversation):undefined;
+      if(!cv||!cv.member||item.thread||cv.venue==='loom'||item.member!==cv.member||item.toKind!=='person'||item.to!==cv.member||item.agent!==cv.agent||item.project!==cv.project||item.source!=='thread'||item.fromKind!=='agent'||item.fromId!==cv.agent||!item.answers||!hasPrivateInboxWords(item.words)&&item.words!==null)throw Error('Not a standalone private question');
+      if(item.waitsOnKind)throw Error('Answer at the linked source');
+      return {item,cv};
+    };
+    const before=check();if(before.item.state==='answered')return()=>check().item;
+    if(before.item.state!=='waiting')throw Error('Question is already settled');
+    if((answer==='yes'||answer==='no')&&before.item.answers!=='yes-no')throw Error('Question needs words');
+    if((answer==='words'||answer==='replied')&&!text?.trim())throw Error('Answer needs words');
+    const words=await sealPrivateInbox(this.key,text?.trim()||answer,this.now(),this.db.select({days:household.commsDays}).from(household).get()?.days??14);
+    return ()=>this.db.transaction(()=>{
+      const live=check();if(live.item.state==='answered')return live.item;
+      if(JSON.stringify(live)!==JSON.stringify(before))throw Error('Question changed during preparation');
+      const {item,cv}=live,at=this.now();
+      cvs.send({conversation:cv.id,toKind:'agent',to:cv.agent,source:'answer',sourceId:item.id,fromKind:'person',fromId:member,words,refs:[item.id,...refsIn(text??'')]});
+      cvs.turn({conversation:cv.id,kind:'message',fromKind:'person',fromId:member});
+      inboxContentChanged(this.db,{kind:item.toKind,id:item.to},item.id);
+      return this.db.update(inbox).set({state:'answered',answer,answerText:null,answeredBy:member,answeredAt:at,changedAt:at}).where(eq(inbox.id,item.id)).returning().get()!;
+    });
+  }
+
   /** Expired words stay unavailable even before the periodic sweep runs. */
   async words(thread: string, seq: number): Promise<string | null> {
     const row = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
@@ -209,6 +245,7 @@ export class CommsMessages {
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
     let expired=0;
+    for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;

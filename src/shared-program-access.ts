@@ -20,6 +20,8 @@ export const sameProgramGrants = (a: ProgramGrants | undefined, b: ProgramGrants
  * callers publish committed writes. The writer completes before returning. */
 export interface ProgramGrantStore {
   read: ProgramGrantReader;
+  /** Synchronous, coherent batch used by owner setup; absent and empty differ. */
+  readMany(fingerprints: readonly string[]): ReadonlyMap<string, Readonly<ProgramGrants>>;
   write(fingerprint:string, grants:ProgramGrants):undefined;
 }
 /** Reserved credential and grant-editor namespaces are never delegated.

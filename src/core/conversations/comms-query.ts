@@ -1,3 +1,4 @@
+import { readAll } from '../data/execution.js';
 import { readCommsFolders, readCommsThreads, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readCommsHome } from '../data/comms-home.js';
@@ -74,7 +75,7 @@ export class CommsQueries {
     const before=readCommsSet(this.db,thread,seqs,this.allowed(viewer),words);
     const service=new CommsQueries(this.db,this.key,this.policy,this.now);service.readSet=before;
     const deadlines:number[]=[];
-    const result=await Promise.all(rows.map(async row=>{
+    const result=await readAll(rows.map(async row=>{
       const current=before.entry(row.seq);
       if(!current)throw Error('Comms changed; retry the query');
       const {words:_cipher,...message}=current.message;
