@@ -4,7 +4,7 @@ import {programGrantStore} from './core/data/program-grants.js';
 import {sharedProgramSetup,programIssueInput} from './shared-program-setup.js';
 import {programSetupQueries,registerProgramSetup} from './shared-program-queries.js';
 import type {ProgramGrantStore,ProgramGrantReader} from './shared-program-access.js';
-import { sharedProjects, sharedProjectQueries, registerSharedProjects } from './shared-projects.js';
+import { sharedProjects, sharedProjectQueries } from './shared-projects.js';
 import { sharedHouseholdAccess, householdAccessQueries, registerSharedHouseholdAccess } from './shared-household-access.js';
 import { sharedNotifications, type SharedNotificationOptions } from './core/signin/shared-notifications.js';
 import { sharedAccount, sharedAccountFields, registerSharedAccount } from './core/signin/shared-account.js';
@@ -28,7 +28,8 @@ import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { boxes, secretChanges } from './core/data/schema.js';
+import { boxes, household, secretChanges } from './core/data/schema.js';
+import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
@@ -53,7 +54,6 @@ import {installMemoryTempo} from './transport/memory-tempo.js';
 import {installMemorySignals} from './transport/memory-signals.js';
 import { OperationError, Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
-import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { registerSharedJobControl } from './shared-job-control.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
@@ -67,7 +67,6 @@ import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
 import { approvalRulesService } from './apps/approval-rules.js';
-import { registerSharedApprovalRules } from './shared-approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
 import { sameRequestOrigin } from './core/data/origin.js';
@@ -256,6 +255,20 @@ export function sharedRoot(options: {
     run(member: string, input: Parameters<typeof applyAgentRunSettings>[2]) { applyAgentRunSettings(db, { kind: 'member', id: member }, input); recount(); },
     models(input: Parameters<typeof applyAgentModels>[1]) { applyAgentModels(db, input, roles()); recount(); },
     bodyPolicy(input: Parameters<typeof saveAgentBodyPolicy>[1]) { saveAgentBodyPolicy(db, input); },
+    // People, projects and the household's own settings.
+    member(input: Parameters<typeof householdSettings.setMember>[0]) { return householdSettings.setMember(input); },
+    agent(input: Parameters<typeof householdSettings.setAgent>[0]) { return householdSettings.setAgent(input); },
+    settings(input: Parameters<typeof householdSettings.setSettings>[0]) { return householdSettings.setSettings(input); },
+    project(input: Parameters<typeof projectSettings.save>[0]) { return projectSettings.save(input); },
+    accounts(input: { agent: string; github: string[] }) { return householdAccess.setAccounts(input); },
+    rule(input: Parameters<typeof ruleSettings.set>[0], owner: string) { return ruleSettings.set(input, owner); },
+    // Secrets and bridges.
+    secretRule(input: Parameters<SecretRequests['setRule']>[0]) { requests.setRule(input); },
+    secretDefault(answer: 'ask' | 'auto' | 'never') { db.insert(household).values({ secretsDefault: answer }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault: answer } }).run(); },
+    houseSecrets(input: Parameters<typeof setHouseSecrets>[1]) { setHouseSecrets(db, input); },
+    bridge(input: Parameters<BridgeSettings['change']>[0]) { return late.bridges!().change(input); },
+    /** File a proposal card on an agent's behalf, as household.propose does for an outside caller. */
+    propose(agent: string, change: { change: string; input: unknown; why: string }, where?: { conversation: string; member: string | null; project: string | null }) { return householdProposals.file(services.approvals, agent, change, where); },
     revokeMachine(id: string) { db.update(boxes).set({ revokedAt: now() }).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).run(); recount(); },
   };
   const services = {
@@ -284,9 +297,7 @@ export function sharedRoot(options: {
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);
-  registerSharedProjects(operations, db, services.projects);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);
-  registerSharedHouseholdMembers(operations, db, services.household);
   householdProposals.register(operations, services.approvals, bodyScope);
   const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => { tempo?.capacityChanged(); data.changed(); }));
   startupCleanups.push(stopHouseholdProposals);
@@ -382,7 +393,6 @@ export function sharedRoot(options: {
   });
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),options.workAnswerAuthority);
   registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
-  registerSharedApprovalRules(operations,db,services.approvalRules);
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules,options.workAnswerAuthority);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();

@@ -27,7 +27,7 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
  expect(app.refreshChanges).toBeUndefined();
  expect(await command(app,cookie,'secrets/set',{id:randomUUID(),name:'FORGE',value:'FICTITIOUS_GITHUB_TOKEN',mode:'add'})).toMatchObject({ok:true});
  const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
- expect(await command(app,cookie,'household/setProject',{id:'app',name:'App',members:[program.signinMember],agents:['assistant'],repositories:['github:acme/app']})).toMatchObject({ok:true});
+ app.writes.run(()=>app.services.setup.project({id:'app',name:'App',members:[program.signinMember],agents:['assistant'],repositories:['github:acme/app']}));
  await app.close();program.githubBindings={ACME:'FORGE'};writeFileSync(file,JSON.stringify(program),{mode:0o600});
  let token='FICTITIOUS_GITHUB_TOKEN',fail=false,hold=false,release!:()=>void,began!:()=>void;
  const realFetch=globalThis.fetch,requests=vi.fn<typeof fetch>(async(input,init)=>{

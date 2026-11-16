@@ -18,10 +18,6 @@ const command = z.discriminatedUnion('action', [
   z.object({action:z.literal('answer'),id,allow:z.boolean(),always:z.boolean()}).strict(),
   z.object({action:z.literal('cancel'),id}).strict(),
   z.object({action:z.literal('revoke'),id}).strict(),
-  z.object({action:z.literal('rule'),secret:secretName,answer,minutes,
-    agents:z.array(z.object({agent:secretAgent,when:z.enum(['on_request','at_start'])}).strict()).max(1000)}).strict(),
-  z.object({action:z.literal('default'),answer}).strict(),
-  houseSecretsInput.extend({action:z.literal('house')}).strict(),
 ]);
 const setInput=z.object({id:z.uuid(),name:secretName,mode:z.enum(['add','replace']),description:z.string().max(4000).optional(),value:z.string().refine(value=>Buffer.byteLength(value)>0&&Buffer.byteLength(value)<=65536)}).strict();
 const removeInput=z.object({id:z.uuid(),name:secretName}).strict();
@@ -64,9 +60,6 @@ export function registerSharedSecretCommands(operations:Operations, db:DataDatab
             else db.delete(secretGrants).where(eq(secretGrants.id,input.id)).run();
             break;
           }
-          case 'rule':requests.setRule({secret:input.secret,answer:input.answer,minutes:input.minutes,agents:input.agents});break;
-          case 'house':setHouseSecrets(db,input);ctx.changed('agentRunSettings',input.agent);break;
-          case 'default':db.insert(household).values({secretsDefault:input.answer}).onConflictDoUpdate({target:household.singleton,set:{secretsDefault:input.answer}}).run();break;
         }
       }catch(error){throw new OperationError('invalid',refusal(error,'Secret change could not complete'));}
       ctx.changed('secrets','metadata');return {saved:true as const};

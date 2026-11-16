@@ -171,8 +171,24 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   change(value,card.decidedBy);
   appliedCards.add(card.id);
  };
+
+ /** File the card. Installed code may call this directly; from outside it is household.propose. */
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null})=>{
+  const value=proposal.parse({change:raw.change,input:raw.input}),was=before(value);
+  if(value.change==='bodyPolicy'&&was===null)throw new OperationError('invalid','Unknown agent');
+  if(value.change==='boxSettings'&&was===null)throw new OperationError('not-found','No live machine has that id');
+  if(dangerOf(value)&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
+  if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
+  if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');
+  if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
+  rehearse(value);
+  return service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
+   agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
+   askedFrom:where?.conversation??'terminal',actingFor:where?.member??'unknown',what:summary(value,was),why:raw.why,...cardWords(value)});
+ };
  return{
   operation:[operation,apply] as const,
+  file,
   // Called after the outer Allow transaction commits, so readers see the change.
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
   register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>){
@@ -180,19 +196,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
     input:asked,output:z.object({id:z.string()}).strict(),may:agent,
     run(ctx,raw){
-     const value=proposal.parse({change:raw.change,input:raw.input}),was=before(value);
-     if(value.change==='bodyPolicy'&&was===null)throw new OperationError('invalid','Unknown agent');
-     if(value.change==='boxSettings'&&was===null)throw new OperationError('not-found','No live machine has that id');
-     if(dangerOf(value)&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
-     if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
-     if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');
-     if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
-     rehearse(value);
      const found=current?.(ctx.viewer);
      // Provenance is set here from the authenticated caller, never taken from input.
-     const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
-      agent:ctx.viewer.id,member:found?.cv.member??null,project:found?.cv.project??null,conversation:found?.cv.id??null,
-      askedFrom:found?.cv.id??'terminal',actingFor:found?.cv.member??'unknown',what:summary(value,was),why:raw.why,...cardWords(value)});
+     const card=file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id};
     },
    });

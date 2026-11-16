@@ -64,7 +64,7 @@ it('proposes member, agent and settings changes, and a denied card changes nothi
 it('refuses a card when what it would replace has changed, or when the change is no longer allowed', async () => {
   const f = fixture();
   const first = await f.call('household/propose', { change: 'settings', input: { commsDays: 7 }, why: 'Keep less' }, 'art');
-  expect((await f.call('household/setSettings', { commsDays: 10 }, 'sam')).status).toBe(200);
+  f.root.writes.run(() => f.root.services.setup.settings({ commsDays: 10 }));
   expect((await f.call('approvals/answer', { id: first.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'conflict' });
   expect(f.root.services.household.settings().commsDays).toBe(10);
   // A change that could never be allowed is refused when it is filed, in the words of the rule it breaks.
@@ -108,14 +108,15 @@ it('proposes one dangerous action, revoking a token by its label, and it takes e
   const filed = await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'lee' }, why: 'Lee lost the laptop' }, 'art');
   expect(f.db.select().from(approvals).get()).toMatchObject({ kind: 'dangerous', state: 'pending', target: 'household:tokenRevoke:lee', ask: 'Revoke token lee?',
     changeSummary: 'Revoke token lee: {"for":"lee","kind":"owner","label":"lee"} → revoked', ifYes: 'The token stops working at once. This cannot be undone.' });
-  expect((await f.call('household/setSettings', { commsDays: 9 }, 'lee')).status).toBe(403);
+  // Lee's token still works: the door knows Lee, and refuses only because Lee is not an owner.
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'deny' }, 'lee')).status).toBe(403);
   // Allowing a dangerous card takes a second, explicit yes. Without it nothing happens.
   expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'invalid', message: expect.stringContaining('cannot be undone') });
   expect(f.db.select().from(approvals).get()).toMatchObject({ state: 'pending' });
   expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeNull();
   expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
   expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeTruthy();
-  expect((await f.call('household/setSettings', { commsDays: 9 }, 'lee')).status).toBe(401);
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'deny' }, 'lee')).status).toBe(401);
   expect((await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'lee' }, why: 'again' }, 'art')).body).toMatchObject({ code: 'not-found' });
 });
 it('proposes revoking a machine and signing out a browser; a deny needs no confirmation and a setting card needs none either', async () => {

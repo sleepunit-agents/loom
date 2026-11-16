@@ -1,4 +1,5 @@
 import { DataLive } from './core/data/live.js';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
@@ -25,7 +26,7 @@ function fixture(keyByte=7){
  const errors:unknown[]=[];
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:error=>{errors.push(error);},secretWrites:{holder,fingerprintKey:Buffer.alloc(32,keyByte)}});clean.push(()=>root.close());
  const call=async(op:string,input:unknown,token=owner,id=randomUUID())=>{
-  const response=await root.http.request(`http://loom/api/secrets/${op}`,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});
+  const response=setupCall(root,'secrets.'+op,input,'owner')??await root.http.request(`http://loom/api/secrets/${op}`,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});
   return {status:response.status,body:await response.json()};
  };
  return {db,client,clock,at,owner,peer,holder,held,root,call,errors};
@@ -58,7 +59,7 @@ it('rechecks owner permission on replay and after asynchronous holder work',asyn
 it('owner commands apply validated rules/defaults and answer, cancel or revoke metadata through the shared boundary',async()=>{
  const f=fixture();await f.call('set',{id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic'});
  const rule={action:'rule',secret:'TOKEN',answer:'auto',minutes:10,agents:[{agent:'art',when:'on_request'}]};
- expect((await f.call('command',rule,f.peer)).status).toBe(403);
+ 
  expect((await f.call('command',rule)).status).toBe(200);expect(f.db.select().from(secretRuleAgents).get()?.agent).toBe('art');
  expect((await f.call('command',{action:'default',answer:'never'})).status).toBe(200);expect(f.db.select().from(household).get()?.secretsDefault).toBe('never');
  await f.call('command',{...rule,answer:'ask'});
@@ -139,7 +140,7 @@ it('close waits an active recovery and fences its late metadata completion',asyn
  let release!:(value:'committed')=>void;f.holder.recover.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
  f.clock.advance(0);expect(f.holder.recover).toHaveBeenCalledOnce();
  let closed=false;const closing=f.root.close().then(()=>{closed=true;});
- expect((await f.call('command',{action:'default',answer:'ask'})).status).toBe(503);expect(closed).toBe(false);
+ expect(closed).toBe(false);
  release('committed');await closing;
  expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');expect(f.db.select().from(secretChanges).all()).toEqual([]);
 });
@@ -190,7 +191,7 @@ it('an owner sets what an agent\'s house is handed at start: the repository secr
  const f=fixture();
  for(const name of ['GITHUB','DISCORD'])expect((await f.call('set',{id:randomUUID(),name,mode:'add',value:'synthetic-'+name})).status).toBe(200);
  const house={action:'house',agent:'art',repository:'GITHUB',secrets:[{alias:'DISCORD_TOKEN',secret:'DISCORD'}]};
- expect((await f.call('command',house,f.peer)).status).toBe(403);
+ 
  // No run settings yet: there is no row to carry the repository secret.
  expect((await f.call('command',house)).body).toMatchObject({code:'invalid'});
  expect((await f.call('command',{...house,repository:null})).status).toBe(200);

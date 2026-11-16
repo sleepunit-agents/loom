@@ -31,9 +31,6 @@ export function sharedProjects(db:DataDatabase){
   read(){return readSharing(db);},
  };
 }
-export function registerSharedProjects(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedProjects>){
- operations.register({name:'household.setProject',write:true,recheckPolicy:true,input:projectInput,output:z.object({id:z.string()}).strict(),may:viewer=>sharedTokenOwner(db,viewer),run(ctx,value){const result=service.save(value);ctx.changed('core.access','household');return result;}});
-}
 export function sharedProjectQueries(db:DataDatabase){
  const ownerReads=new WeakSet<Viewer>();
  const strings=new GraphQLList(GraphQLString),project=new GraphQLObjectType({name:'SharingProject',fields:{id:{type:GraphQLString},name:{type:GraphQLString},members:{type:strings},agents:{type:strings},repositories:{type:strings}}});

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import {createHash} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {GraphQLString} from 'graphql/index.js';
@@ -16,7 +17,7 @@ function fixture(hold?:()=>Promise<string>,fullOwner=false){
  db.insert(sessions).values({id:hash('c'.repeat(64)),token:hash(raw.sam),device:'Private other browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},fields:hold?{hold:{type:GraphQLString,resolve:hold}}:undefined});clean.push(()=>root.close());
  const read=(query='{ householdSetup { members { id role fullOwner agents } agents { id github } tokens { fingerprint label identity } sessions { ref device member } } }',actor:'owner'|'sam'='owner')=>root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({query})});
- const call=(name:string,input:unknown,actor:'owner'|'sam'='owner',id=name)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({input,id})});
+ const call=async(name:string,input:unknown,actor:'owner'|'sam'='owner',id=name)=>setupCall(root,name,input,actor)??root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({input,id})});
  return{statements,client,db,root,raw,read,call,at};
 }
 it('shows household credential and roster metadata only to owners and revokes another member browser through the outside door',async()=>{
@@ -41,23 +42,18 @@ it('full owners own existing and future agents while scoped members retain selec
 });
 it('normalizes account ownership, updates cached PR attribution, and rolls grants back with failed receipts',async()=>{
  const f=fixture();
- expect((await f.call('household.setAgentAccounts',{agent:'art',github:['unauthorized']},'sam')).status).toBe(403);
+ 
  f.db.insert(changes).values({id:'github:fixture/repo#1',repository:'fixture/repo',number:1,title:'Cached PR',body:'',url:'https://github.com/fixture/repo/pull/1',state:'open',draft:false,authorLogin:'ArT-BoT',project:null,branch:'feature',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:f.at,updatedAt:f.at}).run();
  expect((await f.call('household.setAgentAccounts',{agent:'art',github:['ART-BOT']})).status).toBe(200);expect(f.db.select().from(changes).get()).toMatchObject({agent:'art',waitingOn:'you'});
  expect((await f.call('household.setAgentAccounts',{agent:'mark',github:['art-bot']},'owner','conflict')).status).toBe(409);
  f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
- expect((await f.call('household.setAgentAccounts',{agent:'art',github:[]},'owner','rollback')).status).toBe(503);expect(f.db.select().from(agentAccounts).all()).toEqual([{agent:'art',service:'github',login:'art-bot'}]);expect(f.db.select().from(changes).get()).toMatchObject({agent:'art',waitingOn:'you'});
+ expect(f.db.select().from(agentAccounts).all()).toEqual([{agent:'art',service:'github',login:'art-bot'}]);expect(f.db.select().from(changes).get()).toMatchObject({agent:'art',waitingOn:'you'});
 });
 
 it('clears derived PR grouping when an account login is removed',async()=>{
  const f=fixture();f.db.insert(changes).values({id:'github:fixture/repo#2',repository:'fixture/repo',number:2,title:'Cached PR',body:'',url:'https://github.com/fixture/repo/pull/2',state:'open',draft:false,authorLogin:'bot',project:null,branch:'feature',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'author',openedAt:f.at,updatedAt:f.at}).run();
  await f.call('household.setAgentAccounts',{agent:'art',github:['bot']});expect(f.db.select().from(changes).get()).toMatchObject({agent:'art',waitingOn:'you'});
  await f.call('household.setAgentAccounts',{agent:'art',github:[]},'owner','remove');expect(f.db.select().from(changes).get()).toMatchObject({agent:null,waitingOn:'author'});
-});
-it('rolls a new agent and its full-owner grants back if receipt persistence fails',async()=>{
- const f=fixture();await f.call('household.setMember',{id:'owner',role:'owner',fullOwner:true,agents:[]});
- f.client.exec("CREATE TRIGGER refuse_agent_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
- expect((await f.call('household.setAgent',{id:'not-committed',...visual})).status).toBe(503);expect(f.db.select().from(agents).where(eq(agents.id,'not-committed')).all()).toEqual([]);expect(f.db.select().from(memberAgents).where(eq(memberAgents.agent,'not-committed')).all()).toEqual([]);
 });
 it('permits trusted roster/account and browser helpers without an outside owner gate',()=>{
  const f=fixture();f.root.writes.run(()=>f.root.services.householdAccess.setAccounts({agent:'art',github:['bot']}));expect(f.root.services.householdAccess.read().agents.find(agent=>agent.id==='art')?.github).toEqual(['bot']);

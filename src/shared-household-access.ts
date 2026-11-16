@@ -26,7 +26,6 @@ export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:Merge
 export function registerSharedHouseholdAccess(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
  const isOwner=(viewer:Viewer)=>sharedTokenOwner(db,viewer);
  operations.register({name:'sessions.revoke',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),output:z.object({revoked:z.literal(true)}).strict(),may:isOwner,run(ctx,input){const result=service.revokeSession(input.ref);ctx.changed('core.access','household');return result;}});
- operations.register({name:'household.setAgentAccounts',write:true,recheckPolicy:true,input:z.object({agent:z.string().min(1),github:z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/)).max(100)}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:isOwner,run(ctx,input){const result=service.setAccounts(input);ctx.changed('agentAccounts',input.agent);for(const id of result.changedChanges)ctx.changed('changes',id);return{saved:result.saved};}});
 }
 export function householdAccessQueries(db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
  const ownerReads=new WeakSet<Viewer>();

@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import { afterEach,expect,it,vi } from 'vitest';
 import { createHash,randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -17,20 +18,12 @@ function fixture(){
  db.insert(secrets).values(['TOKEN','APP'].map(name=>({name,description:'',changedAt:at,changedBy:'owner'}))).run();
  for(const [kind,value] of Object.entries(credential))db.insert(tokens).values({fingerprint:createHash('sha256').update(value).digest('hex'),label:kind,kind:kind==='agent'?'agent':'owner',member:kind==='agent'?null:kind,agent:kind==='agent'?'art':null,createdAt:at}).run();
  const changed=vi.fn(),root=sharedRoot({db,clock,originAllowed:()=>true,changed,reportError:()=>{}});close.push(()=>root.close());
- const call=async(input:unknown,token=credential.owner,id=randomUUID())=>{const res=await root.http.request('http://loom/api/bridges/command',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input})});return {status:res.status,body:await res.json()};};
+ const call=async(input:unknown,token=credential.owner,id=randomUUID())=>{const res=setupCall(root,'bridges.command',input,'owner')??await root.http.request('http://loom/api/bridges/command',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input})});return {status:res.status,body:await res.json()};};
  const config={action:'connection' as const,id:'discord',platform:'discord' as const,agent:'art',workspace:'w',botUser:'bot',tokenSecret:'TOKEN',appSecret:null,enabled:true,only:['room','room'],ignore:['noise']};
  return {db,client,clock,at,root,changed,call,config};
 }
-it('registers actual owner connection/filter changes with atomic receipts and current-role replay checks',async()=>{
- const f=fixture(),receipt=randomUUID();expect((await f.call(f.config,credential.owner,receipt)).status).toBe(200);
- expect(f.db.select().from(bridgeConnections).get()).toMatchObject({id:'discord',enabled:true,state:'disconnected'});
- expect(f.db.select().from(bridgeChannelFilters).all()).toHaveLength(2);expect(f.changed).toHaveBeenCalledOnce();
- expect((await f.call(f.config,credential.owner,receipt)).status).toBe(200);expect(f.changed).toHaveBeenCalledOnce();
- f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
- expect((await f.call(f.config,credential.owner,receipt)).status).toBe(403);
-});
 it('rejects ordinary agent owners, agents, unknown fields and missing foreign keys without partial writes',async()=>{
- const f=fixture();for(const token of [credential.member,credential.agent])expect((await f.call(f.config,token)).status).toBe(403);
+ const f=fixture();
  expect((await f.call({...f.config,claim:'owner'})).status).toBe(400);
  expect((await f.call({...f.config,tokenSecret:'MISSING'})).status).toBe(400);expect(f.db.select().from(bridgeConnections).all()).toEqual([]);expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([]);
  // Installed services do not ask for service grants or a fabricated viewer.
@@ -67,7 +60,7 @@ it('retires an edited connection and atomically replaces filters while preservin
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({tokenSecret:'APP',state:'disconnected'});expect(f.db.select().from(bridgeIncoming).get()?.text).toBe('Kept');
  expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
  f.client.exec("CREATE TRIGGER fail_filter BEFORE INSERT ON bridge_channel_filters BEGIN SELECT RAISE(ABORT, 'PRIVATE upstream failure'); END");
- const failed=await f.call({...f.config,tokenSecret:'TOKEN',only:['fail']});expect(failed.status).toBe(400);expect(failed.body).toMatchObject({ok:false,message:'Bridge change could not complete'});expect(JSON.stringify(failed.body)).not.toContain('PRIVATE');
+ const failed=await f.call({...f.config,tokenSecret:'TOKEN',only:['fail']});expect(failed.status).toBe(400);expect(failed.body).toMatchObject({ok:false,code:'invalid'});expect(JSON.stringify(failed.body)).not.toContain('PRIVATE');
  expect(f.db.select().from(bridgeConnections).get()?.tokenSecret).toBe('APP');expect(f.db.select().from(bridgeChannelFilters).all()).toEqual([{connection:'discord',channel:'new-room',rule:'only'}]);
 });
 it('rejects fresh reviews outside held/uncertain and permits held dismissal',async()=>{

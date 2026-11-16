@@ -33,6 +33,8 @@ async function commands(app:Home,link:string){
  const response=await fetch(link,{method:'POST',redirect:'manual'});expect(response.status).toBe(303);
  const cookie=response.headers.get('set-cookie')!.split(';')[0];
  return async(path:string,input:unknown)=>{
+  // Bridge settings have no outside command: installed code sets them, anyone else proposes.
+  if(path==='bridges/command'&&(input as {action?:string}).action!=='review'){app.writes.run(()=>app.services.setup.bridge(input as never));return;}
   const result=await fetch(app.url+'/api/'+path,{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});
   expect(result.status).toBe(200);expect(await result.json()).toMatchObject({ok:true});
  };

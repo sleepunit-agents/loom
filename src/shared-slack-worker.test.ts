@@ -41,7 +41,10 @@ it('runs Slack input through the actual worker/body and returns one reply to its
  // Drain the example household's two existing jobs before this single-job proof.
  const base={app,example,clock,home};expect((await nativeProtocolSmoke(base)).runs).toHaveLength(2);
  const signin=await fetch(link,{method:'POST',redirect:'manual'});expect(signin.status).toBe(303);const cookie=signin.headers.get('set-cookie')!.split(';')[0];
- const command=async(operation:string,input:unknown)=>{const response=await fetch(app.url+'/api/'+operation,{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ok:true});};
+ const command=async(operation:string,input:unknown)=>{
+  // Bridge settings have no outside command: installed code sets them, anyone else proposes.
+  if(operation==='bridges/command'&&(input as {action?:string}).action!=='review'){app.writes.run(()=>app.services.setup.bridge(input as never));return;}
+const response=await fetch(app.url+'/api/'+operation,{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ok:true});};
  await command('secrets/set',{id:randomUUID(),name:'SLACK_BOT',value:'FICTITIOUS_SLACK_BOT',mode:'add'});await command('secrets/set',{id:randomUUID(),name:'SLACK_APP',value:'FICTITIOUS_SLACK_APP',mode:'add'});
  await command('bridges/command',{action:'channel',platform:'slack',workspace:'TWORK',channel:'CROOM',answers:'moss',botsMayTalk:false});
  await command('bridges/command',{action:'person',platform:'slack',workspace:'TWORK',user:'UOWNER',member:'alex'});
