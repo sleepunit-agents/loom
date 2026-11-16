@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Turn one trigger off and on, and edit it.** `tempo.start` turns a stopped trigger back on; its next time is worked out from now, so nothing it missed fires. `tempo.edit` changes a trigger's words, file, times, days or label. Each edit is recorded in the new `trigger_edits` table with who made it and what the changed parts said before. Whoever could set the trigger may edit it; a project member who can stop a shared trigger cannot rewrite it. A trigger's words are now limited to 100,000 characters. An existing household database gains the table at start (schema number 3).
+
 - **A secret write no longer drops every bridge connection.** Only the connections that use the secret that changed are restarted.
 
 - **Remove and restore.** `household.propose` takes `remove` and `restore` for a member, agent, project or bridge connection. Nothing is deleted: the row gets `removed_at` and its history stays. A removed person or agent is no longer recognised as a caller, a removed agent does not run, a removed connection is switched off. An existing household database gains the four columns at its next start (schema number 2).

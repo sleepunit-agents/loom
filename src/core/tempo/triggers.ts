@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, max } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
-import { agentPauses, household, triggerLog, triggers } from '../data/schema.js';
+import { agentPauses, household, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import type { Clock } from '../clock.js';
 import { localDate, nextTime } from './calendar.js';
 
@@ -14,9 +14,17 @@ export const triggerInput = z.object({
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
   targetKind: z.enum(['operation', 'inbox']), target: text.nullable().optional(),
   toKind: z.enum(['person', 'agent']).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
-  instructions: z.string().nullable().optional(), file: text.nullable().optional(), note: text,
+  instructions: z.string().max(100_000).nullable().optional(), file: text.nullable().optional(), note: text,
 });
 export type NewTrigger = z.input<typeof triggerInput>;
+/** The parts of a standing trigger that can change after it is set. Who it is for, what it
+ * watches and what it does cannot: stop it and set another. */
+export const triggerEdit = z.object({
+  instructions: z.string().max(100_000).nullable().optional(), file: text.nullable().optional(),
+  times: text.optional(), days: text.nullable().optional(), note: text.optional(),
+}).strict();
+export type TriggerEdit = z.input<typeof triggerEdit>;
+const relativeFile = (file: string) => !/^(?:\/|[A-Za-z]:)/.test(file) && !file.split(/[\\/]/).includes('..');
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
@@ -63,16 +71,9 @@ export class TriggerEngine {
     if (v.targetKind === 'operation' && !v.target) throw new Error('Operation target needs a name');
     if (v.targetKind === 'operation' && this.effects.knows && !this.effects.knows(v.target!)) throw new Error('Unknown operation');
     if (v.sourceKind !== 'time' && !v.watches) throw new Error('Event trigger needs what it watches');
-    if (v.file && (/^(?:\/|[A-Za-z]:)/.test(v.file) || v.file.split(/[\\/]/).includes('..'))) throw new Error('Instructions must be a relative repository file');
+    if (v.file && !relativeFile(v.file)) throw new Error('Instructions must be a relative repository file');
     if (v.file && v.instructions) throw new Error('Give instructions or a file');
-    let due: string | null = null;
-    if (v.sourceKind === 'time') {
-      if (!v.times) throw new Error('Time trigger needs a time');
-      const at = nextTime(v.times, v.days ?? null, this.clock.now() - 1, this.zone());
-      if (!Number.isFinite(at)) throw new Error('Time is in the past');
-      if (v.lifespan === 'today' && localDate(at, this.zone()) !== localDate(this.clock.now(), this.zone())) throw new Error('No time left today');
-      due = new Date(at).toISOString();
-    }
+    const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
       this.db.insert(triggers).values({ ...v, id, enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
@@ -85,6 +86,51 @@ export class TriggerEngine {
     this.open();
     this.db.transaction(() => { this.get(id); this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, id)).run(); this.log(id, 'stopped'); });
     this.tick();
+  }
+  /** Turn a stopped trigger back on. Its next time is worked out from now; nothing missed while it was off fires. */
+  start(id: string): void {
+    this.open();
+    this.db.transaction(() => {
+      const t = this.get(id);
+      if (t.enabled) throw new Error('Trigger is already on');
+      if (t.state !== 'stopped' && t.state !== 'failed') throw new Error('Only a stopped trigger can be started');
+      if (this.expired(t)) throw new Error('No time left today');
+      this.db.update(triggers).set({ enabled: true, state: this.paused(t) ? 'held' : 'standing', nextDueAt: this.due(t.sourceKind, t.times, t.days, t.lifespan), changedAt: this.now() }).where(eq(triggers.id, id)).run();
+      this.log(id, 'started');
+    });
+    this.tick();
+  }
+  /** Change a trigger's words, times or label, keeping what the changed parts said before and who changed them. */
+  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }): void {
+    this.open();
+    const c = triggerEdit.parse(change);
+    this.db.transaction(() => {
+      const t = this.get(id);
+      // Giving the words drops the file and giving a file drops the words: a trigger reads from one place.
+      if (c.instructions != null && c.file === undefined) c.file = null;
+      if (c.file != null && c.instructions === undefined) c.instructions = null;
+      if (c.file && c.instructions) throw new Error('Give instructions or a file');
+      if (c.file && !relativeFile(c.file)) throw new Error('Instructions must be a relative repository file');
+      if ((c.times !== undefined || c.days !== undefined) && t.sourceKind !== 'time') throw new Error('Only a time trigger has times');
+      const before: Record<string, string | null> = {};
+      for (const key of ['instructions', 'file', 'times', 'days', 'note'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
+      if (!Object.keys(before).length) return;
+      const next = { ...t, ...c };
+      const due = t.enabled && ('times' in before || 'days' in before) ? this.due(t.sourceKind, next.times, next.days, t.lifespan) : t.nextDueAt;
+      this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
+      const seq = (this.db.select({ seq: max(triggerEdits.seq) }).from(triggerEdits).get()?.seq ?? 0) + 1;
+      this.db.insert(triggerEdits).values({ seq, trigger: id, at: this.now(), byKind: by.kind, by: by.id, before: JSON.stringify(before) }).run();
+      this.log(id, 'edited', Object.keys(before).join(', '));
+    });
+    this.tick();
+  }
+  private due(sourceKind: Trigger['sourceKind'], times: string | null | undefined, days: string | null | undefined, lifespan: Trigger['lifespan']): string | null {
+    if (sourceKind !== 'time') return null;
+    if (!times) throw new Error('Time trigger needs a time');
+    const at = nextTime(times, days ?? null, this.clock.now() - 1, this.zone());
+    if (!Number.isFinite(at)) throw new Error('Time is in the past');
+    if (lifespan === 'today' && localDate(at, this.zone()) !== localDate(this.clock.now(), this.zone())) throw new Error('No time left today');
+    return new Date(at).toISOString();
   }
   pause(agent: string): void {
     this.open();

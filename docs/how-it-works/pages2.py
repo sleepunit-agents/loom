@@ -207,7 +207,7 @@ def tempo():
     panels = [
         ("A trigger's four parts", "violet", opts(("source", "a time, a pull request changing, an answer arriving, a job stopping"), ("lifespan", "until stopped, for today, the next time only"),
                                                  ("owner", "who set it"), ("target", "run an operation, or drop an item in an inbox")),
-         "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer."),
+         "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them."),
         ("Fire, inbox, start", "pink", flow("trigger", "fires", "inbox", "settles", "agent"),
          "A trigger fires in code, with no model. It drops an item in the recipient's inbox. After a short settle time, a non-empty inbox starts an agent's body or notifies a person, with everything waiting at once. Pausing an agent holds its triggers."),
         ("The sweep", "cyan", log(("Changes", "2 open, oldest 3 days"), ("Tasks", "4 ready, oldest 6 days"), ("Approvals", "1 pending, 2 hours")),
@@ -229,7 +229,7 @@ def tempo():
         [("What it carries.", "A trigger names who set it, the agent or person it is for, and its project."),
          ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them."),
          ("Checked at the door.", DOOR)],
-        [("", ["triggers", "trigger_log", "agent_pauses", "tempo_settings"])], chat=(tchat, "Tempo"))
+        [("", ["triggers", "trigger_log", "trigger_edits", "agent_pauses", "tempo_settings"])], chat=(tchat, "Tempo"))
 
 # ───────────────────────── 5 Changes
 def changes():

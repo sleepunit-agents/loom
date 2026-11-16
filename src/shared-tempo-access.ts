@@ -41,7 +41,15 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
   switch (access.action) {
     case 'volume': return recipient(access.item.toKind, access.item.to) && visibleItem(access.item.id);
     case 'pause': case 'resume': return ownsAgent(access.agent);
-    case 'stop': case 'runNow':
+    // Editing follows setting: whoever could set this trigger for this recipient may change its words and times.
+    case 'edit': {
+      const t = access.trigger;
+      const authored = owner || (t.ownerKind === 'agent' ? !!t.owner && ownsAgent(t.owner) :
+        t.ownerKind === 'member' && viewer.kind === 'member' && t.owner === viewer.id);
+      if (!authored || t.project && !sharedProject(t.project)) return false;
+      return t.toKind && t.to ? recipient(t.toKind, t.to) : owner || (t.ownerKind === 'agent' && !!t.owner && ownsAgent(t.owner));
+    }
+    case 'stop': case 'start': case 'runNow':
       if (access.trigger.targetKind === 'operation' && !access.trigger.toKind && access.trigger.ownerKind === 'agent' && access.trigger.owner && ownsAgent(access.trigger.owner)) return true;
       return !!db.select({ id: triggers.id }).from(triggers)
       .where(and(eq(triggers.id, access.trigger.id), tempoVisibility(viewer).triggers!(getTableColumns(triggers)))).get();

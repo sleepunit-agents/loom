@@ -701,6 +701,19 @@ CREATE TABLE `trigger_log` (
 	CONSTRAINT "trigger_log_at_utc" CHECK("trigger_log"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "trigger_log"."at") = "trigger_log"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "trigger_log"."at") = "trigger_log"."at", 0))
 );
 
+CREATE TABLE `trigger_edits` (
+	`seq` integer PRIMARY KEY NOT NULL,
+	`trigger` text NOT NULL,
+	`at` text NOT NULL,
+	`by_kind` text NOT NULL,
+	`by` text NOT NULL,
+	`before` text NOT NULL,
+	FOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "trigger_edits_at_utc" CHECK("trigger_edits"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "trigger_edits"."at") = "trigger_edits"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "trigger_edits"."at") = "trigger_edits"."at", 0)),
+	CONSTRAINT "trigger_edits_by_kind_choice" CHECK("trigger_edits"."by_kind" in ('member', 'agent'))
+);
+
+CREATE INDEX `trigger_edits_trigger_idx` ON `trigger_edits` (`trigger`);
 CREATE TABLE `agent_pauses` (
 	`agent` text PRIMARY KEY NOT NULL,
 	`since` text NOT NULL,

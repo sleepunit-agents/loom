@@ -37,13 +37,14 @@ beforeEach(() => {
   rows.forEach((row, i) => {
     insert.run(...row, row[0], `words ${row[0]}`);
     client.prepare("INSERT INTO trigger_log (seq,trigger,at,event,note) VALUES (?,?,'2026-11-14T00:00:00Z','set',?)").run(i + 1, row[0], `log ${row[0]}`);
+    client.prepare("INSERT INTO trigger_edits (seq,trigger,at,by_kind,\"by\",\"before\") VALUES (?,?,'2026-11-14T00:00:00Z','member','owner',?)").run(i + 1, row[0], `was ${row[0]}`);
   });
 });
 afterEach(() => client.close());
 const schemaFor = (viewer: Viewer) => dataQueries(client, {
-  tables: ['triggers','triggerLog','agentPauses'], visibility: tempoVisibility(viewer),
+  tables: ['triggers','triggerLog','triggerEdits','agentPauses'], visibility: tempoVisibility(viewer),
 });
-const source = '{ triggers(orderBy:{id:{direction:asc,priority:0}}) { id instructions } triggerLog(orderBy:{seq:{direction:asc,priority:0}}) { trigger note } agentPauses(orderBy:{agent:{direction:asc,priority:0}}) { agent } }';
+const source = '{ triggers(orderBy:{id:{direction:asc,priority:0}}) { id instructions } triggerLog(orderBy:{seq:{direction:asc,priority:0}}) { trigger note } triggerEdits(orderBy:{seq:{direction:asc,priority:0}}) { trigger before } agentPauses(orderBy:{agent:{direction:asc,priority:0}}) { agent } }';
 const shared = ['b-project','c-owned','g-operation'];
 
 it.each([
@@ -63,6 +64,7 @@ it.each([
   expect(result.errors).toBeUndefined();
   expect(result.data?.triggers).toEqual(ids.map(id => ({id,instructions:`words ${id}`})));
   expect(result.data?.triggerLog).toEqual(ids.map(trigger => ({trigger,note:`log ${trigger}`})));
+  expect(result.data?.triggerEdits).toEqual(ids.map(trigger => ({trigger,before:`was ${trigger}`})));
   expect(result.data?.agentPauses).toEqual(pauses.map(agent => ({agent})));
 });
 
@@ -91,7 +93,7 @@ it('rechecks project membership, agent ownership, recipient and owner role in re
     const result=await graphql({schema,source});
     expect(result.errors).toBeUndefined();
     // Losing projects and agents leaves a person only the trigger they set for themselves.
-    expect(result.data).toEqual(schema===sam?{triggers:[{id:'d-person',instructions:'words d-person'}],triggerLog:[{trigger:'d-person',note:'log d-person'}],agentPauses:[]}:{triggers:[],triggerLog:[],agentPauses:[]});
+    expect(result.data).toEqual(schema===sam?{triggers:[{id:'d-person',instructions:'words d-person'}],triggerLog:[{trigger:'d-person',note:'log d-person'}],triggerEdits:[{trigger:'d-person',before:'was d-person'}],agentPauses:[]}:{triggers:[],triggerLog:[],triggerEdits:[],agentPauses:[]});
   }
   expect((await graphql({schema:art,source})).data?.triggers).toEqual([{id:'c-owned',instructions:'words c-owned'}]);
   client.exec("UPDATE triggers SET \"to\"='hidden' WHERE id='c-owned'");

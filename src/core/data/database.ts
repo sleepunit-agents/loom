@@ -31,6 +31,20 @@ export function createDataSchema(client: Database.Database, now: () => string = 
 const upgrades: readonly (readonly string[])[] = [
   // 2: removing a member, agent, project or bridge connection keeps the row and its history.
   ['members', 'agents', 'projects', 'bridge_connections'].map(table => `ALTER TABLE ${table} ADD COLUMN removed_at text CHECK (removed_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', removed_at) = removed_at or strftime('%Y-%m-%dT%H:%M:%fZ', removed_at) = removed_at, 0))`),
+  // 3: what a trigger said before each edit, and who made it.
+  [`CREATE TABLE trigger_edits (
+	seq integer PRIMARY KEY NOT NULL,
+	trigger text NOT NULL,
+	at text NOT NULL,
+	by_kind text NOT NULL,
+	by text NOT NULL,
+	before text NOT NULL,
+	FOREIGN KEY (trigger) REFERENCES triggers(id) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "trigger_edits_at_utc" CHECK("trigger_edits"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "trigger_edits"."at") = "trigger_edits"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "trigger_edits"."at") = "trigger_edits"."at", 0)),
+	CONSTRAINT "trigger_edits_by_kind_choice" CHECK("trigger_edits"."by_kind" in ('member', 'agent'))
+)`,
+  // Written exactly as the fresh schema writes it: startup compares an index's text.
+  'CREATE INDEX `trigger_edits_trigger_idx` ON `trigger_edits` (`trigger`)'],
 ];
 /** Bring an existing household database up to this program's shape. Safe to run at every start. */
 export function upgradeDataSchema(client: Database.Database, now: () => string = () => new Date().toISOString()) {

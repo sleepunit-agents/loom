@@ -427,6 +427,12 @@ area("tempo", "Tempo",
     ("at", "time", "When.", ""),
     ("event", "text", "Set, fired, held, stopped, failed and so on.", ""),
     ("note", "text", "Any detail.", "")]),
+  T("trigger_edits", "What a trigger said before each edit, and who made it.", [
+    ("seq", "number", "Its position.", ""),
+    ("trigger", "id", "The trigger.", "triggers"),
+    ("at", "time", "When it was edited.", ""),
+    ("by_kind, by", "choice(member, agent) + id", "Who edited it.", "members, agents"),
+    ("before", "document", "What the edited parts said before: the words, the file, the times, the days or the label.", "")]),
   T("agent_pauses", "Agents whose triggers are being held.", [
     ("agent", "id", "The paused agent.", "agents"),
     ("since", "time", "When it was paused.", "")]),

@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, household, inbox, members, triggerLog, triggers } from '../data/schema.js';
+import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
 import { TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
@@ -214,4 +214,50 @@ it('refuses an operation target the program cannot run, when the trigger is set'
   const f = fixture({ knows: name => name === 'tempo.sweep' });
   expect(() => f.engine.set({ ...f.base, targetKind: 'operation', target: 'nothing.here', toKind: undefined, to: undefined, instructions: undefined })).toThrow('Unknown operation');
   expect(f.engine.set({ ...f.base, targetKind: 'operation', target: 'tempo.sweep', instructions: undefined }).state).toBe('standing');
+});
+it('turns one stopped lane back on from now, without firing what it missed, and leaves the agent\'s others alone', () => {
+  const { engine, clock, base, items, row, db } = fixture();
+  const lane = engine.set({ ...base, times: '12:10', lifespan: 'until-stopped', instructions: 'Triage' });
+  const other = engine.set({ ...base, times: '12:20', lifespan: 'until-stopped', instructions: 'Tend' });
+  engine.stop(lane.id); expect(row(lane.id)).toMatchObject({ enabled: false, state: 'stopped', nextDueAt: null });
+  clock.advance(15 * 60_000); expect(items()).toEqual([]);
+  expect(() => engine.start(other.id)).toThrow('already on');
+  engine.start(lane.id);
+  expect(row(lane.id)).toMatchObject({ enabled: true, state: 'standing', nextDueAt: '2026-11-15T18:10:00.000Z' });
+  expect(items()).toEqual([]);
+  clock.advance(5 * 60_000); expect(items().map(i => i.words)).toEqual(['Tend']);
+  expect(db.select().from(triggerLog).where(eq(triggerLog.trigger, lane.id)).all().map(l => l.event)).toEqual(['set', 'stopped', 'started']);
+  engine.stop(lane.id); engine.pause('art'); engine.start(lane.id); expect(row(lane.id).state).toBe('held');
+});
+it('refuses to start a one-off whose time has passed or a trigger that has fired', () => {
+  const { engine, clock, base, row } = fixture();
+  const passed = engine.set(base), fired = engine.set({ ...base, times: '2026-11-14T18:00:05Z' });
+  engine.stop(passed.id); clock.advance(60_000);
+  expect(() => engine.start(passed.id)).toThrow('Time is in the past'); expect(row(passed.id).enabled).toBe(false);
+  expect(() => engine.start(fired.id)).toThrow('Only a stopped trigger');
+});
+it('edits a lane\'s words and times, keeps what they said before and who changed them, and fires the new words', () => {
+  const { engine, clock, base, items, row, db } = fixture();
+  const lane = engine.set({ ...base, times: '12:10', lifespan: 'until-stopped', instructions: 'Triage' });
+  const edits = () => db.select().from(triggerEdits).all().map(e => ({ ...e, before: JSON.parse(e.before) }));
+  engine.edit(lane.id, { instructions: 'Triage' }, { kind: 'agent', id: 'art' }); expect(edits()).toEqual([]);
+  engine.edit(lane.id, { instructions: 'Triage carefully', times: '12:05' }, { kind: 'member', id: 'jonathan' });
+  expect(row(lane.id)).toMatchObject({ instructions: 'Triage carefully', times: '12:05', nextDueAt: '2026-11-14T18:05:00.000Z', state: 'standing' });
+  clock.advance(60_000);
+  engine.edit(lane.id, { note: 'Nightly triage' }, { kind: 'agent', id: 'art' });
+  expect(edits()).toEqual([
+    { seq: 1, trigger: lane.id, at: '2026-11-14T18:00:00.000Z', byKind: 'member', by: 'jonathan', before: { instructions: 'Triage', times: '12:10' } },
+    { seq: 2, trigger: lane.id, at: '2026-11-14T18:01:00.000Z', byKind: 'agent', by: 'art', before: { note: 'Test' } }]);
+  expect(db.select().from(triggerLog).where(eq(triggerLog.event, 'edited')).all().map(l => l.note)).toEqual(['instructions, times', 'note']);
+  clock.advance(4 * 60_000); expect(items().map(i => i.words)).toEqual(['Triage carefully']);
+  engine.edit(lane.id, { file: 'routines/triage.md' }, { kind: 'agent', id: 'art' });
+  expect(row(lane.id)).toMatchObject({ instructions: null, file: 'routines/triage.md' });
+  expect(() => engine.edit(lane.id, { file: '../x', instructions: null }, { kind: 'agent', id: 'art' })).toThrow('relative repository file');
+  expect(() => engine.edit(lane.id, { file: 'a.md', instructions: 'b' }, { kind: 'agent', id: 'art' })).toThrow('Give instructions or a file');
+  expect(() => engine.edit(lane.id, { times: 'never' }, { kind: 'agent', id: 'art' })).toThrow();
+  expect(row(lane.id)).toMatchObject({ times: '12:05', file: 'routines/triage.md' });
+  engine.stop(lane.id); engine.edit(lane.id, { times: '12:30' }, { kind: 'agent', id: 'art' });
+  expect(row(lane.id)).toMatchObject({ times: '12:30', enabled: false, nextDueAt: null });
+  const answer = engine.set({ ...base, sourceKind: 'answer', watches: 'approval:a', times: undefined });
+  expect(() => engine.edit(answer.id, { times: '12:00' }, { kind: 'agent', id: 'art' })).toThrow('Only a time trigger');
 });

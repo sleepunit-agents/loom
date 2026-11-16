@@ -744,6 +744,20 @@ export const triggerLog = sqliteTable('trigger_log', {
   check('trigger_log_at_utc', utc(t.at)),
 ]);
 
+/** What a trigger said before each edit, and who made it. */
+export const triggerEdits = sqliteTable('trigger_edits', {
+  seq: integer('seq').primaryKey().notNull(),
+  trigger: text('trigger').notNull().references((): AnySQLiteColumn => triggers.id),
+  at: text('at').notNull(),
+  byKind: text('by_kind', { enum: ["member", "agent"] }).notNull(),
+  by: text('by').notNull(),
+  before: text('before').notNull(),
+}, t => [
+  check('trigger_edits_at_utc', utc(t.at)),
+  check('trigger_edits_by_kind_choice', sql`${t.byKind} in ('member', 'agent')`),
+  index('trigger_edits_trigger_idx').on(t.trigger),
+]);
+
 /** Agents whose triggers are being held. */
 export const agentPauses = sqliteTable('agent_pauses', {
   agent: text('agent').primaryKey().notNull().references((): AnySQLiteColumn => agents.id),
@@ -1547,10 +1561,15 @@ export const approvalRecordRelations = relations(approvalRecord, ({ one }) => ({
 export const triggersRelations = relations(triggers, ({ one, many }) => ({
   projectRow: one(projects, { fields: [triggers.project], references: [projects.id], relationName: 'triggers_project' }),
   triggerLogByTrigger: many(triggerLog, { relationName: 'trigger_log_trigger' }),
+  triggerEditsByTrigger: many(triggerEdits, { relationName: 'trigger_edits_trigger' }),
 }));
 
 export const triggerLogRelations = relations(triggerLog, ({ one }) => ({
   triggerRow: one(triggers, { fields: [triggerLog.trigger], references: [triggers.id], relationName: 'trigger_log_trigger' }),
+}));
+
+export const triggerEditsRelations = relations(triggerEdits, ({ one }) => ({
+  triggerRow: one(triggers, { fields: [triggerEdits.trigger], references: [triggers.id], relationName: 'trigger_edits_trigger' }),
 }));
 
 export const agentPausesRelations = relations(agentPauses, ({ one }) => ({
@@ -1886,6 +1905,7 @@ export const tables = {
   approvalRecord,
   triggers,
   triggerLog,
+  triggerEdits,
   agentPauses,
   tempoSettings,
   changes,
@@ -1967,6 +1987,7 @@ export const schema = { ...tables, ...plumbing,
   approvalRecordRelations,
   triggersRelations,
   triggerLogRelations,
+  triggerEditsRelations,
   agentPausesRelations,
   changesRelations,
   changeChecksRelations,

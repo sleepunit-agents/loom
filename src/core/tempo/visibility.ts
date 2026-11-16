@@ -31,6 +31,7 @@ export function tempoVisibility(viewer: Viewer): QueryVisibility {
     or (${f.targetKind} = 'operation' and ${f.toKind} is null and ${f.to} is null and ${f.ownerKind} = 'agent' and ${ownedAgent(f.owner)}))`;
   return {
     triggers: trigger,
+    triggerEdits: f => sql`exists (select 1 from ${triggers} where ${triggers.id} = ${f.trigger} and ${trigger(getTableColumns(triggers))})`,
     triggerLog: f => sql`exists (select 1 from ${triggers} where ${triggers.id} = ${f.trigger} and ${trigger(getTableColumns(triggers))})`,
     agentPauses: f => sql`(${owner} or ${ownedAgent(f.agent)} or exists (select 1 from ${projectAgents} where ${projectAgents.agent} = ${f.agent} and ${project(projectAgents.project)}))`,
   };

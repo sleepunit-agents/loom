@@ -2,7 +2,7 @@
   "page": "tempo",
   "title": "Tempo",
   "ownerTask": "t-2238",
-  "sourceSha256": "5cdad3fe7519368385ddee7e7b9fb5dc38d59a1e2d476a419f85219baee69c09",
+  "sourceSha256": "adeb844216fd031f070e6b14bb5cd7547b96fe78d1f5389ae840591f62035afa",
   "promises": [
     {
       "id": "tempo-001",
@@ -65,7 +65,7 @@
     },
     {
       "id": "tempo-012",
-      "promise": "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer.",
+      "promise": "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer. One trigger can be stopped and started again without touching the rest. Its words, times and label can be edited, and loom keeps what they said before and who changed them.",
       "source": "docs/how-it-works/site/tempo.html#how-h"
     },
     {
@@ -172,6 +172,7 @@
   "modelTables": [
     "triggers",
     "trigger_log",
+    "trigger_edits",
     "agent_pauses",
     "tempo_settings"
   ]

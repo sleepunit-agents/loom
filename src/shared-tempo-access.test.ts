@@ -45,7 +45,7 @@ it('shares existing trigger controls by project, agent ownership and owner role,
  const f=fixture();
  f.client.prepare(`INSERT INTO triggers(id,owner_kind,source_kind,lifespan,target_kind,to_kind,"to",project,note,enabled,state,created_at,changed_at) VALUES('shared','household','time','once','inbox','agent','mark','pond','Shared',1,'standing',?,?)`).run(f.now(),f.now());
  const trigger=f.db.select().from(triggers).get()!;
- for(const action of ['stop','runNow'] as const){
+ for(const action of ['stop','start','runNow'] as const){
   expect(f.can('member','owner',{action,trigger})).toBe(true);
   expect(f.can('member','sam',{action,trigger})).toBe(true);
   expect(f.can('member','other',{action,trigger})).toBe(false);
@@ -73,10 +73,25 @@ it('lets the owning agent control its operation trigger without inventing a reci
  const f=fixture();
  f.client.prepare(`INSERT INTO triggers(id,owner_kind,owner,source_kind,lifespan,target_kind,target,note,enabled,state,created_at,changed_at) VALUES('operation','agent','art','time','until-stopped','operation','custom','Operation',1,'standing',?,?)`).run(f.now(),f.now());
  const trigger=f.db.select().from(triggers).get()!;
- for(const action of ['stop','runNow'] as const){
+ for(const action of ['stop','start','runNow'] as const){
   expect(f.can('agent','art',{action,trigger})).toBe(true);
   expect(f.can('member','sam',{action,trigger})).toBe(true);
   expect(f.can('agent','mark',{action,trigger})).toBe(false);
   expect(f.can('member','other',{action,trigger})).toBe(false);
  }
+});
+it('lets whoever could set a trigger edit it: a project member can stop a shared trigger but not rewrite it',()=>{
+ const f=fixture(),insert=f.client.prepare(`INSERT INTO triggers(id,owner_kind,owner,source_kind,lifespan,target_kind,to_kind,"to",project,note,enabled,state,created_at,changed_at) VALUES(?,?,?,'time','until-stopped','inbox','agent',?,?,'Lane',1,'standing',?,?)`);
+ insert.run('shared','household',null,'mark','pond',f.now(),f.now());insert.run('lane','agent','art','art',null,f.now(),f.now());
+ const row=(id:string)=>f.db.select().from(triggers).all().find(t=>t.id===id)!;
+ expect(f.can('member','sam',{action:'stop',trigger:row('shared')})).toBe(true);
+ expect(f.can('member','sam',{action:'edit',trigger:row('shared')})).toBe(false);
+ expect(f.can('agent','mark',{action:'edit',trigger:row('shared')})).toBe(false);
+ expect(f.can('member','owner',{action:'edit',trigger:row('shared')})).toBe(true);
+ expect(f.can('agent','art',{action:'edit',trigger:row('lane')})).toBe(true);
+ expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(true);
+ expect(f.can('member','other',{action:'edit',trigger:row('lane')})).toBe(false);
+ expect(f.can('agent','mark',{action:'edit',trigger:row('lane')})).toBe(false);
+ expect(f.can('runner','art',{action:'edit',trigger:row('lane')})).toBe(false);
+ f.client.exec('DELETE FROM member_agents');expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(false);
 });

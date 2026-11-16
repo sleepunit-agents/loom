@@ -10,11 +10,11 @@ import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
 import { Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
-import { triggerInput, type NewTrigger, type Trigger } from './triggers.js';
+import { triggerEdit, triggerInput, type NewTrigger, type Trigger } from './triggers.js';
 
 export type TempoAccess =
   | { action: 'set'; trigger: NewTrigger }
-  | { action: 'stop' | 'runNow'; trigger: Trigger }
+  | { action: 'stop' | 'start' | 'runNow' | 'edit'; trigger: Trigger }
   | { action: 'pause' | 'resume'; agent: string }
   | { action: 'volume'; item: typeof inbox.$inferSelect };
 export interface TempoOperationOptions {
@@ -33,7 +33,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     const scope=options.mailboxReceiptScope?.(identity.actor);
     return createHash('sha256').update(scope===undefined?canonical:JSON.stringify([scope,canonical])).digest('hex');
   }};
-  const triggerAccess = (viewer: Viewer, target: string, action: 'stop' | 'runNow') => {
+  const triggerAccess = (viewer: Viewer, target: string, action: 'stop' | 'start' | 'runNow' | 'edit') => {
     const trigger = db.select().from(triggers).where(eq(triggers.id, target)).get();
     return !!trigger && options.authorize(viewer, { action, trigger });
   };
@@ -41,11 +41,19 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
     run(ctx, trigger) { const row = tempo.triggers.set(trigger); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
-  for (const action of ['stop', 'runNow'] as const) operations.register(operation({ ...common,
+  for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,
     may: (viewer, input) => triggerAccess(viewer, input.id, action),
     run(ctx, input) {
       tempo.triggers[action](input.id); ctx.changed('triggers', input.id); return { saved: true };
+    },
+  }));
+  operations.register(operation({ ...common, name: 'tempo.edit', input: triggerEdit.extend({ id: z.string().min(1) }).strict(), output: saved,
+    may: (viewer, input) => (viewer.kind === 'member' || viewer.kind === 'agent') && triggerAccess(viewer, input.id, 'edit'),
+    run(ctx, { id: target, ...change }) {
+      if (ctx.viewer.kind !== 'member' && ctx.viewer.kind !== 'agent') throw new Error('Only a person or an agent edits a trigger');
+      tempo.triggers.edit(target, change, { kind: ctx.viewer.kind, id: ctx.viewer.id });
+      ctx.changed('triggers', target); ctx.changed('triggerEdits', target); return { saved: true };
     },
   }));
   for (const action of ['pause', 'resume'] as const) operations.register(operation({ ...common,

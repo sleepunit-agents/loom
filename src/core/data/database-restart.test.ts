@@ -20,12 +20,12 @@ it('applies the supported initial schema once and retains its migration receipt 
     // This is the normal prepared-home restart path, not a second install.
     const reopened=dataDatabase(client,()=> '2026-11-16T00:00:00.000Z');
     expect(reopened.query.members.findMany().sync()).toMatchObject([{id:'fictional'}]);
-    expect(client.prepare('SELECT * FROM migrations').all()).toEqual([{number:1,applied_at:at},{number:2,applied_at:at}]);
+    expect(client.prepare('SELECT * FROM migrations').all()).toEqual([{number:1,applied_at:at},{number:2,applied_at:at},{number:3,applied_at:at}]);
     expect(client.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").all()).toEqual(shape);
     // Even an accidental attempt to install twice fails without replacing data
     // or silently re-applying a shape change under a new timestamp.
     expect(()=>createDataSchema(client!)).toThrow('requires an empty database');
-    expect(client.prepare('SELECT * FROM migrations').all()).toEqual([{number:1,applied_at:at},{number:2,applied_at:at}]);
+    expect(client.prepare('SELECT * FROM migrations').all()).toEqual([{number:1,applied_at:at},{number:2,applied_at:at},{number:3,applied_at:at}]);
     expect(reopened.query.members.findMany().sync()).toMatchObject([{id:'fictional'}]);
   } finally {
     if(client?.open)client.close();

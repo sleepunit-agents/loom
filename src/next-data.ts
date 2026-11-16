@@ -32,7 +32,7 @@ import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
-      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
+      'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'triggerEdits', 'agentPauses'] as const;
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead, programRecords?: (viewer:Viewer)=>readonly string[]|undefined) {
   const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
