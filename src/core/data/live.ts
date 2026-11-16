@@ -110,6 +110,7 @@ export class DataLive {
           // settles. The losing execution stays observed, including rejection.
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
           const measure = initial; initial = false;
+          const readVersion = this.version;
           const result = await Promise.race([
             this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure),
             cancellation,
@@ -117,8 +118,13 @@ export class DataLive {
           cancel = undefined;
           if (ended) break;
           if (this.stopped || result === cancelled) throw new Error('Live data access ended');
-          if (result.errors?.length) throw result.errors[0];
           if (!options.valid() || this.stopped) throw new Error('Live data access ended');
+          if (result.errors?.length) {
+            // Only a committed change makes an error stale. Metadata wakeups
+            // must not hide a stable resolver failure.
+            if (this.version !== readVersion) continue;
+            throw result.errors[0];
+          }
           // The generator resolves asynchronously. A commit while execution
           // yielded invalidates that result before any words leave this stream.
           if (dirty) continue;

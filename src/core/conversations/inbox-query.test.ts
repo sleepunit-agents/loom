@@ -1,10 +1,11 @@
+import { DataLive } from '../data/live.js';
 import {sealHandoff} from './handoff-words.js';
 import Database from 'better-sqlite3';
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, household, inbox, members, messages, threads } from '../data/schema.js';
+import { actionResults, agents, household, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { InboxQueries, inboxQueryFields } from './inbox-query.js';
 const clients: Database.Database[] = [];
@@ -490,4 +491,17 @@ it('matches handoff metadata without decrypting wording even on a noncanonical p
  f.db.insert(inbox).values({id:'in-handoff-search',state:'waiting',volume:'full',toKind:'person',to:'alice',source:'handoff',sourceId:'parent-search-witness',fromKind:'agent',fromId:'art',words:encoded,member:'alice',agent:'art',at:'2026-11-14T18:00:00.000Z',changedAt:'2026-11-14T18:00:00.000Z'}).run();
  const opens=f.opens();expect(await f.service.search(alice,{source:'handoff',search:'HANDOFF SEARCH WORDS'})).toEqual([]);expect(f.opens()).toBe(opens);
  expect((await f.service.search(alice,{source:'handoff',search:'parent-search-witness'})).map(row=>row.id)).toEqual(['in-handoff-search']);expect(f.opens()).toBe(opens);
+});
+
+
+it('retries a private Inbox read when an overlapping read-marker write invalidates its batch',async()=>{
+  const f=await fixture(),live=new DataLive();
+  let changed=false;
+  f.onOpen(()=>{if(!changed){changed=true;f.db.insert(inboxReads).values({item:f.ask.inboxItem!,member:'alice',readAt:'2026-11-14T18:00:00.000Z'}).run();live.changed();}});
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:inboxQueryFields(f.service)})});
+  const stream=live.watch({schema,query:'{inboxItems{id read body{words}}}',contextValue:{viewer:alice},valid:()=>true});
+  try {
+    expect((await stream.next()).value).toMatchObject({revision:1,patches:[{path:[],value:{inboxItems:[{id:f.ask.inboxItem,read:true,body:{words:'Order the private pump?'}}]}}]});
+    expect(f.opens()).toBe(2);
+  } finally {await stream.return?.();live.close();}
 });
