@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add `mind.knowledgeEdit` and `mind.knowledgeRestore`: change a Knowledge page's body or bring back one of its kept versions. Either saves the displaced body first.
+
 - Remove `measuring.answer`. A Measuring settings card is answered through `approvals.answer`, like every other settings change.
 
 - The approved site gains a Tools for agents page, describes notes, the further identity pages, memory time to live and confirm/contradict, and task unclaim and reopen.

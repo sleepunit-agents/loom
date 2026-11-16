@@ -229,3 +229,37 @@ it('lets an authenticated household agent add and check Knowledge without any jo
  expect(await backend!.getPage('terminal-fact')).toMatchObject({author:'art'});
  expect(await backend!.getVerifications('terminal-fact')).toEqual(expect.arrayContaining([expect.objectContaining({verifier:'art',outcome:'confirmed'}),expect.objectContaining({verifier:'art',outcome:'stale'})]));
 });
+
+it('edits a page and restores an earlier version, keeping every displaced body; a retry acts once', async () => {
+ const {app,backend,db}=await fixture();
+ const agent:Viewer={kind:'agent',id:'art'};
+ const edit=(id:string,body:string,viewer:Viewer=agent)=>app.operations.call('direct',viewer,'mind.knowledgeEdit',{slug:'fact',body},id);
+ const first=edit('edit-1','Second words');
+ expect(first).toMatchObject({ok:true,value:{slug:'fact'}});
+ expect(edit('edit-1','Second words')).toEqual(first);
+ expect(await backend!.getPage('fact')).toMatchObject({body:'Second words'});
+ expect(edit('same','Second words')).toMatchObject({code:'conflict'});
+ expect(edit('edit-2','Third words',owner)).toMatchObject({ok:true});
+ const kept=db!.prepare('SELECT id,body,op,actor FROM page_revisions ORDER BY id').all() as {id:number;body:string;op:string;actor:string}[];
+ expect(kept.map(({body,op,actor})=>({body,op,actor}))).toEqual([{body:'Original',op:'edit',actor:'art'},{body:'Second words',op:'edit',actor:'owner'}]);
+ const restore=(id:string,revision:number,slug='fact',viewer:Viewer=agent)=>app.operations.call('direct',viewer,'mind.knowledgeRestore',{slug,revision},id);
+ expect(restore('restore-1',kept[0].id)).toMatchObject({ok:true});
+ expect(await backend!.getPage('fact')).toMatchObject({body:'Original'});
+ expect(db!.prepare("SELECT body,op FROM page_revisions ORDER BY id DESC LIMIT 1").get()).toEqual({body:'Third words',op:'restore'});
+ expect(restore('missing',9999)).toMatchObject({code:'not-found'});
+ await backend!.writePage({slug:'other',title:'Other',domain:'systems',body:'Other words'});
+ expect(restore('wrong-page',kept[0].id,'other')).toMatchObject({code:'not-found'});
+ expect(edit('edit-3','Fourth words')).toMatchObject({ok:true});
+ expect(app.operations.call('direct',agent,'mind.knowledgeEdit',{slug:'absent',body:'x'},'no-page')).toMatchObject({code:'not-found'});
+ for(const viewer of [{kind:'member',id:'partial'},{kind:'runner',id:'one'}] as Viewer[]){
+  expect(edit('denied-edit','Nope',viewer)).toMatchObject({code:'denied'});
+  expect(restore('denied-restore',kept[0].id,'fact',viewer)).toMatchObject({code:'denied'});
+ }
+ await backend!.archivePage({slug:'fact'});
+ expect(edit('archived','Later')).toMatchObject({code:'conflict'});
+ db!.exec("CREATE TRIGGER fail_edit BEFORE INSERT ON mind_operation_receipts BEGIN SELECT RAISE(ABORT,'fail'); END");
+ const before=db!.prepare('SELECT count(*) AS n FROM page_revisions').get();
+ expect(app.operations.call('direct',agent,'mind.knowledgeEdit',{slug:'other',body:'Rolled back'},'rollback')).toMatchObject({code:'unavailable'});
+ expect(await backend!.getPage('other')).toMatchObject({body:'Other words'});
+ expect(db!.prepare('SELECT count(*) AS n FROM page_revisions').get()).toEqual(before);
+});

@@ -1,9 +1,10 @@
-/** Knowledge's two page actions; source effects and retry receipts commit together. */
+/** Knowledge's page actions; source effects and retry receipts commit together. */
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
 import { mindReceiptsReady } from './receipt-schema.js';
+import { snapshotKnowledgeRevision } from '../../backends/knowledge-revisions.js';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
 /** Composition supplies the synchronous shared store primitive, without a piece
  * importing the old backend or initializing any of its schema.
@@ -89,5 +90,43 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       return answer;
     },
   }));
+  // Edit and restore both replace a page's body. Either saves the displaced
+  // body as a version first, in the same transaction, and keeps the newest ten.
+  const replace = (name: string, op: string, input: z.ZodType<{ slug: string }>, next: (page: { id: number; body: string }, value: never) => string) =>
+    operations.register(operation({ name, write: true, input, output: z.unknown(), recover,
+      may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
+      run(ctx, value) {
+        if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
+        if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
+        const receipt = ctx.receipt;
+        if (!receipt) throw new Error('Knowledge writes require a retry identity');
+        const answer = db.transaction(() => {
+          db.prepare('DELETE FROM mind_operation_receipts WHERE expires <= ?').run(ctx.now);
+          const replay = recover(ctx); if (replay) return replay;
+          const page = db.prepare('SELECT id, body, status FROM pages WHERE slug = ?').get(value.slug) as { id: number; body: string; status: string } | undefined;
+          if (!page) throw new OperationError('not-found', 'Knowledge page not found');
+          if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before changing it');
+          const body = next(page, value as never);
+          if (body === page.body) throw new OperationError('conflict', 'The page already says that');
+          const at = new Date(ctx.now).toISOString();
+          const revision = snapshotKnowledgeRevision(db, page.id, value.slug, page.body, op, at, ctx.viewer.id);
+          db.prepare('UPDATE pages SET body = ?, updated = ? WHERE id = ?').run(body, at, page.id);
+          const result = { slug: value.slug, slugs: [value.slug], revision };
+          db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer, receipt.id, receipt.name, receipt.inputHash, JSON.stringify(result), receipt.expires);
+          return result;
+        }).immediate();
+        if (!(answer instanceof RecoveredWrite)) ctx.changed('knowledge', value.slug);
+        return answer;
+      },
+    }));
+  const slug = z.string().min(1).max(200);
+  replace('mind.knowledgeEdit', 'edit', z.object({ slug, body: z.string().trim().min(1).max(64 * 1024) }).strict(),
+    (_page, value: { body: string }) => value.body);
+  replace('mind.knowledgeRestore', 'restore', z.object({ slug, revision: z.number().int().positive() }).strict(),
+    (page, value: { revision: number }) => {
+      const kept = db!.prepare('SELECT body FROM page_revisions WHERE id = ? AND page_id = ?').get(value.revision, page.id) as { body: string } | undefined;
+      if (!kept) throw new OperationError('not-found', 'That version of the page is not kept');
+      return kept.body;
+    });
   return { close() { db?.close(); } };
 }
