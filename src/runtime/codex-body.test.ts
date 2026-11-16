@@ -73,4 +73,4 @@ it('stops the child and answers nothing when the body is told to stop', async ()
   expect(f.child.kill).toHaveBeenCalledWith('SIGKILL'); setImmediate(() => f.child.emit('close', null));
   await expect(result).rejects.toThrow('Native execution unavailable');
 });
-it('lists Claude and Codex as the harnesses a body can run on', () => { expect(Object.keys(bodyHarnesses).sort()).toEqual(['claude', 'codex']); });
+it('lists the harnesses a body can run on', () => { expect(Object.keys(bodyHarnesses).sort()).toEqual(['agy', 'claude', 'codex']); });

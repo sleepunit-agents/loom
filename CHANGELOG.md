@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Gemini bodies.** A body can run on Gemini through the Antigravity CLI (`agy`), the third harness in `src/runtime/body-harnesses.ts`. agy reads its tool servers only from a file in its workspace, so each body gets a private temporary workspace holding that file, with the machine's body directory added to it; the workspace, and what agy saved for the conversation, are removed when the body ends. Like Codex it runs only where the machine gives bodies full reach, and not for a body with denied tools.
+
 - **Codex bodies.** A body can now run on Codex as well as Claude. The body program picks the harness by the name a model's role gives it, from one list (`src/runtime/body-harnesses.ts`); adding another harness is one file and one line there. Codex runs isolated from the machine's own Codex settings, with loom's tools and the same identity and mail as a Claude body. Two limits, both because Codex always has its shell: it only runs where the machine gives bodies full reach, and not for a body with denied tools. Its replies carry the model the job asked for, since Codex does not name the one that answered.
 
 - **A body is told how to work where it was started.** With its identity, a body now gets the agent's authored page for the venue of its conversation: `roles/<venue>.md` beside the creed. A body started by a trigger is on the `wake` venue, so `roles/wake.md` is what every lane is told, in one place, instead of a preamble and coda pasted around each lane's instructions.

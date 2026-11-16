@@ -1,0 +1,75 @@
+import {EventEmitter} from 'node:events';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,statSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {PassThrough} from 'node:stream';
+import type {ChildProcessWithoutNullStreams} from 'node:child_process';
+import { afterEach, expect, it, vi } from 'vitest';
+import { agyBody } from './agy-body.js';
+import type { HarnessSpawn } from './body-harness.js';
+import type { WorkerAssignment } from './worker.js';
+const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gemini-fictional', account: 'sub', harness: 'agy', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
+  run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [] } } };
+const bearer = 'Bearer local_secret_' + 'cd'.repeat(32), id = '11111111-2222-4333-8444-555555555555';
+const good = () => [{ event: 'init', conversation_id: id, init: { cwd: '/x', tools: [], permission_mode: 'always-proceed', model: 'gemini-fictional' } },
+  { event: 'step_update', step_update: { state: 'DONE', step_type: 'user_input' } },
+  { event: 'step_update', step_update: { state: 'ACTIVE', step_type: 'tool', tool_name: 'call_mcp_tool' } },
+  { event: 'step_update', step_update: { state: 'DONE', step_type: 'tool', tool_name: 'call_mcp_tool' } },
+  { event: 'step_update', step_update: { state: 'DONE', step_type: 'agent_response', text_delta: '\n' } },
+  { event: 'result', result: { conversation_id: id, status: 'SUCCESS', response: 'Answer é\n', usage: { input_tokens: 1 } } }];
+const homes: string[] = [];
+afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+function fixture(input: Partial<Parameters<typeof agyBody>[0]> = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'agy-test-home-')); homes.push(home);
+  const data = join(home, '.gemini', 'antigravity-cli'); mkdirSync(join(data, 'brain', id), { recursive: true }); mkdirSync(join(data, 'conversations'));
+  writeFileSync(join(data, 'brain', id, 'transcript.jsonl'), 'PRIVATE'); writeFileSync(join(data, 'conversations', id + '.db'), 'PRIVATE'); writeFileSync(join(data, 'antigravity-oauth-token'), 'KEEP');
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn() });
+  let words = ''; child.stdin.on('data', data => { words += data; });
+  const seen: { workspace?: string; config?: string; mode?: number } = {};
+  const launch = vi.fn<HarnessSpawn>((_command, _args, options) => {
+    seen.workspace = options.cwd; const file = join(options.cwd, '.agents', 'mcp_config.json');
+    if (existsSync(file)) { seen.config = readFileSync(file, 'utf8'); seen.mode = statSync(file).mode & 0o777; }
+    return child as unknown as ChildProcessWithoutNullStreams;
+  }), abort = new AbortController();
+  const config = Buffer.from(JSON.stringify({ mcpServers: { loom_secrets: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer } } } }));
+  const run = agyBody({ command: '/native/agy', cwd: '/house', env: { PATH: '/usr/bin', HOME: home }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
+  config.fill(0);
+  const finish = (rows: unknown[] | string, code = 0) => { child.stdout.end(typeof rows === 'string' ? rows : rows.map(value => JSON.stringify(value)).join('\n') + '\n'); child.stderr.end('PRIVATE DIAGNOSTIC'); setImmediate(() => { child.emit('exit', code); child.emit('close', code); }); };
+  return { run, launch, abort, finish, words: () => words, child, seen, data, home };
+}
+
+it('runs agy in a private workspace that holds the tools file, with the words only on stdin, and leaves nothing behind', async () => {
+  const f = fixture(), result = f.run(job, 'PRIVATE ACCEPTED MAIL', f.abort.signal);
+  const [command, args, options] = f.launch.mock.calls[0];
+  expect(command).toBe('/native/agy');
+  expect(args).toEqual(['-p', '', '--input-format', 'stream-json', '--output-format', 'stream-json', '--model', 'gemini-fictional', '--dangerously-skip-permissions', '--add-dir', '/house']);
+  expect(options.cwd).not.toBe('/house'); expect(options.env).toEqual({ PATH: '/usr/bin', HOME: f.home });
+  expect(JSON.parse(f.seen.config!)).toEqual({ mcpServers: { loom_secrets: { serverUrl: 'http://127.0.0.1:4242', headers: { Authorization: bearer }, enabledTools: ['recall', 'reply'] } } });
+  expect(f.seen.mode).toBe(0o600); expect(statSync(f.seen.workspace!).mode & 0o777).toBe(0o700);
+  expect(JSON.stringify(f.launch.mock.calls)).not.toContain('PRIVATE ACCEPTED MAIL'); expect(JSON.stringify(f.launch.mock.calls)).not.toContain('local_secret_');
+  f.finish(good());
+  expect(await result).toEqual({ text: 'Answer é', model: 'gemini-fictional', actions: [{ model: 'gemini-fictional' }] });
+  expect(JSON.parse(f.words())).toEqual({ event: 'user', message: { content: 'PRIVATE ACCEPTED MAIL' } });
+  // The workspace with the bearer is gone, and so is what agy saved for this conversation; its sign-in is untouched.
+  expect(existsSync(f.seen.workspace!)).toBe(false); expect(existsSync(join(f.data, 'brain', id))).toBe(false); expect(existsSync(join(f.data, 'conversations', id + '.db'))).toBe(false);
+  expect(readFileSync(join(f.data, 'antigravity-oauth-token'), 'utf8')).toBe('KEEP');
+});
+it.each(['failed result', 'another model', 'no model named', 'no result', 'two results', 'no words', 'steps after the result', 'invalid json', 'non-zero exit'] as const)('refuses %s without a guessed reply, and still removes the workspace', async mode => {
+  const f = fixture(), result = f.run(job, 'mail', f.abort.signal), rows: any[] = good();
+  if (mode === 'failed result') Object.assign(rows.at(-1).result, { status: 'ERROR', error: 'PRIVATE' });
+  if (mode === 'another model') rows[0].init.model = 'gemini-other';
+  if (mode === 'no model named') delete rows[0].init.model;
+  if (mode === 'no result') rows.pop();
+  if (mode === 'two results') rows.push(structuredClone(rows.at(-1)));
+  if (mode === 'no words') rows.at(-1).result.response = ' \n';
+  if (mode === 'steps after the result') rows.push({ event: 'step_update', step_update: { state: 'DONE', step_type: 'agent_response' } });
+  f.finish(mode === 'invalid json' ? '{not json\n' : rows, mode === 'non-zero exit' ? 1 : 0);
+  await expect(result).rejects.toThrow(/^Native execution unavailable$/); expect(existsSync(f.seen.workspace!)).toBe(false);
+});
+it('does not start without full reach, with tools it cannot deny, or for another harness', async () => {
+  for (const [input, changed] of [[{ reach: 'loom' as const }, job], [{}, { ...job, harness: 'codex' }],
+    [{}, { ...job, run: { ...job.run!, policy: { people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: false }] } } }]] as const) {
+    const f = fixture(input); await expect(f.run(changed, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
+  }
+  expect(() => fixture({ mcpTools: ['Bash'] })).toThrow('Native execution unavailable');
+});
