@@ -205,3 +205,15 @@ it('an owner sets what an agent\'s house is handed at start: the repository secr
  expect(f.db.select().from(agentHouseSecrets).all()).toEqual([]);
  expect(f.client.serialize().includes(Buffer.from('synthetic-GITHUB'))).toBe(false);
 });
+it('says why a secret change was refused, and keeps a holder fault behind one fixed line',async()=>{
+ const f=fixture(),input={id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic-private-value'};
+ expect((await f.call('set',input)).status).toBe(200);
+ expect(await f.call('set',{...input,id:randomUUID()})).toMatchObject({status:409,body:{ok:false,code:'conflict',message:'Secret value already exists'}});
+ expect(await f.call('set',{id:randomUUID(),name:'MISSING',mode:'replace',value:'x'})).toMatchObject({status:404,body:{ok:false,code:'not-found',message:'Unknown secret value'}});
+ expect(await f.call('remove',{id:randomUUID(),name:'MISSING'})).toMatchObject({status:404,body:{ok:false,code:'not-found'}});
+ expect((await f.call('command',{action:'revoke',id:'no-such-grant'})).body).toMatchObject({ok:false,code:'invalid',message:'Unknown grant'});
+ f.holder.set.mockRejectedValueOnce(new Error('holder socket closed at /private/path'));
+ const fault=await f.call('set',{id:randomUUID(),name:'OTHER',mode:'add',value:'synthetic-other-value'});
+ expect(fault.body).toMatchObject({ok:false,code:'unavailable',message:'Secret write awaits recovery'});
+ expect(JSON.stringify(fault.body)).not.toContain('/private/path');
+});

@@ -69,6 +69,7 @@ export function registerConversationOperations(operations: Operations, service: 
     ctx.changed('conversations', service.threads.thread(thread).conversation);
   };
   const common = {
+    refuses: true,
     doors: ['socket', 'http'] as ['socket', 'http'], windowOnly: true, write: true, recheckPolicy: true,
     inputHash: (value: string) => service.key.hash(`conversation-operation\0${value}`),
   };

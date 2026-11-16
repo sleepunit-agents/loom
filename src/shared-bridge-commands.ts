@@ -7,7 +7,7 @@ import { BridgeSettings, bridgeSetting } from './pieces/bridges/settings.js';
 export function registerSharedBridgeCommands(operations:Operations,db:DataDatabase,settings:BridgeSettings){
  operations.register({name:'bridges.command',input:bridgeSetting,output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
   may:viewer=>viewer.kind==='member'&&db.select({role:members.role}).from(members).where(eq(members.id,viewer.id)).get()?.role==='owner',
-  run(ctx,input){try{settings.change(input);}catch{throw new OperationError('invalid','Bridge change could not complete');}ctx.changed('bridges','settings');return {saved:true as const};},
+  run(ctx,input){try{settings.change(input);}catch(error){throw new OperationError('invalid',error instanceof Error&&!('code' in error)&&error.message.length>0&&error.message.length<=200?error.message:'Bridge change could not complete');}ctx.changed('bridges','settings');return {saved:true as const};},
  });
  // Slack attachments, kept fourteen days. Without a file id this lists what a
  // message carried; with one it returns that file. Readers: the agent the

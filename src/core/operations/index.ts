@@ -27,7 +27,19 @@ export interface Context { db: Db; viewer: Viewer; changed(type: string, id: str
 export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
 /** A committed external result retains its original core retry deadline. */
 export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
+/** The reply for something thrown while an operation ran. An OperationError is the
+ * operation's own answer. With `refuses`, a plain Error from the service underneath
+ * is one too: its message was written for the caller. Storage errors (they carry a
+ * `code`) and anything long or empty stay behind one fixed line. */
+function thrown(error: unknown, refuses: boolean | undefined): Failure {
+  if (error instanceof OperationError) return failure(error.code, error.message);
+  if (refuses && error instanceof Error && !('code' in error) && error.message.length > 0 && error.message.length <= 200) return failure('invalid', error.message);
+  return failure('unavailable', 'Operation could not complete');
+}
 export interface Operation<I = unknown> {
+  /** The service this calls refuses bad requests by throwing a plain Error whose
+   * message is meant for the caller. Report those as `invalid`, not as an outage. */
+  refuses?: boolean;
   /** Sensitive authority results must recheck current policy even on receipt replay. */
   recheckPolicy?: boolean | ((viewer: Viewer, input: I) => boolean);
   /** Per-record window gate, evaluated before replay with the exact authenticated Viewer.
@@ -259,7 +271,7 @@ export class Operations {
       const prepared = await op.prepare?.(parsed.data, {viewer, receipt});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
-    } catch (error) { return error instanceof OperationError ? failure(error.code, error.message) : failure('unavailable', 'Operation could not complete'); }
+    } catch (error) { return thrown(error, op.refuses); }
   }
   call(door: Door, viewer: Viewer, name: string, input: unknown, id?: string): Result {
     if (!this.measuring || !this.ops.has(name)) return this.dispatch(door, viewer, name, input, id);
@@ -336,7 +348,7 @@ export class Operations {
         if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + 30 * 86400_000);
         return completed;
       }, !!op.write);
-    } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
+    } catch (e) { result = thrown(e, op.refuses); }
     finally { this.frames.pop(); }
     if (result instanceof PreparationNeeded) return result;
     if (!result.ok && op.rejected) {

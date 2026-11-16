@@ -27,6 +27,11 @@ const command = z.discriminatedUnion('action', [
 const setInput=z.object({id:z.uuid(),name:secretName,mode:z.enum(['add','replace']),description:z.string().max(4000).optional(),value:z.string().refine(value=>Buffer.byteLength(value)>0&&Buffer.byteLength(value)<=65536)}).strict();
 const removeInput=z.object({id:z.uuid(),name:secretName}).strict();
 const acknowledgement=z.object({saved:z.literal(true)}).strict();
+/** A service's own refusal, in its own words. Storage faults and anything unexpected stay behind one fixed line. */
+const refusal=(error:unknown,fallback:string)=>error instanceof Error&&!('code' in error)&&error.message.length>0&&error.message.length<=200?error.message:fallback;
+const writeRefusals:Record<string,'conflict'|'not-found'|'denied'>={'Secret value already exists':'conflict','Unknown secret value':'not-found','Unknown secret writer':'denied'};
+/** A value write refused before it reached the key holder is an answer, not an outage. */
+const writeFailure=(error:unknown)=>{const message=error instanceof Error?error.message:'';const code=writeRefusals[message];return code?new OperationError(code,message):new OperationError('unavailable','Secret write awaits recovery');};
 export function registerSharedSecretCommands(operations:Operations, db:DataDatabase, requests:SecretRequests,
   writes?:{values:SecretValues;fingerprintKey:Uint8Array}) {
   const owner=(viewer:Parameters<Operations['call']>[1])=>viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?.role==='owner';
@@ -59,7 +64,7 @@ export function registerSharedSecretCommands(operations:Operations, db:DataDatab
           }
           case 'default':db.insert(household).values({secretsDefault:input.answer}).onConflictDoUpdate({target:household.singleton,set:{secretsDefault:input.answer}}).run();break;
         }
-      }catch{throw new OperationError('invalid','Secret change could not complete');}
+      }catch(error){throw new OperationError('invalid',refusal(error,'Secret change could not complete'));}
       ctx.changed('secrets','metadata');return {saved:true as const};
     },
   });
@@ -70,14 +75,14 @@ export function registerSharedSecretCommands(operations:Operations, db:DataDatab
   operations.register({name:'secrets.set',input:setInput,output:acknowledgement,write:true,recheckPolicy:true,may:owner,inputHash,
     async prepare(input,{viewer}){
       if(viewer.kind!=='member')throw new OperationError('denied','A household owner is required');
-      try{await writes.values.set({...input,member:viewer.id});}catch{throw new OperationError('unavailable','Secret write awaits recovery');}
+      try{await writes.values.set({...input,member:viewer.id});}catch(error){throw writeFailure(error);}
       return true;
     },run(ctx,input,prepared){if(prepared!==true)throw new OperationError('unavailable','Secret write awaits recovery');ctx.changed('secrets',input.name);return {saved:true as const};},
   });
   operations.register({name:'secrets.remove',input:removeInput,output:acknowledgement,write:true,recheckPolicy:true,may:owner,inputHash,
     async prepare(input,{viewer}){
       if(viewer.kind!=='member')throw new OperationError('denied','A household owner is required');
-      try{await writes.values.remove({...input,member:viewer.id});}catch{throw new OperationError('unavailable','Secret write awaits recovery');}
+      try{await writes.values.remove({...input,member:viewer.id});}catch(error){throw writeFailure(error);}
       return true;
     },run(ctx,input,prepared){if(prepared!==true)throw new OperationError('unavailable','Secret write awaits recovery');ctx.changed('secrets',input.name);return {saved:true as const};},
   });

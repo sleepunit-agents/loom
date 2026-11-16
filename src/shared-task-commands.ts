@@ -10,7 +10,7 @@ import { taskCommandAllowed } from './shared-task-access.js';
 import { canReadSharedConversation } from './shared-sharing.js';
 
 export function registerSharedTaskCommands(operations: Operations, db: DataDatabase, service: TaskService) {
-  operations.register({ name: 'tasks.command', write: true, recheckPolicy: true,
+  operations.register({ name: 'tasks.command', write: true, recheckPolicy: true, refuses: true,
     input: taskCommandSchema, output: z.object({ id: z.string().optional() }).strict(),
     may: (viewer, command) => taskCommandAllowed(db, viewer, command, (actor, id) => canReadSharedConversation(db, actor, id)),
     run(ctx, command) {

@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
-import { Operations, OperationError, operation } from '../operations/index.js';
+import { Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
 import { triggerInput, type NewTrigger, type Trigger } from './triggers.js';
 import type { Recipient, Timings } from './volume.js';
@@ -36,7 +36,7 @@ const saved = z.object({ saved: z.literal(true) }).strict();
 export function registerTempoOperations(operations: Operations, db: DataDatabase,
   tempo: ReturnType<typeof createTempo>, options: TempoOperationOptions): void {
   if (operations.db !== db.$client) throw new Error('Tempo operations need the shared connection');
-  const common = { write: true, recheckPolicy: true };
+  const common = { write: true, recheckPolicy: true, refuses: true };
   const mailbox = {...common,inputHash:(canonical:string,identity:Readonly<{actor:Viewer}>)=>{
     const scope=options.mailboxReceiptScope?.(identity.actor);
     return createHash('sha256').update(scope===undefined?canonical:JSON.stringify([scope,canonical])).digest('hex');
@@ -47,11 +47,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   };
   operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string() }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
-    run(ctx, trigger) {
-      // The engine refuses a bad trigger in words meant for the caller: pass them on as a refusal, not an outage.
-      let row; try { row = tempo.triggers.set(trigger); } catch (error) { throw error instanceof OperationError ? error : new OperationError('invalid', error instanceof Error ? error.message : 'That trigger cannot be set'); }
-      ctx.changed('triggers', row.id); return { id: row.id };
-    },
+    run(ctx, trigger) { const row = tempo.triggers.set(trigger); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,

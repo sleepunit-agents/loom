@@ -168,3 +168,14 @@ it.each(['yes','no','words'] as const)('answers a task question as its recipient
  expect((await f.call({action:'answer',id:task.id,question:old.id,answer:'yes'},'sam','old-card')).status).toBe(409);
  expect(s.get(task.id).ask).toBe(input.ask);expect(s.get(task.id).comments).toEqual([]);
  });
+it('reports a task rule that was broken in its own words, not as an outage', async () => {
+  const f = fixture();
+  const made = await (await f.call({ action: 'create', input: { title: 'Fix the pump', goal: 'It runs', why: 'Green water', owner: { kind: 'member', id: 'sam' } } }, 'sam', 'make')).json() as { value: { id: string } };
+  const id = made.value.id;
+  expect((await f.call({ action: 'claim', id }, 'sam', 'claim')).status).toBe(200);
+  const again = await f.call({ action: 'claim', id }, 'sam', 'claim-again');
+  expect(again.status).toBe(400);
+  expect(await again.json()).toMatchObject({ ok: false, code: 'invalid', message: 'Only open work can be claimed' });
+  const unclaimOpen = await f.call({ action: 'reopen', id: 't-999' }, 'sam', 'missing');
+  expect(unclaimOpen.status).toBe(403);
+});
