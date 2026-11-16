@@ -5,6 +5,7 @@ import {mkdtempSync,writeFileSync,rmSync,readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Readable} from 'node:stream';
+import {createServer,type Server} from 'node:http';
 import {createDataSchema} from '../core/data/database.js';
 import {members,tokens,tasks} from '../core/data/schema.js';
 import {eq} from 'drizzle-orm';
@@ -124,4 +125,29 @@ it('reports failed revocation, removes its token file and bounds the surviving c
  const read=()=>fetch(f.app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } }'})});
  expect((await read()).status).toBe(200);f.clock.advance(60_000);
  expect((await read()).status).toBe(403);
+});
+it('does not print credentials smuggled in task object keys',async()=>{
+ const f=await fixture();
+ const response=await f.invoke(['list'],async()=>Response.json({data:{tasks:[{id:'t-key',title:'Safe task',isReady:true,[f.token]:1}]}}));
+ expect(response.code).toBe(0);expect(JSON.parse(response.out).tasks).toEqual([{id:'t-key',title:'Safe task',isReady:true}]);
+ expect(response.out+response.err).not.toContain(f.token);
+});
+it('rejects a missing command file and interactive stdin without reading or transporting',async()=>{
+ const f=await fixture();let calls=0;const request:typeof fetch=async()=>{calls++;throw Error('Unexpected request');};
+ expect((await f.invoke(['command','--file'],request)).code).toBe(2);
+ f.io.stdinIsTTY=true;expect((await f.invoke(['command','--file','-'],request)).code).toBe(2);
+ expect(calls).toBe(0);
+});
+it('never follows an actual cross-origin 307 with its credential on reads or writes',async()=>{
+ const f=await fixture();let targetCalls=0;
+ const listen=async(server:Server)=>{
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  clean.push(()=>new Promise<void>((resolve,reject)=>{server.closeAllConnections();server.close(error=>error?reject(error):resolve());}));
+  const address=server.address();if(!address||typeof address==='string')throw Error('No test address');return 'http://127.0.0.1:'+address.port;
+ };
+ const target=await listen(createServer((_request,response)=>{targetCalls++;response.end('{}');}));
+ f.io.env.LOOM_URL=await listen(createServer((_request,response)=>{response.writeHead(307,{location:target+'/stolen'});response.end();}));
+ expect((await f.invoke(['ready'])).code).toBe(1);
+ expect((await f.invoke(['command',JSON.stringify({action:'claim',id:'t-fictional'})])).code).toBe(1);
+ expect(targetCalls).toBe(0);
 });

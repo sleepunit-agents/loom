@@ -12,7 +12,14 @@ const query=`query Taskstore {
   goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady
  }
 }`;
-const taskReply=z.object({data:z.object({tasks:z.array(z.object({id:z.string(),title:z.string(),isReady:z.boolean()}).passthrough())})});
+const textField=z.string().nullable().optional();
+const taskReply=z.object({data:z.object({tasks:z.array(z.object({
+ id:z.string(),title:z.string(),isReady:z.boolean(),
+ type:textField,status:textField,priority:z.number().optional(),position:z.number().optional(),
+ ownerKind:textField,owner:textField,project:textField,assigneeKind:textField,assignee:textField,
+ goal:textField,why:textField,doneWhen:textField,description:textField,ask:textField,ifYes:textField,ifNo:textField,
+ closeReason:textField,sourceKind:textField,sourceId:textField,
+}))})});
 const commandReply=z.object({ok:z.literal(true),value:z.object({id:z.string().optional()}).strict()});
 const defaults:ClientRuntime={request:(...args)=>fetch(...args),retry:ms=>new Promise(resolve=>setTimeout(resolve,ms))};
 const help='usage: loom-taskstore ready|list|show <id>|search <words>|command <JSON>|command --file <path|->\nWrites use the same typed action/input object as POST /api/tasks/command.\n';
@@ -26,7 +33,8 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
   || ['ready','list'].includes(verb)&&args.length!==0
   || verb==='show'&&(args.length!==1||!args[0].trim())
   || verb==='search'&&(!args.length||!args.join(' ').trim())
-  || verb==='command'&&!(args.length===1||args.length===2&&args[0]==='--file'))return invalid();
+  || verb==='command'&&!(args.length===1&&args[0]!=='--file'||args.length===2&&args[0]==='--file'&&!!args[1])
+  || verb==='command'&&args[0]==='--file'&&args[1]==='-'&&io.stdinIsTTY)return invalid();
  const fail=(message:string)=>{io.stderr('loom-taskstore: '+message+'\n');io.stdout(JSON.stringify({ok:false,errors:[message]})+'\n');return 1;};
  let input:unknown;
  if(verb==='command'){
