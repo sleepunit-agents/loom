@@ -4,7 +4,8 @@ import {expect,it,vi} from 'vitest';
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
-import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
+import {StdioServerTransport} from '@modelcontextprotocol/server/stdio';
+import {PassThrough} from 'node:stream';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {sharedUiProgram} from '../test/fixtures/shared-ui-program.js';
 import {FakeClock} from './core/clock.js';
@@ -20,7 +21,7 @@ for(const door of ['http','stdio']as const)it(`${door} reads identity, remembers
   const issued=await fetch(p.url+'/api/signin/token',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({kind:'agent',agent:'art',label:'Fictional terminal'})});expect(issued.status).toBe(200);const credential=(await issued.json()).value as {token:string;fingerprint:string};
   for(const file of ['household.json','tokens.json','loom.db'])writeFileSync(join(p.home,file),'Fictional poisoned legacy store');
   if(door==='http')await client.connect(new StreamableHTTPClientTransport(new URL('/mcp',p.url),{requestInit:{headers:{authorization:'Bearer '+credential.token}}}));
-  else{const file=join(p.home,'fictional-token');writeFileSync(file,credential.token,{mode:0o600});({server}=createStdioServer(['mcp','--next','--agent','art','--url',p.url,'--token-file',file]));const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);}
+  else{const file=join(p.home,'fictional-token');writeFileSync(file,credential.token,{mode:0o600});({server}=createStdioServer(['mcp','--next','--agent','art','--url',p.url,'--token-file',file]));const input=new PassThrough(),output=new PassThrough();await server.connect(new StdioServerTransport(input,output));await client.connect(new StdioServerTransport(output,input));}
   const wrong=await fetch(p.url+'/mcp',{method:'POST',headers:{authorization:'Bearer '+credential.token,'x-loom-agent':'another-agent','content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});expect(wrong.status).toBe(401);
   expect((await client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['identity','loom_commands','loom_command','loom_query']));
   const loaded=await client.callTool({name:'identity',arguments:{client:'fictional-terminal',model:'fixture'}});expect(loaded.isError).not.toBe(true);expect(JSON.stringify(loaded.content)).toContain('FICTIONAL_SHARED_TERMINAL_IDENTITY');
@@ -84,4 +85,8 @@ it('runs canonically granted member and program commands without requiring the b
 
 it('refuses legacy home selection before reading an ambient credential or choosing another server',()=>{
  expect(()=>sharedStdioConfig(['mcp','--next','--home','/fictional/intended-home'],{LOOM_URL:'https://different.invalid',LOOM_TOKEN_FILE:'/must-not-read'})).toThrow('--home cannot select');
+});
+
+it('does not fall back to the legacy server for malformed explicit next stdio flags',()=>{
+ expect(()=>createStdioServer(['--context-dir','/must-not-open','mcp','--next'])).toThrow();
 });

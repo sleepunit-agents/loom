@@ -49,7 +49,7 @@ export { isCliInvocation };
 
 /** Shared by the executable and in-process transport acceptance tests. */
 export function createStdioServer(args: string[]) {
-  if(isNextStdioInvocation(args))return createSharedStdioServer(args);
+  if(args.includes('--next'))return createSharedStdioServer(args);
   return createLoomServer({contextDir:resolveContextDir()});
 }
 
