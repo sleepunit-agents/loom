@@ -65,7 +65,7 @@ export function householdService(db: DataDatabase, now: () => string) {
     },
     settings() {
       const row = db.select().from(household).get();
-      return { timezone: row?.timezone ?? 'UTC', commsDays: row?.commsDays ?? 14, githubOwner: row?.githubOwner ?? '',
+      return { defaultAgent: row?.defaultAgent ?? null, timezone: row?.timezone ?? 'UTC', commsDays: row?.commsDays ?? 14, githubOwner: row?.githubOwner ?? '',
         secretsDefault: row?.secretsDefault ?? 'ask', backupTarget: row?.backupTarget ?? '', backupAt: row?.backupAt ?? '03:00', backupKeep: row?.backupKeep ?? 7,
         backupRecipients: db.select().from(backupRecipients).orderBy(asc(backupRecipients.recipient)).all().map(entry => entry.recipient) };
     },

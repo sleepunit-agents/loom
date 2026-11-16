@@ -60,6 +60,7 @@ import {installMemorySignals} from './transport/memory-signals.js';
 import { OperationError, Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
+import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
@@ -149,7 +150,9 @@ export function sharedRoot(options: {
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation]);
+  const householdSettings = householdService(db, now), projectSettings = sharedProjects(db);
+  const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation, householdProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
@@ -265,8 +268,8 @@ export function sharedRoot(options: {
       for(const _error of result.notificationErrors){try{options.reportError(new Error('Changes source notification failed'));}catch{}}
       return result.value;
     }),
-    household: householdService(db, now),
-    projects: sharedProjects(db),
+    household: householdSettings,
+    projects: projectSettings,
     signin: sharedTokens(db, clock),
     programSetup,
     account: sharedAccount(db, clock),
@@ -285,6 +288,9 @@ export function sharedRoot(options: {
   registerSharedProjects(operations, db, services.projects);
   registerSharedHouseholdAccess(operations, db, services.householdAccess);
   registerSharedHouseholdMembers(operations, db, services.household);
+  householdProposals.register(operations, services.approvals, bodyScope);
+  const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => data.changed()));
+  startupCleanups.push(stopHouseholdProposals);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
@@ -407,7 +413,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      stopMemoryWrites();stopModelProposals();stopRunProposals();stopBoxProposals();memorySignals?.close();
+      stopMemoryWrites();stopModelProposals();stopHouseholdProposals();stopRunProposals();stopBoxProposals();memorySignals?.close();
       accountReports.close();
       commsLifetime?.close();workLife.close();
       runtime.close();
