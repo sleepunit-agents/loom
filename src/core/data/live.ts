@@ -1,6 +1,6 @@
 import { clearReadDeadline } from './read-lease.js';
-import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
-import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
+import { ExecutionDrain } from './execution.js';
+import { getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
  * transport data, never opaque database records. A missing value means remove. */
@@ -64,12 +64,11 @@ export class DataLive {
    * whose consumer already cancelled. Cancellation cannot cancel their IO. */
   async drain() { await this.executions.drain(); }
 
-  private async read(args: ExecutionArgs, initial: boolean) {
+  private async read(args: ExecutionArgs, initial: boolean, valid: () => boolean) {
     if (this.stopped) throw new Error('Live data access ended');
     this.captureRead(args.contextValue);
-    instrumentExecution(args.schema);
-    return this.executions.scope(() => !this.stopped, () => initial && this.measure
-      ? this.measure(() => execute(executionArguments(args))) : execute(executionArguments(args)));
+    const read = () => this.executions.read(args, () => !this.stopped && valid());
+    return this.executions.run(() => initial && this.measure ? this.measure(read) : read());
   }
 
   watch(options: {
@@ -82,9 +81,8 @@ export class DataLive {
     valid(): boolean;
   }): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
-    instrumentExecution(options.schema);
     const document = parse(options.query);
-    const errors = this.executions.scope(() => !this.stopped, () => validate(options.schema, document));
+    const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
     let initial = true;
@@ -112,7 +110,7 @@ export class DataLive {
           const measure = initial; initial = false;
           const readVersion = this.version;
           const result = await Promise.race([
-            this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure),
+            this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure, options.valid),
             cancellation,
           ]);
           cancel = undefined;

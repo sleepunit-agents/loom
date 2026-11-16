@@ -3,11 +3,11 @@ import { DataLive, type DataPatch } from './live.js';
 
 // JSON is only the wire envelope for selected results and variables. The data
 // definition, validation, joins and visibility still come from Drizzle.
-const value = new GraphQLScalarType({ name: 'DataValue', serialize: value => value, parseValue: value => value, parseLiteral: node => valueFromASTUntyped(node) });
+export const dataValue = new GraphQLScalarType({ name: 'DataValue', serialize: value => value, parseValue: value => value, parseLiteral: node => valueFromASTUntyped(node) });
 const patch = new GraphQLObjectType({ name: 'DataPatch', fields: {
-  path: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(value))) },
+  path: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(dataValue))) },
   removed: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (patch: DataPatch) => !Object.hasOwn(patch, 'value') },
-  value: { type: value },
+  value: { type: dataValue },
 } });
 const delta = new GraphQLObjectType({ name: 'DataDelta', fields: {
   revision: { type: new GraphQLNonNull(GraphQLInt) },
@@ -23,7 +23,7 @@ export function dataSubscriptions(schema: GraphQLSchema, live: DataLive, valid: 
   return new GraphQLSchema({ ...schema.toConfig(), subscription: new GraphQLObjectType({ name: 'Subscription', fields: {
     observe: {
       type: new GraphQLNonNull(delta),
-      args: { query: { type: new GraphQLNonNull(GraphQLString) }, variables: { type: value }, operationName: { type: GraphQLString } },
+      args: { query: { type: new GraphQLNonNull(GraphQLString) }, variables: { type: dataValue }, operationName: { type: GraphQLString } },
       subscribe: (_source, args, contextValue) => live.watch({ schema, contextValue, query: args.query, variables: args.variables, operationName: args.operationName, valid }),
       resolve: event => event,
     },

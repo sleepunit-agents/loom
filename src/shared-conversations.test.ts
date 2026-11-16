@@ -11,7 +11,6 @@ import { agents, conversations, household, inbox, inboxRefs, inboxReads, memberA
 import { DataLive } from './core/data/live.js';
 import { DataWrites } from './core/data/writes.js';
 import { sharedRoot } from './shared-root.js';
-import { GraphQLScalarType } from 'graphql/index.js';
 import { wordsKey } from './pieces/comms/crypto.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
@@ -177,9 +176,8 @@ it('withholds private metadata when read authority changes while a sibling decry
 });
 
 it.each(['comms','inbox','answer','summary','search'].flatMap(kind => ['stored','household'].map(bound => ({kind,bound}))))('withholds $kind wording at the $bound deadline before the expiry timer runs', async ({kind,bound}) => {
-  const now=Date.parse('2026-11-14T18:00:00Z');let time=now,advanced=false;
-  const clockStep=new GraphQLScalarType({name:'DeadlineClockStep',serialize:()=>({toJSON(){advanced=true;time=now+1000;return 'public';}})});
-  const f=await fixture({lateClock:{type:clockStep,resolve:()=>true}});
+  const now=Date.parse('2026-11-14T18:00:00Z');let time=now;
+  const f=await fixture();
   vi.spyOn(f.clock,'now').mockImplementation(()=>time);
   expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'Pump'},'open')).status).toBe(200);
   const comms=f.root.services.comms!;
@@ -194,8 +192,9 @@ it.each(['comms','inbox','answer','summary','search'].flatMap(kind => ['stored',
     :kind==='summary'?'{recentConversations(agent:"art"){lastAnswer{words}}}'
     :kind==='search'?'{inboxItems(search:"PRIVATE FINAL WORDS"){id}}'
     :`{inboxItem(id:"${question.inboxItem}"){${kind==='answer'?'answerText':'body{words}'}}}`;
-  const read=await f.query(source.slice(0,-1)+' lateClock}');expect(advanced).toBe(true);expect(read.response.status).toBe(503);
-  expect(JSON.stringify(read.body)).not.toContain('PRIVATE FINAL WORDS');
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.alice.cookie}`},body:JSON.stringify({query:source})});
+  expect(response.status).toBe(200); time=now+1000;
+  await expect(response.text()).rejects.toThrow('Data access ended');
   expect(f.db.select().from(messages).get()?.words).not.toBeNull();
   const retry=await f.query(source);expect(retry.response.status).toBe(200);expect(JSON.stringify(retry.body)).not.toContain('PRIVATE FINAL WORDS');
 });
@@ -319,4 +318,29 @@ it('bounds SQL for the full actual Comms selection with two and ten retained mes
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(conversations).set({member:'bob'}).where(eq(conversations.id,thread.conversation)).run());}});
   const revoked=await f.query(commsQuery,'alice',variables);
   expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE MESSAGE');
+});
+
+it('keeps every started private decrypt alive until shutdown can safely close SQLite', async () => {
+  const f = await fixture();
+  await f.post('comms.open', { thread: 'th:drain', agent: 'art', title: 'Drain' }, 'open');
+  await f.post('comms.send', { thread: 'th:drain', clientId: 'one', words: 'PRIVATE FIRST' }, 'one');
+  await f.post('comms.send', { thread: 'th:drain', clientId: 'two', words: 'PRIVATE SECOND' }, 'two');
+  let opens = 0, entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  f.openGate(async () => { if (++opens === 1) throw Error('decrypt failed'); entered(); await held; });
+  const pending = f.query('{commsMessages(thread:"th:drain"){words}}');
+  await started;
+  let closed = false;
+  const closing = f.root.close().then(() => { closed = true; });
+  try {
+    // A turn of the executor can return a sibling error; the held decrypt is
+    // still real work and must remain owned by the read until it settles.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    const result = await pending;
+    expect(JSON.stringify(result.body)).not.toContain('PRIVATE');
+    await closing; expect(closed).toBe(true);
+  } finally { release(); await closing; }
 });

@@ -155,21 +155,6 @@ it('measures only initial snapshot work and does not measure its own notificatio
   } finally {await stream.return?.();live.close();await live.drain();}
 });
 
-it('fences validation callbacks after a literal callback stops live access', async () => {
-  const { GraphQLScalarType } = await import('graphql/index.js');
-  const live = new DataLive(); let late = 0;
-  const input = new GraphQLScalarType({ name: 'ShutdownInput', serialize: v => v, parseValue: v => v, parseLiteral(node) {
-    if ('value' in node && node.value === 'stop') live.close();
-    else late++;
-    return 'x';
-  } });
-  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
-    value: { type: GraphQLString, args: { input: { type: input } }, resolve: () => 'value' },
-  } }) });
-  expect(() => live.watch({ schema, query: '{ a:value(input:"stop") b:value(input:"late") }', valid: () => true })).toThrow();
-  await live.drain(); expect(late).toBe(0);
-
-});
 
 it('timing notifications wake selections without reviving a read invalidated by a private write',async()=>{
  const {live,watch}=setup(),context={};
@@ -193,4 +178,19 @@ it.each(['timingsChanged','metadataChanged'] as const)('does not hide a resolver
   const pending=stream.next();live[notification]();reject(new Error('Stable resolver failure'));
   await expect(pending).rejects.toThrow('Stable resolver failure');
   expect(await stream.next()).toEqual({done:true,value:undefined});
+});
+
+it('drains initial read accounting after its consumer cancels', async () => {
+  const { client } = setup();
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let measured = false;
+  const live = new DataLive(async work => { const result = await work(); entered(); await held; client.prepare('SELECT id FROM tasks').all(); measured = true; return result; });
+  const schema = dataQueries(client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) });
+  const stream = live.watch({ schema, query: '{tasks{id}}', valid: () => true });
+  const pending = stream.next(); await started; await stream.return?.(); await pending; live.close();
+  let drained = false; const closing = live.drain().then(() => { drained = true; });
+  try { await Promise.resolve(); expect(drained).toBe(false); release(); await closing; expect(measured).toBe(true); }
+  finally { release(); await closing; }
 });

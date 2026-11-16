@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { GraphQLString } from 'graphql/index.js';
+import { GraphQLString, GraphQLScalarType } from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -465,4 +465,11 @@ it.each(['http', 'socket', 'observe'])('fences an already-selected private Task 
     }
     expect(await (await f.post({ authorization: 'Bearer '+token })).json()).toEqual({ data: { tasks: [] } });
   } finally { release(); }
+});
+
+it('refuses unsupported installed coercion at startup before admitting reads', async () => {
+  let callbacks = 0;
+  const installed = new GraphQLScalarType({ name: 'Installed', serialize() { callbacks++; return 'private'; } });
+  await expect(setup({ installed: { type: installed, resolve() { callbacks++; return 'private'; } } })).rejects.toThrow('Unsupported read scalar');
+  expect(callbacks).toBe(0);
 });

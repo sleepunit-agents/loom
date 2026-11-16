@@ -24,7 +24,7 @@ const detail = new GraphQLObjectType({ name: 'RuntimeAccountDetail', interfaces:
 } });
 // The union registers both concrete types with the generated schema. Their
 // shared interface lets clients select label/level with one common fragment.
-const view = new GraphQLUnionType({ name: 'RuntimeAccountView', types: [summary, detail], resolveType: value => value.__typename });
+const view = new GraphQLUnionType({ name: 'RuntimeAccountView', types: [summary, detail] });
 
 export function modelAccountQueries(db: DataDatabase, now: () => string) {
   // The same admitted Viewer object reaches GraphQL context and auth.valid().

@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
-import { GraphQLString, GraphQLScalarType } from 'graphql/index.js';
+import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
@@ -163,17 +163,14 @@ it('preserves socket credential expiry metadata without requiring another reques
   const closed = once(ws, 'close'); f.clock.advance(1000); expect((await closed)[0]).toBe(4403);
 });
 
-it('rechecks authority after frame serialization immediately before socket send', async () => {
-  const serialized = deferred();
-  const trigger = new GraphQLScalarType({ name: 'AccountFrameProbe', serialize: value => ({ toJSON() {
-    // Fictional trusted serializer changes authority after execute's check,
-    // with no refresh notification; only the final send fence can catch it.
-    f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); serialized.resolve(); return value;
-  } }) });
-  const f = fixture({ probe: { type: trigger, resolve: () => 'probe' } }), ws = await openSocket(f, 'alice');
+it('rechecks authority before sending a result whose sibling read changes account ownership', async () => {
+  const changed = deferred();
+  const f = fixture({ probe: { type: GraphQLString, resolve: () => {
+    f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); changed.resolve(); return 'probe';
+  } } }), ws = await openSocket(f, 'alice');
   const closed = once(ws, 'close'), frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'serialized', payload: { query: `{ ${selection} probe }` } }));
-  await serialized.promise; expect((await closed)[0]).toBe(4403); expect(frames.join('\n')).not.toContain('private-provider');
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'changed', payload: { query: `{ ${selection} probe }` } }));
+  await changed.promise; expect((await closed)[0]).toBe(4403); expect(frames.join('\n')).not.toContain('private-provider');
 });
 
 it('keeps public-only account selections valid across ownership transfer without a private witness', async () => {

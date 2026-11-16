@@ -9,7 +9,7 @@ import { taskVisibility } from './visibility.js';
 import { keepReadUntil } from './read-lease.js';
 import { DataLive } from './live.js';
 import { dataSocket } from './socket.js';
-import { GraphQLNonNull, GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
+import { GraphQLNonNull, GraphQLObjectType,  GraphQLSchema, GraphQLString } from 'graphql/index.js';
 import type { Authentication } from '../live/index.js';
 import { FakeClock } from '../clock.js';
 
@@ -114,10 +114,10 @@ it('ignores connectionParams identity and reads only as the upgrade principal', 
   expect(message.payload.data.observe.patches[0].value.tasks).toEqual([{ id: 't-1', title: 'Pump' }]);
 });
 
-it.each(['revoke','expire'])('blocks buffered result release when authority ends during serialisation: %s', async how => {
+it.each(['revoke','expire'])('blocks buffered result release when authority ends during its read: %s', async how => {
   const f = await setup(), ws = await f.open();
-  const secret = new GraphQLScalarType({ name: 'BufferedSecret', serialize: () => ({ toJSON() { if (how === 'revoke') f.invalidate(); else f.clock.advance(1000); return 'must not leave'; } }) });
-  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => 'secret' } } }) }));
+  const secret = GraphQLString;
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => { if (how === 'revoke') f.invalidate(); else f.clock.advance(1000); return 'must not leave'; } } } }) }));
   const messages: string[] = []; ws.on('message', data => messages.push(String(data)));
   const closed = once(ws, 'close');
   ws.send(JSON.stringify({ ...selection, payload: { ...selection.payload, variables: { query: '{ secret }' } } }));
@@ -268,20 +268,6 @@ it('fences a queued protocol frame before async cleanup can close the transport'
   expect(() => f.socket.attach(createServer())).toThrow('access ended');
 });
 
-it('blocks buffered words and validity callbacks when serialisation reenters shutdown', async () => {
-  let stopping = false, lateValidity = 0, closing: Promise<void> | undefined;
-  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopping) lateValidity++; return true; } }));
-  const ws = await f.open();
-  const secret = new GraphQLScalarType({ name: 'ClosingSecret', serialize: () => ({ toJSON() {
-    stopping = true; closing = f.socket.close(); return 'must not leave';
-  } }) });
-  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => 'secret' } } }) }));
-  const messages: string[] = []; ws.on('message', raw => messages.push(String(raw)));
-  const ended = once(ws, 'close');
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'secret', payload: { query: '{ secret }' } }));
-  await ended; expect(closing).toBeDefined(); await closing;
-  expect(lateValidity).toBe(0); expect(messages).toEqual([]);
-});
 
 it('publishes the same close promise before clock cleanup can reenter', async () => {
   const f = await setup();
@@ -317,22 +303,6 @@ it('drains socket work without closing independent watchers on its shared live h
   expect((await pending).value.patches).toEqual([{ path: ['tasks', 0, 'title'], value: 'Still live' }]);
 });
 
-it('fences validation callbacks synchronously when a literal callback closes the socket', async () => {
-  const f = await setup(), ws = await f.open();
-  let began!: () => void, closing!: Promise<void>, late = 0;
-  const started = new Promise<void>(resolve => { began = resolve; });
-  const input = new GraphQLScalarType({ name: 'ShutdownInput', serialize: v => v, parseValue: v => v, parseLiteral(node) {
-    if ('value' in node && node.value === 'stop') { closing = f.socket.close(); began(); }
-    else { late++; f.client.prepare('SELECT title FROM tasks').all(); }
-    return 'x';
-  } });
-  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
-    value: { type: GraphQLString, args: { input: { type: input } }, resolve: () => 'value' },
-  } }) }));
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'literal', payload: { query: '{ a:value(input:"stop") b:value(input:"late") }' } }));
-  await started; await closing;
-  expect(late).toBe(0);
-});
 
 it('does not build a schema after activity synchronously stops admission', async () => {
   let activity: (() => void) | undefined, built = 0;
@@ -385,10 +355,10 @@ it('restarts a live selection if current data changes after the iterator resolve
   const value=await read(fresh,()=>fresh.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:'{private}'}}})));
   expect(value.payload.data.observe).toMatchObject({revision:1,patches:[{path:[],value:{private:null}}]});
 });
-it('rechecks a direct query after serialization changes current data without ending its credential', async () => {
+it('rechecks a direct query after a sibling read changes current data without ending its credential', async () => {
   const f=await setup();let allowed=true,revoke=true;
-  const changing=new GraphQLScalarType({name:'Changing',serialize:()=>({toJSON(){if(revoke){revoke=false;allowed=false;f.live.changed();}return 'public';}})});
-  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:()=>allowed?'PRIVATE SERIALIZED':null},trigger:{type:changing,resolve:()=>true}}})}));
+  const changing=GraphQLString;
+  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:()=>allowed?'PRIVATE SERIALIZED':null},trigger:{type:changing,resolve:()=>{if(revoke){revoke=false;allowed=false;f.live.changed();}return 'public';}}}})}));
   const ws=await f.open(),seen:string[]=[];ws.on('message',raw=>seen.push(String(raw)));
   const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'direct',payload:{query:'{private trigger}'}}));
   expect((await closed)[0]).toBe(1012);expect(seen.join('')).not.toContain('PRIVATE SERIALIZED');
@@ -396,10 +366,10 @@ it('rechecks a direct query after serialization changes current data without end
   expect(value.payload.data).toEqual({private:null,trigger:'public'});
 });
 
-it('withholds a private-word lease that expires during serialization without any data commit', async () => {
+it('withholds a private-word lease that expires during its read without any data commit', async () => {
   const f=await setup();const until=f.clock.now()+1;let advance=true;
-  const trigger=new GraphQLScalarType({name:'DeadlineTrigger',serialize:()=>({toJSON(){if(advance){advance=false;f.clock.advance(1);}return 'public';}})});
-  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:(_root,_args,context)=>{if(f.clock.now()>=until)return null;keepReadUntil(context,until);return 'PRIVATE EXPIRED FRAME';}},trigger:{type:trigger,resolve:()=>true}}})}));
+  const trigger=GraphQLString;
+  f.setSchema(()=>new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{private:{type:GraphQLString,resolve:(_root,_args,context)=>{if(f.clock.now()>=until)return null;keepReadUntil(context,until);return 'PRIVATE EXPIRED FRAME';}},trigger:{type:trigger,resolve:()=>{if(advance){advance=false;f.clock.advance(1);}return 'public';}}}})}));
   const ws=await f.open(),seen:string[]=[];ws.on('message',raw=>seen.push(String(raw)));
   const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'deadline',payload:{query:'{private trigger}'}}));
   expect((await closed)[0]).toBe(1012);expect(seen.join('')).not.toContain('PRIVATE EXPIRED FRAME');
