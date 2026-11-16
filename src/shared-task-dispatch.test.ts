@@ -25,7 +25,7 @@ async function rootCommand(app:Context['app'],token:string,name:string,input:unk
  const response=await fetch(app.url+'/api/'+name,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});
  expect(response.status).toBe(200);return z.object({ok:z.literal(true),value:z.unknown()}).parse(await response.json()).value;
 }
-async function household(run:(context:Context)=>Promise<void>){
+async function withTemporaryRoot(run:(context:Context)=>Promise<void>){
  const parent=mkdtempSync(join(tmpdir(),'loom-task-dispatch-')),home=join(parent,'home'),webRoot=join(parent,'web');
  let app:Context['app']|undefined;
  try{
@@ -36,7 +36,7 @@ async function household(run:(context:Context)=>Promise<void>){
  }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
 }
 
-it('a scheduled work sweep wakes one body that claims, comments on and closes its ready task without a desk',()=>household(async context=>{
+it('a scheduled work sweep wakes one body that claims, comments on and closes its ready task without a desk',()=>withTemporaryRoot(async context=>{
  const {app,clock}=context;expect((await nativeProtocolSmoke(context)).runs).toHaveLength(2);
  const setup=app.writes.run(()=>app.services.signin.issue({kind:'owner',member:'alex',label:'Fictitious headless dispatch setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
  const command=(name:string,input:unknown)=>rootCommand(app,setup.token,name,input);
@@ -52,11 +52,14 @@ it('a scheduled work sweep wakes one body that claims, comments on and closes it
   const db=comms.db.$client,queued=()=>db.prepare("SELECT id FROM jobs WHERE agent='moss' AND state='queued'").all();
   expect(queued()).toEqual([]);clock.advance(1000+exampleSettleMs);expect(queued()).toEqual([]);
   expect(db.prepare('SELECT state FROM triggers WHERE id=?').get(trigger.id)).toMatchObject({state:'held'});
-  await command('tempo/resume',{agent:'moss'});clock.advance(exampleSettleMs);
+  await command('tempo/resume',{agent:'moss'});
+  const settleMs=app.services.tempo.volume.timings({kind:'agent',id:'moss'}).settleSeconds*1000;
+  expect(settleMs).toBeGreaterThan(0);expect(queued()).toEqual([]);
+  clock.advance(settleMs-1);expect(queued()).toEqual([]);clock.advance(1);
   const pending=db.prepare("SELECT id,conversation FROM jobs WHERE agent='moss' AND state='queued'").all() as Array<{id:string;conversation:string}>;
   expect(pending).toHaveLength(1);
   expect(db.prepare('SELECT venue FROM conversations WHERE id=?').get(pending[0].conversation)).toMatchObject({venue:'wake'});
-  const mail=db.prepare('SELECT words FROM inbox WHERE conversation=?').get(pending[0].conversation) as {words:string};expect(mail.words).toContain(title);
+  const mail=db.prepare('SELECT words FROM inbox WHERE conversation=?').get(pending[0].conversation) as {words:string};expect(mail.words).toContain(title);expect(mail.words).not.toContain('Fictitious private Fern work');
   let bodyCapability:Capability|undefined;
   const result=await nativeProtocolSmoke({...context,targets:[{id:pending[0].id,words:title}],native:async({call}:{call:Capability})=>{
    bodyCapability=call;await expect(call('tasks.other',{})).rejects.toThrow('unavailable');
@@ -69,6 +72,7 @@ it('a scheduled work sweep wakes one body that claims, comments on and closes it
   }});
   expect(result.runs).toEqual([expect.objectContaining({job:pending[0].id,state:'done',running:true,hadInput:true,bootstrapErased:true})]);
   if(!bodyCapability)throw Error('No actual enrolled task capability');
+  // This checks observable retirement. It does not isolate each unchanged guard predicate.
   await expect(bodyCapability('tasks.command',{action:'comment',id:task.id,text:'Forbidden late action'})).rejects.toThrow('unavailable');
   expect(app.services.tasks.get(hidden.id).status).toBe('open');
   expect(app.services.tasks.get(task.id)).toMatchObject({status:'closed',assigneeKind:'agent',assignee:'moss',closeReason:'Fictional valve inspection complete',comments:[expect.objectContaining({actorKind:'agent',actor:'moss',text:'Inspected the fictional valve; no outside action.'})]});
@@ -76,10 +80,22 @@ it('a scheduled work sweep wakes one body that claims, comments on and closes it
   expect(db.prepare('SELECT state FROM triggers WHERE id=?').get(trigger.id)).toMatchObject({state:'fired'});
   const empty=await setSweep('Fictitious sweep after closed work');clock.advance(1000+exampleSettleMs);
   expect(db.prepare('SELECT state FROM triggers WHERE id=?').get(empty.id)).toMatchObject({state:'fired'});expect(queued()).toEqual([]);
+  // Positive control: the reused sweep conversation still admits later ready work.
+  const nextTitle='Inspect the fictitious return valve';
+  const nextTask=identifier.parse(await command('tasks/command',{action:'create',input:{title:nextTitle,goal:'Record the next fictional inspection',why:'Prove dispatch continues after completion',owner:{kind:'agent',id:'moss'}}}));
+  await setSweep('Fictitious sweep with subsequent work');clock.advance(1000+exampleSettleMs);
+  const following=db.prepare("SELECT id,conversation FROM jobs WHERE agent='moss' AND state='queued'").all() as Array<{id:string;conversation:string}>;
+  expect(following).toHaveLength(1);expect(following[0].conversation).toBe(pending[0].conversation);
+  const continued=await nativeProtocolSmoke({...context,targets:[{id:following[0].id,words:nextTitle}],native:async({call}:{call:Capability})=>{
+   await call('tasks.command',{action:'claim',id:nextTask.id});await call('tasks.command',{action:'close',id:nextTask.id,reason:'Finished the next fictional inspection'});
+   return{text:'Next fictitious inspection complete.',model:'fixture-dispatch-observed-model',actions:[]};
+  }});
+  expect(continued.runs).toEqual([expect.objectContaining({job:following[0].id,state:'done'})]);expect(app.services.tasks.get(nextTask.id).status).toBe('closed');
+
  }finally{app.writes.run(()=>app.services.signin.revoke(setup.fingerprint));}
 }));
 
-it('a terminal agent uses the Tasks CLI with its own identity and current visibility, without a browser',()=>household(async({app,home,clock})=>{
+it('the Tasks client function keeps an ordinary agent identity and current visibility',()=>withTemporaryRoot(async({app,home,clock})=>{
  // The fixture supplies an ordinary agent token; external issuance is DOOR's proof.
  const credential=app.writes.run(()=>app.services.signin.issue({kind:'agent',agent:'moss',label:'Fictitious terminal task client',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
  const setup=app.writes.run(()=>app.services.signin.issue({kind:'owner',member:'alex',label:'Fictitious terminal peer setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
@@ -107,7 +123,7 @@ it('a terminal agent uses the Tasks CLI with its own identity and current visibi
  }finally{app.writes.run(()=>{app.services.signin.revoke(credential.fingerprint);app.services.signin.revoke(setup.fingerprint);});rmSync(file,{force:true});}
 }));
 
-it('the enrolled task capability refuses calls after cancellation and leaves no live job or task action',()=>household(async context=>{
+it('the enrolled task capability refuses calls after cancellation and leaves no live job or task action',()=>withTemporaryRoot(async context=>{
  const controller=new AbortController();let refusal:Promise<string>|undefined;
  await expect(nativeProtocolSmoke({...context,signal:controller.signal,native:async({call}:{call:Capability})=>{
   controller.abort();refusal=call('tasks.command',{action:'create',input:{title:'Forbidden cancelled task',goal:'Must not happen',why:'Cancellation boundary',owner:{kind:'agent',id:'moss'}}}).then(()=> 'Allowed',error=>String(error));
