@@ -291,7 +291,7 @@ export function sharedRoot(options: {
   registerSharedHouseholdAccess(operations, db, services.householdAccess);
   registerSharedHouseholdMembers(operations, db, services.household);
   householdProposals.register(operations, services.approvals, bodyScope);
-  const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => data.changed()));
+  const stopHouseholdProposals = data.writes.observe(() => householdProposals.committed(() => { tempo?.capacityChanged(); data.changed(); }));
   startupCleanups.push(stopHouseholdProposals);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);

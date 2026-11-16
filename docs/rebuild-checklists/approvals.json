@@ -2,7 +2,7 @@
   "page": "approvals",
   "title": "Approvals",
   "ownerTask": "t-2239",
-  "sourceSha256": "af9e598e930f520cadd20bbd16d321054db0023017f17df7700f3fd51fe375a7",
+  "sourceSha256": "71a8dcd91be67dcd23851882785919ae9c6c1dcbf20bb3b10118ff444023c95b",
   "promises": [
     {
       "id": "approvals-001",
@@ -141,6 +141,11 @@
     },
     {
       "id": "approvals-014",
+      "promise": "Revoking a token, revoking a machine and signing out a browser cannot be put back. An agent proposes one the same way as a settings change. Allowing it takes a second, explicit yes. Denying it takes one answer.",
+      "source": "docs/how-it-works/site/approvals.html#how-h"
+    },
+    {
+      "id": "approvals-015",
       "promise": "Loom keeps every request, answer and use in a record that is never edited. Steps an agent took under a tell-me-after rule are listed as reported steps.",
       "source": "docs/how-it-works/site/approvals.html#how-h",
       "probe": {
@@ -149,7 +154,7 @@
       }
     },
     {
-      "id": "approvals-015",
+      "id": "approvals-016",
       "promise": "a Three labels. An approval carries the agent asking, the project it concerns, and a member when it is private to them.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
@@ -158,7 +163,7 @@
       }
     },
     {
-      "id": "approvals-016",
+      "id": "approvals-017",
       "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees approvals in their projects and approvals of agents they own. Private to a member means that member plus household owners.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
@@ -167,7 +172,7 @@
       }
     },
     {
-      "id": "approvals-017",
+      "id": "approvals-018",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
       "source": "docs/how-it-works/site/approvals.html#see-h",
       "probe": {
@@ -176,7 +181,7 @@
       }
     },
     {
-      "id": "approvals-018",
+      "id": "approvals-019",
       "promise": "The pending request shows its question, reason, outcomes and exact target.",
       "source": "docs/how-it-works/site/approvals.html",
       "probe": {
@@ -192,7 +197,7 @@
       }
     },
     {
-      "id": "approvals-019",
+      "id": "approvals-020",
       "promise": "The request offers Allow and Deny.",
       "source": "docs/how-it-works/site/approvals.html",
       "probe": {
@@ -205,7 +210,7 @@
       }
     },
     {
-      "id": "approvals-020",
+      "id": "approvals-021",
       "promise": "The request shows its permanent request record.",
       "source": "docs/how-it-works/site/approvals.html",
       "probe": {

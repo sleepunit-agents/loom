@@ -2,7 +2,7 @@
   "page": "tools",
   "title": "Tools for agents",
   "ownerTask": "t-2190",
-  "sourceSha256": "c28068fe137753025609c0c66394988edfcedb59a97ccf7f84a188ac8932772d",
+  "sourceSha256": "ab5958a3891ec417bc4f8aabc05b2a90416526504d6332391aaeec59f24dc3d2",
   "promises": [
     {
       "id": "tools-001",
@@ -21,7 +21,7 @@
     },
     {
       "id": "tools-004",
-      "promise": "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in.",
+      "promise": "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in. When it proposes something, the card it files is where a conversation about it can begin.",
       "source": "docs/how-it-works/site/tools.html#how-h"
     },
     {
@@ -106,7 +106,7 @@
     },
     {
       "id": "tools-021",
-      "promise": "Propose a dangerous action, such as revoking a token, for a person to allow. Loom carries it out.",
+      "promise": "Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser. Loom carries it out.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {

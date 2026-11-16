@@ -66,9 +66,14 @@ it('denies visible ordinary members for all kinds despite owned agents and execu
   expect((await f.send('changes',{id:changeId,head,approval:requests[0].id,answer:'yes'})).status).toBe(403);
   expect(f.db.select().from(operationResults).all()).toEqual([]);
   f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
-  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(200);
+  // A dangerous card is not allowed by a bare yes: it stays pending until the owner confirms.
+  const dangerous = requests.find(request => request.kind === 'dangerous')!;
+  expect((await f.send('approvals',{id:dangerous.id,answer:'allow'},'unconfirmed')).status).toBe(400);
+  expect(f.root.services.approvals.get(dangerous.id).state).toBe('pending');
+  const allow = (request: typeof requests[number]) => ({id:request.id,answer:'allow',...(request.kind==='dangerous'?{confirm:true}:{})});
+  for (const request of requests) expect((await f.send('approvals',allow(request),request.kind)).status).toBe(200);
   f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
-  for (const request of requests) expect((await f.send('approvals',{id:request.id,answer:'allow'},request.kind)).status).toBe(403);
+  for (const request of requests) expect((await f.send('approvals',allow(request),request.kind)).status).toBe(403);
   expect(f.db.select().from(operationResults).all()).toHaveLength(4);
 });
 

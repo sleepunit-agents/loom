@@ -50,7 +50,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     ctx.changed('approvals', input.approval); ctx.changed('changes', input.id);
   };
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']) }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) || !row || (authority && authority.approval(viewer, row) !== true)) return false;
@@ -66,6 +66,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
+      // A dangerous action cannot be put back, so allowing one takes a second, explicit yes.
+      if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true)
+        throw new OperationError('invalid', 'This cannot be undone. To allow it, answer again with confirm set to true.');
       const merge = mergeTarget(row);
       if (merge) answerMerge(ctx, { ...merge, approval: row.id, allow: input.answer === 'allow' });
       else {

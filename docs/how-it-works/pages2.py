@@ -162,6 +162,8 @@ def approvals():
          "A rule answers one kind of request the same way every time, for a scope such as certain repositories or commands. A rule that names a person is a grant to that person. Only the household owner edits rules."),
         ("Asked for in chat", "cyan", card("cyan", "Change a setting", "Wake jonathan's inbox every minute", "Before: the default. After: 60 seconds."),
          "When a person asks an agent in chat to change a setting or do something dangerous, the agent proposes it. Loom shows an approval card inline, with exactly what will change, before and after. On Allow loom makes the change itself and records it. Ordinary work needs no card."),
+        ("A dangerous action", "pink", log(("propose", "an agent names it exactly"), ("allow", "a person says yes"), ("confirm", "and says yes a second time")),
+         "Revoking a token, revoking a machine and signing out a browser cannot be put back. An agent proposes one the same way as a settings change. Allowing it takes a second, explicit yes. Denying it takes one answer."),
         ("The record", "amber", log(("request", "art asks to merge"), ("allow", "jonathan allows"), ("use", "art merges")),
          "Loom keeps every request, answer and use in a record that is never edited. Steps an agent took under a tell-me-after rule are listed as reported steps."),
     ]
@@ -171,7 +173,7 @@ def approvals():
          "Shows a card inline in chat when a setting change or a dangerous action is asked for there.", "Holds standing rules, and keeps a permanent record of every request, answer and use."],
         tile("pink", "approvals", "Approvals", mock), "One approval shown two ways, with example content: as a request in the Approvals tile, and as a question with Allow and Deny inline in the conversation it was asked in.",
         "How an approval connects to other parts", "One approval, with a thread from each field that reaches another part.", anat,
-        "Requests, rules, chat and the record", panels,
+        "Requests, rules, chat, dangerous actions and the record", panels,
         [("agent", "cyan"), ("project", "violet"), ("member, when private", "pink")],
         [("Three labels.", "An approval carries the agent asking, the project it concerns, and a member when it is private to them."),
          ("Who sees it.", f"{OWNER} Anyone else sees approvals in their projects and approvals of agents they own. {PRIVATE}"),
@@ -782,7 +784,7 @@ def tools():
         ("Work", "violet", [
             row("Tasks: create, edit, claim, unclaim, comment, close, reopen, move one in the hand-kept order, put one under a parent or behind a blocker, and put a question to a person.", G),
             row("Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G + ", with a job"),
-            row("Propose a dangerous action, such as revoking a token, for a person to allow. Loom carries it out.", G),
+            row("Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser. Loom carries it out.", G),
             row("Changes: read pull requests and who each is waiting on. Merge under an approval.", G),
             row("Tempo: set a trigger, stop it, or run it now.", G),
             row("Discord and Slack: reply to an incoming message.", G + ", with a job"),
@@ -801,7 +803,7 @@ def tools():
         ("Three general tools", "violet", opts(("loom_commands", "lists the operations and what each takes"), ("loom_command", "calls one"), ("loom_query", "reads through the data endpoint")),
          "Everything else on these pages is reached with three general tools. Nothing an agent may do is out of reach for want of a named tool."),
         ("With a job, or without", "pink", opts(("a body with a job", "works in one conversation"), ("a terminal session", "no job and no conversation")),
-         "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in."),
+         "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in. When it proposes something, the card it files is where a conversation about it can begin."),
         ("What it will not do", "amber", log(("credentials", "made by a person, never through a tool"), ("settings", "proposed, then allowed by a person"), ("secret values", "handed over only under a grant")),
          "Three things stay out. An agent cannot make a token, a sign-in link or a passkey. It cannot change a setting directly: it proposes the change and a person allows it. It is handed a secret's value only under a grant."),
     ]

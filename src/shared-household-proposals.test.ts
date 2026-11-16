@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentPeople, agentDeniedTools, approvals, members, tokens, projects } from './core/data/schema.js';
+import { agents, agentPeople, agentDeniedTools, approvals, boxes, members, sessions, tokens, projects } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -105,8 +105,38 @@ it('proposes one dangerous action, revoking a token by its label, and it takes e
   expect(f.db.select().from(approvals).get()).toMatchObject({ kind: 'dangerous', state: 'pending', target: 'household:tokenRevoke:lee', ask: 'Revoke token lee?',
     changeSummary: 'Revoke token lee: {"for":"lee","kind":"owner","label":"lee"} → revoked', ifYes: 'The token stops working at once. This cannot be undone.' });
   expect((await f.call('household/setSettings', { commsDays: 9 }, 'lee')).status).toBe(403);
-  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  // Allowing a dangerous card takes a second, explicit yes. Without it nothing happens.
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'invalid', message: expect.stringContaining('cannot be undone') });
+  expect(f.db.select().from(approvals).get()).toMatchObject({ state: 'pending' });
+  expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeNull();
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
   expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeTruthy();
   expect((await f.call('household/setSettings', { commsDays: 9 }, 'lee')).status).toBe(401);
   expect((await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'lee' }, why: 'again' }, 'art')).body).toMatchObject({ code: 'not-found' });
+});
+it('proposes revoking a machine and signing out a browser; a deny needs no confirmation and a setting card needs none either', async () => {
+  const f = fixture(), at = new Date(0).toISOString();
+  f.root.writes.run(() => {
+    f.db.insert(boxes).values({ id: 'box-1', name: 'workshop', owner: 'sam', hostsAny: true, sameMachineAsLoom: false, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+    for (const id of ['s1', 's2']) f.db.insert(sessions).values({ id, token: hash(credentials.lee), device: 'Chrome on Mac', via: 'link', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
+    f.db.insert(sessions).values({ id: 's3', token: hash(credentials.lee), device: 'Safari on iPhone', via: 'link', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }).run();
+  });
+  const propose = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Asked in chat' }, 'art');
+  expect((await propose('boxRevoke', { name: 'attic' })).body).toMatchObject({ code: 'not-found' });
+  expect((await propose('browserSignOut', { member: 'lee', device: 'Firefox' })).body).toMatchObject({ code: 'not-found' });
+  const box = await propose('boxRevoke', { name: 'workshop' });
+  expect(f.db.select().from(approvals).all().find(row => row.id === box.body.value!.id)).toMatchObject({ kind: 'dangerous', ask: 'Revoke machine workshop?', changeSummary: 'Revoke machine workshop: {"name":"workshop","owner":"sam"} → revoked' });
+  expect((await f.call('approvals/answer', { id: box.body.value!.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(boxes).get()!.revokedAt).toBeNull();
+  const again = await propose('boxRevoke', { name: 'workshop' });
+  expect((await f.call('approvals/answer', { id: again.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(false);
+  expect((await f.call('approvals/answer', { id: again.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(boxes).get()!.revokedAt).toBeTruthy();
+  const browser = await propose('browserSignOut', { member: 'lee', device: 'Chrome on Mac' });
+  expect(f.db.select().from(approvals).all().find(row => row.id === browser.body.value!.id)).toMatchObject({ kind: 'dangerous', ask: 'Sign out browser Chrome on Mac of lee?', changeSummary: 'Sign out browser Chrome on Mac of lee: {"browsers":2,"device":"Chrome on Mac","member":"lee"} → signed out' });
+  expect((await f.call('approvals/answer', { id: browser.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(sessions).all().map(row => row.id)).toEqual(['s3']);
+  // An ordinary settings card is allowed with one answer.
+  const setting = await propose('settings', { commsDays: 7 });
+  expect((await f.call('approvals/answer', { id: setting.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
 });

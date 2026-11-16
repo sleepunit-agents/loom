@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Allowing a dangerous approval card now needs `confirm: true` on `approvals.answer`. `household.propose` can also file two more dangerous actions: revoking a machine and signing out a browser.
+
+- Remove the older listener's Measuring wiring (`/api/measuring/*` adapter and its meter). Measuring lives in the rebuilt program only.
+
 - Add the `jobHistory` read (an agent's jobs, ended ones included) and `runtime.jobStop` (a household owner or the agent's owner ends a job by hand, as a reset or a write-off).
 
 - The MCP door gains four named tools: `person`, `person_write`, `project` and `project_write`, for an agent's own person and project cards.
