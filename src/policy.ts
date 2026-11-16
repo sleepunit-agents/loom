@@ -30,7 +30,9 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
     if (inProject || r.type === 'task' || taskQuestion) return inProject;
   }
   if (r.agent !== undefined) return v.kind === 'agent' ? v.id === r.agent : !!m?.agents.includes(r.agent);
-  return false;
+  // Viewer identity is supplied by authentication, including an agent terminal
+  // session without a job. Knowledge is the household's shared file store.
+  return r.type === 'knowledge' && v.kind === 'agent';
 }
 export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act', operation?: string): boolean {
   if (isInternalCaller(v)) return true;

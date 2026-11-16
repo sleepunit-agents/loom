@@ -34,6 +34,7 @@ it('lets a generated endpoint compose typed file-backed fields and return exactl
  const result=await f.query('{ tasks { id } memoryKnowledge { total checkDays pages { slug title fresh } } memoryKnowledgePage(slug:"hose") { body sources { claim locator excerpt retrievedAt createdAt } citedBy { slug title } } }');
  expect(result.errors).toBeUndefined();
  expect(JSON.parse(JSON.stringify(result.data))).toEqual({tasks:[],memoryKnowledge:{total:2,checkDays:30,pages:expect.arrayContaining([{slug:'hose',title:'The hose',fresh:'fresh'},{slug:'ref',title:'Referring fact',fresh:'fresh'}])},memoryKnowledgePage:{body,sources:[{claim:'25 mm',locator:'https://example.com/hose',excerpt:'25 mm',retrievedAt:expect.any(String),createdAt:expect.any(String)}],citedBy:[{slug:'ref',title:'Referring fact'}]}});
+ expect(await f.query('{memoryKnowledgeAccess{allowed canAdd canVerify canRecheck} memoryKnowledgePage(slug:"hose"){body}}',{viewer:{kind:'agent',id:'fiction'}})).toMatchObject({data:{memoryKnowledgeAccess:{allowed:true,canAdd:true,canVerify:true,canRecheck:true},memoryKnowledgePage:{body}}});
  f.at(Date.parse('2026-12-14T18:00:00Z'));
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { fresh } }')).toMatchObject({data:{memoryKnowledgePage:{fresh:'due'}}});
  await store.archivePage({slug:'hose'});
@@ -43,8 +44,9 @@ it('uses the current authenticated context and central sharing on every executio
  const f=fixture(join(home(),'absent.db'));
  const source='{ memoryKnowledge { total } }';
  expect(await f.query(source)).toMatchObject({data:{memoryKnowledge:{total:0}}});
- for(const viewer of [{kind:'member',id:'member'},{kind:'agent',id:'fiction'},{kind:'runner',id:'machine'},{kind:'member',id:'unknown'}] as const)
+ for(const viewer of [{kind:'member',id:'member'},{kind:'runner',id:'machine'},{kind:'member',id:'unknown'}] as const)
   expect(await f.query(source,{viewer})).toMatchObject({data:{memoryKnowledge:null}});
+ expect(await f.query(source,{viewer:{kind:'agent',id:'fiction'}})).toMatchObject({data:{memoryKnowledge:{total:0}}});
  f.sharing.members.owner.owner=false;
  expect(await f.query(source)).toMatchObject({data:{memoryKnowledge:null}});
  expect((await f.query('{ memoryKnowledge(viewer:"owner") { total } }')).errors).toBeDefined();

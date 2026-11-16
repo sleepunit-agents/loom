@@ -440,3 +440,15 @@ it('drains an active command on shutdown, rolls back its source and releases com
  expect(active.every(db=>!db.open)).toBe(true);expect(readers.every(db=>!db.open)).toBe(true);expect(f.count()).toBe(0);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name IN ('memories','vec_memories')").all()).toEqual([]);
 });
+it('lets a no-job agent credential read and write shared Knowledge through the real HTTP door',async()=>{
+ const f=await fixture();
+ expect(f.db.select().from(s.tokens).all().find(row=>row.fingerprint===credentialHash(raw.agent))?.job).toBeNull();
+ const input={title:'Terminal knowledge',domain:'household',body:'A shared fact from a terminal.',source:''};
+ const response=await fetch(f.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{authorization:'Bearer '+raw.agent,'content-type':'application/json'},body:JSON.stringify({id:'terminal-knowledge',input})});
+ expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ok:true,value:{slug:'terminal-knowledge'}});
+ const selection='{memoryKnowledgeAccess{allowed canAdd canVerify canRecheck} memoryKnowledgePage(slug:"terminal-knowledge"){body}}';
+ expect(await f.query(selection,raw.agent)).toMatchObject({memoryKnowledgeAccess:{allowed:true,canAdd:true,canVerify:true,canRecheck:true},memoryKnowledgePage:{body:input.body}});
+ expect(await f.query(selection,raw.member)).toMatchObject({memoryKnowledgeAccess:{allowed:false,canAdd:false,canVerify:false,canRecheck:false},memoryKnowledgePage:null});
+ const denied=await fetch(f.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({id:'member-knowledge',input:{...input,title:'Forbidden member fact'}})});
+ expect(denied.status).toBe(403);
+});

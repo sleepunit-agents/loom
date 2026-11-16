@@ -658,7 +658,7 @@ def memory():
         "What is kept, top of mind, changes and knowledge", panels,
         [("agent", "cyan")],
         [("Memories and cards.", "The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories."),
-         ("Knowledge.", "Knowledge pages are shared by the household. Household owners see them."),
+         ("Knowledge.", "Knowledge pages are shared by the household. Household owners and household agents can read and write them, including agents in terminal sessions without a job. Non-owner members cannot."),
          ("Precious.", "Agents' memories are the only data loom treats as precious.")],
         [], ref_extra=files)
 

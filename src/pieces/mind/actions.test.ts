@@ -53,9 +53,9 @@ it('confirms and requests a recheck with original notes, attribution and clock; 
   expect(await backend!.getVerifications('fact')).toEqual(expect.arrayContaining([expect.objectContaining({ verifier: 'owner', outcome: 'stale' }), expect.objectContaining({ verifier: 'owner', outcome: 'confirmed' })]));
   expect(knowledgeView(db,clock.now(),'fact',true).open).toMatchObject({fresh:'due'});
 });
-it('denies partial members, agents, runners and read-only services without recording a receipt', async () => {
+it('denies partial members, runners and read-only services without recording a receipt', async () => {
   const { app, db, backend } = await fixture();
-  for (const viewer of [{ kind: 'member', id: 'partial' }, { kind: 'agent', id: 'art' }, { kind: 'runner', id: 'one' }, { kind: 'service', id: 'reader' }] as Viewer[]) {
+  for (const viewer of [{ kind: 'member', id: 'partial' }, { kind: 'runner', id: 'one' }, { kind: 'service', id: 'reader' }] as Viewer[]) {
     for (const verb of ['knowledgeVerify', 'knowledgeRecheck']) expect(app.operations.call('direct', viewer, `mind.${verb}`, { slug: 'fact' }, 'denied')).toMatchObject({ code: 'denied' });
   }
   expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 0 });
@@ -218,4 +218,14 @@ it('adds facts atomically with source citations, attribution and durable recover
   const next=await start();expect(next.operations.call('direct',owner,'mind.knowledgeAdd',sourced,'recover-add')).toMatchObject({ok:true,value:{slug:'a-device'}});
   expect(db!.prepare('SELECT COUNT(*) AS n FROM citations WHERE page_id=(SELECT id FROM pages WHERE slug=?)').get('a-device')).toEqual({n:1});
   expect(next.operations.call('direct',owner,'mind.knowledgeVerify',{slug:'fact'},'recover-add')).toMatchObject({code:'conflict'});
+});
+
+it('lets an authenticated household agent add and check Knowledge without any job context', async () => {
+ const {app,backend}=await fixture();
+ const viewer:Viewer={kind:'agent',id:'art'};
+ expect(app.operations.call('direct',viewer,'mind.knowledgeAdd',{title:'Terminal fact',domain:'household',body:'A terminal can contribute.'},'agent-add')).toMatchObject({ok:true,value:{slug:'terminal-fact'}});
+ expect(app.operations.call('direct',viewer,'mind.knowledgeVerify',{slug:'terminal-fact'},'agent-verify')).toMatchObject({ok:true});
+ expect(app.operations.call('direct',viewer,'mind.knowledgeRecheck',{slug:'terminal-fact'},'agent-recheck')).toMatchObject({ok:true});
+ expect(await backend!.getPage('terminal-fact')).toMatchObject({author:'art'});
+ expect(await backend!.getVerifications('terminal-fact')).toEqual(expect.arrayContaining([expect.objectContaining({verifier:'art',outcome:'confirmed'}),expect.objectContaining({verifier:'art',outcome:'stale'})]));
 });
