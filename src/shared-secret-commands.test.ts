@@ -5,7 +5,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, tokens, agents, household, secrets, secretChanges, secretWriteJournal, secretRequests, secretRules, secretRuleAgents, secretGrants, jobs, operationResults, inbox } from './core/data/schema.js';
+import { members, tokens, agents, household, agentRunSettings, agentHouseSecrets, secrets, secretChanges, secretWriteJournal, secretRequests, secretRules, secretRuleAgents, secretGrants, jobs, operationResults, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of clean.splice(0).reverse())await close();});
@@ -184,4 +184,24 @@ it('trusted installed services use an existing nonowner attribution without outs
  });
  expect(f.db.select().from(secretRequests).get()).toMatchObject({state:'allowed',answeredBy:'peer'});
  expect(f.db.select().from(secretGrants).get()?.grantedBy).toBe('peer');
+});
+
+it('an owner sets what an agent\'s house is handed at start: the repository secret and aliased secrets',async()=>{
+ const f=fixture();
+ for(const name of ['GITHUB','DISCORD'])expect((await f.call('set',{id:randomUUID(),name,mode:'add',value:'synthetic-'+name})).status).toBe(200);
+ const house={action:'house',agent:'art',repository:'GITHUB',secrets:[{alias:'DISCORD_TOKEN',secret:'DISCORD'}]};
+ expect((await f.call('command',house,f.peer)).status).toBe(403);
+ // No run settings yet: there is no row to carry the repository secret.
+ expect((await f.call('command',house)).body).toMatchObject({code:'invalid'});
+ expect((await f.call('command',{...house,repository:null})).status).toBe(200);
+ expect(f.db.select().from(agentHouseSecrets).all()).toEqual([{agent:'art',alias:'DISCORD_TOKEN',secret:'DISCORD'}]);
+ f.db.insert(agentRunSettings).values({agent:'art',houseRepository:'github:owner/house',houseFile:'house.yml',houseBranch:'main',nestedContainers:false,gpu:false}).run();
+ expect((await f.call('command',house)).status).toBe(200);
+ expect(f.db.select().from(agentRunSettings).get()).toMatchObject({repositorySecret:'GITHUB',houseRepository:'github:owner/house'});
+ for(const bad of [{...house,agent:'nobody'},{...house,repository:'MISSING'},{...house,secrets:[{alias:'A',secret:'MISSING'}]}])expect((await f.call('command',bad)).body).toMatchObject({code:'invalid'});
+ for(const bad of [{...house,secrets:[{alias:'A',secret:'GITHUB'},{alias:'A',secret:'DISCORD'}]},{...house,secrets:[{alias:'-x',secret:'GITHUB'}]}])expect((await f.call('command',bad)).status).toBe(400);
+ expect((await f.call('command',{...house,repository:null,secrets:[]})).status).toBe(200);
+ expect(f.db.select().from(agentRunSettings).get()).toMatchObject({repositorySecret:null});
+ expect(f.db.select().from(agentHouseSecrets).all()).toEqual([]);
+ expect(f.client.serialize().includes(Buffer.from('synthetic-GITHUB'))).toBe(false);
 });

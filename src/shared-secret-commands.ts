@@ -3,7 +3,7 @@ import { createHmac, createSecretKey } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { members, household, secretGrants } from './core/data/schema.js';
+import { members, household, secretGrants, secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { secretName, secretAgent } from './pieces/secrets/input.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
@@ -18,6 +18,11 @@ const command = z.discriminatedUnion('action', [
   z.object({action:z.literal('rule'),secret:secretName,answer,minutes,
     agents:z.array(z.object({agent:secretAgent,when:z.enum(['on_request','at_start'])}).strict()).max(1000)}).strict(),
   z.object({action:z.literal('default'),answer}).strict(),
+  // What an agent's house is handed when it starts: the secret that fetches its
+  // repository, and named secrets under the alias the house knows each by.
+  z.object({action:z.literal('house'),agent:secretAgent,repository:secretName.nullable(),
+    secrets:z.array(z.object({alias:z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,199}$/),secret:secretName}).strict()).max(128)
+      .refine(values=>new Set(values.map(value=>value.alias)).size===values.length,'An alias names one secret')}).strict(),
 ]);
 const setInput=z.object({id:z.uuid(),name:secretName,mode:z.enum(['add','replace']),description:z.string().max(4000).optional(),value:z.string().refine(value=>Buffer.byteLength(value)>0&&Buffer.byteLength(value)<=65536)}).strict();
 const removeInput=z.object({id:z.uuid(),name:secretName}).strict();
@@ -40,6 +45,18 @@ export function registerSharedSecretCommands(operations:Operations, db:DataDatab
             break;
           }
           case 'rule':requests.setRule({secret:input.secret,answer:input.answer,minutes:input.minutes,agents:input.agents});break;
+          case 'house':{
+            if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw Error('Unknown agent');
+            for(const name of [input.repository,...input.secrets.map(value=>value.secret)])if(name!==null&&!db.select().from(secrets).where(eq(secrets.name,name)).get())throw Error('Unknown secret');
+            const settings=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,input.agent)).get();
+            // The repository secret is a column of the run settings; those must exist first.
+            if(!settings&&input.repository!==null)throw Error('Agent has no run settings');
+            if(settings)db.update(agentRunSettings).set({repositorySecret:input.repository}).where(eq(agentRunSettings.agent,input.agent)).run();
+            db.delete(agentHouseSecrets).where(eq(agentHouseSecrets.agent,input.agent)).run();
+            if(input.secrets.length)db.insert(agentHouseSecrets).values(input.secrets.map(value=>({agent:input.agent,...value}))).run();
+            ctx.changed('agentRunSettings',input.agent);
+            break;
+          }
           case 'default':db.insert(household).values({secretsDefault:input.answer}).onConflictDoUpdate({target:household.singleton,set:{secretsDefault:input.answer}}).run();break;
         }
       }catch{throw new OperationError('invalid','Secret change could not complete');}
