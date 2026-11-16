@@ -1,3 +1,4 @@
+import { tasksQuery } from '../../../web/src/pieces/tasks/query.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq, ne, sql } from 'drizzle-orm';
@@ -246,4 +247,18 @@ describe('generated SQL reads', () => {
     }
   });
 
+});
+
+it('orders the actual Tasks selection by urgency, then position, then ID', async () => {
+  const { client, db } = fixture();
+  db.update(tasks).set({ priority: 3, position: 0 }).where(eq(tasks.id, 'a')).run();
+  db.update(tasks).set({ priority: 1, position: 1 }).where(eq(tasks.id, 'b')).run();
+  db.insert(tasks).values({ id: 'c', title: 'Urgent first', priority: 1, position: -1, ownerKind: 'member', owner: 'sam', createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
+  db.insert(tasks).values({ id: 'd', title: 'Equal urgency and position', priority: 1, position: 1, ownerKind: 'member', owner: 'sam', createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
+  const schema = dataQueries(client, { tables: ['tasks', 'taskComments', 'taskLinks', 'changeTasks', 'changes'], visibility: {
+    tasks: fields => ne(fields.id, 'hidden'), taskComments: () => sql`true`, taskLinks: () => sql`true`, changeTasks: () => sql`true`, changes: () => sql`true`,
+  } });
+  const result = await graphql({ schema, source: tasksQuery });
+  expect(result.errors).toBeUndefined();
+  expect((result.data!.tasks as { id: string }[]).map(row => row.id)).toEqual(['c', 'b', 'd', 'a']);
 });
