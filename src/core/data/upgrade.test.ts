@@ -15,8 +15,8 @@ it('brings a database made before removal up to date once, keeping its rows, and
   const old = new Database(':memory:'); old.pragma('foreign_keys = ON');
   const first = readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8')
     .replace(/\t`removed_at` text,\n/g, '').replace(/\tCONSTRAINT "\w+_removed_at_utc" CHECK\([^\n]*\n/g, '').replace(/,\n\);/g, '\n);')
-    .replace(/CREATE TABLE `trigger_edits` \([^;]*;\n/, '').replace(/CREATE INDEX `trigger_edits_trigger_idx`[^;]*;\n/, '');
-  expect(first).not.toContain('trigger_edits');
+    .replace(/\t`wants_model` text,\n/, '').replace(/CREATE TABLE `trigger_edits` \([^;]*;\n/, '').replace(/CREATE INDEX `trigger_edits_trigger_idx`[^;]*;\n/, '');
+  expect(first).not.toContain('trigger_edits'); expect(first).not.toContain('wants_model');
   const made = new Database(':memory:'); createDataSchema(made);
   old.exec(first); old.prepare('INSERT INTO migrations (number, applied_at) VALUES (1, ?)').run('2026-11-15T00:00:00.000Z');
   for (const table of tables) expect(columns(old, table)).not.toContain('removed_at');
@@ -24,15 +24,16 @@ it('brings a database made before removal up to date once, keeping its rows, and
   upgradeDataSchema(old, () => '2026-11-16T00:00:00.000Z');
   for (const table of tables) expect(columns(old, table)).toContain('removed_at');
   expect(old.prepare('SELECT id, role, removed_at FROM members').all()).toEqual([{ id: 'sam', role: 'owner', removed_at: null }]);
-  expect(old.prepare('SELECT number FROM migrations ORDER BY number').all()).toEqual([{ number: 1 }, { number: 2 }, { number: 3 }]);
+  expect(old.prepare('SELECT number FROM migrations ORDER BY number').all()).toEqual([{ number: 1 }, { number: 2 }, { number: 3 }, { number: 4 }]);
+  expect(columns(old, 'triggers')).toContain('wants_model');
   expect(shape(old, 'trigger_edits')).toEqual(shape(made, 'trigger_edits'));
   expect(() => old.prepare("UPDATE members SET removed_at = 'yesterday'").run()).toThrow();
-  upgradeDataSchema(old); expect(old.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: 3 });
+  upgradeDataSchema(old); expect(old.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: 4 });
   made.close();
   old.close();
   const fresh = new Database(':memory:'); createDataSchema(fresh);
-  expect(fresh.prepare('SELECT number FROM migrations ORDER BY number').all()).toEqual([{ number: 1 }, { number: 2 }, { number: 3 }]);
-  upgradeDataSchema(fresh); expect(fresh.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: 3 });
+  expect(fresh.prepare('SELECT number FROM migrations ORDER BY number').all()).toEqual([{ number: 1 }, { number: 2 }, { number: 3 }, { number: 4 }]);
+  upgradeDataSchema(fresh); expect(fresh.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: 4 });
   fresh.prepare('INSERT INTO migrations (number, applied_at) VALUES (9, ?)').run('2026-11-16T00:00:00.000Z');
   expect(() => upgradeDataSchema(fresh)).toThrow('newer program');
   fresh.close();

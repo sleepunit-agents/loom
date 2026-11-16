@@ -716,6 +716,7 @@ export const triggers = sqliteTable('triggers', {
   lastFiredAt: text('last_fired_at'),
   createdAt: text('created_at').notNull(),
   changedAt: text('changed_at').notNull(),
+  wantsModel: text('wants_model'),
 }, t => [
   check('triggers_next_due_at_utc', utc(t.nextDueAt)),
   check('triggers_last_fired_at_utc', utc(t.lastFiredAt)),

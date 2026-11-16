@@ -45,6 +45,8 @@ const upgrades: readonly (readonly string[])[] = [
 )`,
   // Written exactly as the fresh schema writes it: startup compares an index's text.
   'CREATE INDEX `trigger_edits_trigger_idx` ON `trigger_edits` (`trigger`)'],
+  // 4: a lane can say what kind of model it should run on.
+  ['ALTER TABLE triggers ADD COLUMN wants_model text'],
 ];
 /** Bring an existing household database up to this program's shape. Safe to run at every start. */
 export function upgradeDataSchema(client: Database.Database, now: () => string = () => new Date().toISOString()) {

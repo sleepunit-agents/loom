@@ -15,13 +15,15 @@ export const triggerInput = z.object({
   targetKind: z.enum(['operation', 'inbox']), target: text.nullable().optional(),
   toKind: z.enum(['person', 'agent']).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
   instructions: z.string().max(100_000).nullable().optional(), file: text.nullable().optional(), note: text,
+  /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
+  wantsModel: text.max(200).nullable().optional(),
 });
 export type NewTrigger = z.input<typeof triggerInput>;
 /** The parts of a standing trigger that can change after it is set. Who it is for, what it
  * watches and what it does cannot: stop it and set another. */
 export const triggerEdit = z.object({
   instructions: z.string().max(100_000).nullable().optional(), file: text.nullable().optional(),
-  times: text.optional(), days: text.nullable().optional(), note: text.optional(),
+  times: text.optional(), days: text.nullable().optional(), note: text.optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
 const relativeFile = (file: string) => !/^(?:\/|[A-Za-z]:)/.test(file) && !file.split(/[\\/]/).includes('..');
@@ -100,7 +102,7 @@ export class TriggerEngine {
     });
     this.tick();
   }
-  /** Change a trigger's words, times or label, keeping what the changed parts said before and who changed them. */
+  /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and who changed them. */
   edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }): void {
     this.open();
     const c = triggerEdit.parse(change);
@@ -113,11 +115,11 @@ export class TriggerEngine {
       if (c.file && !relativeFile(c.file)) throw new Error('Instructions must be a relative repository file');
       if ((c.times !== undefined || c.days !== undefined) && t.sourceKind !== 'time') throw new Error('Only a time trigger has times');
       const before: Record<string, string | null> = {};
-      for (const key of ['instructions', 'file', 'times', 'days', 'note'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
+      for (const key of ['instructions', 'file', 'times', 'days', 'note', 'wantsModel'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
       if (!Object.keys(before).length) return;
       const next = { ...t, ...c };
       const due = t.enabled && ('times' in before || 'days' in before) ? this.due(t.sourceKind, next.times, next.days, t.lifespan) : t.nextDueAt;
-      this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
+      this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
       const seq = (this.db.select({ seq: max(triggerEdits.seq) }).from(triggerEdits).get()?.seq ?? 0) + 1;
       this.db.insert(triggerEdits).values({ seq, trigger: id, at: this.now(), byKind: by.kind, by: by.id, before: JSON.stringify(before) }).run();
       this.log(id, 'edited', Object.keys(before).join(', '));

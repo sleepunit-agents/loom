@@ -3,7 +3,9 @@ import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
 
-export interface ModelRole { model: string; provider: string; harness: string; series: string }
+/** `tag` is the operator's word for what kind of model this is within its family, such as best, normal or low.
+ * Work that wants a tag runs on any allowed model carrying it, whichever family has room. */
+export interface ModelRole { model: string; provider: string; harness: string; series: string; tag?: string }
 export interface Placement { box: string; model: string; account: string; harness: string }
 export const WORKER_SILENCE_MS = 120_000;
 
@@ -22,6 +24,8 @@ export function meetsNeed(facts: readonly string[], need: string): boolean {
  */
 export function selectPlacement(db: DataDatabase, input: {
   agent: string; now: string; roles: readonly ModelRole[]; model?: string; needs?: readonly string[];
+  /** What the work asked to run on: a tag or one model's name. Only the agent's allowed models that match are tried. */
+  wants?: string | null;
 }): Placement | undefined {
   const now = Date.parse(input.now);
   if (!Number.isFinite(now)) throw new Error('Invalid placement time');
@@ -29,7 +33,8 @@ export function selectPlacement(db: DataDatabase, input: {
   const allowed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box,row.lent]));
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
   const models = db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
-    .filter(row => input.model === undefined || row.model === input.model);
+    .filter(row => input.model === undefined || row.model === input.model)
+    .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all().filter(account => currentAccountCapacity(db, account.id, input.now).hasRoom);
   const signedIn = db.select().from(modelAccountBoxes).all();
   for (const preference of preferences) {

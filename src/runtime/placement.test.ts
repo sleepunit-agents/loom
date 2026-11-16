@@ -105,3 +105,21 @@ it('closes placement when shared observations expire even while summary says roo
   expect(selectPlacement(db, input)).toBeUndefined();
   expect(db.select().from(modelAccounts).get()!.hasRoom).toBe(true);
 });
+it('runs work that wants a tag on any allowed model carrying it, in the agent\'s order, across families', () => {
+  const { db, input } = fixture(), now = input.now;
+  db.insert(modelAccounts).values({ id: 'second', owner: 'owner', provider: 'other-provider', label: 'Other', hasRoom: true }).run();
+  db.insert(modelAccountWindows).values({ account: 'second', window: 'week', usage: 0.2, usageReadAt: now, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
+  db.insert(modelAccountBoxes).values({ account: 'second', box: 'local' }).run();
+  db.insert(agentModels).values({ agent: 'art', model: 'other-best', position: 2 }).run();
+  const roles = [{ model: 'preferred', provider: 'provider', harness: 'runner', series: 'a', tag: 'normal' }, { model: 'backup', provider: 'provider', harness: 'runner', series: 'a', tag: 'best' },
+    { model: 'other-best', provider: 'other-provider', harness: 'other', series: 'b', tag: 'best' }, { model: 'not-allowed', provider: 'provider', harness: 'runner', series: 'a', tag: 'low' }];
+  const place = (wants?: string | null) => selectPlacement(db, { ...input, roles, wants })?.model;
+  expect(place()).toBe('preferred'); expect(place(null)).toBe('preferred');
+  expect(place('best')).toBe('backup'); expect(place('normal')).toBe('preferred');
+  // One model by name works the same way; a tag no allowed model carries, or a model the agent may not use, places nothing.
+  expect(place('other-best')).toBe('other-best'); expect(place('low')).toBeUndefined(); expect(place('not-allowed')).toBeUndefined();
+  // The first family is out of room: the same tag goes to the next family that has some.
+  db.update(modelAccountWindows).set({ usage: 1 }).where(eq(modelAccountWindows.account, 'shared')).run();
+  expect(selectPlacement(db, { ...input, roles, wants: 'best' })).toMatchObject({ model: 'other-best', account: 'second', harness: 'other' });
+  expect(place('normal')).toBeUndefined();
+});

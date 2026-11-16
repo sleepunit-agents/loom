@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations } from '../core/data/schema.js';
+import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
@@ -244,4 +244,20 @@ it('keeps explicit body waiting status across worker liveness pulses until a bod
 
 it.each(['discord','slack'] as const)('includes the saved %s receiving venue without pretending it is a Comms thread',venue=>{
  const f=fixture();f.db.update(conversations).set({venue}).where(eq(conversations.id,f.conversation.id)).run();const claimed=f.runtime.next('first');expect(claimed).toMatchObject({venue,thread:null,conversation:f.conversation.id});
+});
+it('places a lane\'s work on what its trigger wants, read when the job is placed', () => {
+  const f = fixture();
+  f.db.insert(agentModels).values({ agent: 'art', model: 'clever', position: 1 }).run();
+  f.roles.splice(0, 1, { model: 'primary', provider: 'provider', harness: 'codex', series: 'series', tag: 'normal' } as never, { model: 'clever', provider: 'provider', harness: 'claude', series: 'series', tag: 'best' } as never);
+  f.db.insert(triggers).values({ id: 'tr-lane', ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: '03:13', lifespan: 'until-stopped', targetKind: 'inbox', toKind: 'agent', to: 'art', note: 'Lane', enabled: true, state: 'standing', createdAt: f.now(), changedAt: f.now(), wantsModel: 'low' }).run();
+  const wake = f.comms.open({ agent: 'art', venue: 'wake', place: 'tr-lane', label: 'Lane' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: wake.id, source: 'trigger', sourceId: 'tr-lane:1', fromKind: 'schedule', words: 'Do the lane' });
+  const lane = f.runtime.jobs.admit(wake.id)!;
+  // The ordinary conversation's job goes first, on the agent's own order.
+  expect(f.runtime.next('first')).toMatchObject({ id: f.job.id, model: 'primary' });
+  // Nothing the agent may use carries "low": the lane's work waits, it does not run on something else.
+  expect(f.runtime.next('first')).toBeUndefined(); expect(f.runtime.jobs.get(lane.id).state).toBe('queued');
+  // The lane is edited to want the best model: the waiting job is placed on it.
+  f.db.update(triggers).set({ wantsModel: 'best' }).where(eq(triggers.id, 'tr-lane')).run();
+  expect(f.runtime.next('first')).toMatchObject({ id: lane.id, model: 'clever', harness: 'claude', venue: 'wake' });
 });

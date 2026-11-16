@@ -258,6 +258,10 @@ it('edits a lane\'s words and times, keeps what they said before and who changed
   expect(row(lane.id)).toMatchObject({ times: '12:05', file: 'routines/triage.md' });
   engine.stop(lane.id); engine.edit(lane.id, { times: '12:30' }, { kind: 'agent', id: 'art' });
   expect(row(lane.id)).toMatchObject({ times: '12:30', enabled: false, nextDueAt: null });
+  // What the lane wants to run on is set with it, edited like its words, and kept in the history.
+  const tagged = engine.set({ ...base, times: '12:40', lifespan: 'until-stopped', wantsModel: 'best' }); expect(row(tagged.id).wantsModel).toBe('best');
+  engine.edit(tagged.id, { wantsModel: 'normal' }, { kind: 'agent', id: 'art' }); engine.edit(tagged.id, { wantsModel: null }, { kind: 'agent', id: 'art' });
+  expect(row(tagged.id).wantsModel).toBeNull(); expect(edits().filter(e => e.trigger === tagged.id).map(e => e.before)).toEqual([{ wantsModel: 'best' }, { wantsModel: 'normal' }]);
   const answer = engine.set({ ...base, sourceKind: 'answer', watches: 'approval:a', times: undefined });
   expect(() => engine.edit(answer.id, { times: '12:00' }, { kind: 'agent', id: 'art' })).toThrow('Only a time trigger');
 });

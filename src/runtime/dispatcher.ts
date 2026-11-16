@@ -5,7 +5,7 @@ import { Threads } from '../core/conversations/threads.js';
 import { workerPolicy } from './body-policy.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads } from '../core/data/schema.js';
+import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads, triggers } from '../core/data/schema.js';
 import { Jobs, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
@@ -36,7 +36,7 @@ export class Dispatcher {
         const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
         // Settings may gain GPU after admission; never claim an incapable box.
         if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
-        const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs });
+        const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation) });
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
@@ -55,6 +55,14 @@ export class Dispatcher {
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
     }, { behavior: 'immediate' });
+  }
+  /** A lane's work runs in the conversation its trigger opened, whose place is the trigger. What that trigger
+   * wants to run on is read when the job is placed, so an edit to the lane takes effect at once. */
+  private wants(conversation: string | null): string | null {
+    if (!conversation) return null;
+    const row = this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, conversation)).get();
+    if (row?.venue !== 'wake' || !row.place) return null;
+    return this.db.select({ wants: triggers.wantsModel }).from(triggers).where(eq(triggers.id, row.place)).get()?.wants ?? null;
   }
   private liveMachine(box: string) {
     const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();

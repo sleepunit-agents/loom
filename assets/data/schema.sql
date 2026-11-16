@@ -674,6 +674,7 @@ CREATE TABLE `triggers` (
 	`last_fired_at` text,
 	`created_at` text NOT NULL,
 	`changed_at` text NOT NULL,
+	`wants_model` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "triggers_next_due_at_utc" CHECK("triggers"."next_due_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."next_due_at") = "triggers"."next_due_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."next_due_at") = "triggers"."next_due_at", 0)),
 	CONSTRAINT "triggers_last_fired_at_utc" CHECK("triggers"."last_fired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."last_fired_at") = "triggers"."last_fired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."last_fired_at") = "triggers"."last_fired_at", 0)),
