@@ -10,14 +10,14 @@ import { operation, mayAct, OperationError, RecoveredWrite, type Context, type O
  * importing the old backend or initializing any of its schema.
  */
 export interface KnowledgeActionResult { verified: number; slugs: string[]; verified_at: string; stamped: boolean; noted: boolean }
-export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: string; outcome: 'confirmed' | 'stale'; note: string; verifier: string }, now: number) => KnowledgeActionResult;
+export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: string; outcome: 'confirmed' | 'stale'; note?: string; freshness_anchor?: string; verifier: string }, now: number) => KnowledgeActionResult;
 
 /** Opt-in alongside the read installer. Never creates a missing content store.
  * The added tables hold migration/retry metadata, never page bodies or notes.
  * Source preparation owns metadata; verification and its receipt
  * insertion share one immediate source transaction.
  */
-export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier; classify(domain: string): string }) {
+export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier; classify(domain: string, anchor?: string): string }) {
   const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
   const recover = (ctx: Context) => {
     if (!db || !ctx.receipt || !mindReceiptsReady(db)) return;
@@ -30,12 +30,14 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     for (const slug of result.slugs) ctx.changed('knowledge', slug);
     return new RecoveredWrite(result, prior.expires);
   };
-  for (const [verb, outcome, note] of [
-    ['knowledgeVerify', 'confirmed', "confirmed from loom's page"],
-    ['knowledgeRecheck', 'stale', "asked to be checked again from loom's page"],
+  // A check with no note is a pure stamp: the body, `updated` and the kept
+  // versions stay as they are, and the check is recorded in `verifications`.
+  for (const [verb, outcome] of [
+    ['knowledgeVerify', 'confirmed'],
+    ['knowledgeRecheck', 'stale'],
   ] as const) {
     const name = `mind.${verb}`;
-    operations.register(operation({ name, write: true, input: z.object({ slug: z.string().min(1).max(200) }), output: z.unknown(),
+    operations.register(operation({ name, write: true, input: z.object({ slug: z.string().min(1).max(200), note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
       recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
       run(ctx, input) {
@@ -51,7 +53,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
           const page = db.prepare('SELECT status FROM pages WHERE slug = ?').get(input.slug) as { status: string } | undefined;
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
           if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before checking it');
-          const answer = options.verify(db, { slug: input.slug, outcome, note, verifier: ctx.viewer.id }, ctx.now);
+          const answer = options.verify(db, { slug: input.slug, outcome, ...(input.note ? { note: input.note } : {}), ...(input.freshnessAnchor ? { freshness_anchor: input.freshnessAnchor } : {}), verifier: ctx.viewer.id }, ctx.now);
           db.prepare('INSERT INTO mind_operation_receipts VALUES (?, ?, ?, ?, ?, ?)')
             .run(receipt.viewer, receipt.id, receipt.name, receipt.inputHash, JSON.stringify(answer), receipt.expires);
           return answer;
@@ -64,7 +66,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   }
   operations.register(operation({ name: 'mind.knowledgeAdd', write: true,
     input: z.object({ title: z.string().trim().min(1).max(200), domain: z.string().trim().toLowerCase().min(1).max(200),
-      body: z.string().trim().min(1).max(64 * 1024), source: z.string().trim().max(4000).default('') }), output: z.unknown(), recover,
+      body: z.string().trim().min(1).max(64 * 1024), source: z.string().trim().max(4000).default(''), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(), recover,
     may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeAdd'),
     run(ctx, input) {
       if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
@@ -78,8 +80,8 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
         const replay = recover(ctx); if (replay) return replay;
         if (db.prepare('SELECT 1 FROM pages WHERE slug = ?').get(slug)) throw new OperationError('conflict', 'Knowledge already has a page by that title');
         const at = new Date(ctx.now).toISOString(), sourcing = input.source ? 'sourced' : 'provisional';
-        const inserted = db.prepare(`INSERT INTO pages(uuid,slug,title,domain,body,sourcing,verified_at,sla_class,created_by,author,created,updated)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(),slug,input.title,input.domain,input.body,sourcing,at,options.classify(input.domain),input.domain.startsWith('ours/') ? ctx.viewer.id : null,ctx.viewer.id,at,at);
+        const inserted = db.prepare(`INSERT INTO pages(uuid,slug,title,domain,body,sourcing,verified_at,freshness_anchor,sla_class,created_by,author,created,updated)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(randomUUID(),slug,input.title,input.domain,input.body,sourcing,at,input.freshnessAnchor ?? null,options.classify(input.domain, input.freshnessAnchor),input.domain.startsWith('ours/') ? ctx.viewer.id : null,ctx.viewer.id,at,at);
         db.prepare('INSERT INTO citations(page_id,claim,source_kind,source_locator,excerpt,retrieved_at,created) VALUES(?,?,?,?,?,?,?)')
           .run(inserted.lastInsertRowid,input.title,input.source ? 'web' : 'conversation',input.source || `${ctx.viewer.id} on loom's page`,input.title,at,at);
         const result = { slug, slugs: [slug], sourcing };

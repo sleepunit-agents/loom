@@ -70,3 +70,25 @@ it('returns fifty records by default, follows the remaining page, and accepts th
   const maximum=await f.query(`{${field}(agent:"fiction",first:200){entries{title} nextBefore}}`);expect(maximum.errors).toBeUndefined();const complete=maximum.data![field] as {entries:unknown[];nextBefore:null};expect(complete.entries).toHaveLength(51);expect(complete.nextBefore).toBeNull();
  }expect(f.db.serialize()).toEqual(before);
 });
+
+it('lists live memories newest first under current Memory visibility, without changing the source',async()=>{
+ const f=fixture(),backend=f.backend!,refs:string[]=[];
+ for(const [i,category,project] of [[0,'project','pond'],[1,'user','pond'],[2,'project','other'],[3,'project','pond']] as const)refs.push((await backend.remember({category,project,title:'Listed '+i,content:'Listed words '+i,...(i===0?{sourcing:'observed' as const}:{})})).ref);
+ await backend.archive({ref:refs[3]});f.db.prepare("UPDATE memories SET created='2026-01-0'||id||'T00:00:00.000Z'").run();f.db.prepare("UPDATE memories SET expires_at='2000-01-01T00:00:00.000Z' WHERE ref=?").run(refs[2]);
+ const uuid=(ref:string)=>'fiction:'+(f.db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}).uuid,before=f.db.serialize();
+ const all=await f.query('{memoryList(agent:"fiction"){id title category project created updated sourcing}}');expect(all.errors).toBeUndefined();
+ expect(all.data).toEqual({memoryList:[{id:uuid(refs[1]),title:'Listed 1',category:'user',project:'pond',created:'2026-01-02T00:00:00.000Z',updated:'2026-01-02T00:00:00.000Z',sourcing:null},{id:uuid(refs[0]),title:'Listed 0',category:'project',project:'pond',created:'2026-01-01T00:00:00.000Z',updated:'2026-01-01T00:00:00.000Z',sourcing:'observed'}]});
+ expect((await f.query('{memoryList(agent:"fiction",category:"project"){title}}')).data).toEqual({memoryList:[{title:'Listed 0'}]});expect((await f.query('{memoryList(agent:"fiction",project:"other"){title}}')).data).toEqual({memoryList:[]});
+ expect((await f.query('{memoryList(agent:"fiction",first:1){title}}')).data).toEqual({memoryList:[{title:'Listed 1'}]});
+ for(const viewer of [{kind:'member',id:'peer'},{kind:'agent',id:'other'}] as Viewer[])expect((await f.query('{memoryList(agent:"fiction"){title}}',viewer)).data).toEqual({memoryList:null});
+ expect((await f.query('{memoryList(agent:"fiction"){title}}',{kind:'member',id:'coowner'})).data).toMatchObject({memoryList:[{title:'Listed 1'},{title:'Listed 0'}]});
+ expect((await graphql({schema:f.schema,source:'{memoryList(agent:"fiction"){title}}',contextValue:{}})).data).toEqual({memoryList:null});expect((await f.query('{memoryList(agent:"ghost"){title}}')).data).toEqual({memoryList:null});
+ for(const args of ['first:0','first:501','project:""'])expect((await f.query(`{memoryList(agent:"fiction",${args}){title}}`)).errors?.[0].message).toBe('Memory list selection is invalid');
+ expect(f.db.serialize()).toEqual(before);expect(existsSync(f.missing)).toBe(false);
+});
+it('lists a legacy source without opaque IDs, sourcing or expiry, and sanitizes an unsupported one',async()=>{
+ const f=fixture(true);f.db.exec("CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,title TEXT,category TEXT,created TEXT,archived INTEGER);INSERT INTO memories VALUES(1,'a','Old','user','2020-01-01',0),(2,'b','Gone','user','2020-01-02',1),(3,'c','New','user','2020-01-01',0)");
+ expect((await f.query('{memoryList(agent:"fiction"){id title project updated sourcing}}')).data).toEqual({memoryList:[{id:null,title:'New',project:null,updated:'2020-01-01',sourcing:null},{id:null,title:'Old',project:null,updated:'2020-01-01',sourcing:null}]});
+ expect((await f.query('{memoryList(agent:"fiction",project:"pond"){title}}')).data).toEqual({memoryList:[]});
+ f.db.exec('DROP TABLE memories;CREATE TABLE memories(id INTEGER PRIMARY KEY,content TEXT)');const result=await f.query('{memoryList(agent:"fiction"){title}}');expect(result.errors?.[0].message).toBe('Memory list is unavailable');expect(JSON.stringify(result)).not.toContain(f.path);
+});

@@ -249,9 +249,9 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('knowledge_edit','Change a shared knowledge page: replace its body (the old body is kept as a version), add a source (an http or https link), or both.',
   z.object({slug:z.string().min(1).max(200),body:z.string().min(1).max(65536).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
- tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check.',
-  z.object({slug:z.string().min(1).max(200),outcome:z.enum(['still-true','due-a-check'])}).strict(),
-  async input=>{await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',{slug:input.slug});return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
+ tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check. A note is added to the page as a dated section; without one the page is left as it is. freshnessAnchor is the version or date the page holds true as of.',
+  z.object({slug:z.string().min(1).max(200),outcome:z.enum(['still-true','due-a-check']),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
+  async input=>{const {outcome:_outcome,...check}=input;await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',check);return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
  tool('knowledge_restore','Put back an earlier version of a shared knowledge page.',
   z.object({slug:z.string().min(1).max(200),revision:z.number().int().positive()}).strict(),
   async input=>{await run('mind.knowledgeRestore',input);return 'Restored version '+input.revision+' of '+input.slug;});

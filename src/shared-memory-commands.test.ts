@@ -445,3 +445,61 @@ it('lets a no-job agent credential read and write shared Knowledge through the r
  const denied=await fetch(f.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({id:'member-knowledge',input:{...input,title:'Forbidden member fact'}})});
  expect(denied.status).toBe(403);
 });
+it('lists live memories newest first by category and project with sourcing, forgettable IDs and no recall heat',async()=>{
+ const f=await fixture(),ids:string[]=[];
+ for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other'],[4,'project','pond'],[5,'project','pond']] as const){
+  vi.setSystemTime(Date.parse('2026-11-14T18:00:00Z')+i*60000);
+  const made=await f.call('remember',{category,project,title:'Listed '+i,content:'alpha listed '+i,...(i===1?{sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'}:{}),...(i===5?{ttl:'1h'}:{})},'list-'+i);expect(made.status).toBe(200);ids.push(made.result.value.ids[0]);
+ }
+ expect(f.source.prepare('SELECT sourcing,provenance FROM memories WHERE uuid=?').get(ids[1].slice(4))).toEqual({sourcing:'relayed',provenance:'PRIVATE_PROVENANCE, fictional lane'});
+ expect((await f.call('remember',{...input,title:'Bad sourcing',sourcing:'guessed'},'bad-sourcing')).status).toBe(400);expect((await f.call('remember',{...input,title:'Long provenance',provenance:'p'.repeat(2001)},'long-provenance')).status).toBe(400);
+ // A draft has nowhere to keep them, so it refuses rather than drops them.
+ expect((await f.call('propose',{...input,sourcing:'relayed'},'propose-sourcing')).status).toBe(400);expect(f.count()).toBe(6);
+ expect((await f.call('archive',{id:ids[4]},'list-archive')).status).toBe(200);
+ const later=Date.parse('2026-11-14T20:30:00Z');vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
+ const all=(await f.query('{memoryList(agent:"art"){id title category project created updated sourcing}}')).memoryList as Array<{id:string;title:string;category:string;project:string;created:string;updated:string;sourcing:string|null}>;
+ expect(all.map(row=>row.id)).toEqual([ids[3],ids[2],ids[1],ids[0]]);expect(all[2]).toMatchObject({title:'Listed 1',category:'project',project:'pond',created:'2026-11-14T18:01:00.000Z',updated:'2026-11-14T18:01:00.000Z',sourcing:'relayed'});
+ expect((await f.query('{memoryList(agent:"art",category:"project"){id}}')).memoryList).toEqual([{id:ids[3]},{id:ids[1]},{id:ids[0]}]);
+ expect((await f.query('{memoryList(agent:"art",project:"pond"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);
+ expect((await f.query('{memoryList(agent:"art",category:"project",project:"pond",first:1){id}}')).memoryList).toEqual([{id:ids[1]}]);
+ expect((await f.query('{memoryList(agent:"art",category:"reference"){id}}')).memoryList).toEqual([]);
+ for(const args of ['first:0','first:501','category:""']){const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:`{memoryList(agent:"art",${args}){id}}`})});expect((await response.json()).errors?.[0].message).toBe('Memory list selection is invalid');}
+ expect(f.source.serialize()).toEqual(before);expect(f.source.prepare('SELECT sum(recall_heat) AS heat FROM memories').get()).toEqual({heat:0});
+ // Only a caller who may see this agent's Memory lists it.
+ expect((await f.query('{memoryList(agent:"art"){id}}',raw.member)).memoryList).toHaveLength(4);
+ expect(await f.query('{memoryList(agent:"mark"){id}}')).toEqual({memoryList:null});expect(await f.query('{memoryList(agent:"nobody"){id}}')).toEqual({memoryList:null});
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query('{memoryList(agent:"art"){id title}}',raw.member)).toEqual({memoryList:null});
+ const forgotten=await f.call('forget',{id:all[0].id},'list-forget');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([ids[3]]);
+ expect((await f.query('{memoryList(agent:"art"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);
+ for(const value of ['PRIVATE_PROVENANCE','Listed 1',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('checks a Knowledge page without changing its words unless a note is given, and keeps its freshness anchor',async()=>{
+ const f=await fixture(),knowledge=new Database(f.memory.sources.commons.knowledge,{readonly:true,fileMustExist:true});clean.push(()=>{knowledge.close();});
+ const mind=async(verb:string,value:unknown,id:string,token=raw.agent)=>{const response=await fetch(f.url+'/api/mind/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id,input:value})});return {status:response.status,result:await response.json()};};
+ const page={title:'Fictional pump',domain:'household',body:'Fictional pump words.',source:''};
+ expect((await mind('knowledgeAdd',{...page,freshnessAnchor:'  Pump OS 1.21  '},'add-anchored')).status).toBe(200);expect((await mind('knowledgeAdd',{...page,title:'Plain fact'},'add-plain')).status).toBe(200);
+ expect((await mind('knowledgeAdd',{...page,title:'Blank anchor',freshnessAnchor:'   '},'add-blank')).status).toBe(400);
+ const fields='slug freshness_anchor sla_class';
+ expect(await f.query(`{memoryKnowledgePage(slug:"fictional-pump"){${fields}} plain:memoryKnowledgePage(slug:"plain-fact"){${fields}} memoryKnowledge{pages{${fields}}} memoryKnowledgeSearch(query:"pump words"){${fields}}}`,raw.agent)).toEqual({
+  memoryKnowledgePage:{slug:'fictional-pump',freshness_anchor:'Pump OS 1.21',sla_class:'software'},plain:{slug:'plain-fact',freshness_anchor:null,sla_class:'default'},
+  memoryKnowledge:{pages:expect.arrayContaining([{slug:'fictional-pump',freshness_anchor:'Pump OS 1.21',sla_class:'software'},{slug:'plain-fact',freshness_anchor:null,sla_class:'default'}])},
+  memoryKnowledgeSearch:expect.arrayContaining([{slug:'fictional-pump',freshness_anchor:'Pump OS 1.21',sla_class:'software'},{slug:'plain-fact',freshness_anchor:null,sla_class:'default'}])});
+ const state=()=>knowledge.prepare(`SELECT p.body,p.updated,p.verified_at,p.freshness_anchor,p.sla_class,(SELECT count(*) FROM page_revisions r WHERE r.page_id=p.id) AS revisions,(SELECT count(*) FROM verifications v WHERE v.page_id=p.id) AS checks FROM pages p WHERE p.slug='plain-fact'`).get() as {body:string;updated:string;verified_at:string;freshness_anchor:string|null;sla_class:string;revisions:number;checks:number};
+ const made=state();expect(made).toMatchObject({body:page.body,revisions:0,checks:0,freshness_anchor:null});
+ const move=(at:string)=>{const now=Date.parse(at);vi.setSystemTime(now);vi.spyOn(f.clock,'now').mockReturnValue(now);};
+ // No note: a pure stamp. The words, their date and their kept versions stay.
+ move('2026-11-15T18:00:00Z');const stamped=await mind('knowledgeVerify',{slug:'plain-fact'},'verify-plain');expect(stamped.status).toBe(200);expect(stamped.result.value).toMatchObject({slugs:['plain-fact'],stamped:true,noted:false});
+ expect(state()).toEqual({...made,verified_at:'2026-11-15T18:00:00.000Z',checks:1});expect(knowledge.prepare('SELECT verifier,outcome FROM verifications').all()).toEqual([{verifier:expect.any(String),outcome:'confirmed'}]);
+ // Asking for another check records it without renewing the stamp or touching the words.
+ move('2026-11-16T18:00:00Z');expect((await mind('knowledgeRecheck',{slug:'plain-fact'},'recheck-plain')).result.value).toMatchObject({stamped:false,noted:false});
+ expect(state()).toEqual({...made,verified_at:'2026-11-15T18:00:00.000Z',checks:2});expect((await f.query('{memoryKnowledgePage(slug:"plain-fact"){checked{outcome}}}',raw.agent)).memoryKnowledgePage).toEqual({checked:{outcome:'stale'}});
+ // An anchor alone is still no change to the words; it moves the class.
+ move('2026-11-17T18:00:00Z');expect((await mind('knowledgeVerify',{slug:'plain-fact',freshnessAnchor:' as of v2.0 '},'verify-anchor')).status).toBe(200);
+ expect(state()).toEqual({...made,verified_at:'2026-11-17T18:00:00.000Z',freshness_anchor:'as of v2.0',sla_class:'software',checks:3});
+ expect((await f.query(`{memoryKnowledgePage(slug:"plain-fact"){${fields} verified_at}}`,raw.agent)).memoryKnowledgePage).toEqual({slug:'plain-fact',freshness_anchor:'as of v2.0',sla_class:'software',verified_at:'2026-11-17T18:00:00.000Z'});
+ // A note is asked for: it is appended, dated, and the prior words are kept as a version.
+ move('2026-11-18T18:00:00Z');const noted=await mind('knowledgeVerify',{slug:'plain-fact',note:'  Checked against the fictional manual.  '},'verify-note');expect(noted.result.value).toMatchObject({noted:true});
+ expect(state()).toEqual({body:page.body+'\n\n## Verification — 2026-11-18\n\nChecked against the fictional manual.',updated:'2026-11-18T18:00:00.000Z',verified_at:'2026-11-18T18:00:00.000Z',freshness_anchor:'as of v2.0',sla_class:'software',revisions:1,checks:4});
+ for(const bad of [{note:'   '},{note:'n'.repeat(4001)},{freshnessAnchor:'a'.repeat(201)}])expect((await mind('knowledgeVerify',{slug:'plain-fact',...bad},'verify-bad-'+Object.keys(bad)[0]+String(Object.values(bad)[0]).length)).status).toBe(400);
+ expect(state().checks).toBe(4);
+});

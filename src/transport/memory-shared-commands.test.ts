@@ -44,7 +44,7 @@ async function fixture(){
  let failReceipt=false,failRelationship=false;
  const receipts:ReceiptPersistence={get:stored.get.bind(stored),expire:stored.expire.bind(stored),nextExpiry:stored.nextExpiry.bind(stored),recover:stored.recover.bind(stored),insert(receipt){if(failReceipt)throw Error('Fictional shared receipt failure');stored.insert(receipt);}};
  const changes=vi.fn(),operations=new Operations(client,clock,changes,{receipts,writes,reportError:()=>{}});
- const knowledgeActions=installMindKnowledgeActions(operations,{path,sharing,verify:verifyKnowledgePages,classify:domain=>deriveSlaClass(null,domain)});
+ const knowledgeActions=installMindKnowledgeActions(operations,{path,sharing,verify:verifyKnowledgePages,classify:(domain,anchor)=>deriveSlaClass(anchor,domain)});
  const peopleActions=installMindPeopleActions(operations,{directory,relationship,agent:'fiction',sharing,create(db,input,now,half){if(half==='relationship'&&failRelationship)throw Error('Fictional relationship interruption');createPersonHalf(db,input,now,half);}});
  closes.push(()=>knowledgeActions.close(),()=>peopleActions.close(),()=>operations.close(),()=>data.close());
  const call=(name:string,input:unknown,id:string)=>operations.call('http',{kind:'member',id:'owner'},name,input,id);

@@ -206,6 +206,10 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
   expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true'})).text).toBe('Marked fictional-hose still true');
   const page=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
   expect(page).toContain('# Fictional hose');expect(page).toContain('FICTIONAL_SECOND_FACT');expect(page).toContain('## Earlier versions');
+  // A check without a note leaves the words alone; one with a note appends it.
+  expect(page).not.toContain('## Verification');expect(page).not.toContain('(verify-note');
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true',note:'FICTIONAL_CHECK_NOTE',freshnessAnchor:'Hose 1.2'})).error).toBe(false);
+  const noted=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;expect(noted).toContain('## Verification');expect(noted).toContain('FICTIONAL_CHECK_NOTE');expect(noted).toContain('(verify-note');
   const version=Number(/^- (\d+) \(edit/m.exec(page)?.[1]);expect(version).toBeGreaterThan(0);
   expect((await art.call('knowledge_restore',{slug:'fictional-hose',revision:version})).error).toBe(false);
   expect((await art.call('knowledge_read',{slug:'fictional-hose'})).text).toContain('FICTIONAL_FIRST_FACT');

@@ -126,6 +126,19 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
    return {...row,id:uuid&&/^[a-f0-9-]{36}$/.test(uuid)?`${agent}:${kind==='proposal'?'proposal:':''}${uuid}`:null,note,archivedAt};
   }),nextBefore:rows.length>first?page.at(-1)!.cursor:null};
  };
+ // Every live memory's line, newest first, under the same private Memory
+ // visibility as the other reads. A plain read: it adds no recall heat.
+ const memoryList=(agent:string,v:Viewer,filter:{category?:string|null;project?:string|null},first:number)=>{
+  const db=sources.get(agent);if(!db||!maySee(v,{type:'memory',agent},options.sharing()))return null;
+  if(!has(db,'memories'))return [];
+  const columns=new Set((db.pragma('table_info(memories)') as {name:string}[]).map(column=>column.name));
+  if(!columns.has('archived'))throw Error('Memory source schema is unavailable');
+  const column=(name:string)=>columns.has(name)?name:'NULL',clauses=['archived=0'],params:unknown[]=[];
+  if(columns.has('expires_at')){clauses.push("(expires_at IS NULL OR julianday(expires_at)>julianday(?))");params.push(new Date(clock.now()).toISOString());}
+  for(const name of ['category','project'] as const)if(filter[name]){clauses.push(`${column(name)}=?`);params.push(filter[name]);}
+  const rows=db.prepare(`SELECT ${column('uuid')} AS uuid,${column('title')} AS title,${column('category')} AS category,${column('project')} AS project,${column('created')} AS created,coalesce(${column('updated')},${column('created')}) AS updated,${column('sourcing')} AS sourcing FROM memories WHERE ${clauses.join(' AND ')} ORDER BY ${column('created')} DESC,id DESC LIMIT ?`).all(...params,first) as Array<{uuid:string|null;title:string|null;category:string|null;project:string|null;created:string|null;updated:string|null;sourcing:string|null}>;
+  return rows.map(({uuid,...row})=>({id:uuid&&/^[a-f0-9-]{36}$/.test(uuid)?`${agent}:${uuid}`:null,...row}));
+ };
  const memoryHistory=(id:string,v:Viewer)=>{
   const source=memorySource(id,v);if(!source||!has(source.db,'memory_revisions'))return [];const {db,selector,params}=source;
   const row=db.prepare(`SELECT id FROM memories WHERE ${selector}`).get(...params) as {id:number}|undefined;
@@ -135,6 +148,6 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  };
  const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
  let closed=false;
- const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,retained,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={access,ids,allowed,expires,readIndex:read,read:hub,memoryRead,memoryHistory,retained,memoryList,list:(v:Viewer)=>ids().flatMap(id=>{const r=read(id,v);return r?[r]:[];}),close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
  return reader;
 }
