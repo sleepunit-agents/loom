@@ -89,3 +89,15 @@ it.each([{names:[{toString:()=> 'mcp__loom_secrets__command'} as unknown as stri
 it('refuses private tool names without a private MCP configuration before launch',()=>{
  const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpTools:['mcp__loom_secrets__command']})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });
+it('gives a body the harness\'s own tools only when the machine says so, and still withholds denied tools', async () => {
+  const f = fixture();
+  const full = claudeBody({ command: '/private/claude', cwd: '/house', env: f.env, spawn: f.launch, reach: 'all' });
+  const result = full(job, 'mail', f.abort.signal); const args = f.launch.mock.calls[0][1];
+  expect(args[args.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
+  expect(args).not.toContain('--allowedTools');
+  expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools', 'Read']);
+  f.finish(f.rows()); await result.catch(() => {});
+  const g = fixture(), plain = g.run(job, 'mail', g.abort.signal);
+  expect(g.launch.mock.calls[0][1][g.launch.mock.calls[0][1].indexOf('--permission-mode') + 1]).toBe('dontAsk');
+  g.finish(g.rows()); await plain.catch(() => {});
+});

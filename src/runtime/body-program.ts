@@ -13,7 +13,10 @@ import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
-const config = z.object({ command: z.string().min(1), cwd: z.string().min(1) }).strict();
+// `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
+// own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
+// way the household's list of tools an agent's body is not given still applies.
+const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
 const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(/^body_[a-f0-9]{64}$/) }).strict(),
 }).strict();

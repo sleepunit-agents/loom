@@ -16,6 +16,8 @@ const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/;
 const unavailable = () => new Error('Native Claude execution unavailable');
 export function claudeBody(input: {
   command: string; cwd: string; env: NodeJS.ProcessEnv; spawn?: ClaudeSpawn; mcpConfig?: Uint8Array; mcpTools?:readonly string[];
+  /** 'all' lets the body use the harness's own tools too; denied tools still apply. */
+  reach?: 'loom' | 'all';
 }) {
   const env = { ...input.env };
   if (!input.command || !input.cwd || [input.command, input.cwd, ...Object.keys(env), ...Object.values(env).filter((v): v is string => v !== undefined)].some(v => v.includes('\0'))) throw unavailable();
@@ -34,8 +36,9 @@ export function claudeBody(input: {
     const session = randomUUID();
     const args = ['-p', '--model', job.model, '--session-id', session,
       '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
-      '--permission-mode', 'dontAsk', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', control?'/dev/fd/3':'{"mcpServers":{}}',
-      ...(control?['--allowedTools',...allowed]:[]),
+      // With full reach nothing asks and nothing is listed: everything is allowed except what is denied below.
+      '--permission-mode', input.reach==='all'?'bypassPermissions':'dontAsk', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', control?'/dev/fd/3':'{"mcpServers":{}}',
+      ...(control&&input.reach!=='all'?['--allowedTools',...allowed]:[]),
       ...(denied.length ? ['--disallowedTools', ...denied] : [])];
     let child: ChildProcessWithoutNullStreams;
     // Node extra pipes are Unix sockets, which cannot be reopened as /dev/fd/3.
