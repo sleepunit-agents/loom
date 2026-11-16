@@ -36,7 +36,7 @@ function fixture() {
   db.insert(secretUses).values({ id: 'use', secret: 'API', agent: 'art', job: 'job', at: now(), state: 'released' }).run();
   const tables = ['household', 'secrets', 'secretGrants', 'secretRequests', 'secretRules', 'secretRuleAgents', 'secretUses', 'secretChanges', 'bridgeConnections', 'bridgeChannelFilters', 'bridgeChannels', 'bridgePeople', 'bridgeSends'] as const;
   const schema = withQueryFields(dataQueries(client, { tables: [...tables], visibility: Object.fromEntries(tables.map(table => [table, () => sql`true`])) }), { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(new BridgeQueries(db, () => Date.parse(now())), () => ({ connections: sql`true`, incoming: sql`true` })) });
-  return { schema };
+  return { schema, db };
 }
 it('executes the actual Bridges app query without legacy records or a guessed member', async () => {
   const { schema } = fixture(), result = await graphql({ schema, source: bridgesQuery, contextValue: { viewer: { kind: 'member', id: 'owner' } } });
@@ -50,4 +50,15 @@ it('executes the actual Settings app query including job use/audit and household
   const snapshot = settingsSnapshot({ status: 'live', data: result.data as unknown as SettingsData });
   expect(snapshot).toMatchObject({ status: 'live', member: 'owner', defaultAnswer: 'ask', secrets: [{ name: 'API' }], grants: [{ id: 'grant', job: 'job' }], requests: [{ id: 'request', state: 'allowed' }], rules: [{ answer: 'auto' }], ruleAgents: [{ when: 'at_start' }], uses: [{ job: 'job', state: 'released' }], changes: [{ action: 'add' }] });
   const forbidden = await graphql({ schema, source: '{ secrets { value } }' }); expect(forbidden.errors?.[0].message).toContain('Cannot query field');
+});
+
+it('uses current reader membership and owner role without exposing the owner default to other callers',async()=>{
+ const {schema,db}=fixture(),source='{bridgeReader{id manage} secretsReader{id defaultAnswer}}';
+ const read=(viewer:object)=>graphql({schema,source,contextValue:{viewer}});
+ expect(await read({kind:'member',id:'owner'})).toMatchObject({data:{bridgeReader:{id:'owner',manage:true},secretsReader:{id:'owner',defaultAnswer:'ask'}}});
+ db.update(household).set({secretsDefault:'auto'}).run();
+ expect(await read({kind:'member',id:'owner'})).toMatchObject({data:{secretsReader:{defaultAnswer:'auto'}}});
+ db.update(members).set({role:'member'}).run();
+ expect(await read({kind:'member',id:'owner'})).toMatchObject({data:{bridgeReader:{id:'owner',manage:false},secretsReader:null}});
+ for(const viewer of [{kind:'member',id:'missing'},{kind:'agent',id:'art'},{kind:'runner',id:'box'},{kind:'service',id:'internal'}])expect(await read(viewer)).toMatchObject({data:{bridgeReader:null,secretsReader:null}});
 });
