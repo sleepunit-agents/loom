@@ -134,3 +134,30 @@ for(const mode of ['bootstrap-envelope','body-capability'] as const)it(`refuses 
  finally{Buffer.prototype.fill=fill;for(const bytes of held)Reflect.apply(fill,bytes,[0]);held.clear();}
  restored(context.db,context.example.runtime.box);
 }));
+
+it('pins Tasks commands to the normal body-authenticated door and preserves actor, scope and retirement',{timeout:20_000},()=>household(async context=>{
+ const setup=context.app.writes.run(()=>context.app.services.signin.issue({kind:'owner',member:'alex',label:'Native task capability setup',expiresAt:new Date(context.clock.now()+60000).toISOString()})).value;
+ const create=async input=>{const response=await fetch(context.app.url+'/api/tasks/command',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),input:{action:'create',input}})});expect(response.status).toBe(200);return(await response.json()).value.id;};
+ let task,hidden;
+ try{
+  task=await create({title:'Fictional body task',goal:'Exercise the normal command door',why:'Prove the worker capability',owner:{kind:'agent',id:'moss'},project:'garden'});
+  hidden=await create({title:'Other member private task',goal:'Stay open',why:'Check the ordinary Root scope',owner:{kind:'member',id:'robin'}});
+ }finally{context.app.writes.run(()=>context.app.services.signin.revoke(setup.fingerprint));}
+ let worked=false,retired;
+ await nativeProtocolSmoke({...context,native:async({call})=>{
+  retired=call;
+  if(!worked){
+   await expect(call('tasks.command/../signin/revoke',{})).rejects.toThrow('unavailable');
+   await expect(call('tasks.command',{action:'close',id:hidden,reason:'Forbidden'})).rejects.toThrow('refused');
+   await call('tasks.command',{action:'claim',id:task});
+   await call('tasks.command',{action:'comment',id:task,text:'Fictional enrolled body comment'});
+   await expect(call('tasks.command',{action:'comment',id:task,text:'FORGED',actor:{kind:'member',id:'alex'}})).rejects.toThrow('refused');
+   await call('tasks.command',{action:'close',id:task,reason:'Completed by the enrolled body'});worked=true;
+  }
+  return{text:'Fictional task work completed',model:'fixture-task-model',actions:[]};
+ }});
+ expect(worked).toBe(true);expect(context.app.services.tasks.get(task)).toMatchObject({status:'closed',closeReason:'Completed by the enrolled body'});
+ expect(context.app.services.tasks.get(hidden).status).toBe('open');
+ expect(context.db.prepare('SELECT actor_kind,actor,text FROM task_comments WHERE task=?').all(task)).toEqual([{actor_kind:'agent',actor:'moss',text:'Fictional enrolled body comment'}]);
+ await expect(retired('tasks.command',{action:'reopen',id:task})).rejects.toThrow('unavailable');restored(context.db,context.example.runtime.box);
+}));

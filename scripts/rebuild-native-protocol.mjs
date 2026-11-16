@@ -12,6 +12,7 @@ import {httpWorkerControl,reportWorkerHealth} from '../dist/runtime/worker-http.
 import {workOnce} from '../dist/runtime/worker.js';
 import {bodyProgram} from '../dist/runtime/body-program.js';
 import {bodyInput} from '../dist/runtime/body-bootstrap.js';
+const nativeCallPaths=new Map([['digest','/api/conversation/digest'],['turn','/api/conversation/turn'],['status','/api/conversation/status'],['tasks.command','/api/tasks/command']]);
 export async function nativeProtocolSmoke({app,example,clock,home,signal,native,targets}){
  if(!example.fictional||!example.runtime)throw Error('Native protocol requires the new fictional household');
  const supplied=targets===undefined?[{id:example.runtime.job.id,words:'Check the shed hinges before the example rain.'},{id:example.runtime.publicJob.id,words:'Inspect the shared garden path'}]:targets;
@@ -60,9 +61,9 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
         observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare('SELECT job FROM conversations WHERE id=?').get(job.conversation)?.job};
         let finished=false;
         const call=async(name,input)=>{
-         if(finished||bodySignal.aborted||!['digest','turn','status'].includes(name))throw Error('Native fixture command is unavailable');
+         if(finished||bodySignal.aborted||!nativeCallPaths.has(name))throw Error('Native fixture command is unavailable');
          const token=commandToken.toString('ascii');
-         const response=await fetch(app.url+'/api/conversation/'+name,{method:'POST',signal:bodySignal,headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});
+         const response=await fetch(app.url+nativeCallPaths.get(name),{method:'POST',signal:bodySignal,headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});
          const result=await response.json();if(!response.ok||result.ok!==true)throw Error('Native fixture command was refused');return result.value;
         };
         let refuse;const cancelled=new Promise((_,reject)=>{refuse=()=>reject(Error('Native fixture provider stopped'));bodySignal.addEventListener('abort',refuse,{once:true});});
