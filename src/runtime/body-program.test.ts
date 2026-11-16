@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { bodyProgram } from './body-program.js';
+import { bodyProgram, BODY_EXIT } from './body-program.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
 const raw = 'body_' + 'a'.repeat(64);
@@ -62,11 +62,11 @@ it('erases bootstrap at cancellation while startup remains pending, before its p
   const started = new Promise<void>(resolve => { entered = resolve; });
   const pending = bodyProgram({ ...f.options, startup: async (_job, bootstrap) => { bytes = bootstrap.token; entered(); await new Promise<void>(resolve => { release = resolve; }); } });
   await started; f.abort.abort(); expect(bytes!.every(byte => byte === 0)).toBe(true); expect(f.input.every(byte => byte === 0)).toBe(true); release();
-  expect(await pending).toBe(1); expect(f.native).not.toHaveBeenCalled(); expect(f.calls.map(row=>row.path)).toEqual(['status']);
+  expect(await pending).toBe(BODY_EXIT.startup); expect(f.native).not.toHaveBeenCalled(); expect(f.calls.map(row=>row.path)).toEqual(['status']);
 });
 
 it('never reports private native diagnostics as a body error',async()=>{
- const f=fixture();expect(await bodyProgram({...f.options,native:async()=>{throw new Error(raw);}})).toBe(1);
+ const f=fixture();expect(await bodyProgram({...f.options,native:async()=>{throw new Error(raw);}})).toBe(BODY_EXIT.harness);
  expect(f.error).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
  expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
@@ -93,7 +93,7 @@ it('ends native work when a current body status beat fails, without publishing a
  const pending=bodyProgram({...f.options,schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
   if(String(url).endsWith('/status')&&++statuses>2)throw new Error(raw);return fetcher(url,init);
  }});
- await started;tick();expect(await pending).toBe(1);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
+ await started;tick();expect(await pending).toBe(BODY_EXIT.harness);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
 it('refuses mail arriving after Stop was observed during an outstanding take',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,release!:()=>void,cancelled!:()=>void;
@@ -118,7 +118,7 @@ it.each(['missing-ref','foreign-platform','unsupported-venue'])('refuses a %s br
  expect(await bodyProgram({...f.options,stdin:async()=>bytes,...(mode==='unsupported-venue'?{startup}:{}),fetch:async(url,options)=>{
   const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
   const batch=await response.json();Object.assign(batch.value.items[0],{source:mode==='foreign-platform'?'discord':'slack',refs:mode==='missing-ref'?[]:['bi:fixture']});return Response.json(batch);
- }})).toBe(1);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);if(mode==='unsupported-venue'){expect(startup).not.toHaveBeenCalled();expect(f.calls).toEqual([]);}
+ }})).toBe(mode==='unsupported-venue'?1:BODY_EXIT.mail);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);if(mode==='unsupported-venue'){expect(startup).not.toHaveBeenCalled();expect(f.calls).toEqual([]);}
 });
 
 it('replies to the last accepted matching bridge reference even when its words are unavailable',async()=>{

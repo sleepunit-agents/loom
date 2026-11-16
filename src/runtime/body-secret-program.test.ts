@@ -47,5 +47,5 @@ it.each(['abort','status failure'])('cancels pending default startup on %s witho
  const f=fixture();f.pending();const fetcher=f.options.fetch;let fail=false;
  const running=bodyProgram({...f.options,fetch:async(url,options)=>{if(fail&&String(url).endsWith('/status'))throw new Error(raw);return fetcher(url,options);}});
  await f.planned;if(mode==='abort')f.abort.abort();else{fail=true;f.tick();}
- expect(await running).toBe(1);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.cancel).toHaveBeenCalledOnce();expect(f.errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');expect(f.bytes.every(b=>b===0)).toBe(true);
+ expect(await running).toBe(11);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.cancel).toHaveBeenCalledOnce();expect(f.errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');expect(f.bytes.every(b=>b===0)).toBe(true);
 });

@@ -21,6 +21,8 @@ const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), re
 const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(/^body_[a-f0-9]{64}$/) }).strict(),
 }).strict();
+/** How a body that fails says where, with no private words: its exit code. 1 is input it could not accept. */
+export const BODY_EXIT={startup:11,mail:12,identity:13,harness:14,record:15} as const;
 export async function bodyProgram(input: {
   args: readonly string[]; read: (path: string) => Promise<string>;
   stdin: () => Promise<Uint8Array>; env: NodeJS.ProcessEnv; signal: AbortSignal;
@@ -32,6 +34,7 @@ export async function bodyProgram(input: {
   error: (text: string) => void;
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
+  let exit:number=1;
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
@@ -70,9 +73,11 @@ export async function bodyProgram(input: {
       pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
     };
     cancel=input.schedule?input.schedule.every(15_000,beat):(()=>{const timer=setInterval(beat,15_000);return()=>clearInterval(timer);})();
+    exit=BODY_EXIT.startup;
     await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
+    exit=BODY_EXIT.mail;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
@@ -86,6 +91,7 @@ export async function bodyProgram(input: {
     if (batch.stopRequested) { await retire(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
+    exit=BODY_EXIT.identity;
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
     if(signal.aborted)throw new Error();if(memory)context.unshift(memory);
@@ -102,6 +108,7 @@ export async function bodyProgram(input: {
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();
+    exit=BODY_EXIT.harness;
     const native = input.native ?? bodyHarnesses[job.harness]({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
@@ -111,6 +118,7 @@ export async function bodyProgram(input: {
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
+    exit=BODY_EXIT.record;
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
     if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
@@ -127,7 +135,7 @@ export async function bodyProgram(input: {
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
     }
-    input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
+    input.error('Body stopped: invalid input or unavailable execution\n'); return exit;
   }
   finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }
