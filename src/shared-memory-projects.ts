@@ -1,34 +1,27 @@
 import { readProjectConversations } from './core/data/project-conversations.js';
 /** Project sections over the shared services' current outside visibility. No
  * legacy registry, persisted projection or independent permission predicate. */
-import {asc,desc,eq,getTableColumns} from 'drizzle-orm';
 import type {DataDatabase} from './core/data/database.js';
-import {tasks,taskComments,taskLinks,changes} from './core/data/schema.js';
-import {taskVisibility} from './core/data/visibility.js';
-import {workVisibility} from './core/data/work-visibility.js';
-import type {TaskService} from './apps/tasks.js';
+import {readProjectTasks,readProjectChanges} from './core/data/project-sections.js';
 import {taskGroups,type ProjectTask} from './pieces/mind/projects-tasks.js';
 import type {ProjectSectionRole} from './pieces/mind/projects-roles.js';
 import type {ProjectGroup} from './pieces/mind/projects-model.js';
-export function sharedProjectSections(db:DataDatabase,service:Pick<TaskService,'ready'>):{tasks:ProjectSectionRole;changes:ProjectSectionRole;conversations:ProjectSectionRole}{
+export function sharedProjectSections(db:DataDatabase):{tasks:ProjectSectionRole;changes:ProjectSectionRole;conversations:ProjectSectionRole}{
  return {
   tasks:{read(viewer,q){
-   const policy=taskVisibility(viewer);
-   const comments=db.select().from(taskComments).where(policy.taskComments!(getTableColumns(taskComments))).all();
-   const rows:ProjectTask[]=db.select().from(tasks).where(policy.tasks!(getTableColumns(tasks))).orderBy(asc(tasks.priority),asc(tasks.position),asc(tasks.id)).all().map(row=>({
-    id:row.id,title:row.title,status:row.status,priority:row.priority,createdAt:row.createdAt,comments:comments.filter(c=>c.task===row.id),description:row.description,goal:row.goal,why:row.why,
+   const selected=readProjectTasks(db,viewer);
+   const rows:ProjectTask[]=selected.rows.map(row=>({
+    id:row.id,title:row.title,status:row.status,priority:row.priority,createdAt:row.createdAt,comments:selected.comments(row.id),description:row.description,goal:row.goal,why:row.why,
     ...(row.project?{project:row.project}:{}),...(row.assignee&&row.assigneeKind===viewer.kind?{assignee:row.assignee}:{}),...(row.startedAt?{startedAt:row.startedAt}:{}),...(row.closedAt?{closedAt:row.closedAt}:{}),...(row.closeReason?{closeReason:row.closeReason}:{}),...(row.sourceKind&&row.sourceId?{source:row.sourceKind+':'+row.sourceId}:{}),
    }));
-   const links=db.select().from(taskLinks).where(policy.taskLinks!(getTableColumns(taskLinks))).all().map(row=>({id:row.task,dependsOn:row.dependsOn,type:row.type}));
-   // The trusted service computes readiness over all dependencies, including a
-   // hidden blocker. Only already-visible task IDs reach the section.
-   const visible=new Set(rows.map(r=>r.id)),ready=new Set(service.ready().filter(r=>visible.has(r.id)).map(r=>r.id));
+   const links=selected.links;
+   const ready=selected.ready;
    return {available:true,groups:taskGroups(rows,links,ready,q,new Set([viewer.id]))};
   }},
   changes:{read(viewer,q){
    const repos=new Set((q.card.links.repos??[]).map(r=>(r.includes(':')?r:'github:'+r).toLowerCase())),groups:ProjectGroup[]=[];
    const labels:Record<string,string>={you:'Waiting on you',agent:'Ready to merge',ci:'Waiting on CI',reviewer:'Waiting on a reviewer',author:'Waiting on its author',done:'Lately'};
-   for(const row of db.select().from(changes).where(workVisibility(viewer).changes!(getTableColumns(changes))).orderBy(desc(changes.updatedAt),asc(changes.id)).all()){
+   for(const row of readProjectChanges(db,viewer)){
     const repo=(row.repository.includes(':')?row.repository:'github:'+row.repository).toLowerCase();
     if(!q.names.includes(row.project??'')&&!repos.has(repo))continue;
     const title=labels[row.waitingOn],waiting=row.waitingOn==='you';let group=groups.find(g=>g.title===title);

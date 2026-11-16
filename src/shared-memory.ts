@@ -24,7 +24,6 @@ import {verifyKnowledgePages,deriveSlaClass} from './backends/knowledge-verifica
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 import {createPersonHalf} from './backends/people-creation.js';
-import type {TaskService} from './apps/tasks.js';
 import {sharedProjectSections} from './shared-memory-projects.js';
 import {sharedSharing} from './shared-sharing.js';
 import {migrateMindReceipts} from './pieces/mind/receipt-schema.js';
@@ -60,7 +59,7 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
  if(options&&(typeof options.checkingAgent!=='string'||!options.checkingAgent.trim()||!db.select().from(agentRows).where(eq(agentRows.id,options.checkingAgent)).get()))throw new Error('Memory needs an explicit configured checking agent');
 }
-export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,tasks:Pick<TaskService,'ready'>){
+export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined){
  validateSharedMemoryOptions(db,options);
  const closers:Array<()=>void>=[];let closed=false;
  const close=()=>{if(closed)return;closed=true;const errors:unknown[]=[];for(const stop of closers.splice(0).reverse())try{stop();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory teardown failed');};
@@ -71,7 +70,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  const projectHref=(agent:string,slug:string)=>'/p/projects-preview/project/'+encodeURIComponent(agent+':'+slug);
  try{
   const people=peopleReader({directory:sources?.commons.people,agents,sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
-  const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
+  const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db),...options?.sections});closers.push(projects.close);
   const activity=createActivityReader(clock,{agents,sharing,timezone,github:settings?.githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),timezone,projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const touches=mindTouchSources(sources);
