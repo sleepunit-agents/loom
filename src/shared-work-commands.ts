@@ -39,6 +39,15 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   };
   const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
     if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
+    // A no is always possible. When the pull request has moved on, closed or gone,
+    // there is nothing left to compare the card with: deny the card itself.
+    const row = change(input.id);
+    if (!input.allow && (!row || row.state !== 'open' || row.headCommit !== input.head)) {
+      try { service.deny(input.approval, ctx.viewer.id); }
+      catch (error) { if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message)) throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.'); throw error; }
+      ctx.changed('approvals', input.approval); if (row) ctx.changed('changes', input.id);
+      return;
+    }
     currentHead(input);
     try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member: ctx.viewer.id, allow: input.allow }); }
     catch (error) {
@@ -55,12 +64,12 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) || !row || (authority && authority.approval(viewer, row) !== true)) return false;
       const merge = mergeTarget(row);
-      return !merge || mayMerge(viewer, row, merge.id);
+      return !merge || input.answer === 'deny' || mayMerge(viewer, row, merge.id);
     },
     validateReplay(_viewer, input) {
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
-      const merge = mergeTarget(row); if (merge) currentHead(merge);
+      const merge = mergeTarget(row); if (merge && input.answer !== 'deny') currentHead(merge);
     },
     run(ctx, input) {
       if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');

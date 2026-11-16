@@ -8,7 +8,7 @@ import { eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, triggers } from '../data/schema.js';
-import { Operations, operation } from '../operations/index.js';
+import { Operations, OperationError, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
 import { triggerInput, type NewTrigger, type Trigger } from './triggers.js';
 import type { Recipient, Timings } from './volume.js';
@@ -47,7 +47,11 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   };
   operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string() }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
-    run(ctx, trigger) { const row = tempo.triggers.set(trigger); ctx.changed('triggers', row.id); return { id: row.id }; },
+    run(ctx, trigger) {
+      // The engine refuses a bad trigger in words meant for the caller: pass them on as a refusal, not an outage.
+      let row; try { row = tempo.triggers.set(trigger); } catch (error) { throw error instanceof OperationError ? error : new OperationError('invalid', error instanceof Error ? error.message : 'That trigger cannot be set'); }
+      ctx.changed('triggers', row.id); return { id: row.id };
+    },
   }));
   for (const action of ['stop', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,

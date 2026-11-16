@@ -58,7 +58,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
 
  const section=z.enum(['creed','preferences','top-of-mind','self-model','last-24h','harness','model','all']);
  server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; pass piece or pieces for self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
-  inputSchema:z.object({agent:z.string().optional(),client:z.string().max(100).optional(),model:z.string().max(100).optional(),piece:section.optional(),pieces:z.array(section).max(8).optional(),role:z.string().max(100).optional(),project:z.string().max(100).optional(),conversation:z.string().max(200).optional(),run:z.string().max(200).optional(),people:z.array(z.string().max(100)).max(20).optional()}).strict()},
+  inputSchema:z.object({agent:z.string().optional(),client:z.string().max(100).optional(),model:z.string().max(100).optional(),piece:section.optional(),pieces:z.array(section).max(8).optional(),role:z.string().max(100).optional(),project:z.string().max(100).optional()}).strict()},
   async(args:{agent?:string;client?:string;model?:string;piece?:Section;pieces?:Section[];role?:string;project?:string}):Promise<Result>=>{
    try{
     const agent=ports.agent;if(!ports.valid()||!agent||args.agent&&args.agent!==agent)throw Error();
@@ -131,7 +131,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    return data.memoryKnowledgeSearch.map(page=>'## '+page.title+'\n_'+page.domain+' · '+page.slug+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_\n\n'+page.body).join('\n\n---\n\n');
   });
 
- tool('knowledge_write','Add a shared knowledge page.',
+ tool('knowledge_write','Add a shared knowledge page. source, if given, is an http or https link; without one the page stays provisional.',
   z.object({title:z.string().min(1).max(200),domain:z.string().min(1).max(200),body:z.string().min(1).max(65536),source:z.string().max(4000).optional()}).strict(),
   async input=>{const value=await run('mind.knowledgeAdd',input) as {slug:string};return 'Wrote knowledge page '+value.slug;});
 
@@ -157,7 +157,8 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  // Cards: what you know about a person, and a project's card. Each lives in your own store, addressed by slug.
- const slug=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),facts=z.record(z.string(),z.unknown());
+ // Lengths match the commands: a person's slug is at most 64 characters, a project's 32.
+ const slugOf=(max:number)=>z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(max),slug=slugOf(64),projectSlug=slugOf(32),facts=z.record(z.string(),z.unknown());
  const shown=(value:CardValue|string|null|undefined)=>value==null?'':typeof value==='string'?value:value.text??(value.strings?value.strings.join(', '):value.number!=null?String(value.number):value.boolean!=null?String(value.boolean):'');
  tool('person','Read your card on one person by slug, or list the people you have cards on.',
   z.object({slug:slug.optional()}).strict(),
@@ -177,12 +178,12 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    return lines.join('\n');
   });
 
- tool('person_write','Write your card on a person. Pass merge: true to change only the fields you name.',
+ tool('person_write','Write your card on a person. Pass merge: true to change only the fields you name. Each entry under where is {value, source?, verified_at?}.',
   z.object({slug,name:z.string().max(200).optional(),summary:z.string().max(4000).optional(),where:facts.optional(),how:facts.optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict(),
   async input=>{await run('memory.personWrite',input);return 'Saved person card '+input.slug;});
 
  tool('project','Read one of your project cards by slug, or list them.',
-  z.object({slug:slug.optional()}).strict(),
+  z.object({slug:projectSlug.optional()}).strict(),
   async(input,agent)=>{
    if(!input.slug){
     const data=await read<{memoryProjects:{slug:string;name:string;agent:string}[]|null}>('{memoryProjects{slug name agent}}',{});
@@ -200,14 +201,14 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    return lines.join('\n');
   });
 
- tool('project_write','Write one of your project cards. Pass merge: true to change only the fields you name.',
-  z.object({slug,name:z.string().max(200).optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().max(4000).optional(),goal:z.string().max(4000).optional(),where:facts.optional(),
+ tool('project_write','Write one of your project cards. Pass merge: true to change only the fields you name. Each entry under where is {value, source?, verified_at?}.',
+  z.object({slug:projectSlug,name:z.string().max(200).optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().max(4000).optional(),goal:z.string().max(4000).optional(),where:facts.optional(),
    links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict(),
   async input=>{await run('memory.projectWrite',input);return 'Saved project card '+input.slug;});
 
  // Memory: drafts, the archive and earlier versions.
  tool('memory_propose','Draft a memory. Recall cannot see a draft until it is ratified.',
-  z.object({category,title:z.string().max(200),content:z.string().max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),source:z.string().max(500).optional()}).strict(),
+  z.object({category,title:z.string().max(200),content:z.string().max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.unknown()).optional(),source:z.string().max(200).optional()}).strict(),
   async input=>{const value=await run('memory.propose',input) as {id?:string;ids?:string[]};return 'Drafted "'+input.title+'" ('+(value.id??(value.ids??[]).join(', '))+')';});
  tool('memory_drafts','List your drafted memories that await ratification.',
   z.object({limit:z.number().int().min(1).max(50).optional()}).strict(),

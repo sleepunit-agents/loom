@@ -223,8 +223,8 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect(pending).toContain('## Change Household settings?');expect(pending).toContain('"commsDays":7');expect(pending).toContain('Why: FICTIONAL_REASON');
   expect((await art.call('approvals',{state:'denied'})).text).toBe('No approvals are denied.');
   // A refusal carries the door's own words, not a bare "refused".
-  const refusedChange=await art.call('propose',{change:'settings',input:{commsDays:7},why:'again'});
-  expect(refusedChange.error).toBe(false);
+  const refusedChange=await art.call('propose',{change:'settings',input:{commsDays:8},why:'again'});
+  expect(refusedChange.error).toBe(true);expect(refusedChange.text).toBe('A card for this is already waiting for an answer (conflict)');
   const same=await art.call('task_close',{id:'t-999',reason:'x'});expect(same.error).toBe(true);expect(same.text).not.toBe('The command was refused');expect(same.text).toMatch(/\((denied|not-found|invalid|conflict)\)$/);
   expect((await art.call('propose',{change:'settings',input:{commsDays:99},why:'x'})).error).toBe(true);
   expect(p.composition.services.household.settings().commsDays).toBe(14);

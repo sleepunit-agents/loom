@@ -75,9 +75,11 @@ it('publishes settled person notifications and rejects unknown operation targets
  const { DataLive }=await import('./core/data/live.js');
  const notified=vi.spyOn(DataLive.prototype,'changed');
  notified.mockClear();f.clock.advance(5000);expect(notified).toHaveBeenCalled();notified.mockRestore();stop();
- expect((await f.call('tempo.set',{...f.trigger,times:f.now(),id:'unknown',targetKind:'operation',target:'unknown'},'unknown')).status).toBe(200);
+ // An operation the program cannot run is refused when the trigger is set, in plain words, and nothing is stored.
+ const unknown=await f.call('tempo.set',{...f.trigger,times:f.now(),id:'unknown',targetKind:'operation',target:'unknown'},'unknown');
+ expect(unknown.status).toBe(400);expect(await unknown.json()).toMatchObject({ok:false,code:'invalid',message:'Unknown operation'});
  expect(f.root.services.tempo.triggers).toBeDefined();
- const failed=f.client.prepare("SELECT state FROM triggers WHERE id='unknown'").get();expect(failed).toEqual({state:'failed'});
+ expect(f.client.prepare("SELECT state FROM triggers WHERE id='unknown'").get()).toBeUndefined();
  expect((await f.call('tempo.set',{...f.trigger,times:f.now(),id:'sweep',targetKind:'operation',target:'tempo.sweep'},'sweep')).status).toBe(200);
  expect(f.client.prepare("SELECT state FROM triggers WHERE id='sweep'").get()).toEqual({state:'fired'});
 });

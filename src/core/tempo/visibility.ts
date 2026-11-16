@@ -23,7 +23,11 @@ export function tempoVisibility(viewer: Viewer): QueryVisibility {
   const ownedAgent = (column: AnyColumn): SQL => kind === 'member'
     ? sql`exists (select 1 from ${memberAgents} where ${memberAgents.agent} = ${column} and ${memberAgents.member} = ${id})`
     : kind === 'agent' ? sql`${column} = ${id}` : sql`false`;
-  const trigger = (f: Fields): SQL => sql`(${owner} or ${project(f.project)} or (${f.toKind} = 'agent' and ${ownedAgent(f.to)})
+  // A person can see, and so cancel, a trigger they set for themselves or one that is for them.
+  const mine = (f: Fields): SQL => kind === 'member'
+    ? sql`((${f.ownerKind} = 'member' and ${f.owner} = ${id}) or (${f.toKind} = 'person' and ${f.to} = ${id}))`
+    : sql`false`;
+  const trigger = (f: Fields): SQL => sql`(${owner} or ${mine(f)} or ${project(f.project)} or (${f.toKind} = 'agent' and ${ownedAgent(f.to)})
     or (${f.targetKind} = 'operation' and ${f.toKind} is null and ${f.to} is null and ${f.ownerKind} = 'agent' and ${ownedAgent(f.owner)}))`;
   return {
     triggers: trigger,

@@ -7,7 +7,9 @@ import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs, members, memberAgents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-export function registerSharedJobControl(operations: Operations, db: DataDatabase, stop: (job: string, member: string, reason: 'reset' | 'write-off') => unknown) {
+import { Jobs } from './runtime/jobs.js';
+export function registerSharedJobControl(operations: Operations, db: DataDatabase, options: { now(): string; jobEnded(job: string): void }) {
+  const store = new Jobs(db, options.now);
   const may = (viewer: Viewer, id: string) => {
     if (viewer.kind !== 'member') return false;
     const job = db.select({ agent: jobs.agent }).from(jobs).where(eq(jobs.id, id)).get();
@@ -22,9 +24,11 @@ export function registerSharedJobControl(operations: Operations, db: DataDatabas
     run(ctx, input) {
       const job = db.select({ state: jobs.state }).from(jobs).where(eq(jobs.id, input.job)).get();
       if (!job || !['queued', 'starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'That job has already ended');
-      stop(input.job, ctx.viewer.id, input.reason);
-      ctx.changed('jobs', input.job);
+      store.stop(input.job, ctx.viewer.id, input.reason);
+      ctx.changed('job', input.job);
       return { stopped: true as const };
     },
+    // Watchers hear of the end only after it and its receipt are saved, as with a worker's finish.
+    after: input => options.jobEnded(input.job),
   });
 }

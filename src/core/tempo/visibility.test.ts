@@ -48,15 +48,17 @@ const shared = ['b-project','c-owned','g-operation'];
 
 it.each([
   [{kind:'member',id:'owner'}, ['a-hidden',...shared.slice(0,2),'d-person','e-authored','f-global','g-operation'], ['art','hidden','mark']],
-  [{kind:'member',id:'sam'}, shared, ['art','mark']],
+  // sam also sees the trigger sam set for sam, though it is in no project.
+  [{kind:'member',id:'sam'}, ['b-project','c-owned','d-person','g-operation'], ['art','mark']],
   [{kind:'agent',id:'art'}, shared, ['art','mark']],
   [{kind:'agent',id:'mark'}, ['b-project','g-operation'], ['art','mark']],
-  [{kind:'member',id:'other'}, [], []],
+  // other is on no project and owns no agent, but set two triggers, one of them for other.
+  [{kind:'member',id:'other'}, ['b-project','c-owned'], []],
   [{kind:'member',id:'absent'}, [], []],
   [{kind:'agent',id:'absent'}, [], []],
   [{kind:'runner',id:'owner'}, [], []],
   [{kind:'service',id:'art'}, [], []],
-] as const)('applies project OR recipient-agent visibility for %j', async (viewer, ids, pauses) => {
+] as const)('applies project, recipient-agent and own-trigger visibility for %j', async (viewer, ids, pauses) => {
   const result = await graphql({schema:schemaFor(viewer), source});
   expect(result.errors).toBeUndefined();
   expect(result.data?.triggers).toEqual(ids.map(id => ({id,instructions:`words ${id}`})));
@@ -88,7 +90,8 @@ it('rechecks project membership, agent ownership, recipient and owner role in re
   for(const schema of [sam,owner]) {
     const result=await graphql({schema,source});
     expect(result.errors).toBeUndefined();
-    expect(result.data).toEqual({triggers:[],triggerLog:[],agentPauses:[]});
+    // Losing projects and agents leaves a person only the trigger they set for themselves.
+    expect(result.data).toEqual(schema===sam?{triggers:[{id:'d-person',instructions:'words d-person'}],triggerLog:[{trigger:'d-person',note:'log d-person'}],agentPauses:[]}:{triggers:[],triggerLog:[],agentPauses:[]});
   }
   expect((await graphql({schema:art,source})).data?.triggers).toEqual([{id:'c-owned',instructions:'words c-owned'}]);
   client.exec("UPDATE triggers SET \"to\"='hidden' WHERE id='c-owned'");
@@ -140,7 +143,8 @@ it('captures identity scalars and cannot bypass denial with aliases or filters',
   viewer.id='owner';
   const result=await graphql({schema,source:'{ stolen:triggers(where:{id:{eq:"a-hidden"}},limit:1){id instructions} logs:triggerLog{note} }'});
   expect(result.errors).toBeUndefined();
-  expect(result.data).toEqual({stolen:[],logs:[]});
+  // The schema keeps the identity it was built for: other's own two triggers, never the owner's view.
+  expect(result.data).toEqual({stolen:[],logs:[{note:'log b-project'},{note:'log c-owned'}]});
   expect(schema.getMutationType()).toBeUndefined();
 });
 it('shows recipient-free agent operation triggers to that agent and its owners, with current ownership rechecked',async()=>{

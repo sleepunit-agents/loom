@@ -196,3 +196,22 @@ it('rejects half-specified operation recipients and holds a recipient-free opera
  f.engine.pause('art');expect(f.row(t.id).state).toBe('held');
  f.engine.resume('art');expect(f.row(t.id).state).toBe('standing');
 });
+it('keeps a standing lane alive after one failed firing, and fires it again at its next time', () => {
+  const f = fixture(); let broken = true;
+  const send = f.effects.inbox;
+  f.effects.inbox = (t, id, words) => { if (broken) throw new Error('could not read the instructions'); send(t, id, words); };
+  const lane = f.engine.set({ ...f.base, times: '12:05', days: null, lifespan: 'until-stopped' });
+  f.clock.advance(5 * 60_000);
+  expect(f.items()).toEqual([]);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true });
+  expect(Date.parse(f.row(lane.id).nextDueAt!)).toBeGreaterThan(f.clock.now());
+  expect(f.db.select().from(triggerLog).all().map(row => row.event)).toContain('failed');
+  broken = false; f.clock.advance(24 * 3600_000);
+  expect(f.items()).toHaveLength(1);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true });
+});
+it('refuses an operation target the program cannot run, when the trigger is set', () => {
+  const f = fixture({ knows: name => name === 'tempo.sweep' });
+  expect(() => f.engine.set({ ...f.base, targetKind: 'operation', target: 'nothing.here', toKind: undefined, to: undefined, instructions: undefined })).toThrow('Unknown operation');
+  expect(f.engine.set({ ...f.base, targetKind: 'operation', target: 'tempo.sweep', instructions: undefined }).state).toBe('standing');
+});

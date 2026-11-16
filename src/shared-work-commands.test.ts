@@ -186,6 +186,16 @@ it('refuses stale merge heads through the Approvals door for fresh calls and cac
   expect(f.root.services.approvals.get(second.id).state).toBe('pending');
   expect(f.root.services.approvals.get(first.id).target).toBe(`${changeId}@${head}`);
   expect(f.db.select().from(operationResults).all()).toHaveLength(1);
+  // The owner can still say no to the card the pull request left behind, and again after it closes or is gone.
+  expect((await f.send('approvals', { id: second.id, answer: 'deny' }, 'deny-stale')).status).toBe(200);
+  expect(f.root.services.approvals.get(second.id)).toMatchObject({ state: 'denied', decidedBy: 'sam' });
+  const third = f.request(), fourth = f.request();
+  f.root.writes.run(() => f.db.update(changes).set({ headCommit: head, state: 'closed' }).run());
+  expect((await f.send('approvals', { id: third.id, answer: 'allow' }, 'allow-closed')).status).toBe(409);
+  expect((await f.send('approvals', { id: third.id, answer: 'deny' }, 'deny-closed')).status).toBe(200);
+  f.root.writes.run(() => f.db.delete(changes).run());
+  expect((await f.send('approvals', { id: fourth.id, answer: 'deny' }, 'deny-gone')).status).toBe(200);
+  expect(f.root.services.approvals.get(fourth.id).state).toBe('denied');
 });
 
 it('keeps non-merge approvals independent of the Changes cache', async () => {

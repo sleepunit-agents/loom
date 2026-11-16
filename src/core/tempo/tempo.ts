@@ -17,6 +17,8 @@ export interface TempoOptions {
   admit: AdmitInbox;
   /** Commit a synchronous built-in operation on this same database. */
   operation(name: string, trigger: Trigger, occurrence: string): void;
+  /** Names of further operations the composition can run, beside tempo.sweep. */
+  knows?(name: string): boolean;
   instructions?(file: string): string;
   /** Read Changes' persisted occurrence revision during source recovery. */
   changeRevision?(id: string): string | undefined;
@@ -43,6 +45,8 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
         sweep.run({ kind: t.toKind, id: t.to }, occurrence);
       } else options.operation(name, t, occurrence);
     },
+    // Without a list from the composition, any name it handles is taken on trust, as before.
+    knows: name => name === 'tempo.sweep' || (options.knows ? options.knows(name) : true),
     instructions: options.instructions,
     changed() { if (closed) return; settled.changed(); if (!closed) options.changed?.(); },
   });

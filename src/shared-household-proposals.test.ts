@@ -67,11 +67,15 @@ it('refuses a card when what it would replace has changed, or when the change is
   expect((await f.call('household/setSettings', { commsDays: 10 }, 'sam')).status).toBe(200);
   expect((await f.call('approvals/answer', { id: first.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'conflict' });
   expect(f.root.services.household.settings().commsDays).toBe(10);
-  // Demoting the only owner is refused by the same rule the owner's own command follows.
-  const demote = await f.call('household/propose', { change: 'member', input: { id: 'sam', role: 'member', agents: [] }, why: 'Asked' }, 'art');
-  expect((await f.call('approvals/answer', { id: demote.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'conflict' });
+  // A change that could never be allowed is refused when it is filed, in the words of the rule it breaks.
+  expect((await f.call('household/propose', { change: 'member', input: { id: 'sam', role: 'member', agents: [] }, why: 'Asked' }, 'art')).body).toMatchObject({ ok: false, code: 'conflict', message: 'At least one household owner must remain' });
+  expect((await f.call('household/propose', { change: 'project', input: { ...pond, members: ['nobody'] }, why: 'Asked' }, 'art')).body).toMatchObject({ ok: false, code: 'invalid' });
+  expect((await f.call('household/propose', { change: 'member', input: { id: 'pat', role: 'member', agents: ['no-agent'] }, why: 'Asked' }, 'art')).body).toMatchObject({ ok: false, code: 'invalid' });
   expect(f.root.services.household.members().find(row => row.id === 'sam')).toMatchObject({ role: 'owner' });
-  expect(f.db.select().from(approvals).all().every(row => row.state === 'pending')).toBe(true);
+  expect(f.db.select().from(projects).all()).toEqual([]);
+  // Only the stale card was ever filed, and a second card for the same thing waits its turn.
+  expect(f.db.select().from(approvals).all()).toHaveLength(1);
+  expect((await f.call('household/propose', { change: 'settings', input: { commsDays: 8 }, why: 'Again' }, 'art')).body).toMatchObject({ ok: false, code: 'conflict', message: 'A card for this is already waiting for an answer' });
 });
 it('proposes a standing approval rule, recorded as set by the owner who allowed it, and its removal', async () => {
   const f = fixture();

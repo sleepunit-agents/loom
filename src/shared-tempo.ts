@@ -47,6 +47,8 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
         return admitted > 0 && admitted === ids.length;
       }),
       operation: options.operation ?? (() => { throw new Error('Unknown Tempo operation'); }),
+      // The shipped program runs only the sweep. A composition that adds operations vouches for their names.
+      knows: options.operation ? undefined : () => false,
     },
     commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => {
       // Chat is the control surface. A current body may carry out its recorded

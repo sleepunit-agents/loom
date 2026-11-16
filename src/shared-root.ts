@@ -220,7 +220,7 @@ export function sharedRoot(options: {
   const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
-  registerSharedJobControl(operations, db, (job, member, reason) => runtime.stop(job, member, reason));
+  registerSharedJobControl(operations, db, { now, jobEnded: id => { jobEnded(id); tempo?.capacityChanged(); } });
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);

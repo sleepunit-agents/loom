@@ -12,7 +12,7 @@ import {and,eq,isNull} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agents,approvals,tokens,boxes,sessions} from './core/data/schema.js';
+import {agents,approvals,members,tokens,boxes,sessions} from './core/data/schema.js';
 import {endBrowser} from './core/signin/shared-browser.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
@@ -70,25 +70,34 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   const current=household.settings() as Record<string,unknown>;
   return sorted(Object.fromEntries(Object.keys(value.input).map(key=>[key,current[key]])));
  };
- const apply=(card:Approval)=>{
-  if(card.operation!==operation)throw new OperationError('conflict','Wrong household card');
-  const kept=details.parse(JSON.parse(card.details)),value=proposal.parse({change:kept.change,input:kept.after});
-  if(card.kind!==kindOf(value))throw new OperationError('conflict','Wrong household card');
-  const words=cardWords(value);
-  if(card.target!==target(value)||card.changeSummary!==summary(value,kept.before)||card.ask!==words.ask||card.ifYes!==words.ifYes||card.ifNo!==words.ifNo)throw new OperationError('denied','Household card changed');
-  if(JSON.stringify(before(value))!==JSON.stringify(kept.before))throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
+ // Make the change. `by` is the owner on whose word it is made.
+ const change=(value:Proposal,by:string)=>{
   try{
    if(value.change==='project')projects.save(value.input);
    else if(value.change==='member')household.setMember(value.input);
    else if(value.change==='agent')household.setAgent(value.input);
    else if(value.change==='settings')household.setSettings(value.input);
-   // A rule records who set it: the owner who allowed this card.
-   else if(value.change==='rule'){if(!card.decidedBy)throw new OperationError('denied','A household owner is required');rules.set(value.input,card.decidedBy);}
+   // A rule records who set it: the owner who allowed the card.
+   else if(value.change==='rule')rules.set(value.input,by);
    else if(value.change==='bodyPolicy')saveAgentBodyPolicy(db,value.input);
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
    else if(value.change==='boxRevoke')db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,liveBox(value.input.name)!.id)).run();
    else for(const row of browsers(value.input))endBrowser(db,row.id);
   }catch(error){if(error instanceof HouseholdError)throw new OperationError(error.code,error.message);throw error;}
+ };
+ // Try the change and undo it, so a card that could never be allowed is refused when it is filed.
+ const undone=Symbol('rehearsal');
+ const rehearse=(value:Proposal)=>{
+  const owner=db.select({id:members.id}).from(members).where(eq(members.role,'owner')).get()?.id;
+  if(!owner)throw new OperationError('conflict','No household owner can allow this');
+  try{db.transaction(()=>{change(value,owner);throw undone;});}catch(error){if(error!==undone)throw error instanceof OperationError?error:new OperationError('invalid','That change cannot be made');}
+ };
+ const apply=(card:Approval)=>{
+  if(card.operation!==operation)throw new OperationError('conflict','Wrong household card');
+  const kept=details.parse(JSON.parse(card.details)),value=proposal.parse({change:kept.change,input:kept.after});
+  if(card.kind!==kindOf(value)||!card.decidedBy)throw new OperationError('conflict','Wrong household card');
+  if(JSON.stringify(before(value))!==JSON.stringify(kept.before))throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
+  change(value,card.decidedBy);
   appliedCards.add(card.id);
  };
  return{
@@ -105,6 +114,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      if(dangerOf(value)&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
      if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
      if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');
+     if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
+     rehearse(value);
      const found=current?.(ctx.viewer);
      // Provenance is set here from the authenticated caller, never taken from input.
      const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),

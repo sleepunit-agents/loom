@@ -22,6 +22,8 @@ export interface TriggerEffects {
    * transaction. The delivery id is the inbox source_id. Never start a body. */
   inbox(trigger: Trigger, deliveryId: string, words: string): void;
   operation(name: string, trigger: Trigger, deliveryId: string): void;
+  /** Whether an operation target names something this program can run. Checked when a trigger is set. */
+  knows?(name: string): boolean;
   /** Resolve relative household repository files; no runtime home is read here. */
   instructions?(file: string): string;
   changed?(): void;
@@ -59,6 +61,7 @@ export class TriggerEngine {
     if (!!v.toKind !== !!v.to) throw new Error('A recipient needs both kind and id');
     if (v.targetKind === 'inbox' && (!v.toKind || !v.to)) throw new Error('Inbox target needs a recipient');
     if (v.targetKind === 'operation' && !v.target) throw new Error('Operation target needs a name');
+    if (v.targetKind === 'operation' && this.effects.knows && !this.effects.knows(v.target!)) throw new Error('Unknown operation');
     if (v.sourceKind !== 'time' && !v.watches) throw new Error('Event trigger needs what it watches');
     if (v.file && (/^(?:\/|[A-Za-z]:)/.test(v.file) || v.file.split(/[\\/]/).includes('..'))) throw new Error('Instructions must be a relative repository file');
     if (v.file && v.instructions) throw new Error('Give instructions or a file');
@@ -191,8 +194,15 @@ export class TriggerEngine {
         this.log(t.id, 'fired', eventId);
       });
     } catch {
+      // One bad firing must not end a standing trigger: a lane that could not read its
+      // instructions tonight still runs tomorrow. Only a once-only trigger ends as failed.
       this.db.transaction(() => {
-        this.db.update(triggers).set({ state: 'failed', enabled: false, changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'failed', eventId);
+        const next = t.sourceKind === 'time' && t.lifespan !== 'once' ? nextTime(t.times!, t.days, this.clock.now(), this.zone()) : Infinity;
+        const standing = this.get(t.id).enabled && t.lifespan !== 'once' && (t.sourceKind !== 'time' || Number.isFinite(next)) &&
+          (t.lifespan !== 'today' || t.sourceKind !== 'time' || localDate(next, this.zone()) === localDate(this.clock.now(), this.zone()));
+        if (standing) this.db.update(triggers).set({ state: this.paused(t) ? 'held' : 'standing', nextDueAt: Number.isFinite(next) ? new Date(next).toISOString() : null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+        else this.db.update(triggers).set({ state: 'failed', enabled: false, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+        this.log(t.id, 'failed', eventId);
       });
     }
   }
