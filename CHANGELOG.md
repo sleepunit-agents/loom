@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Recall is a read.** `memory.recall` needs no operation id, reserves nothing and stores no receipt. It still warms what it finds. Asking twice recalls twice.
+
 - **Two more things to propose.** `household.propose` takes `order` (the order people or agents are listed in) and `secretDescription` (what a secret is for, without touching its value). `mind.knowledgeEdit` can add a source.
 
 - **How an agent runs can be read.** `boxAgents`, `boxFacts`, `agentRunSettings`, `agentBoxes`, `agentHousePorts`, `agentHouseSecrets` (names only), `agentPeople` and `agentDeniedTools` are readable. Run settings follow the agent's visibility; a machine's lists follow the machine's; an agent sees only its own "may run there" rows.

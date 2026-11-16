@@ -85,7 +85,23 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const proposalId=z.string().regex(/^[^:]+:proposal:[a-f0-9-]{36}$/);
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
  operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(input))).ref)]}))});
- operations.register({...base,doors:[...base.doors],name:'memory.recall',input:recall.describe('Recall your memories by meaning, adding heat. Returns opaque IDs and scores; select memoryProjectMemory(id: id) on GraphQL for title and content.'),output:z.object({ids,matches:z.array(z.object({id:scopedId,score:z.number()}))}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{const matches=(await backend.recall(input)).map(row=>({id:opaque(db,row.path),score:row.relevance}));return {ids:matches.map(row=>row.id),matches};})});
+ // Recall is a read: no operation id, no reservation, no receipt. It warms what it finds, which the
+ // store records in its own short transaction after the embedding has been computed, so nothing is
+ // locked while that runs. Asking twice simply recalls twice.
+ operations.register({name:'memory.recall',doors:['http'],recheckPolicy:true,may:(viewer:Viewer)=>!!selected(viewer),
+  input:recall.describe('Recall your memories by meaning, adding heat. Returns opaque IDs and scores; select memoryProjectMemory(id: id) on GraphQL for title and content.'),output:z.object({ids,matches:z.array(z.object({id:scopedId,score:z.number()}))}).strict(),
+  prepare:async(input,{viewer})=>{
+   const source=current(viewer),agent=options.body(viewer)?.agent;
+   // A source that has not been prepared is left exactly as it is.
+   if(!source||!agent)throw new OperationError(selected(viewer)?'unavailable':'denied',selected(viewer)?'Memory is not prepared for commands':'Current body required');
+   const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,deferSchema:true},(options.embedding??createEmbeddingProvider)());
+   try{
+    const matches=(await backend.recall(input)).map(row=>({id:`${agent}:${opaque(source.db,row.path)}`,score:row.relevance}));
+    if(current(viewer)?.path!==source.path)throw new OperationError('denied','Memory access ended');
+    return {ids:matches.map(row=>row.id),matches};
+   }finally{backend.close();options.committed();}
+  },
+  run(_ctx,_input,prepared){return prepared;}});
  const cardValue=z.union([z.string(),z.number(),z.boolean(),z.array(z.string())]);
  const stamp={verified_at:z.string().optional(),source:z.string().optional(),stale_after_days:z.number().optional()};
  const person=z.object({slug:z.string().min(1).max(64),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();

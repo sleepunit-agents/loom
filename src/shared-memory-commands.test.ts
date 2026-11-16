@@ -200,7 +200,9 @@ it('binds commands to the actual body, publishes committed content, and reads op
  expect(await f.query(`{memoryProjectMemory(id:"${id}"){title content}}`)).toEqual({memoryProjectMemory:{title,content:words}});
  const recall=await f.call('recall',{query:'alpha',limit:1},'recall');expect(recall.status).toBe(200);expect(recall.result.value).toMatchObject({ids:[id],matches:[{id}]});expect(JSON.stringify(recall)).not.toContain(words);
  const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all();
- const priorHeat=heat(),before=embed.calls;expect(await f.call('recall',{query:'alpha',limit:1},'recall')).toEqual(recall);expect(embed.calls).toBe(before);expect(heat()).toEqual(priorHeat);
+ // Recall is a read: asking again recalls again, and warms what it finds again.
+ const before=embed.calls,again=await f.call('recall',{query:'alpha',limit:1},'recall');expect(again.status).toBe(200);expect(again.result.value).toMatchObject({ids:[id],matches:[{id}]});expect(embed.calls).toBe(before+1);expect(heat()).toHaveLength(1);
+ expect(f.source.prepare("SELECT count(*) AS n FROM memory_command_receipts WHERE name='memory.recall'").get()).toEqual({n:0});
  for(const token of [raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
  expect((await f.call('remember',{...input,agent:'mark'},'choose-agent')).status).toBe(400);expect((await f.call('remember',{...input,path:f.other},'choose-path')).status).toBe(400);
  const canonical=JSON.stringify({category:input.category,content:input.content,project:input.project,title:input.title}),fingerprint=f.key.hash(canonical);
@@ -240,12 +242,6 @@ it('leaves an existing unprepared source byte-for-byte unchanged through startup
  const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect((await f.call('propose',input,'unprepared-propose')).status).toBe(503);expect((await f.call('ratify',{id:'art:proposal:00000000-0000-0000-0000-000000000000'},'unprepared-ratify')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
-});
-it('recovers recall after shared receipt failure without adding heat again',async()=>{
- const f=await fixture();expect((await f.call('remember',input,'initial')).status).toBe(200);
- f.db.$client.exec("CREATE TRIGGER fail_recall_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(503);
- const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all(),before=heat(),calls=embed.calls;expect(before).toEqual([expect.objectContaining({recall_heat:expect.any(Number)})]);
- f.db.$client.exec('DROP TRIGGER fail_recall_core');expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(200);expect(heat()).toEqual(before);expect(embed.calls).toBe(calls);
 });
 it('publishes a committed source effect even when its shared receipt cannot be saved',async()=>{
  const f=await fixture(),gate=hold();f.db.$client.exec("CREATE TRIGGER fail_live_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");
