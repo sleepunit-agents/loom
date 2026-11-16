@@ -9,6 +9,7 @@ import {bodyOrigin} from './runtime/body-bootstrap.js';
 export function sharedStdioConfig(args:string[],env:NodeJS.ProcessEnv=process.env){
  const {values}=parseArgs({args:args[0]==='mcp'?args.slice(1):args,options:{next:{type:'boolean'},url:{type:'string'},'token-file':{type:'string'},home:{type:'string'},agent:{type:'string'}},strict:true,allowPositionals:false});
  if(!values.next)throw Error('Shared stdio requires --next');
+ if(values.home)throw Error('--home cannot select a shared MCP server; use --url and --token-file for the running program');
  const url=values.url??env.LOOM_URL,file=values['token-file']??env.LOOM_TOKEN_FILE;
  if(!url||!file)throw Error('Shared stdio needs --url and --token-file (or LOOM_URL and LOOM_TOKEN_FILE) for the running program');
  const origin=bodyOrigin(url),token=readFileSync(file,'utf8').trim();

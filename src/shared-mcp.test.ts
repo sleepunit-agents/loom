@@ -10,18 +10,21 @@ import {sharedUiProgram} from '../test/fixtures/shared-ui-program.js';
 import {FakeClock} from './core/clock.js';
 import * as s from './core/data/schema.js';
 import {createStdioServer} from './index.js';
+import {sharedStdioConfig} from './shared-mcp-stdio.js';
 vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{readonly dimensions=4;async embed(){return [1,0,0,0];}async embedBatch(texts:string[]){return texts.map(()=>[1,0,0,0]);}}}));
 for(const door of ['http','stdio']as const)it(`${door} reads identity, remembers and recalls, and handles Tasks without a browser or worker job`,async()=>{
- const clock=new FakeClock(Date.now()),p=await sharedUiProgram({clock,seed(db,now){db.insert(s.members).values({id:'alice',role:'owner',joinedAt:now()}).run();db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();}}),client=new Client({name:'fictional-terminal',version:'1'});let server:ReturnType<typeof createStdioServer>['server']|undefined;
+ const clock=new FakeClock(Date.now()),p=await sharedUiProgram({clock,seed(db,now){db.insert(s.members).values([{id:'alice',role:'owner',joinedAt:now()},{id:'peer',role:'member',joinedAt:now()}]).run();db.insert(s.agents).values(['art','mark'].map(id=>({id,about:'',markBg:'',markFg:'',faceShape:'pebble' as const,faceEyes:'dot' as const}))).run();db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();}}),client=new Client({name:'fictional-terminal',version:'1'});let server:ReturnType<typeof createStdioServer>['server']|undefined;
  try{
   writeFileSync(join(p.home,'agents/art/IDENTITY.md'),'FICTIONAL_SHARED_TERMINAL_IDENTITY');
   const setup=p.composition.writes.run(()=>p.composition.services.signin.issue({kind:'owner',member:'alice',label:'Fictional owner setup'})).value;
   const issued=await fetch(p.url+'/api/signin/token',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({kind:'agent',agent:'art',label:'Fictional terminal'})});expect(issued.status).toBe(200);const credential=(await issued.json()).value as {token:string;fingerprint:string};
   for(const file of ['household.json','tokens.json','loom.db'])writeFileSync(join(p.home,file),'Fictional poisoned legacy store');
   if(door==='http')await client.connect(new StreamableHTTPClientTransport(new URL('/mcp',p.url),{requestInit:{headers:{authorization:'Bearer '+credential.token}}}));
-  else{const file=join(p.home,'fictional-token');writeFileSync(file,credential.token,{mode:0o600});({server}=createStdioServer(['mcp','--next','--home',p.home,'--agent','art','--url',p.url,'--token-file',file]));const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);}
+  else{const file=join(p.home,'fictional-token');writeFileSync(file,credential.token,{mode:0o600});({server}=createStdioServer(['mcp','--next','--agent','art','--url',p.url,'--token-file',file]));const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);}
   const wrong=await fetch(p.url+'/mcp',{method:'POST',headers:{authorization:'Bearer '+credential.token,'x-loom-agent':'another-agent','content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/list'})});expect(wrong.status).toBe(401);
-  expect((await client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['loom_commands','loom_command','loom_query']));
+  expect((await client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['identity','loom_commands','loom_command','loom_query']));
+  const loaded=await client.callTool({name:'identity',arguments:{client:'fictional-terminal',model:'fixture'}});expect(loaded.isError).not.toBe(true);expect(JSON.stringify(loaded.content)).toContain('FICTIONAL_SHARED_TERMINAL_IDENTITY');
+  expect((await client.callTool({name:'identity',arguments:{agent:'mark'}})).isError).toBe(true);
   const call=async(name:string,args:Record<string,unknown>)=>{const result=await client.callTool({name,arguments:args});expect(result.isError,JSON.stringify(result)).not.toBe(true);return JSON.parse((result.content as Array<{text:string}>)[0].text);};
   const command=async(operation:string,input:unknown,id:string)=>(await call('loom_command',{operation,input,id})).value;
   expect(await call('loom_query',{query:'{memoryIdentity(agent:"art"){creed}}'})).toMatchObject({data:{memoryIdentity:{creed:'FICTIONAL_SHARED_TERMINAL_IDENTITY'}}});
@@ -31,6 +34,11 @@ for(const door of ['http','stdio']as const)it(`${door} reads identity, remembers
   expect(await command('memory.noteWrite',note,'terminal-note')).toEqual({saved:true});expect(await command('memory.noteWrite',note,'terminal-note')).toEqual({saved:true});
   expect(await call('loom_query',{query:'{memoryNote(agent:"art",path:"fictional/terminal-note"){body by}}'})).toMatchObject({data:{memoryNote:{body:note.body,by:'art'}}});
   for(const value of [note.path,note.body,'FICTIONAL_TERMINAL_MEMORY'])expect(p.client.serialize().includes(Buffer.from(value))).toBe(false);
+  for(const actor of [{kind:'agent' as const,agent:'mark',label:'Fictional foreign agent'},{kind:'owner' as const,member:'peer',label:'Fictional non-owner member'}]){
+   const foreign=p.composition.writes.run(()=>p.composition.services.signin.issue(actor)).value;
+   const denied=await p.composition.http.request(p.url+'/mcp',{method:'POST',headers:{authorization:'Bearer '+foreign.token,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_query',arguments:{query:'{memoryNote(agent:"art",path:"fictional/terminal-note"){body}}'}}})});
+   expect(denied.status).toBe(200);const result=await denied.json();expect(JSON.parse(result.result.content[0].text)).toEqual({data:{memoryNote:null}});
+  }
   const notes=new Database(join(p.home,'agents/art/notes.db'));try{
    const before=notes.prepare('SELECT * FROM notes').all();
    notes.exec("CREATE TRIGGER fail_note_receipt BEFORE INSERT ON mind_operation_receipts BEGIN SELECT RAISE(ABORT,'injected'); END");
@@ -62,4 +70,18 @@ it('retains the selected Memory expiry on delayed MCP bytes even without a timer
   const response=await p.composition.http.request(p.url+'/mcp',{method:'POST',headers:{authorization:'Bearer '+credential.token,'content-type':'application/json',accept:'application/json, text/event-stream','mcp-protocol-version':'2025-06-18'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_query',arguments:{query:`{memoryProjectMemory(id:"${id}"){content}}`}}})});expect(response.status).toBe(200);const clone=response.clone();now+=1001;
   for(const held of [response,clone])await expect(held.text()).rejects.toThrow();
  }finally{await p.close();}
+});
+it('runs canonically granted member and program commands without requiring the body catalogue',async()=>{
+ const p=await sharedUiProgram({clock:new FakeClock(Date.now()),seed(db,now){db.insert(s.members).values({id:'alice',role:'owner',joinedAt:now()}).run();db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();}});
+ try{const owner=p.composition.writes.run(()=>p.composition.services.signin.issue({kind:'owner',member:'alice',label:'Fictional owner MCP'})).value;
+  const issued=await fetch(p.url+'/api/signin/program',{method:'POST',headers:{authorization:'Bearer '+owner.token,'content-type':'application/json'},body:JSON.stringify({member:'alice',label:'Fictional Tasks-only MCP',records:['tasks'],operations:['tasks.command']})});expect(issued.status).toBe(200);const program=(await issued.json()).value as {token:string};
+  for(const [index,token]of [owner.token,program.token].entries()){
+   const response=await p.composition.http.request(p.url+'/mcp',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_command',arguments:{operation:'tasks.command',input:{action:'create',input:{title:'Fictional granted MCP task '+index,goal:'Use the canonical grant',why:'No catalogue grant is implied',owner:{kind:'member',id:'alice'}}},id:'granted-create-'+index}}})});expect(response.status).toBe(200);const result=await response.json();expect(result.result.isError).not.toBe(true);expect(JSON.parse(result.result.content[0].text)).toMatchObject({ok:true,value:{id:expect.any(String)}});
+  }
+  const denied=await p.composition.http.request(p.url+'/mcp',{method:'POST',headers:{authorization:'Bearer '+program.token,'content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'loom_command',arguments:{operation:'memory.remember',input:{category:'user',title:'Not granted',content:'FICTIONAL_UNGRANTED_WORDS'},id:'ungranted'}}})});expect(denied.status).toBe(200);const result=await denied.json();expect(result.result.isError).toBe(true);expect(JSON.stringify(result)).not.toContain('FICTIONAL_UNGRANTED_WORDS');
+ }finally{await p.close();}
+});
+
+it('refuses legacy home selection before reading an ambient credential or choosing another server',()=>{
+ expect(()=>sharedStdioConfig(['mcp','--next','--home','/fictional/intended-home'],{LOOM_URL:'https://different.invalid',LOOM_TOKEN_FILE:'/must-not-read'})).toThrow('--home cannot select');
 });

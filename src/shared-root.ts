@@ -322,6 +322,13 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>workLife.close());
   const authenticate = authenticateOutside;
 
+  const executeCommand=async(auth:NonNullable<ReturnType<typeof authenticate>>,name:string,input:unknown,id?:string)=>{
+    if(closing||!auth.valid())return failure('denied','Authentication ended');
+    const answer=await operations.callAsync('http',auth.viewer,name,input,id,auth.window===true,()=>!closing&&auth.valid());
+    if(!closing)recordActionResult({db,writes:data.writes,operations,viewer:auth.viewer,window:auth.window===true,name,input,id,result:answer,now:()=>clock.now(),reportError:options.reportError});
+    return closing||!auth.valid()?failure('denied','Authentication ended'):answer;
+  };
+
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -360,7 +367,7 @@ export function sharedRoot(options: {
   });
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, issueProgram:programSetup?input=>{const parsed=programIssueInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid program token request');return programSetup.issue(parsed.data);}:undefined, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
-  http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,version:data.readVersion,valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
+  http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,version:data.readVersion,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
@@ -376,15 +383,8 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
+    const answer=await executeCommand(auth,`${c.req.param('piece')}.${c.req.param('operation')}`,parsed.data.input,parsed.data.id);
 
-    // Execution and its final await can yield. A committed receipt remains
-    // durable, but its response must not outlive the admitted credential.
-    // The admitted member receives server-owned outcome metadata even when
-    // preparation was refused after credential expiry. Never write after stop.
-    if (!closing) recordActionResult({db,writes:data.writes,operations,viewer:auth.viewer,window:auth.window===true,name:`${c.req.param('piece')}.${c.req.param('operation')}`,input:parsed.data.input,id:parsed.data.id,result:answer,now:()=>clock.now(),reportError:options.reportError});
-    if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),options.workAnswerAuthority);

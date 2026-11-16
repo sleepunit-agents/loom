@@ -8,7 +8,7 @@ const json=z.json();
 const catalogue=z.object({name:z.string().min(1).optional()}).strict();
 const command=z.object({operation:z.string().min(1),input:json,id:z.string().min(1).max(200)}).strict();
 const query=z.object({query:z.string().min(1),variables:z.record(z.string(),json).nullable().optional(),operationName:z.string().min(1).nullable().optional()}).strict();
-const definitions=[
+export const programToolDefinitions=[
  ['loom_commands','Discover current Root command names or structural input schema. Discovery grants no permission.',catalogue],
  ['loom_command','Call a registered Root command. Choose one stable id per intended write; do not automatically retry uncertain outcomes.',command],
  ['loom_query','Read through the existing generated GraphQL schema with this body’s current permissions.',query],
@@ -20,7 +20,7 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
  onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void}){
  const {url,token,signal,fetch,clock,onStop,onStatus}=options;
  const abort=new AbortController(),lifetime=AbortSignal.any([signal,abort.signal]),active=new Set<ReturnType<typeof bodyCommandClient>>();
- const tools:Tool[]=definitions.map(([name,description,input])=>({name,description,inputSchema:z.toJSONSchema(input,{target:'draft-7'})as Tool['inputSchema']}));
+ const tools:Tool[]=programToolDefinitions.map(([name,description,input])=>({name,description,inputSchema:z.toJSONSchema(input,{target:'draft-7'})as Tool['inputSchema']}));
  const port={tools,
   async call(name:string,args:unknown,requestSignal?:AbortSignal):Promise<BodyProgramToolResult>{
    let client:ReturnType<typeof bodyCommandClient>|undefined;
@@ -54,5 +54,5 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
   },
   close(){abort.abort();for(const client of active)client.close();active.clear();},
  };
- return {...port,extensions:definitions.map(([name,description,inputSchema])=>({name,description,inputSchema,execute:(args:Record<string,unknown>,signal:AbortSignal)=>port.call(name,args,signal)}))};
+ return {...port,extensions:programToolDefinitions.map(([name,description,inputSchema])=>({name,description,inputSchema,execute:(args:Record<string,unknown>,signal:AbortSignal)=>port.call(name,args,signal)}))};
 }
