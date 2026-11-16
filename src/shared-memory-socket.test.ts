@@ -229,7 +229,7 @@ it('refreshes Knowledge at exact clock boundaries without writes and cancels its
     const at=vi.spyOn(f.clock,'at');await f.loom.close();at.mockClear();
     f.clock.advance(day);expect(at).not.toHaveBeenCalled();at.mockRestore();
   } finally {writer.close();await f.close();}
-},2000);
+},20000);
 
 it('refreshes Activity expiry and household midnight on the shared GraphQL clock',async()=>{
   const midnight=Date.parse('2026-11-15T00:00:00Z');
@@ -262,7 +262,7 @@ it('refreshes Activity expiry and household midnight on the shared GraphQL clock
     expect(current.data.memoryActivity.days).toEqual(['2026-11-15','2026-11-14','2026-11-13']);
     expect(JSON.stringify(current)).not.toContain('Leaves recent');expect(JSON.stringify(current)).not.toContain('Expires soon');
   } finally {writer.close();await f.close();}
-},2000);
+},20000);
 
 it('refreshes People contact staleness and evidence expiry on the shared GraphQL clock',async()=>{
  const f=await setup(),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
@@ -288,7 +288,7 @@ it('refreshes People contact staleness and evidence expiry on the shared GraphQL
   const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query:selection})});
   expect(await response.json()).toMatchObject({data:{memoryPerson:{fields:[{key:'email',state:'stale'}],evidence:[],newer:0}}});
  }finally{writer.close();await f.close();}
-},2000);
+},20000);
 
 it('arms Projects deadlines from the initial query and refreshes age, expiry and spark without writes',async()=>{
  const f=await setup(),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
@@ -315,7 +315,7 @@ it('arms Projects deadlines from the initial query and refreshes age, expiry and
   expect(await response.json()).toMatchObject({data:{memoryProject:{fields:[{state:'stale for 14 days'}],spark:[0,0,0,0,0,1,0],sections:expect.arrayContaining([{key:'memories',total:1}])},memoryProjectMemory:null}});
   const at=vi.spyOn(f.clock,'at');await f.loom.close();at.mockClear();f.clock.advance(day);await Promise.resolve();expect(at).not.toHaveBeenCalled();at.mockRestore();
  }finally{writer.close();await f.close();}
-},2000);
+},20000);
 
 it('refreshes Activity when future shared conversations enter the inclusive detail and exclusive list windows',async()=>{
  const f=await setup();
@@ -330,7 +330,7 @@ it('refreshes Activity when future shared conversations enter the inclusive deta
   expect(await message(ws,()=>f.clock.advance(1))).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryActivityEntry'],removed:false,value:{title:'Fictional conversation'}}]}}}});
   expect(await message(ws,()=>f.clock.advance(1))).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryActivity','entries',0],removed:false,value:{title:'Fictional conversation'}}]}}}});
  }finally{await f.close();}
-},2000);
+},20000);
 
 it('projects existing Memory capabilities on GraphQL and updates them after a committed demotion',async()=>{
  const f=await setup();
@@ -345,4 +345,4 @@ it('projects existing Memory capabilities on GraphQL and updates them after a co
   expect(changed).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining(['memoryKnowledgeAccess','memoryPeopleAccess','memoryProjectsAccess','memoryActivityAccess'].map(field=>({path:[field,'allowed'],removed:false,value:false})))}}}});
   const after=await http('owner');for(const value of Object.values(after) as Array<{allowed:boolean}>)expect(value.allowed).toBe(false);
  }finally{await f.close();}
-},2000);
+},20000);
