@@ -45,7 +45,7 @@ class ChecklistGeneration(unittest.TestCase):
         self.assertEqual(result['ownerTask'], 't-2254')
         rows = [row for row in result['promises'] if row['promise'].startswith(('A page reads', 'Loom handles'))]
         self.assertEqual(len(rows), 2)
-        self.assertTrue(all(row['probe'] == {'kind': 'action', 'action': 'dataSharingSQL'} for row in rows))
+        self.assertTrue(all(row['probe'] == {'kind': 'action', 'action': 'dataReadBounds'} for row in rows))
 
     def test_check_rejects_drift_without_repairing_it(self):
         changed = json.loads(self.original)
