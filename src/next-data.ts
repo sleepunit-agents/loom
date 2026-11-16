@@ -29,7 +29,7 @@ import { measuringVisibility } from './core/measuring/visibility.js';
 import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
 // One explicit public read projection, shared by the outside doors and programme catalogue.
-export const sharedQueryTables = ['boxes', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
+export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'members', 'memberAgents', ...bridgeSecretsTables, ...conversationTables,
       'timingDays', 'measuringSettings', 'triggers', 'triggerLog', 'agentPauses'] as const;
@@ -68,6 +68,9 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       // Reports and model preferences have their agent's current visibility.
       agentStatus: byAgent,
       agentModels: byAgent,
+      // How an agent runs: its house, its machines in order, its ports and startup secrets (names only),
+      // how it treats outside people and which tools its body is not given.
+      agentRunSettings: byAgent, agentBoxes: byAgent, agentHousePorts: byAgent, agentHouseSecrets: byAgent, agentPeople: byAgent, agentDeniedTools: byAgent,
       members: fields => viewer.kind === 'member' ? sql`(exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner') or ${fields.id} = ${viewer.id})` : sql`false`,
       memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
