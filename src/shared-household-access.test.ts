@@ -77,7 +77,7 @@ it('bounds the actual setup query at two and ten members/agents while preserving
  }
  f.statements.length=0;const large=await(await f.read()).json();expect(large.errors).toBeUndefined();const result=large.data.householdSetup;
  expect(result.members).toHaveLength(10);expect(result.agents).toHaveLength(10);expect(result.members.find((row:{id:string})=>row.id==='fixture-9').agents).toEqual(['fixture-9']);expect(result.agents.find((row:{id:string})=>row.id==='fixture-9').github).toEqual(['login-9']);
- expect(f.statements.length).toBe(count);expect(count).toBe(5);
+ expect(f.statements.length).toBe(count);expect(count).toBe(6); // the sixth reads the backup keys; still the same at two rows and at ten
 });
 
 it('keeps browser validity tied to the exact current token expiry and revocation',async()=>{

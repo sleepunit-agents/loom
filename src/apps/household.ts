@@ -2,7 +2,7 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { agents, members, memberAgents, household } from '../core/data/schema.js';
+import { agents, members, memberAgents, household, backupRecipients } from '../core/data/schema.js';
 const id = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
 export const memberInput = z.object({
   id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
@@ -13,6 +13,15 @@ export const agentInput = z.object({
   markFg: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   faceShape: z.enum(['pebble', 'trefoil', 'clover', 'drop']), faceEyes: z.enum(['dot', 'oval']),
 }).strict();
+const zone = z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Unknown time zone');
+/** A patch: only the named settings change. An empty backup target turns backups off. */
+export const settingsInput = z.object({
+  defaultAgent: id.nullable(), timezone: zone, commsDays: z.number().int().min(1).max(14),
+  githubOwner: z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9-]{0,38})?$/),
+  backupTarget: z.string().trim().max(500), backupAt: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  backupKeep: z.number().int().min(1).max(90),
+  backupRecipients: z.array(z.string().trim().regex(/^(?:age1[0-9a-z]{20,100}|ssh-(?:ed25519|rsa) [A-Za-z0-9+/=]{40,1000}(?: [^\r\n]{0,100})?)$/)).max(50).transform(values => [...new Set(values)].sort()),
+}).partial().strict().refine(value => Object.keys(value).length > 0, 'Name at least one setting');
 export class HouseholdError extends Error {
   constructor(readonly code: 'invalid' | 'conflict', message: string) { super(message); }
 }
@@ -52,6 +61,25 @@ export function householdService(db: DataDatabase, now: () => string) {
       } }).run();
       for(const owner of db.select({id:members.id}).from(members).where(eq(members.fullOwner,true)).all())db.insert(memberAgents).values({member:owner.id,agent:value.id}).onConflictDoNothing().run();
       return { id: value.id };
+      });
+    },
+    settings() {
+      const row = db.select().from(household).get();
+      return { timezone: row?.timezone ?? 'UTC', commsDays: row?.commsDays ?? 14, githubOwner: row?.githubOwner ?? '',
+        secretsDefault: row?.secretsDefault ?? 'ask', backupTarget: row?.backupTarget ?? '', backupAt: row?.backupAt ?? '03:00', backupKeep: row?.backupKeep ?? 7,
+        backupRecipients: db.select().from(backupRecipients).orderBy(asc(backupRecipients.recipient)).all().map(entry => entry.recipient) };
+    },
+    setSettings(input: z.input<typeof settingsInput>) {
+      const { backupRecipients: recipients, ...row } = settingsInput.parse(input);
+      return db.transaction(() => {
+        if (row.defaultAgent && !db.select({ id: agents.id }).from(agents).where(eq(agents.id, row.defaultAgent)).get())
+          throw new HouseholdError('invalid', 'Unknown agent');
+        if (Object.keys(row).length) db.insert(household).values(row).onConflictDoUpdate({ target: household.singleton, set: row }).run();
+        if (recipients) {
+          db.delete(backupRecipients).run();
+          if (recipients.length) db.insert(backupRecipients).values(recipients.map(recipient => ({ recipient }))).run();
+        }
+        return { saved: true as const };
       });
     },
     members() {

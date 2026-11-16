@@ -3,7 +3,7 @@ import { reattributeChanges, AttributionConflict, type MergeRuleReader } from '.
 /** Household-wide credential and roster projection, for outside owners only. */
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
-import {GraphQLObjectType,GraphQLString,GraphQLBoolean,GraphQLList,type GraphQLFieldConfigMap} from 'graphql/index.js';
+import {GraphQLObjectType,GraphQLString,GraphQLBoolean,GraphQLInt,GraphQLList,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
 import {agents,agentAccounts,sessions} from './core/data/schema.js';
@@ -35,6 +35,7 @@ export function householdAccessQueries(db:DataDatabase,service:ReturnType<typeof
  const agent=new GraphQLObjectType({name:'SetupAgent',fields:{id:{type:GraphQLString},about:{type:GraphQLString},markBg:{type:GraphQLString},markFg:{type:GraphQLString},faceShape:{type:GraphQLString},faceEyes:{type:GraphQLString},github:{type:strings}}});
  const token=new GraphQLObjectType({name:'SetupToken',fields:{fingerprint:{type:GraphQLString},label:{type:GraphQLString},kind:{type:GraphQLString},expired:{type:GraphQLBoolean},identity:{type:GraphQLString},createdAt:{type:GraphQLString},expiresAt:{type:GraphQLString},revokedAt:{type:GraphQLString},lastUsedAt:{type:GraphQLString}}});
  const session=new GraphQLObjectType({name:'SetupBrowser',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},issuedAt:{type:GraphQLString},seenAt:{type:GraphQLString},isAgent:{type:GraphQLBoolean},ended:{type:GraphQLBoolean},member:{type:GraphQLString},tokenLabel:{type:GraphQLString}}});
- const setup=new GraphQLObjectType({name:'HouseholdSetup',fields:{defaultAgent:{type:GraphQLString},members:{type:new GraphQLList(member)},agents:{type:new GraphQLList(agent)},tokens:{type:new GraphQLList(token)},sessions:{type:new GraphQLList(session)}}});
+ const settings=new GraphQLObjectType({name:'SetupSettings',fields:{timezone:{type:GraphQLString},commsDays:{type:GraphQLInt},githubOwner:{type:GraphQLString},secretsDefault:{type:GraphQLString},backupTarget:{type:GraphQLString},backupAt:{type:GraphQLString},backupKeep:{type:GraphQLInt},backupRecipients:{type:strings}}});
+ const setup=new GraphQLObjectType({name:'HouseholdSetup',fields:{defaultAgent:{type:GraphQLString},settings:{type:settings},members:{type:new GraphQLList(member)},agents:{type:new GraphQLList(agent)},tokens:{type:new GraphQLList(token)},sessions:{type:new GraphQLList(session)}}});
  const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSetup:{type:setup,resolve(_row,_args,{viewer}){if(!sharedTokenOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};return{fields,valid:(viewer:Viewer)=>!ownerReads.has(viewer)||sharedTokenOwner(db,viewer)};
 }

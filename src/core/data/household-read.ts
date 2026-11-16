@@ -10,7 +10,8 @@ export function readHouseholdSetup(db: DataDatabase, now: string) {
   const agents = db.query.agents.findMany({ with: { agentAccountsByAgent: { columns: { login: true } } } }).sync()
     .map(({ agentAccountsByAgent, ...row }) => ({ ...row, github: agentAccountsByAgent.map(account => account.login) }));
   const credentials = db.query.tokens.findMany().sync(), byToken = new Map(credentials.map(row => [row.fingerprint, row]));
-  const settings = db.query.household.findFirst({ columns: { defaultAgent: true } }).sync();
+  const settings = db.query.household.findFirst().sync();
+  const recipients = db.query.backupRecipients.findMany({ orderBy: f => asc(f.recipient) }).sync().map(row => row.recipient);
   const at = Date.parse(now);
   const sessions = db.query.sessions.findMany().sync().map(row => {
     const token = byToken.get(row.token);
@@ -19,5 +20,8 @@ export function readHouseholdSetup(db: DataDatabase, now: string) {
       member: token?.member ?? null, tokenLabel: token?.label ?? null };
   });
   return { members, agents, defaultAgent: settings?.defaultAgent ?? null,
+    settings: { timezone: settings?.timezone ?? 'UTC', commsDays: settings?.commsDays ?? 14, githubOwner: settings?.githubOwner ?? '',
+      secretsDefault: settings?.secretsDefault ?? 'ask', backupTarget: settings?.backupTarget ?? '', backupAt: settings?.backupAt ?? '03:00',
+      backupKeep: settings?.backupKeep ?? 7, backupRecipients: recipients },
     tokens: credentials.map(row => ({ ...row, identity: row.member ?? row.agent ?? row.box, expired: !!row.expiresAt && Date.parse(row.expiresAt) <= at })), sessions };
 }

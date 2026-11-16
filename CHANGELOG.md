@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add `household.setSettings` and a `settings` field on `householdSetup`: an owner can change and read the default agent, time zone, keep time, GitHub owner and backup settings.
+
 - Add `mind.knowledgeEdit` and `mind.knowledgeRestore`: change a Knowledge page's body or bring back one of its kept versions. Either saves the displaced body first.
 
 - Remove `measuring.answer`. A Measuring settings card is answered through `approvals.answer`, like every other settings change.

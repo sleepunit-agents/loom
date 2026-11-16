@@ -206,3 +206,22 @@ it('keeps generic member output types free of credential relations and generated
     .filter((name: string) => /^(Tokens|Sessions|Passkeys|SigninLinks|SigninChallenges|NotificationDevices|OperationResults)/.test(name));
   expect(leaked).toEqual([]);
 });
+it('lets an owner change the household settings as a patch and read them back; nobody else can', async () => {
+  const f = fixture();
+  const query = '{ householdSetup { defaultAgent settings { timezone commsDays githubOwner secretsDefault backupTarget backupAt backupKeep backupRecipients } } }';
+  const read = async (actor: keyof typeof credentials) => (await (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ query }) })).json() as { data: { householdSetup: { defaultAgent: string | null; settings: Record<string, unknown> } | null } }).data.householdSetup;
+  const key = 'age1'+'q'.repeat(58);
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('setSettings', { timezone: 'America/Chicago' }, actor)).status).toBe(403);
+  expect((await f.call('setSettings', { timezone: 'America/Chicago', commsDays: 7, defaultAgent: 'art' }, 'sam', 'first')).status).toBe(200);
+  expect(await read('sam')).toMatchObject({ defaultAgent: 'art', settings: { timezone: 'America/Chicago', commsDays: 7, githubOwner: '', secretsDefault: 'ask', backupTarget: '', backupAt: '03:00', backupKeep: 7, backupRecipients: [] } });
+  expect((await f.call('setSettings', { githubOwner: 'sleepunit-agents', backupTarget: '/srv/backups', backupAt: '02:40', backupKeep: 30, backupRecipients: [key, key] }, 'sam', 'second')).status).toBe(200);
+  expect(await read('sam')).toMatchObject({ defaultAgent: 'art', settings: { timezone: 'America/Chicago', commsDays: 7, githubOwner: 'sleepunit-agents', backupTarget: '/srv/backups', backupAt: '02:40', backupKeep: 30, backupRecipients: [key] } });
+  expect((await f.call('setSettings', { defaultAgent: null, backupRecipients: [] }, 'sam', 'third')).status).toBe(200);
+  expect(await read('sam')).toMatchObject({ defaultAgent: null, settings: { backupRecipients: [], backupTarget: '/srv/backups' } });
+  let n = 0;
+  for (const bad of [{}, { timezone: 'Mars/Olympus' }, { commsDays: 15 }, { backupAt: '25:00' }, { backupKeep: 0 }, { backupRecipients: ['not a key'] }, { secretsDefault: 'auto' }])
+    expect((await f.call('setSettings', bad, 'sam', 'bad-'+(n++))).status).toBe(400);
+  expect((await (await f.call('setSettings', { defaultAgent: 'nobody' }, 'sam', 'unknown')).json() as { code?: string })).toMatchObject({ code: 'invalid' });
+  expect(await read('sam')).toMatchObject({ defaultAgent: null, settings: { timezone: 'America/Chicago', commsDays: 7 } });
+  expect(await read('lee')).toBeNull();
+});
