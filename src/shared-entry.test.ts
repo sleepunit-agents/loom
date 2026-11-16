@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {Readable} from 'node:stream';
 import {it,expect,vi} from 'vitest';
-import {run} from './cli/serve.js';
+import {serve as run} from './index.js';
 // Only the process boundary is substituted; real entry/protocol/storage run.
 vi.mock('./shared-holder-process.js',async()=>({startSharedHolder:(await import('../test/fixtures/shared-holder.js')).inProcessSharedHolder}));
 const webRoot=resolve(import.meta.dirname,'../dist/web');

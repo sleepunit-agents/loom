@@ -9,7 +9,6 @@ on:
       - 'src/shared-serve.ts'
       - 'src/shared-root.ts'
       - 'src/shared-credentials.ts'
-      - 'src/fixture.ts'
       - 'src/ui/account-next.integration.test.ts'
       - '.github/workflows/account-evidence.yml'
 permissions:

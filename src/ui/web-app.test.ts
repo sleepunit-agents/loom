@@ -13,15 +13,6 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const casesIn = (src: string) => new Set([...src.matchAll(/^\s*case '([a-z]+)':/gm)].map((m) => m[1]));
 
 describe('the app (web/)', () => {
-  it('draws every block type vocab.ts accepts', () => {
-    const vocab = readFileSync(`${root}src/ui/vocab.ts`, 'utf-8');
-    const body = vocab.slice(vocab.indexOf('function block('), vocab.indexOf('unknown block type'));
-    const accepted = casesIn(body);
-    expect(accepted.size).toBeGreaterThan(10);
-    const drawn = casesIn(readFileSync(`${root}web/src/blocks.tsx`, 'utf-8'));
-    expect([...accepted].filter((t) => !drawn.has(t)), 'a block type with no case in web/src/blocks.tsx BlockView').toEqual([]);
-  });
-
   it.runIf(existsSync(`${root}dist/web/index.html`)).each(['index', 'next'])('keeps %s first page under 230 KB of JS and 120 KB of CSS, gzipped', (page) => {
     const index = readFileSync(`${root}dist/web/${page}.html`, 'utf-8');
     const named = (re: RegExp) => [...index.matchAll(re)].map((m) => gzipSync(readFileSync(`${root}dist/web/${m[1]}`)).length).reduce((a, b) => a + b, 0);

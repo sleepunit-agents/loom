@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { chromium } from 'playwright-core';
 
-import { run } from '../cli/serve.js';
+import {serve as run} from '../index.js';
 import { FakeClock,clock as normalClock } from '../core/clock.js';
 // In-process private holder fixture; no real child or fake frontend.
 vi.mock('../shared-holder-process.js',async()=>({startSharedHolder:(await import('../../test/fixtures/shared-holder.js')).inProcessSharedHolder}));

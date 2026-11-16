@@ -5,8 +5,6 @@ on:
       - 'src/shared-*.ts'
       - 'src/apps/tasks*.ts'
       - 'web/src/pieces/tasks/**'
-      - 'src/next.ts'
-      - 'src/foundation.ts'
       - 'src/next-data.ts'
       - 'src/core/data/**'
       - 'web/src/data/**'

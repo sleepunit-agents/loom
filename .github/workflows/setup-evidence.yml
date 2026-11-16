@@ -14,7 +14,6 @@ on:
       - 'web/src/data/**'
       - 'src/shared-root.ts'
       - 'src/shared-credentials.ts'
-      - 'src/fixture.ts'
       - 'src/ui/household-setup.integration.test.ts'
       - '.github/workflows/setup-evidence.yml'
 permissions:

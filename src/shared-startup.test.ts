@@ -16,7 +16,7 @@ import {requestLocalLink} from './core/signin/operator.js';
 import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 import * as startup from './shared-startup.js';
-import {run} from './cli/serve.js';
+import {serve as run} from './index.js';
 import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';

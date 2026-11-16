@@ -6,7 +6,6 @@ on:
       - 'src/pieces/sharing/**'
       - 'src/shared-projects*'
       - 'src/shared-root.ts'
-      - 'src/fixture.ts'
       - 'src/ui/sharing-app.integration.test.ts'
       - '.github/workflows/sharing-evidence.yml'
 permissions:

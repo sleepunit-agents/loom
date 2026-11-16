@@ -4,7 +4,6 @@ on:
     paths:
       - 'web/src/shell/**'
       - 'web/src/ticker.tsx'
-      - 'web/src/phone-bar.tsx'
       - 'web/src/pieces/attention/bar*'
       - 'web/src/kit/split.tsx'
       - 'web/src/pieces/attention/agent-face*'

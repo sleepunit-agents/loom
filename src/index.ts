@@ -1,103 +1,98 @@
 #!/usr/bin/env node
 /**
- * Loom — CLI + stdio MCP entry point.
+ * loom: one program, one data folder.
  *
- * When the first non-global token is a known CLI subcommand or
- * --help/--version, routes to src/cli/index.ts. Otherwise (or if argv is
- * empty / only flags), falls through to the MCP stdio server so existing
- * .mcp.json configs keep working.
+ *   loom serve --home <dir> [--host <address>] [--port <number>] [--program <file>]
+ *       Run the household's program. Environment: LOOM_HOME, LOOM_HTTP_HOST, LOOM_HTTP_PORT.
+ *   loom mcp --url <origin> --token-file <file> [--agent <id>]
+ *       A stdio MCP session that proxies the running program's door. It never
+ *       opens the household's stores itself. Environment: LOOM_URL, LOOM_TOKEN_FILE.
  *
- * "First non-global token", not argv[2]: --context-dir and friends are
- * documented as global flags, so `loom --context-dir DIR knowledge write`
- * has to reach the CLI. Routing on argv[2] alone sent it to the stdio
- * server instead, which read an empty stdin and exited 0 — a write verb
- * reporting success having never entered the write path (t-665).
- *
- * Configure via environment variables:
- *   LOOM_CONTEXT_DIR         — path to identity/memory directory (required)
- *   LOOM_SQLITE_DB_PATH      — override memories.db location (optional)
- *   LOOM_FASTEMBED_MODEL     — embedding model (default fast-bge-small-en-v1.5)
- *   LOOM_FASTEMBED_CACHE_DIR — ONNX cache (default ~/.cache/loom/fastembed)
- *   LOOM_CLIENT              — runtime client adapter name (optional)
+ * The older program that lived here (its own stdio server, command line and
+ * web pages) is gone; `--next`, which used to select this one, is accepted and ignored.
  */
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { createLoomServer } from './server.js';
-import { resolveContextDir } from './config.js';
-import { SUBCOMMANDS } from './cli/subcommands.js';
-import { firstNonGlobalIndex } from './cli/args.js';
-import { findPiece } from './cli/pieces.js';
-import { isNextStdioInvocation } from './continuity/stdio.js';
-import {createSharedStdioServer} from './shared-mcp-stdio.js';
+import { createSharedStdioServer } from './shared-mcp-stdio.js';
 
-const CLI_KEYWORDS: ReadonlySet<string> = new Set(SUBCOMMANDS);
+const USAGE = `Usage:
+  loom serve --home <dir> [--host <address>] [--port <number>] [--program <file>]
+  loom mcp --url <origin> --token-file <file> [--agent <id>]
+  loom --version
+`;
 
-function isCliInvocation(argv: string[]): boolean {
-  const args = argv.slice(2);
-  const first = args[firstNonGlobalIndex(args)];
-  if (first === undefined) return false;
-  if (first === '--help' || first === '-h') return true;
-  if (first === '--version' || first === '-V') return true;
-  if (CLI_KEYWORDS.has(first)) return true;
-  // An installed piece (loom-<first> on PATH) is a CLI call too. Anything else
-  // still falls through to the stdio server, exactly as before.
-  return findPiece(first, process.env) !== undefined;
+/** Shared by the executable and in-process transport tests. */
+export function createStdioServer(args: string[]) { return createSharedStdioServer(args); }
+
+export function version(): string {
+  return (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 }
 
-export { isCliInvocation };
+/** Where serve writes. Tests pass their own; the executable uses the process streams. */
+export interface ServeIo { stdout(text: string): void; stderr(text: string): void }
+const processIo: ServeIo = { stdout: text => { process.stdout.write(text); }, stderr: text => { process.stderr.write(text); } };
 
-/** Shared by the executable and in-process transport acceptance tests. */
-export function createStdioServer(args: string[]) {
-  if(args.includes('--next'))return createSharedStdioServer(args);
-  return createLoomServer({contextDir:resolveContextDir()});
+export async function serve(args: string[], io: ServeIo = processIo): Promise<number> {
+  let values: { home?: string; host?: string; port?: string; program?: string };
+  try {
+    ({ values } = parseArgs({ args, strict: true, allowPositionals: false, options: {
+      next: { type: 'boolean' }, http: { type: 'boolean' },
+      home: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, program: { type: 'string' },
+    } }));
+  } catch (error) { io.stderr(`${error instanceof Error ? error.message : 'Bad arguments'}\n${USAGE}`); return 2; }
+  const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);
+  const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
+  const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
+  if (host.includes(',') || !Number.isInteger(port) || port < 0 || port > 65535) { io.stderr('Choose one --host and a valid --port\n'); return 2; }
+  const { startSharedHome } = await import('./shared-startup.js');
+  let handle: Awaited<ReturnType<typeof startSharedHome>>;
+  try {
+    handle = await startSharedHome({ home, program: values.program, host, port, stdout: io.stdout,
+      reportError: () => { io.stderr('loom: service error\n'); } });
+  } catch { io.stderr('Startup refused. Supply a private program.json for an initialized household.\n'); return 2; }
+  io.stderr(`loom: shared app on ${handle.url}\n`);
+  await new Promise<void>(done => {
+    const stop = () => {
+      process.off('SIGTERM', stop); process.off('SIGINT', stop); process.off('disconnect', stop);
+      void handle.close().then(done, () => { io.stderr('loom: cleanup failed\n'); done(); });
+    };
+    process.on('SIGTERM', stop); process.on('SIGINT', stop); if (process.connected) process.on('disconnect', stop);
+  });
+  return 0;
 }
 
-async function main() {
-  const nextStdio = isNextStdioInvocation(process.argv.slice(2));
-  if (!nextStdio && isCliInvocation(process.argv)) {
-    const { runCli } = await import('./cli/index.js');
-    const code = await runCli(process.argv.slice(2));
-    // Drain stdout before exiting — without this, large outputs (e.g.
-    // `loom memory list --json` on a big store) truncate at 64 KiB when
-    // piped because process.exit() tears down the stream before the OS
-    // buffer drains (t-198). process.stdout.write('', cb) fires after all
-    // prior writes have been handed to the OS.
-    process.stdout.write('', () => process.exit(code));
-    return;
+async function main(): Promise<number | undefined> {
+  const args = process.argv.slice(2), first = args[0];
+  if (first === '--version' || first === '-V') { process.stdout.write(`loom v${version()}\n`); return 0; }
+  if (first === undefined || first === '--help' || first === '-h') { process.stdout.write(USAGE); return first === undefined ? 2 : 0; }
+  if (first === 'serve') return serve(args.slice(1));
+  if (first === 'mcp' || first === '--next') {
+    const { server } = createStdioServer(args);
+    await server.connect(new StdioServerTransport());
+    return undefined; // the session lives until stdin closes
   }
-  const { server } = createStdioServer(process.argv.slice(2));
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  process.stderr.write(`Unknown command: ${first}\n${USAGE}`);
+  return 2;
 }
 
 /**
- * True when this module is the process entry point.
- *
- * `process.argv[1]` is whatever path the shell invoked, which for every
- * packaged install (`npm i -g`, `npm link`, `npx`) is a SYMLINK in a bin
- * directory, while `import.meta.url` always resolves to the real file. A
- * raw string compare is false in exactly those cases, so `main()` never
- * runs: no CLI dispatch, no MCP server, exit 0 with no output. Resolve
- * both sides before comparing.
+ * True when this module is the process entry point. `process.argv[1]` is the
+ * path the shell invoked, which for a packaged install is a symlink in a bin
+ * directory, while `import.meta.url` is the real file: resolve both.
  */
-function isEntryPoint(): boolean {
+export function isEntryPoint(): boolean {
   const argv1 = process.argv[1];
   if (argv1 === undefined) return false;
   const self = fileURLToPath(import.meta.url);
   if (argv1 === self) return true;
-  try {
-    return realpathSync(argv1) === realpathSync(self);
-  } catch {
-    return false;
-  }
+  try { return realpathSync(argv1) === realpathSync(self); } catch { return false; }
 }
 
-export { isEntryPoint };
-
 if (isEntryPoint()) {
-  main().catch((err) => {
-    console.error('Loom failed to start:', err);
-    process.exit(1);
-  });
+  main().then(code => { if (code !== undefined) process.stdout.write('', () => process.exit(code)); },
+    error => { console.error('loom failed to start:', error); process.exit(1); });
 }
