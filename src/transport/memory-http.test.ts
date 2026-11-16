@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -37,7 +38,7 @@ async function fixture() {
   const conversations = new Conversations(db, () => new Date(clock.now()).toISOString());
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
-  const activity = createActivityReader(clock,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
+  const activity = createActivityReader(clock,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{conversationHref})}); cleanup.push(activity.close);
   const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),projects:projectReader,activity,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
   let valid = true, admitted = false;
   const http = dataHttp(db, request => {
@@ -46,7 +47,7 @@ async function fixture() {
     return id === 'owner' || id === 'peer' ? {viewer:{kind:'member',id},valid:()=>valid} : undefined;
   }, undefined, queries.fields, {}, undefined, () => clock.now());
   const read = (query:string, token='owner', extra={}) => http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:token},body:JSON.stringify({query,...extra})});
-  return {http,read,sharing,thread,knowledge,client,admitted:()=>admitted,end:()=>{valid=false;}};
+  return {db,http,read,sharing,thread,knowledge,client,admitted:()=>admitted,end:()=>{valid=false;}};
 }
 const selection = `{ tasks { id } memoryKnowledgePage(slug:"pump") { title body } memoryPerson(id:"fiction:friend") { name conversations { available rows { id title href } } } memoryProjects { id name } memoryActivity { entries { id title } conversations } }`;
 it('reads Tasks and all four real Memory projections through the authenticated HTTP door', async () => {
@@ -66,7 +67,7 @@ it('binds every Memory resolver to the caller, rechecks ownership and rejects ca
   const peer = await peerResponse.json();
   expect(peer.errors).toBeUndefined();
   expect(peer.data).toMatchObject({tasks:[],memoryKnowledgePage:null,memoryPerson:null,memoryProjects:[],memoryActivity:null});
-  f.sharing.members.owner.owner=false;
+  f.sharing.members.owner.owner=false; f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
   const demoted = await (await f.read(selection)).json();
   expect(demoted.data).toMatchObject({memoryKnowledgePage:null,memoryPerson:null,memoryProjects:[],memoryActivity:null});
   expect((await (await f.read('{ memoryPerson(id:"fiction:friend",viewer:"owner") { name } }')).json()).errors[0].message).toContain('Unknown argument');

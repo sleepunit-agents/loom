@@ -1,11 +1,11 @@
+import { readProjectConversations } from './core/data/project-conversations.js';
 /** Project sections over the shared services' current outside visibility. No
  * legacy registry, persisted projection or independent permission predicate. */
 import {asc,desc,eq,getTableColumns} from 'drizzle-orm';
 import type {DataDatabase} from './core/data/database.js';
-import {tasks,taskComments,taskLinks,changes,conversations,conversationPeople} from './core/data/schema.js';
+import {tasks,taskComments,taskLinks,changes} from './core/data/schema.js';
 import {taskVisibility} from './core/data/visibility.js';
 import {workVisibility} from './core/data/work-visibility.js';
-import {canReadSharedConversation} from './shared-sharing.js';
 import type {TaskService} from './apps/tasks.js';
 import {taskGroups,type ProjectTask} from './pieces/mind/projects-tasks.js';
 import type {ProjectSectionRole} from './pieces/mind/projects-roles.js';
@@ -39,10 +39,8 @@ export function sharedProjectSections(db:DataDatabase,service:Pick<TaskService,'
    return {available:true,groups};
   }},
   conversations:{read(viewer,q){
-   const venues=new Set(q.card.links.venues??[]);
-   const rows=db.select().from(conversations).orderBy(desc(conversations.lastAt),asc(conversations.id)).all().filter(row=>
-    (q.names.includes(row.project??'')||venues.has(row.venue+':'+row.place)||venues.has(row.venue+':'+row.id))&&canReadSharedConversation(db,viewer,row.id));
-   return {available:true,total:rows.length,conversationIds:rows.map(row=>row.id),items:rows.slice(0,50).map(row=>({title:row.label,ref:row.id,when:row.lastAt,href:'/p/comms-preview/conversation/'+encodeURIComponent(row.id),who:db.select().from(conversationPeople).where(eq(conversationPeople.conversation,row.id)).all().map(p=>p.who)}))};
+   const result=readProjectConversations(db,viewer,q.names,q.card.links.venues??[]),rows=result.rows;
+   return {available:true,total:rows.length,conversationIds:rows.map(row=>row.id),items:rows.slice(0,50).map(row=>({title:row.label,ref:row.id,when:row.lastAt,href:'/p/comms-preview/conversation/'+encodeURIComponent(row.id),who:result.people(row.id)}))};
   }},
  };
 }

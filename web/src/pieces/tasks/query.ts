@@ -1,9 +1,10 @@
 import type { SharedTask, SharedTaskComment, SharedTaskLink, SharedTaskChange } from './shared-view';
 
 /** A single generated relational selection, including comment/link deltas.
+ * Larger order priorities take precedence in the generated API.
  * Readiness is computed in SQL against all blockers, including hidden ones. */
 export const tasksQuery = `query Tasks {
-  tasks(orderBy: {priority: {direction: asc, priority: 0}, position: {direction: asc, priority: 1}, id: {direction: asc, priority: 2}}) {
+  tasks(orderBy: {priority: {direction: asc, priority: 2}, position: {direction: asc, priority: 1}, id: {direction: asc, priority: 0}}) {
     id title type status priority position ownerKind owner project assigneeKind assignee
     goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId
     commentCount isReady

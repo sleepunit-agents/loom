@@ -1,3 +1,4 @@
+import { readInboxVolume } from './core/data/inbox-volume.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 /** Conversations at the shared outside boundary. Current household facts and
  * the existing ordered policy decide every read/write; services own no policy. */
@@ -20,7 +21,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
   const service = new CommsMessages(db, key, now);
   const policy = (viewer: Parameters<typeof workVisibility>[0], fields: Parameters<NonNullable<ReturnType<typeof workVisibility>['approvals']>>[0]) => workVisibility(viewer).approvals!(fields);
   const questionPolicy=conversationQuestionPolicy(db);
-  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }));
+  const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)));
   const summaries = new ConversationSummaries(db, key, now);
   const scope = (row: { member?: string | null; project?: string | null; agent?: string | null }): RecordScope => ({
     type: 'conversation', member: row.member ?? undefined, project: row.project ?? undefined, agent: row.agent ?? undefined,

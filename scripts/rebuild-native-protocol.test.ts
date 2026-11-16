@@ -6,6 +6,7 @@ import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
+import {exampleSettleMs} from '../dist/example-runtime.js';
 import {nativeProtocolSmoke} from './rebuild-native-protocol.mjs';
 async function household(run){
  const parent=mkdtempSync(join(tmpdir(),'loom-native-protocol-')),home=join(parent,'home');let app;
@@ -80,5 +81,56 @@ it('withdraws enrolled body authority even when normal HTTP job retirement is re
  expect(refused).toBeGreaterThan(0);
  const bodies=context.db.prepare("SELECT b.revoked_at FROM tokens b JOIN tokens r ON b.made_from=r.fingerprint WHERE r.label='Native protocol fixture worker' AND b.job IS NOT NULL").all();
  expect(bodies.length).toBeGreaterThan(0);expect(bodies.every(row=>!!row.revoked_at)).toBe(true);
+ restored(context.db,context.example.runtime.box);
+}));
+
+it('accepts one requested follow-up job after the default jobs without consuming unrelated targets',{timeout:20_000},()=>household(async context=>{
+ await nativeProtocolSmoke(context);
+ const commit=await context.app.services.comms.prepareSend({thread:context.example.runtime.thread,sender:'alex',kind:'message',clientId:'native-target-followup',words:'Fictional target-only follow-up'});
+ context.app.writes.run(commit);context.clock.advance(exampleSettleMs);
+ const id=context.app.services.conversations.conversation(context.example.runtime.conversation).job;expect(id).toBeTruthy();
+ const result=await nativeProtocolSmoke({...context,targets:[{id,words:'Fictional target-only follow-up'}]});
+ expect(result.runs).toHaveLength(1);expect(result.runs[0]).toMatchObject({job:id,state:'done',hadInput:true,running:true,bootstrapErased:true});
+ const acquired=context.db.prepare("SELECT revoked_at FROM tokens WHERE label LIKE 'Native protocol fixture %'").all();
+ expect(acquired).toHaveLength(4);expect(acquired.every(row=>!!row.revoked_at)).toBe(true);
+}));
+it('rejects missing, duplicate or empty target inputs before acquiring any authority',{timeout:20_000},()=>household(async context=>{
+ for(const targets of [[],[{id:'same',words:'a'},{id:'same',words:'b'}],[{id:'',words:'a'}],[{id:'one',words:' '}],null])await expect(nativeProtocolSmoke({...context,targets})).rejects.toThrow('targets must');
+ expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
+}));
+
+it('refuses a target subset before leasing or acquiring authority',{timeout:20_000},()=>household(async context=>{
+ const id=context.example.runtime.publicJob.id;
+ await expect(nativeProtocolSmoke({...context,targets:[{id,words:'Inspect the shared garden path'}]})).rejects.toThrow('all queued Moss jobs');
+ expect(context.db.prepare("SELECT state FROM jobs WHERE agent='moss'").all()).toEqual([{state:'queued'},{state:'queued'}]);
+ expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
+}));
+it('snapshots target IDs and input words across asynchronous execution without disclosing them',{timeout:20_000},()=>household(async context=>{
+ const targets=[{id:context.example.runtime.job.id,words:'Check the shed hinges before the example rain.'},{id:context.example.runtime.publicJob.id,words:'Inspect the shared garden path'}];let changed=false;
+ const off=context.app.writes.observe(()=>{if(!changed){changed=true;targets[0].id='mutated';targets[0].words='CHANGED_PRIVATE_WORDS';targets.push({id:'another',words:'OTHER_PRIVATE_WORDS'});}});
+ let result;try{result=await nativeProtocolSmoke({...context,targets});}finally{off();}
+ expect(changed).toBe(true);expect(result.runs).toHaveLength(2);expect(result.runs.every(row=>row.hadInput)).toBe(true);
+ const evidence=JSON.stringify(result);expect(evidence).not.toContain('Check the shed hinges');expect(evidence).not.toContain('PRIVATE_WORDS');expect(evidence).not.toMatch(/(?:body_[a-f0-9]{64}|loom_[A-Za-z0-9_-]{43})/);
+}));
+it('keeps expected input and generated credentials out of forced failure diagnostics',{timeout:20_000},()=>household(async context=>{
+ const marker='DISTINCT_PRIVATE_TARGET_WORDS';let diagnostic='';
+ try{await nativeProtocolSmoke({...context,targets:[{id:context.example.runtime.job.id,words:marker},{id:context.example.runtime.publicJob.id,words:marker}]});}catch(error){diagnostic=String(error);}
+ expect(diagnostic).toContain('did not complete');expect(diagnostic).not.toContain(marker);expect(diagnostic).not.toMatch(/(?:body_[a-f0-9]{64}|loom_[A-Za-z0-9_-]{43})/);
+ restored(context.db,context.example.runtime.box);
+}));
+it('refuses a non-fictional or incomplete household before authority or leasing',{timeout:20_000},()=>household(async context=>{
+ for(const example of [{...context.example,fictional:false},{...context.example,runtime:undefined}])await expect(nativeProtocolSmoke({...context,example})).rejects.toThrow('fictional household');
+ expect(context.db.prepare("SELECT state FROM jobs WHERE agent='moss'").all()).toEqual([{state:'queued'},{state:'queued'}]);
+ expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
+}));
+for(const mode of ['bootstrap-envelope','body-capability'] as const)it(`refuses completion when ${mode} byte erasure is broken`,{timeout:20_000},()=>household(async context=>{
+ const fill=Buffer.prototype.fill,held=new Set<Buffer>();
+ Buffer.prototype.fill=function(value,...args){
+  const owned=mode==='bootstrap-envelope'?this.subarray(0,7).toString('utf8')==='{"job":'&&this.includes('"bootstrap":'):this.length===69&&this.subarray(0,5).toString('ascii')==='body_';
+  if(value===0&&owned){held.add(this);return this;}
+  return Reflect.apply(fill,this,[value,...args]);
+ };
+ try{await expect(nativeProtocolSmoke(context)).rejects.toThrow();expect(held.size).toBeGreaterThan(0);}
+ finally{Buffer.prototype.fill=fill;for(const bytes of held)Reflect.apply(fill,bytes,[0]);held.clear();}
  restored(context.db,context.example.runtime.box);
 }));

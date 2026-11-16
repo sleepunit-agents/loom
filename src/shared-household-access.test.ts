@@ -10,14 +10,14 @@ import {sharedRoot} from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const visual={about:'Fictional agent',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble' as const,faceEyes:'dot' as const};
 function fixture(hold?:()=>Promise<string>,fullOwner=false){
- const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),raw={owner:'a'.repeat(64),sam:'b'.repeat(64)};
+ const statements:string[]=[];const client=new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s)&&/readHouseholdSetup|at Object\.read \(.*shared-household-access/.test(new Error().stack??''))statements.push(s);}});clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),raw={owner:'a'.repeat(64),sam:'b'.repeat(64)};
  db.insert(members).values([{id:'owner',role:'owner',fullOwner,joinedAt:at},{id:'sam',role:'member',joinedAt:at}]).run();db.insert(agents).values([{id:'art',...visual},{id:'mark',...visual}]).run();
  for(const member of ['owner','sam'] as const)db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member==='sam'?'PRIVATE TOKEN LABEL':'Owner',createdAt:at}).run();
  db.insert(sessions).values({id:hash('c'.repeat(64)),token:hash(raw.sam),device:'Private other browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},fields:hold?{hold:{type:GraphQLString,resolve:hold}}:undefined});clean.push(()=>root.close());
  const read=(query='{ householdSetup { members { id role fullOwner agents } agents { id github } tokens { fingerprint label identity } sessions { ref device member } } }',actor:'owner'|'sam'='owner')=>root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({query})});
  const call=(name:string,input:unknown,actor:'owner'|'sam'='owner',id=name)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({input,id})});
- return{client,db,root,raw,read,call,at};
+ return{statements,client,db,root,raw,read,call,at};
 }
 it('shows household credential and roster metadata only to owners and revokes another member browser through the outside door',async()=>{
  const f=fixture(),data=(await(await f.read()).json()).data.householdSetup;
@@ -67,4 +67,24 @@ it('permits trusted roster/account and browser helpers without an outside owner 
 it('materializes declared full ownership for preexisting rows when the shared program starts',()=>{
  const f=fixture(undefined,true);expect(f.db.select().from(memberAgents).where(eq(memberAgents.member,'owner')).all().map(row=>row.agent).sort()).toEqual(['art','mark']);
  expect(f.root.services.household.members().find(member=>member.id==='owner')).toMatchObject({fullOwner:true,agents:['art','mark']});
+});
+
+it('bounds the actual setup query at two and ten members/agents while preserving owned links and account labels',async()=>{
+ const f=fixture();f.statements.length=0;const small=await(await f.read()).json();expect(small.errors).toBeUndefined();expect(small.data.householdSetup.members).toHaveLength(2);const count=f.statements.length;
+ for(let n=2;n<10;n++){
+  const id='fixture-'+n;f.db.insert(members).values({id,role:'member',joinedAt:f.at}).run();f.db.insert(agents).values({id,...visual}).run();
+  f.db.insert(memberAgents).values({member:id,agent:id}).run();f.db.insert(agentAccounts).values({agent:id,service:'github',login:'login-'+n}).run();
+ }
+ f.statements.length=0;const large=await(await f.read()).json();expect(large.errors).toBeUndefined();const result=large.data.householdSetup;
+ expect(result.members).toHaveLength(10);expect(result.agents).toHaveLength(10);expect(result.members.find((row:{id:string})=>row.id==='fixture-9').agents).toEqual(['fixture-9']);expect(result.agents.find((row:{id:string})=>row.id==='fixture-9').github).toEqual(['login-9']);
+ expect(f.statements.length).toBe(count);expect(count).toBe(5);
+});
+
+it('keeps browser validity tied to the exact current token expiry and revocation',async()=>{
+ const f=fixture(),sam=f.db.select().from(tokens).where(eq(tokens.member,'sam')).get()!;
+ const read=async()=> (await(await f.read('{householdSetup{sessions{ended member tokenLabel}}}')).json()).data.householdSetup.sessions[0];
+ f.db.update(tokens).set({expiresAt:new Date(Date.parse(f.at)+60000).toISOString()}).where(eq(tokens.fingerprint,sam.fingerprint)).run();
+ expect(await read()).toMatchObject({ended:false,member:'sam',tokenLabel:'PRIVATE TOKEN LABEL'});
+ f.db.update(tokens).set({expiresAt:f.at}).where(eq(tokens.fingerprint,sam.fingerprint)).run();expect((await read()).ended).toBe(true);
+ f.db.update(tokens).set({expiresAt:null,revokedAt:f.at}).where(eq(tokens.fingerprint,sam.fingerprint)).run();expect((await read()).ended).toBe(true);
 });

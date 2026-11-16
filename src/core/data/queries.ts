@@ -221,3 +221,12 @@ function rejectRelationAliases(info: GraphQLResolveInfo) {
   }
   for (const node of info.fieldNodes) check(node.selectionSet);
 }
+
+/** Selected schema field names, respecting aliases, fragments and directives.
+ * Custom display projections share the generated reader's selection walker.
+ */
+export function selectedQueryFields(info: GraphQLResolveInfo, path: readonly string[] = []) {
+  let sets = info.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []);
+  for (const name of path) sets = selectedFields(sets, info).get(name) ?? [];
+  return new Set(selectedFields(sets, info).keys());
+}
