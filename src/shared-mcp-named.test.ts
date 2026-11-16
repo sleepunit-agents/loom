@@ -1,6 +1,6 @@
 /** The named terminal tools, over the real HTTP door of a started program. */
 import {expect,it,vi} from 'vitest';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync,mkdirSync} from 'node:fs';
 import {join} from 'node:path';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -98,4 +98,32 @@ it('lists recent episodes',async()=>{
   const episodes=await art.call('episodes');
   expect(episodes.error,episodes.text).toBe(false);expect(episodes.text).toContain('Fictional episode title');
  }finally{await art.client.close();await p.close();}
+},30_000);
+
+it('loads identity as a core with an index, and further pieces by name',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ try{
+  const home=join(p.home,'agents/art');
+  writeFileSync(join(home,'IDENTITY.md'),'FICTIONAL_CREED');writeFileSync(join(home,'self-model.md'),'FICTIONAL_SELF_MODEL');
+  for(const [folder,name,words] of [['harnesses','fictional-terminal','FICTIONAL_HARNESS'],['models','fictional-model','FICTIONAL_MODEL_FAMILY'],['roles','tend','FICTIONAL_ROLE']] as const){
+   mkdirSync(join(home,folder),{recursive:true});writeFileSync(join(home,folder,name+'.md'),words);
+  }
+  const core=(await art.call('identity',{client:'fictional-terminal',model:'fictional-model-9'})).text;
+  expect(core).toContain('Agent: art');expect(core).toContain('FICTIONAL_CREED');expect(core).toContain('# Pieces');
+  for(const absent of ['FICTIONAL_SELF_MODEL','FICTIONAL_HARNESS','FICTIONAL_MODEL_FAMILY','FICTIONAL_ROLE'])expect(core).not.toContain(absent);
+  expect((await art.call('identity',{piece:'self-model'})).text).toBe('Agent: art\n\n# Self-Model\n\nFICTIONAL_SELF_MODEL');
+  expect((await art.call('identity',{piece:'harness',client:'fictional-terminal'})).text).toContain('FICTIONAL_HARNESS');
+  // A dated model name falls back to its family's page.
+  expect((await art.call('identity',{piece:'model',model:'fictional-model-9-1'})).text).toContain('FICTIONAL_MODEL_FAMILY');
+  expect((await art.call('identity',{role:'tend'})).text).toContain('# Mode: tend\n\nFICTIONAL_ROLE');
+  const all=(await art.call('identity',{piece:'all',client:'fictional-terminal',model:'fictional-model'})).text;
+  for(const present of ['FICTIONAL_CREED','FICTIONAL_SELF_MODEL','FICTIONAL_HARNESS','FICTIONAL_MODEL_FAMILY'])expect(all).toContain(present);
+  // No path leaves the declared folder, and no caller reads another agent's pages.
+  expect((await art.call('identity',{piece:'harness',client:'../IDENTITY'})).text).not.toContain('FICTIONAL_CREED');
+  expect((await art.call('identity',{agent:'mark'})).error).toBe(true);
+  const foreign=JSON.parse((await mark.call('loom_query',{query:'{memoryIdentity(agent:"art"){page(kind:"harness",name:"fictional-terminal")}}'})).text);
+  expect(foreign.data).toEqual({memoryIdentity:null});
+  const escape=JSON.parse((await art.call('loom_query',{query:'{memoryIdentity(agent:"art"){a:page(kind:"harness",name:"..") b:page(kind:"__proto__",name:"x") c:page(kind:"role",name:"tend")}}'})).text);
+  expect(escape.data).toEqual({memoryIdentity:{a:null,b:null,c:'FICTIONAL_ROLE'}});
+ }finally{await art.client.close();await mark.client.close();await p.close();}
 },30_000);

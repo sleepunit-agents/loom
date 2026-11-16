@@ -37,6 +37,7 @@ that works proves its data layer works:
 
 | Tool | Maps to |
 |---|---|
+| `identity` | `memoryIdentity(agent:)`, with `page(kind:, name:)` for harness, model, role and project pages |
 | `remember` | `memory.remember` |
 | `recall` | `memory.recall`, then one query for the matches' titles and content |
 | `update`, `forget` | `memory.update`, `memory.forget` |
@@ -46,6 +47,13 @@ that works proves its data layer works:
 | `note_read` | `memoryNote(agent:, path:)` |
 | `note_write` | `memory.noteWrite` |
 | `note_list` | `memoryNotes(agent:, prefix:, first:)` |
+
+`identity` returns the creed, preferences, Top of Mind and an index of further
+pieces. `piece` or `pieces` selects `self-model`, `last-24h`, `harness` (with
+`client`), `model` (with `model`; a dated name falls back to its family's page)
+or `all`. `role` and `project` add that page to the core. Pages are Markdown
+files in the agent's own declared folder (`harnesses/`, `models/`, `roles/`,
+`projects/`, `clients/`); a name cannot leave its folder.
 
 `memoryNotes` lists paths, lifetimes and sizes without text.
 `memoryKnowledgeSearch` returns active pages in which every query word appears

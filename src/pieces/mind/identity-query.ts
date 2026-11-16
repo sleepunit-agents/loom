@@ -11,7 +11,9 @@ import type {MemoryQueryContext} from './knowledge-query.js';
 import type {MindSources} from './sources.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 const text={type:GraphQLString},required={type:new GraphQLNonNull(GraphQLString)};
-const identityType=new GraphQLObjectType({name:'MemoryIdentity',fields:{agent:required,readAt:required,creed:text,preferences:text,selfModel:text,topOfMind:text,recent:text}});
+/** Authored pages beside the creed: one folder per kind, one Markdown file per name. */
+const pageFolders:Readonly<Record<string,string>>={harness:'harnesses',model:'models',role:'roles',project:'projects',client:'clients'};
+const pageName=/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 function identity(directory:string,name:string){
  const path=join(directory,name);if(!existsSync(path))return null;
  const base=realpathSync(directory),target=realpathSync(path),inside=relative(base,target);
@@ -23,6 +25,13 @@ export function memoryIdentityFields(options:{sources?:MindSources;sharing():Sha
  const close=()=>{if(closed)return;closed=true;for(const source of sources.values())source.db?.close();sources.clear();};
  try{for(const source of options.sources?.agents??[]){if(sources.has(source.agent))throw Error('Duplicate Memory source');sources.set(source.agent,{directory:source.directory,db:existsSync(source.memories)?new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined});}}
  catch(error){close();throw error;}
+ const identityType=new GraphQLObjectType<{agent:string},MemoryQueryContext>({name:'MemoryIdentity',fields:{agent:required,readAt:required,creed:text,preferences:text,selfModel:text,topOfMind:text,recent:text,
+  page:{type:GraphQLString,args:{kind:required,name:required},resolve:(parent,args:{kind:string;name:string},context)=>{
+   const source=sources.get(parent.agent),folder=Object.hasOwn(pageFolders,args.kind)?pageFolders[args.kind]:undefined;
+   if(closed||!source||!folder||!pageName.test(args.name)||!context?.viewer||!maySee(context.viewer,{type:'memory',agent:parent.agent},options.sharing()))return null;
+   try{return identity(source.directory,join(folder,args.name+'.md'));}catch{throw new GraphQLError('Identity is unavailable');}
+  }},
+ }});
  const fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>={memoryIdentity:{type:identityType,args:{agent:required},resolve:(_source,args,context)=>{
   const source=sources.get(args.agent);if(closed||!source||!context?.viewer||!maySee(context.viewer,{type:'memory',agent:args.agent},options.sharing()))return null;
   try{

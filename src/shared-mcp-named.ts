@@ -21,6 +21,8 @@ const refuse=(text:string):Result=>({isError:true,content:[{type:'text',text}]})
 const category=z.enum(['user','project','self','feedback','reference','pursuit','episode']);
 const memoryId=z.string().regex(/^[^:]+:[a-f0-9-]{36}$/);
 const notePath=z.string().min(1).max(300);
+const pageName=/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+type Section='creed'|'preferences'|'top-of-mind'|'self-model'|'last-24h'|'harness'|'model'|'all';
 
 interface Memory{id:string;title:string;content:string;category:string;updated:string}
 interface NoteSummary{path:string;lifespan:string;updated:string;by:string;bytes:number;files:number;expires:string|null}
@@ -50,6 +52,33 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
     if(error instanceof z.ZodError)return refuse('Invalid input: '+error.issues.map(issue=>issue.path.join('.')+' '+issue.message).join('; '));
     return refuse('Tool unavailable; outcome may be uncertain');
    }
+  });
+
+ const section=z.enum(['creed','preferences','top-of-mind','self-model','last-24h','harness','model','all']);
+ server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; pass piece or pieces for self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
+  inputSchema:z.object({agent:z.string().optional(),client:z.string().max(100).optional(),model:z.string().max(100).optional(),piece:section.optional(),pieces:z.array(section).max(8).optional(),role:z.string().max(100).optional(),project:z.string().max(100).optional(),conversation:z.string().max(200).optional(),run:z.string().max(200).optional(),people:z.array(z.string().max(100)).max(20).optional()}).strict()},
+  async(args:{agent?:string;client?:string;model?:string;piece?:Section;pieces?:Section[];role?:string;project?:string}):Promise<Result>=>{
+   try{
+    const agent=ports.agent;if(!ports.valid()||!agent||args.agent&&args.agent!==agent)throw Error();
+    const asked=[...(args.piece?[args.piece]:[]),...(args.pieces??[])],core=!asked.length,all=asked.includes('all');
+    const wants=(name:Section)=>all||asked.includes(name)||core&&(name==='creed'||name==='preferences'||name==='top-of-mind');
+    // A model page may be filed under a shorter family name: claude-fable-5-2, claude-fable-5, claude-fable.
+    const family=(name:string)=>name.split('-').map((_part,index,parts)=>parts.slice(0,parts.length-index).join('-'));
+    const pages:{alias:string;kind:string;name:string;heading:string}[]=[];
+    const page=(kind:string,name:string|undefined,heading:string,names:(name:string)=>string[]=name=>[name])=>{if(name&&pageName.test(name))for(const candidate of names(name))pages.push({alias:'p'+pages.length,kind,name:candidate,heading});};
+    if(core||all){page('role',args.role,'Mode: '+args.role);page('project',args.project,'Project: '+args.project);}
+    if(wants('harness')){page('harness',args.client,'Harness: '+args.client);page('client',args.client,'Client: '+args.client);}
+    if(wants('model'))page('model',args.model,'Model: '+args.model,family);
+    const fields=['agent',wants('creed')&&'creed',wants('preferences')&&'preferences',wants('top-of-mind')&&'topOfMind',wants('self-model')&&'selfModel',wants('last-24h')&&'recent',
+     ...pages.map(entry=>entry.alias+':page(kind:'+JSON.stringify(entry.kind)+',name:'+JSON.stringify(entry.name)+')')].filter(Boolean).join(' ');
+    const data=await read<{memoryIdentity:Record<string,string|null>|null}>('query($agent:String!){memoryIdentity(agent:$agent){'+fields+'}}',{agent});
+    const identity=data.memoryIdentity;if(!identity||identity.agent!==agent)throw Error();
+    const parts:string[]=[],add=(heading:string,words:string|null|undefined)=>{if(words)parts.push('# '+heading+'\n\n'+words);};
+    add('Identity',identity.creed);add('Preferences',identity.preferences);add('Top of Mind',identity.topOfMind);add('Self-Model',identity.selfModel);add('Last 24 hours',identity.recent);
+    const shown=new Set<string>();for(const entry of pages)if(identity[entry.alias]&&!shown.has(entry.heading)){shown.add(entry.heading);add(entry.heading,identity[entry.alias]);}
+    if(core)parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client or model for their pages. Use piece: "all" for everything.\n\n- last-24h: what other bodies did recently\n- self-model: before reflection, retro or identity work\n- harness: before scheduling, delegation or harness-specific work (pass client)\n- model: when choosing or describing models (pass model)');
+    return say('Agent: '+agent+'\n\n'+(parts.join('\n\n---\n\n')||'No Identity has been written.'));
+   }catch{return refuse('Identity unavailable');}
   });
 
  tool('remember','Save a memory in your own store.',
