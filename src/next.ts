@@ -1,10 +1,5 @@
 import {peopleReader} from './pieces/mind/people.js';
 import {mindSources} from './pieces/mind/sources.js';
-import { measureResponse } from './core/measuring/response.js';
-import { measuringHttp } from './core/measuring/http.js';
-import { installMeasuring } from './core/measuring/install.js';
-import { measuringSettingsProposals } from './core/measuring/proposal.js';
-import { approvalService } from './apps/approvals.js';
 import { nextData } from './next-data.js';
 import type { Viewer } from './core/index.js';
 import { dataDatabase } from './core/data/database.js';
@@ -108,12 +103,9 @@ const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const notificationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
-const measuringSignals = new WeakMap<Foundation, () => void>();
-const measuring = new WeakMap<Foundation, Awaited<ReturnType<typeof installMeasuring>>>();
 export async function closeNext(app: Foundation) {
   const failures: unknown[] = [];
   for (const close of [
-    () => measuring.get(app)?.close(),
     secretWorkerClosers.get(app), notificationClosers.get(app), secretMutationClosers.get(app),
     () => bridgeDaemons.get(app)?.close(),
     async () => { try { await secretAuthorities.get(app)?.close(); } finally { secretAuthorities.delete(app); } },
@@ -212,7 +204,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
       ? installedSecretUse(app.operations, credentials.source, app.live, 'changes')
       : {async withValue() { throw new Error('GitHub credential unavailable'); }}, credentials?.github ?? {});
     installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
-      staging: options.staging, interval: credentials?.interval, request: credentials?.request, measure: work => { const meter = measuring.get(app); return meter ? meter.runAsync('job', 'changes.read', work) : work(); }});
+      staging: options.staging, interval: credentials?.interval, request: credentials?.request});
   }
   const effects = installEffects(app, sharing, !!options.staging);
   const notifications=installNotificationSending(app,effects,options.notifications);
@@ -295,15 +287,6 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const workers=await startSecretWorkers(app,sharing,effects,options.secretWorkers);
     secretWorkerClosers.set(app,workers.close);
   }
-  // No schema creation or migration here: only the approved shared home has
-  // Measuring tables. The separate move owns existing homes.
-  if (!measuring.has(app) && app.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='measuring_settings'").get()) {
-    // This older composition has no shared Approvals answer command. A card
-    // proposed here is filed and stays pending; the rebuilt program answers it.
-    const measured = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, measured,
-      approvalService(measured, new Map([measuringSettingsProposals(measured).operation]), () => new Date(app.operations.clock.now()).toISOString())));
-  }
   return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
@@ -330,12 +313,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     // The generated door uses the SAME connection and fresh shared credentials.
     // Existing homes are deliberately not bootstrapped or migrated here.
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-    const measuringApi = measuringHttp(app, sharedData);
-    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, undefined, undefined, undefined, work => {
-      const meter = measuring.get(app);
-      return meter?.enabled() ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work();
-    });
-    measuringSignals.set(app, () => data!.timingsChanged());
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin);
     stopDataChanges=app.live.observe(()=>data!.changed());
     routes.all('/graphql', c => data!.http.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
@@ -386,11 +364,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         let parts: string[];
         try { parts = new URL(req.url ?? '/', 'http://localhost').pathname.split('/').map(decodeURIComponent); }
         catch { res.writeHead(400); res.end(); return; }
-        if (parts[1] === 'api' && parts[2] === 'measuring') return measuringApi(req, res);
         if (req.url?.startsWith('/api/') && req.url.split('?')[0] !== '/api/signin/link') return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
         };
-        void measureResponse(measuring.get(app), req, res, dispatch)?.catch(() => { if (!res.headersSent) res.writeHead(503); res.end(); });
+        dispatch();
       });
       http.on('connection',socket=>{
         sockets.add(socket);

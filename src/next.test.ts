@@ -256,7 +256,6 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
       app.db.function('loom_now', () => new Date(app.operations.clock.now()).toISOString());
       app.db.exec(readFileSync(new URL('../assets/data/schema.sql', import.meta.url), 'utf8'));
       app.db.prepare('INSERT INTO members (id,role,joined_at) VALUES (?,?,?)').run('sam','owner',at);
-      app.db.prepare('INSERT INTO measuring_settings(singleton, "on", send_outside, outside_address, keep_days) VALUES (1,1,0,NULL,90)').run();
       app.db.prepare("INSERT INTO agents(id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES('art','','#fff','#000','pebble','dot')").run();
       app.db.prepare('INSERT INTO tokens(fingerprint,label,kind,agent,created_at) VALUES(?,?,?,?,?)').run(createHash('sha256').update(agentToken).digest('hex'),'Art','agent','art',at);
       app.db.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'Sam','owner','sam',at,new Date(expiry).toISOString());
@@ -269,11 +268,6 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
   try {
     const request = (authorization: string) => fetch(loom.url+'/graphql',{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title } approvals { id } }'})});
     expect((await request('legacy')).status).toBe(401);
-    await fetch(loom.url+'/health');
-    const timings = await fetch(loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:'{ timingDays { kind name count } measuringSettings { on } }'})});
-    const measured = await timings.json() as {data:{timingDays:unknown[];measuringSettings:unknown[]}};
-    expect(measured.data.measuringSettings).toEqual([{on:true}]);
-    expect(measured.data.timingDays).toContainEqual(expect.objectContaining({kind:'request',name:'web',count:1}));
     ws = new WebSocket(loom.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+token}});
     await once(ws,'open');
     const probeAck=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await probeAck;
@@ -283,28 +277,16 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     const direct=once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'direct',payload:{query:'{ tasks { id } }'}}));
     expect(JSON.parse(String((await direct)[0])).payload.data.tasks).toEqual([{id:'pump'}]);
-    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:2});
     const sampleClosed=once(ws,'close');ws.close();await sampleClosed;ws=undefined;
-    const command=(authorization:string,verb:string,input:unknown,id:string)=>fetch(loom.url+'/api/measuring/'+verb,{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({input,id})});
-    const proposal={after:{on:false,send_outside:false,outside_address:'',keep_days:90},agent:'art',why:'Stop timing'};
-    expect((await command('legacy','propose',proposal,'bad')).status).toBe(401);
-    expect((await fetch(loom.url+'/api/%6deasuring/propose',{method:'POST',headers:{authorization:'legacy','content-type':'application/json'},body:JSON.stringify({input:proposal,id:'encoded'})})).status).toBe(401);
-    const proposed=await (await command('Bearer '+agentToken,'propose',proposal,'propose')).json() as {ok:boolean;value:{id:string}};
-    expect(proposed.ok).toBe(true);
-    // Measuring has no answer command of its own; a card is answered through Approvals.
-    expect(loom.operations.has('measuring.answer')).toBe(false);
-    expect(loom.db.prepare('SELECT state, operation FROM approvals WHERE id=?').get(proposed.value.id)).toMatchObject({state:'pending'});
-    expect(loom.db.prepare('SELECT "on" FROM measuring_settings').get()).toEqual({on:1});
-
-    expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}]}});
+    // The older listener mounts no Measuring: that lives in the rebuilt program only.
+    expect(loom.operations.has('measuring.propose')).toBe(false);
+    expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[]}});
     ws = new WebSocket(loom.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+token}});
     await once(ws,'open');
     const ack = once(ws,'message'); ws.send(JSON.stringify({type:'connection_init'})); await ack;
     const first = once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } approvals { id } }") { revision patches { path value } } }'}}));
-    expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}]});
-    // The card is still pending, so Measuring is still on and this subscription is counted too.
-    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:3});
+    expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[]});
     expect(credentialTimer).toBe(true);
     const databaseClose = loom.db.close.bind(loom.db);
     loom.db.close = () => { expect(credentialTimer).toBe(false); databaseClosed = true; return databaseClose(); };
