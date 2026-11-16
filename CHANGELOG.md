@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Remove `measuring.answer`. A Measuring settings card is answered through `approvals.answer`, like every other settings change.
+
+- The approved site gains a Tools for agents page, describes notes, the further identity pages, memory time to live and confirm/contradict, and task unclaim and reopen.
+
 - Add own-body Memory editing, retained-revision reads, and revision restoration through the canonical command and query doors.
 
 - Add current-owner household membership and agent appearance commands on the shared data connection.

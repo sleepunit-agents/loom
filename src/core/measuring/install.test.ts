@@ -9,6 +9,8 @@ import { agents, members, timingDays, measuringSettings } from '../data/schema.j
 import { Operations } from '../operations/index.js';
 import { DEFAULT_MEASURING } from './index.js';
 import { installMeasuring } from './install.js';
+import { measuringSettingsProposals } from './proposal.js';
+import { approvalService } from '../../apps/approvals.js';
 
 const exported=vi.hoisted(()=>[] as unknown[]);
 vi.mock('@opentelemetry/exporter-trace-otlp-proto',()=>({OTLPTraceExporter:class{
@@ -36,7 +38,15 @@ it('installs owner-approved measuring on the actual operation dispatcher and fen
  operations.register({name:'example.read',input:z.object({}),output:z.number(),may:()=>true,run:()=>42});
  const stops: (()=>void)[]=[];
  const app = {db:client,operations,live:{changed(){}},onClose:(stop:()=>void)=>stops.push(stop)} as Foundation;
- const meter = await installMeasuring(app,db);
+ // The root's composition: one Approvals service holds Measuring's change, an
+ // owner answers through it, and the root reloads Measuring after the commit.
+ let installed: Awaited<ReturnType<typeof installMeasuring>> | undefined;
+ const change = measuringSettingsProposals(db).operation;
+ const approvals = approvalService(db, new Map([[change[0], card => { change[1](card); queueMicrotask(() => { void installed?.refresh(); }); }]]), () => new Date(clock.now()).toISOString());
+ operations.register({name:'approvals.answer',write:true,input:z.object({id:z.string()}).strict(),output:z.unknown(),
+  may:viewer=>viewer.kind==='member'&&viewer.id==='owner',run:(ctx,input)=>approvals.allow(input.id,ctx.viewer.id)});
+ const meter = installed = await installMeasuring(app,db,approvals);
+ expect(operations.has('measuring.answer')).toBe(false);
  let seq=0;
  const call=(name:string,input:unknown,who='owner',id=String(++seq))=>operations.call('http',{kind:who==='art'?'agent':'member',id:who},name,input,id);
  try {
@@ -46,7 +56,6 @@ it('installs owner-approved measuring on the actual operation dispatcher and fen
   const proposal={after:{...DEFAULT_MEASURING,on:true},agent:'art',why:'Find slow work'};
   for(const door of ['mcp','socket'] as const) {
    expect(operations.call(door,{kind:'member',id:'owner'},'measuring.propose',proposal,'door-'+door)).toMatchObject({ok:false,code:'denied'});
-   expect(operations.call(door,{kind:'member',id:'owner'},'measuring.answer',{id:'missing',allow:true},'answer-'+door)).toMatchObject({ok:false,code:'denied'});
   }
   expect(call('measuring.propose',proposal,'guest')).toMatchObject({ok:false,code:'denied'});
   expect(call('measuring.propose',{...proposal,agent:'mark'},'art')).toMatchObject({ok:false,code:'denied'});
@@ -54,19 +63,15 @@ it('installs owner-approved measuring on the actual operation dispatcher and fen
   const card=call('measuring.propose',proposal,'art');
   expect(card.ok).toBe(true);if(!card.ok)throw new Error('proposal failed');
   const id=(card.value as {id:string}).id;
-  expect(call('measuring.answer',{id,allow:true},'art')).toMatchObject({ok:false,code:'denied'});
-  expect(call('measuring.answer',{id,allow:true},'guest')).toMatchObject({ok:false,code:'denied'});
-  client.prepare("UPDATE members SET role='member' WHERE id='owner'").run();
-  expect(call('measuring.answer',{id,allow:true})).toMatchObject({ok:false,code:'denied'});
-  client.prepare("UPDATE members SET role='owner' WHERE id='owner'").run();
+  expect(call('approvals.answer',{id},'art')).toMatchObject({ok:false,code:'denied'});
   expect(db.select().from(measuringSettings).all()).toEqual([]);
   failReceipt = true;
-  expect(call('measuring.answer',{id,allow:true})).toMatchObject({ok:false,code:'unavailable'});
+  expect(call('approvals.answer',{id})).toMatchObject({ok:false,code:'unavailable'});
   await Promise.resolve();
   expect(db.select().from(measuringSettings).all()).toEqual([]);
   expect(meter.enabled()).toBe(false);
   failReceipt = false;
-  expect(call('measuring.answer',{id,allow:true})).toMatchObject({ok:true});
+  expect(call('approvals.answer',{id})).toMatchObject({ok:true});
   await meter.settled();
   expect(meter.enabled()).toBe(true);
   expect(retention.size).toBe(1);
@@ -81,7 +86,7 @@ it('installs owner-approved measuring on the actual operation dispatcher and fen
   const outside={...proposal,after:{...DEFAULT_MEASURING,on:true,keep_days:0,send_outside:true,outside_address:'https://monitor.example/v1/traces'}};
   const direct=operations.call('direct',{kind:'member',id:'owner'},'measuring.propose',outside,'outside');
   if(!direct.ok)throw new Error('direct proposal failed');
-  expect(call('measuring.answer',{id:(direct.value as {id:string}).id,allow:true})).toMatchObject({ok:true});
+  expect(call('approvals.answer',{id:(direct.value as {id:string}).id})).toMatchObject({ok:true});
   await meter.settled();
   expect(meter.enabled()).toBe(true);
   expect(retention.size).toBe(0);
@@ -92,7 +97,7 @@ it('installs owner-approved measuring on the actual operation dispatcher and fen
   expect(db.select().from(timingDays).all()).toEqual(localBefore);
   const disabling = call('measuring.propose',{...proposal,after:{...DEFAULT_MEASURING,on:false}},'art');
   if(!disabling.ok)throw new Error('disable proposal failed');
-  expect(call('measuring.answer',{id:(disabling.value as {id:string}).id,allow:true})).toMatchObject({ok:true});
+  expect(call('approvals.answer',{id:(disabling.value as {id:string}).id})).toMatchObject({ok:true});
   await meter.settled();
   expect(meter.enabled()).toBe(false);
   const before=db.select().from(timingDays).all();
@@ -110,7 +115,7 @@ it('publishes idle retention deletions to agents watching local daily rows',asyn
  db.insert(measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:1}).run();
  const operations=new Operations(client,clock,()=>{}, {receipts:new OperationResults(db)});
  const changed=vi.fn();
- const meter=await installMeasuring({operations,live:{changed},onClose(){}},db);
+ const meter=await installMeasuring({operations,live:{changed},onClose(){}},db,approvalService(db));
  try{
   meter.run('job','changes.read',()=>{});
   expect(db.select().from(timingDays).all()).toHaveLength(1);

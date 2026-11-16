@@ -291,8 +291,10 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     expect((await fetch(loom.url+'/api/%6deasuring/propose',{method:'POST',headers:{authorization:'legacy','content-type':'application/json'},body:JSON.stringify({input:proposal,id:'encoded'})})).status).toBe(401);
     const proposed=await (await command('Bearer '+agentToken,'propose',proposal,'propose')).json() as {ok:boolean;value:{id:string}};
     expect(proposed.ok).toBe(true);
-    expect(await (await command('Bearer '+token,'answer',{id:proposed.value.id,allow:true},'answer')).json()).toMatchObject({ok:true});
-    expect(loom.db.prepare('SELECT "on" FROM measuring_settings').get()).toEqual({on:0});
+    // Measuring has no answer command of its own; a card is answered through Approvals.
+    expect(loom.operations.has('measuring.answer')).toBe(false);
+    expect(loom.db.prepare('SELECT state, operation FROM approvals WHERE id=?').get(proposed.value.id)).toMatchObject({state:'pending'});
+    expect(loom.db.prepare('SELECT "on" FROM measuring_settings').get()).toEqual({on:1});
 
     expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}]}});
     ws = new WebSocket(loom.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+token}});
@@ -301,7 +303,8 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     const first = once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } approvals { id } }") { revision patches { path value } } }'}}));
     expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}],approvals:[{id:proposed.value.id}]});
-    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:2});
+    // The card is still pending, so Measuring is still on and this subscription is counted too.
+    expect(loom.db.prepare("SELECT count FROM timing_days WHERE kind='request' AND name='graphql.socket'").get()).toEqual({count:3});
     expect(credentialTimer).toBe(true);
     const databaseClose = loom.db.close.bind(loom.db);
     loom.db.close = () => { expect(credentialTimer).toBe(false); databaseClosed = true; return databaseClose(); };

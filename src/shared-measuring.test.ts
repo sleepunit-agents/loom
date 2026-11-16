@@ -36,8 +36,15 @@ it('runs Measuring through the fresh shared listener and refreshes generic appro
   const settings={...DEFAULT_MEASURING,on:true};
   const proposed=await call('propose',{after:settings,agent:'art',why:'Find slow work'},agentToken);
   expect(proposed.status).toBe(200);
-  expect((await call('answer',{id:proposed.result.value.id,allow:true},guestToken)).status).toBe(403);
-  expect((await call('answer',{id:proposed.result.value.id,allow:true})).result.ok).toBe(true);
+  expect((await call('answer',{id:proposed.result.value.id,allow:true})).result.ok).toBe(false);
+  const answer=async(token:string)=>{
+   const response=await fetch(root.url+'/api/approvals/answer',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:{id:proposed.result.value.id,answer:'allow'},id:String(++seq)})});
+   return {status:response.status,result:await response.json() as {ok:boolean}};
+  };
+  expect((await answer(guestToken)).status).toBe(403);
+  expect((await answer(agentToken)).status).toBe(403);
+  expect(meter.enabled()).toBe(false);
+  expect((await answer(ownerToken)).result.ok).toBe(true);
   await meter.settled();expect(meter.enabled()).toBe(true);
   await (await fetch(root.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+ownerToken,'content-type':'application/json'},body:JSON.stringify({query:'{ timingDays { name } }'})})).json();
   expect(db.select().from(timingDays).all()).toContainEqual(expect.objectContaining({kind:'request',name:'graphql',count:1}));

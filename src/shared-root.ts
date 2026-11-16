@@ -315,7 +315,7 @@ export function sharedRoot(options: {
   startupCleanups.push(stopDeskTime);
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
-  }, db).then(value => { meter = value; return value; });
+  }, db, services.approvals).then(value => { meter = value; return value; });
   const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
   const workLife=workLifetime(db,clock,data.writes,options.reportError);

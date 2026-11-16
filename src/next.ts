@@ -3,6 +3,8 @@ import {mindSources} from './pieces/mind/sources.js';
 import { measureResponse } from './core/measuring/response.js';
 import { measuringHttp } from './core/measuring/http.js';
 import { installMeasuring } from './core/measuring/install.js';
+import { measuringSettingsProposals } from './core/measuring/proposal.js';
+import { approvalService } from './apps/approvals.js';
 import { nextData } from './next-data.js';
 import type { Viewer } from './core/index.js';
 import { dataDatabase } from './core/data/database.js';
@@ -296,7 +298,11 @@ export async function installNext(app: Foundation, options: NextOptions) {
   // No schema creation or migration here: only the approved shared home has
   // Measuring tables. The separate move owns existing homes.
   if (!measuring.has(app) && app.db.prepare("SELECT 1 FROM sqlite_schema WHERE name='measuring_settings'").get()) {
-    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString())));
+    // This older composition has no shared Approvals answer command. A card
+    // proposed here is filed and stays pending; the rebuilt program answers it.
+    const measured = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+    measuring.set(app, await installMeasuring({ operations: app.operations, onClose: stop => app.onClose(stop), live: { changed: () => measuringSignals.get(app)?.() } }, measured,
+      approvalService(measured, new Map([measuringSettingsProposals(measured).operation]), () => new Date(app.operations.clock.now()).toISOString())));
   }
   return effects;
 }
