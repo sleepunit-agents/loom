@@ -86,7 +86,7 @@ export async function bodyProgram(input: {
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
-    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent));
+    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
     if(signal.aborted)throw new Error();if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();

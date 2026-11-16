@@ -2,7 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import Database,{type Database as Connection} from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
+import {mkdirSync,mkdtempSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
 import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
@@ -326,6 +326,10 @@ it('reads private identity and hottest memories from declared sources through th
  expect((await f.call('remember',input,'context-memory')).status).toBe(200);expect((await f.call('remember',{...input,category:'episode',title:'Private recent episode',content:'PRIVATE_BODY_EPISODE'},'context-episode')).status).toBe(200);
  f.source.prepare('UPDATE memories SET created=?,authored_at=NULL,recall_heat=0 WHERE category=?').run('2026-07-01T00:00:00.000Z','project');
  const cool=await bodyMemoryIdentity(client,'art');expect(cool).toContain('## Background');expect(cool).toContain(title);
+ // The page for the venue the body was started on comes with it: roles/wake.md is what every lane is told.
+ mkdirSync(join(directory,'roles'),{recursive:true});writeFileSync(join(directory,'roles','wake.md'),'PRIVATE_LANE_RULES');
+ const lane=await bodyMemoryIdentity(client,'art','wake');expect(lane).toContain('# Mode: wake\n\nPRIVATE_LANE_RULES');expect(lane!.indexOf('PRIVATE_LANE_RULES')).toBeGreaterThan(lane!.indexOf('PRIVATE_BODY_CREED'));
+ expect(await bodyMemoryIdentity(client,'art','discord')).not.toContain('PRIVATE_LANE_RULES');expect(await bodyMemoryIdentity(client,'art')).not.toContain('Mode:');
  expect((await f.call('recall',{query:'alpha'},'context-recall')).status).toBe(200);const before=f.source.serialize();
  vi.stubEnv('LOOM_SQLITE_DB_PATH',f.other);vi.stubEnv('LOOM_TIMEZONE','Pacific/Honolulu');
  try{const identity=await bodyMemoryIdentity(client,'art');for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',title,'18:00'])expect(identity).toContain(value);expect(identity).toContain('## Recent');expect(identity).not.toContain('OTHER_BODY_CREED');expect(await bodyMemoryIdentity(client,'mark')).toBeNull();}finally{vi.unstubAllEnvs();}

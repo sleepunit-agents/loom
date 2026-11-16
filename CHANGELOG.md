@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **A body is told how to work where it was started.** With its identity, a body now gets the agent's authored page for the venue of its conversation: `roles/<venue>.md` beside the creed. A body started by a trigger is on the `wake` venue, so `roles/wake.md` is what every lane is told, in one place, instead of a preamble and coda pasted around each lane's instructions.
+
 - **Turn one trigger off and on, and edit it.** `tempo.start` turns a stopped trigger back on; its next time is worked out from now, so nothing it missed fires. `tempo.edit` changes a trigger's words, file, times, days or label. Each edit is recorded in the new `trigger_edits` table with who made it and what the changed parts said before. Whoever could set the trigger may edit it; a project member who can stop a shared trigger cannot rewrite it. A trigger's words are now limited to 100,000 characters. An existing household database gains the table at start (schema number 3).
 
 - **A secret write no longer drops every bridge connection.** Only the connections that use the secret that changed are restarted.
