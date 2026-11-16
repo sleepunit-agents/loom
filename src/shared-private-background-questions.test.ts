@@ -5,7 +5,7 @@ import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixture
 import {bodyProgram} from './runtime/body-program.js';
 import {sealHandoff} from './core/conversations/handoff-words.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
-import {privateInboxEnvelope,hasPrivateInboxWords,sealPrivateInbox,privateInboxExpiries} from './core/conversations/private-inbox-words.js';
+import {privateInboxEnvelope,hasPrivateInboxWords,hasPrivateInboxPayload,sealPrivateInbox,privateInboxExpiries} from './core/conversations/private-inbox-words.js';
 import {sharedActivityConversations} from './pieces/mind/activity-conversations.js';
 import {sharedSharing} from './shared-sharing.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
@@ -164,4 +164,15 @@ it('does not confirm a new private answer if assignment ends during SDK acceptan
 });
 it('fails closed on malformed private storage without treating it as an immediately expired ordinary payload',async()=>{
  const f=await fixture(),id=await ask(f);expect((await answer(f,id)).status).toBe(200);const mail=f.db.select().from(s.inbox).all().find(i=>i.source==='answer')!,words='loom:private-inbox:v1:{';f.root.writes.run(()=>f.db.update(s.inbox).set({words}).where(eq(s.inbox.id,mail.id)).run());f.clock.advance(0);expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.words).toBe(words);expect((await take(f)).status).toBe(503);expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('waiting');expect(privateInboxExpiries(f.db,14).find(row=>row.id===mail.id)?.until).toBe(f.clock.now()+14*86400000);
+});
+it.each(['allow','deny'] as const)('refuses an approval %s that would relabel another member private source',async verdict=>{
+ const f=await fixture();f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run());const card=f.root.services.approvals.request({kind:'command',target:'fictional:other-private-source',what:'Fictitious Bob-private approval',why:'Never borrow another member scope',agent:'art',askedFrom:f.thread.conversation,actingFor:'bob',conversation:f.thread.conversation,project:'pond',member:'bob',ask:'Fictitious Bob-private decision?',ifYes:'Proceed.',ifNo:'Wait.'}),before=f.db.select().from(s.inbox).all(),records=f.db.select().from(s.approvalRecord).all();
+ const response=await f.root.http.request('/api/approvals/answer',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({input:{id:card.id,answer:verdict},id:'other-member-'+verdict})});expect(response.status).toBe(503);expect(f.root.services.approvals.get(card.id).state).toBe('pending');expect(f.db.select().from(s.inbox).all()).toEqual(before);expect(f.db.select().from(s.approvalRecord).all()).toEqual(records);
+});
+it('withdraws delayed and cloned private search-ID bytes when the person session ends',async()=>{
+ const f=await fixture(),id=await ask(f);expect((await answer(f,id)).status).toBe(200);const search=()=>query(f,'{inboxItems(folder:"answered",search:"PRIVATE PUMP QUESTION"){id}}');expect(await (await search()).json()).toEqual({data:{inboxItems:[{id}]}});const response=await search(),copy=response.clone();f.root.writes.run(()=>f.db.delete(s.sessions).run());await expect(response.text()).rejects.toThrow();await expect(copy.text()).rejects.toThrow();
+});
+it('keeps private payload recognition and erasure provenance in agreement for actual producer rows',async()=>{
+ const f=await fixture(),id=await ask(f);expect((await answer(f,id)).status).toBe(200);const publicCv=f.root.services.conversations.open({agent:'art',venue:'wake',place:'fictitious-literal-agreement',project:'pond',label:'Fictitious public source'});f.root.services.conversations.digest({conversation:publicCv.id,run:'public-literal',summary:'Fictitious public literal',question:{to:'alice',answers:'words',words:'loom:private-inbox:v1:literal public words'}});
+ const recognised=f.db.select().from(s.inbox).all().filter(row=>hasPrivateInboxPayload(f.db,row)).map(row=>row.id).sort();expect(recognised).toHaveLength(2);expect(privateInboxExpiries(f.db,14).map(row=>row.id).sort()).toEqual(recognised);
 });

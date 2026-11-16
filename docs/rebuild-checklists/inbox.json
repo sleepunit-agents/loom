@@ -104,11 +104,7 @@
     {
       "id": "inbox-014",
       "promise": "Every item has a recipient. An agent's body takes the items addressed to it, in order. A person's Inbox app is the items addressed to them that are waiting.",
-      "source": "docs/how-it-works/site/inbox.html#how-h",
-      "probe": {
-        "kind": "action",
-        "action": "privateConversationBatch"
-      }
+      "source": "docs/how-it-works/site/inbox.html#how-h"
     },
     {
       "id": "inbox-015",
