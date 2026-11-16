@@ -29,7 +29,11 @@
     {
       "id": "signing-in-003",
       "promise": "Gives each agent's body and each machine a token of its own.",
-      "source": "docs/how-it-works/site/signing-in.html"
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "action",
+        "action": "nativeProtocol"
+      }
     },
     {
       "id": "signing-in-004",
@@ -52,7 +56,11 @@
     {
       "id": "signing-in-005",
       "promise": "Sends notifications to the phones and browsers you turn on.",
-      "source": "docs/how-it-works/site/signing-in.html"
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "action",
+        "action": "signinNotifications"
+      }
     },
     {
       "id": "signing-in-006",
@@ -66,7 +74,11 @@
     {
       "id": "signing-in-007",
       "promise": "An agent's body and each machine carry a token of their own.",
-      "source": "docs/how-it-works/site/signing-in.html#con-h"
+      "source": "docs/how-it-works/site/signing-in.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "nativeProtocol"
+      }
     },
     {
       "id": "signing-in-008",

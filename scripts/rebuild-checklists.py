@@ -139,6 +139,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
 
  if f.stem=='signing-in':
   for row in rows:
+   if row['promise'].startswith(('Gives each agent', "An agent's body and each machine carry")):row['probe']={'kind':'action','action':'nativeProtocol'}
+   if row['promise'].startswith('Sends notifications to the phones and browsers you turn on.'):row['probe']={'kind':'action','action':'signinNotifications'}
    if row['promise'].startswith('Signs a person in with a passkey or a one-time link.'):row['probe']={'kind':'all','probes':[{'kind':'signin'},{'kind':'action','action':'signinPasskey'}]}
    if row['promise'].startswith('Lists your signed-in browsers and passkeys, and lets you end them.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'signinPasskeyControls'},{'kind':'action','action':'signinBrowsers'}]}
    if row['promise'].startswith("A person's token names the member."):row['probe']={'kind':'action','action':'signinMember'}
