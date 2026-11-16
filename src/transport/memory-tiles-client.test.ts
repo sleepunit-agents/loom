@@ -1,3 +1,4 @@
+import {eq} from 'drizzle-orm';
 /** Real Memory query fields, canonical client and tile entries. The websocket
  * boundary is mocked; this does not establish real root sign-in convergence. */
 import {expect,it,vi} from 'vitest';
@@ -11,7 +12,7 @@ import {graphql,GraphQLSchema,GraphQLObjectType} from 'graphql/index.js';
 import {SqliteKnowledgeBackend} from '../backends/sqlite-knowledge.js';
 import Database from 'better-sqlite3';
 import {createDataSchema} from '../core/data/database.js';
-import {agents} from '../core/data/schema.js';
+import {agents,members} from '../core/data/schema.js';
 import {Conversations} from '../core/conversations/index.js';
 import {PeopleStore} from '../backends/people.js';
 import {ProjectsStore} from '../backends/projects.js';
@@ -39,6 +40,7 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
  let tree:ReturnType<typeof create>|undefined,owner=true;
  const now=Date.parse('2026-11-14T12:00:00Z'),dbClient=new Database(':memory:'),db=createDataSchema(dbClient),memories=join(home,'memories.db');
  db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+ db.insert(members).values({id:'sam',role:'owner',joinedAt:new Date(now).toISOString()}).run();
  const sharing=()=>({members:{sam:{owner,agents:[]}},projects:{},services:{}});
  const peopleStore=new PeopleStore({dbPath:memories,actor:'fiction'});peopleStore.write({slug:'friend',name:'Private fictional friend'});peopleStore.close();
  const projectsStore=new ProjectsStore({dbPath:memories});projectsStore.write({slug:'pond',name:'Private fictional pond',status:'paused'});projectsStore.close();
@@ -47,7 +49,7 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
  const projects=createProjectsReader({now:()=>now},{agents:sources.agents,sharing,people});
  const conversations=new Conversations(db,()=>new Date(now).toISOString());
  const thread=conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'});
- const activity=createActivityReader({now:()=>now},{agents:sources.agents,sharing,conversations:sharedActivityConversations(db,{sharing}),timezone:'America/Chicago'});
+ const activity=createActivityReader({now:()=>now},{agents:sources.agents,sharing,conversations:sharedActivityConversations(db,{}),timezone:'America/Chicago'});
  const queries=memoryQueryFields(db,{sources,sharing,now:()=>now,projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:queries.fields})});
  vi.stubGlobal('location',{protocol:'https:',host:'memory.invalid'});
@@ -80,8 +82,8 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
   expect(projectText()).toContain('People');
   await act(async()=>tree!.update(render('clock')));expect(text()).not.toContain('Private pump words');expect(text()).not.toContain('Private clock words');
   await act(async()=>{await expect.poll(()=>[...selections.values()].some(s=>s.variables?.slug==='clock')).toBe(true);});await refresh();expect(text()).toContain('Private clock words');
-  owner=false;await refresh();expect(text()).toContain('don’t have access');expect(text()).not.toContain('Private clock words');expect(text()).not.toContain('Fictional pump');for(const words of ['Private fictional friend','Private fictional pond','Private fictional session'])expect(text()).not.toContain(words);
-  owner=true;await refresh();expect(text()).toContain('Private clock words');
+  owner=false;db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run();await refresh();expect(text()).toContain('don’t have access');expect(text()).not.toContain('Private clock words');expect(text()).not.toContain('Fictional pump');for(const words of ['Private fictional friend','Private fictional pond','Private fictional session'])expect(text()).not.toContain(words);
+  owner=true;db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();await refresh();expect(text()).toContain('Private clock words');
   await act(async()=>wire.closed!());expect(text()).toContain('Connection lost');expect(text()).not.toContain('Private clock words');
   expect(wire.create).toHaveBeenCalledTimes(1);expect(wire.call).not.toHaveBeenCalled();
   await act(async()=>tree!.unmount());tree=undefined;expect([...selections.values()].every(s=>s.stop.mock.calls.length===1)).toBe(true);
