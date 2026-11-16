@@ -227,7 +227,7 @@ def tempo():
         "Four parts, firing, the sweep, volume and settings", panels,
         [("owner", "cyan"), ("for an agent or a person", "pink"), ("project", "violet")],
         [("What it carries.", "A trigger names who set it, the agent or person it is for, and its project."),
-         ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own."),
+         ("Who sees it.", f"{OWNER} Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them."),
          ("Checked at the door.", DOOR)],
         [("", ["triggers", "trigger_log", "agent_pauses", "tempo_settings"])], chat=(tchat, "Tempo"))
 
@@ -773,7 +773,6 @@ def tools():
             row("Change a knowledge page, mark it still true or due a check, and restore an earlier version of it.", "knowledge_edit · knowledge_check · knowledge_restore"),
             row("Draft a memory and ratify it. Archive a memory, restore it, or bring back an earlier version.", "memory_propose · memory_drafts · memory_ratify · memory_archive · memory_restore · memory_history"),
             row("Read and write its cards on people and on projects, by slug, or list them.", "person · person_write · project · project_write"),
-            row("Add someone to the people directory.", G),
         ]),
         ("Conversations and inbox", "pink", [
             row("Reply, show a progress card, report what it is doing, and title the conversation.", G + ", with a job"),

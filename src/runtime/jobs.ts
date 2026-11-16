@@ -95,7 +95,9 @@ export class Jobs {
 
   started(id: string, box: string, build: string): Job {
     return this.db.transaction(() => {
-      this.assigned(id, box, ['starting']);
+      // A worker may report "started" late or twice. Once the job is running that report changes nothing.
+      const job = this.assigned(id, box, ['starting', 'running', 'waiting']);
+      if (job.state !== 'starting') return job;
       return this.db.update(jobs).set({ state: 'running', build, heardAt: this.now() }).where(eq(jobs.id, id)).returning().get()!;
     });
   }

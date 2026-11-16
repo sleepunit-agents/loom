@@ -44,6 +44,8 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   expect(() => f.comms.take(f.conversation.id, job.id)).toThrow();
   expect(() => f.runtime.started(job.id, 'foreign', 'image')).toThrow();
   expect(f.runtime.started(job.id, 'worker', 'image').build).toBe('image');
+  // A late or repeated report changes nothing once the job is running.
+  expect(f.runtime.started(job.id, 'worker', 'other-image')).toMatchObject({ state: 'running', build: 'image' });
   expect(f.comms.take(f.conversation.id, job.id).map(row => row.id)).toEqual([mail.id]);
   const receipt = f.comms.confirm(mail.id, job.id);
   f.tick(100);

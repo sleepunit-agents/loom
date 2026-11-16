@@ -2,7 +2,7 @@
   "page": "tempo",
   "title": "Tempo",
   "ownerTask": "t-2238",
-  "sourceSha256": "7b9a5a9bc01efdae4cb40d04120f4b8bcb0403e0fe00fd48a5414aea6511e12a",
+  "sourceSha256": "5cdad3fe7519368385ddee7e7b9fb5dc38d59a1e2d476a419f85219baee69c09",
   "promises": [
     {
       "id": "tempo-001",
@@ -95,7 +95,7 @@
     },
     {
       "id": "tempo-018",
-      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees triggers in their projects and triggers for agents they own.",
+      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees triggers in their projects and triggers for agents they own, and a person also sees a trigger they set for themselves or one that is for them.",
       "source": "docs/how-it-works/site/tempo.html#see-h"
     },
     {
