@@ -17,3 +17,6 @@ The server validates the action and supplies the authenticated actor. Each
 invocation uses one operation ID across transport retries. Results are JSON;
 failed or refused requests exit nonzero. Issuing a credential remains a separate
 sign-in operation.
+
+Use HTTPS for remote origins. An explicitly configured HTTP origin is also accepted,
+including the disposable loopback household used by the checks.

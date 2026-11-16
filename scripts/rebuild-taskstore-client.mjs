@@ -8,6 +8,10 @@ import {runSharedTaskClient} from '../dist/cli/shared-task-client.js';
 export async function taskstoreClientAction({page,app,home,member='alex'}){
  const directory=mkdtempSync(join(home,'taskstore-client-proof-')),file=join(directory,'token');let fingerprint,raw;
  const fail=message=>{throw Error(message);};
+ const revoke=async()=>{
+  const response=await page.request.post(app.url+'/api/token/revoke',{headers:{origin:app.url},data:{id:randomUUID(),input:{fingerprint}}});
+  if(response.status()!==200||(await response.json()).ok!==true)fail('Fictitious CLI credential revocation failed');
+ };
  try{
   // One-time issuance has no retry: an ambiguous answer must not issue again.
   const issued=await page.request.post(app.url+'/api/signin/program',{headers:{origin:app.url},data:{member,label:'Fictitious Tasks CLI '+randomUUID(),records:['tasks'],operations:['tasks.command']}});
@@ -23,15 +27,19 @@ export async function taskstoreClientAction({page,app,home,member='alex'}){
   const created=await run(['command',JSON.stringify(input)]);if(created.code!==0||!created.value.id)fail('CLI command did not create a task');
   const id=created.value.id,ready=await run(['ready']);if(ready.code!==0||!ready.value.entries?.some(row=>row.id===id&&row.isReady===true))fail('CLI ready did not use current server eligibility');
   const shown=await run(['show',id]);if(shown.code!==0||shown.value.task?.id!==id)fail('CLI show did not return its created task');
+  const claimed=await run(['command',JSON.stringify({action:'claim',id})]);if(claimed.code!==0)fail('CLI claim was refused');
+  const held=await run(['show',id]);if(held.code!==0||held.value.task?.status!=='in_progress'||held.value.task?.assignee!==member)fail('CLI claim did not record its current caller');
+  const text='Completed the fictional headless Tasks client check';
+  const commented=await run(['command',JSON.stringify({action:'comment',id,text})]);if(commented.code!==0)fail('CLI comment was refused');
+  if(!app.services.tasks.get(id).comments.some(comment=>comment.text===text&&comment.actor===member))fail('CLI comment was not recorded for its current caller');
   const closed=await run(['command',JSON.stringify({action:'close',id,reason:'Completed the fictional CLI verification'})]);if(closed.code!==0)fail('CLI close was refused');
   const after=await run(['ready']);if(after.code!==0||after.value.entries?.some(row=>row.id===id))fail('CLI ready retained a closed task');
-  const revoked=await page.request.post(app.url+'/api/token/revoke',{headers:{origin:app.url},data:{id:randomUUID(),input:{fingerprint}}});
-  if(revoked.status()!==200||(await revoked.json()).ok!==true)fail('Fictitious CLI credential revocation failed');
+  await revoke();
   fingerprint=undefined;const denied=await run(['ready']);if(denied.code===0||denied.value.ok!==false)fail('Revoked CLI retained access');
-  return{ok:true,builtClient:true,canonicalRead:true,canonicalWrite:true,closedLeavesQueue:true,revokedRefused:true};
+  return{ok:true,builtClient:true,canonicalRead:true,canonicalWrite:true,claimRecorded:true,commentRecorded:true,closedLeavesQueue:true,revokedRefused:true};
  }catch(error){return{ok:false,error:String(error)};}
  finally{
-  if(fingerprint)await page.request.post(app.url+'/api/token/revoke',{headers:{origin:app.url},data:{id:randomUUID(),input:{fingerprint}}}).catch(()=>{});
-  raw=undefined;rmSync(directory,{recursive:true,force:true});
+  try{if(fingerprint)await revoke();}
+  finally{raw=undefined;rmSync(directory,{recursive:true,force:true});}
  }
 }

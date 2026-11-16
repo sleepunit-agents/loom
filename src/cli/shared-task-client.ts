@@ -12,10 +12,11 @@ const query=`query Taskstore {
   goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady
  }
 }`;
-const rows=z.object({data:z.object({tasks:z.array(z.object({id:z.string(),title:z.string(),isReady:z.boolean()}).passthrough())})});
-const result=z.object({ok:z.literal(true),value:z.object({id:z.string().optional()}).strict()});
+const taskReply=z.object({data:z.object({tasks:z.array(z.object({id:z.string(),title:z.string(),isReady:z.boolean()}).passthrough())})});
+const commandReply=z.object({ok:z.literal(true),value:z.object({id:z.string().optional()}).strict()});
 const defaults:ClientRuntime={request:(...args)=>fetch(...args),retry:ms=>new Promise(resolve=>setTimeout(resolve,ms))};
 const help='usage: loom-taskstore ready|list|show <id>|search <words>|command <JSON>|command --file <path|->\nWrites use the same typed action/input object as POST /api/tasks/command.\n';
+const searchFields=['id','title','description','goal','why','doneWhen','ask'] as const;
 
 export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:ClientRuntime=defaults):Promise<number>{
  const [verb,...args]=argv;
@@ -47,10 +48,10 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
    if(response.status===503&&attempt<3){await response.body?.cancel().catch(()=>{});await runtime.retry(100*(attempt+1));continue;}
    if(!response.ok){await response.body?.cancel().catch(()=>{});return fail('Request refused');}
    const answer=parseRedactedJSON(await response.text(),token);
-   if(write){const parsed=result.safeParse(answer);if(!parsed.success)return fail('Invalid daemon response');io.stdout(JSON.stringify({ok:true,...parsed.data.value},null,2)+'\n');return 0;}
-   const parsed=rows.safeParse(answer);if(!parsed.success||answer&&typeof answer==='object'&&'errors'in answer)return fail('Invalid daemon response');
+   if(write){const parsed=commandReply.safeParse(answer);if(!parsed.success)return fail('Invalid daemon response');io.stdout(JSON.stringify({ok:true,...parsed.data.value},null,2)+'\n');return 0;}
+   const parsed=taskReply.safeParse(answer);if(!parsed.success||answer&&typeof answer==='object'&&'errors'in answer)return fail('Invalid daemon response');
    const tasks=parsed.data.data.tasks;
-   const value=verb==='show'?tasks.find(row=>row.id===args[0]):verb==='ready'?tasks.filter(row=>row.isReady):verb==='search'?tasks.filter(row=>JSON.stringify(row).toLowerCase().includes(args[0].toLowerCase())):tasks;
+   const value=verb==='show'?tasks.find(row=>row.id===args[0]):verb==='ready'?tasks.filter(row=>row.isReady):verb==='search'?tasks.filter(row=>searchFields.some(field=>typeof row[field]==='string'&&(row[field] as string).toLowerCase().includes(args[0].toLowerCase()))):tasks;
    if(value===undefined)return fail('Task not found');
    io.stdout(JSON.stringify({ok:true,[verb==='show'?'task':verb==='ready'?'entries':'tasks']:value},null,2)+'\n');return 0;
   }catch{if(attempt===3)return fail('Loom is unavailable');}
