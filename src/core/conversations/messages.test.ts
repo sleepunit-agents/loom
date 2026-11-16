@@ -45,7 +45,7 @@ it('keeps private question details and answer text out of every plaintext Inbox 
   expect(await service.words(thread.id, ask.seq)).toBe(JSON.stringify(question));
   const item = service.threads.conversations.item(ask.inboxItem!);
   expect(item).toMatchObject({ words: null, why: null, ifYes: null, ifNo: null, link: null, answers: 'yes-no', thread: thread.id });
-  expect(() => service.threads.conversations.answer(item.id, 'jonathan', 'words', 'Secret reply')).toThrow('encrypted Comms');
+  expect(() => service.threads.conversations.answer(item.id, 'jonathan', 'words', 'Secret reply')).toThrow('encrypted conversation');
   const results = await Promise.all([service.answer(item.id, 'jonathan', 'words', 'Secret reply'), service.answer(item.id, 'owner', 'words', 'Other secret reply')]);
   expect(results[0]).toEqual(results[1]);
   expect(results[0]).toMatchObject({ answer: 'words', answerText: null, answeredBy: results[0].answeredBy });

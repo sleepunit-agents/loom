@@ -109,3 +109,8 @@ it.each(['Unexpected task question','Expected private question'])('does not infe
  expect(evaluate({probe:{kind:'ui',app:'Inbox',contains:['Expected private question']}},run)).toMatchObject({status:'not checkable yet',evidence:'wrong-reader.png'});
  expect(evaluate({probe:{kind:'action',action:'knownFailure'}},run)).toMatchObject({status:'not met',reason:'Observed missing source link'});
 });
+it('does not mark the compound person-and-agent Inbox promise met from a body-only batch',()=>{
+ const page=JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/inbox.json',import.meta.url),'utf8'));
+ const row=page.promises.find(row=>row.id==='inbox-014');expect(row.promise).toContain("A person's Inbox app");
+ expect(evaluate(row,{actions:{privateConversationBatch:{ok:true}},apps:[]}).status).not.toBe('met');
+});

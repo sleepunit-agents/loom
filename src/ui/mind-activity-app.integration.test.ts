@@ -22,14 +22,16 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
  add('m-field','Field release: team connected');add('m-older','Earlier field notes','2026-11-09T12:00:00Z');
  const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art'],otherMembers:['other-member']}),{app}=fixture;
  app.writes.run(()=>{
-  const first=app.services.conversations.open({agent:'art',venue:'wake',place:'owner-session',member:'owner',label:'Build the household desk'});
+  const first=app.services.conversations.open({agent:'art',venue:'wake',place:'owner-session',label:'Build the household desk'});
   app.services.conversations.turn({conversation:first.id,kind:'reply',fromKind:'agent',fromId:'art'});
   app.services.conversations.digest({conversation:first.id,run:'fictional-owner-run',summary:'Shipped the household desk. The live timeline brings the work together.',items:[{kind:'ask',text:'Show what happened across the household'},{kind:'decision',text:'Keep content in the agents’ stores'},{kind:'task',text:'t-2207'}],question:{to:'owner',words:'Review the result',answers:'yes-no'}});
+
   const planning=app.services.conversations.open({agent:'art',venue:'wake',place:'planning-session',label:'Planning the next release'});
   for(let i=0;i<3;i++)app.services.conversations.turn({conversation:planning.id,kind:i===2?'reply':'message',fromKind:i===2?'agent':'person',fromId:i===2?'art':'owner'});
   const other=app.services.conversations.open({agent:'art',venue:'wake',place:'other-session',member:'other-member',label:'Other member private thread'});
   app.services.conversations.digest({conversation:other.id,run:'fictional-other-run',summary:'Shipped the household desk. The live timeline brings the work together.',items:[{kind:'decision',text:'Keep content in the agents’ stores'}]});
  });
+
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}}),a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});

@@ -142,11 +142,13 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         if (task.askedByKind && task.askedBy) {
           // A task can be asked outside a thread; its answer still reaches its asker.
           const conversation = task.sourceKind === 'conversation' && task.sourceId ? mail.conversation(task.sourceId) : null;
+          const destination=conversation && (task.askedByKind === 'member' || conversation.agent === task.askedBy) ? conversation.id : null;
+          const scope=task.askedByKind==='agent'?(mail.answerScope(destination,task.askedBy,{project:task.project,member:task.ownerKind==='member'?task.owner:null})??{project:task.project}):{project:task.project};
           mail.send({ toKind: task.askedByKind === 'member' ? 'person' : 'agent', to: task.askedBy,
             source: 'answer', sourceId: resolved[0]?.id ?? `${id}:${randomUUID()}`,
-            conversation: conversation && (task.askedByKind === 'member' || conversation.agent === task.askedBy) ? conversation.id : null,
+            conversation: destination,
             fromKind: actor.kind === 'member' ? 'person' : 'agent', fromId: actor.id,
-            project: task.project, words: answer === 'words' ? text : `${answer === 'yes' ? 'Yes' : 'No'}, to: ${task.ask}\n${answer === 'yes' ? task.ifYes : task.ifNo}`, refs: [id] });
+            ...scope, words: answer === 'words' ? text : `${answer === 'yes' ? 'Yes' : 'No'}, to: ${task.ask}\n${answer === 'yes' ? task.ifYes : task.ifNo}`, refs: [id] });
         }
         return touch(id, { assigneeKind: task.askedByKind, assignee: task.askedBy, ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null });
       });

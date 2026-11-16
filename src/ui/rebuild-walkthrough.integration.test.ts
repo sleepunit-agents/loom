@@ -120,6 +120,14 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   for(const name of ['inboxTaskSettlement','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.inboxSourceTargets).toMatchObject(arrival.ok?{ok:true}:{inconclusive:true});
  });
+ it('delivers private source replies, a native handoff and a wake through the one Inbox',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail');
+  for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false});
+ });
+ it('records a private background question in Inbox and returns its answer to the body',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('conversation-mail-question');
+  for(const name of ['privateConversationBatch','nativeHandoff','conversationInboxIngress','privateConversationQuestion'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true,currentJobFixtures:true,providerStarted:false,cleanup:{jobsStopped:true,credentialsRevoked:true}});
+ });
  it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
   expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});

@@ -46,7 +46,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
  operations.register(operation({...common,name:'conversation.digest',
   input:z.object({summary:z.string().max(600),ifAbsent:z.boolean().optional(),items:z.array(z.object({kind:z.enum(['decision','ask','task','project']),text:z.string().min(1).max(2000)}).strict()).max(100).optional(),question:question.optional()}).strict(),
   output:z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),
-  may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||found.cv.venue==='loom')&&(!found.cv.member||input.question.to===found.cv.member)&&questionAllowed?.(viewer,found.cv,input.question)===true);},
+  may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||input.question.to===found.cv.member)&&questionAllowed?.(viewer,found.cv,input.question)===true);},
   async prepare(input,ctx){const {job,cv}=requireCurrent(ctx.viewer);return service.prepareDigest({conversation:cv.id,run:job.id,...input});},
   run(ctx,_input,prepared){const {cv}=requireCurrent(ctx.viewer);const digest=(prepared as Awaited<ReturnType<CommsMessages['prepareDigest']>>)();ctx.changed('digests',digest.id);if(digest.inboxItem)ctx.changed('inbox',digest.inboxItem);ctx.changed('conversations',cv.id);return {saved:true as const,digest:digest.id,revision:digest.revision,item:digest.inboxItem};},
  }));
