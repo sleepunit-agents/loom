@@ -7,7 +7,7 @@ import {bodyConversationClient} from '../dist/runtime/conversation-client.js';
 import {redactSignin} from './rebuild-conversation-visibility.mjs';
 class ObservedMailFailure extends Error {}
 const check=(yes,message)=>{if(!yes)throw new ObservedMailFailure(message);};
-export async function conversationMail({page,app,clock,example,out,open}){
+export async function* conversationMailSteps({page,app,clock,example,out,open}){
  const pending=()=>({inconclusive:true,reason:'The real conversation-mail observation did not complete.'});
  const evidence={privateConversationBatch:pending(),nativeHandoff:pending(),conversationInboxIngress:pending(),privateConversationQuestion:pending()};
  const db=app.services.comms.db,write=fn=>app.writes.run(fn).value,current=[],clients=[];let stage='privateConversationBatch';
@@ -58,6 +58,7 @@ export async function conversationMail({page,app,clock,example,out,open}){
   const wake=db.$client.prepare("SELECT inbox.* FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE source='trigger' AND inbox_refs.ref=?").get(trigger.id);check(!!wake?.conversation,'The real time trigger did not name its conversation');
   const wakeBody=await body(app.services.conversations.conversation(wake.conversation));let wakeTaken=0;await wakeBody.client.takeAndAccept(async item=>{check(item.id===wake.id&&item.source==='trigger'&&item.words===wakeWords,'The real wake did not use the same receiving Inbox client');wakeTaken++;});check(wakeTaken===1,'The real wake did not arrive once');
   evidence.conversationInboxIngress={ok:true,reason:'Actual Comms, time-trigger and native-handoff producers each delivered through the same current-body Inbox SDK.',sources:['thread','trigger','handoff'],currentJobFixtures:true,providerStarted:false};
+  yield {phase:'conversation-mail',actions:evidence};
   stage='privateConversationQuestion';
   const question={to:'alex',answers:'yes-no',words:'May Moss inspect the fictitious delegated pump?',why:'The delegated comparison needs its owner.',ifYes:'Moss inspects the fictitious pump.',ifNo:'Moss leaves the fictitious pump alone.'};
   const digest=await child.call('conversation.digest',{summary:'Fictitious delegated work awaits a decision',question});
@@ -83,5 +84,8 @@ export async function conversationMail({page,app,clock,example,out,open}){
    if(value.ok&&(!stopped||!revoked)){delete value.ok;value.inconclusive=true;value.reason='Fixture body cleanup could not be verified.';}
   }
  }
+ yield {phase:'conversation-mail-question',actions:evidence};
  return evidence;
 }
+export async function conversationMail(options){let evidence;for await(const step of conversationMailSteps(options))evidence=step.actions;return evidence;}
+
