@@ -1,3 +1,4 @@
+import { guardedResponse, responseAvailability } from './guarded-response.js';
 import { afterEach, expect, it } from 'vitest';
 import { GraphQLSchema, GraphQLObjectType, GraphQLString, GraphQLNonNull } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
@@ -338,4 +339,19 @@ it.each(['commit','deadline'].flatMap(kind => ['none','direct','wrapped'].map(cl
   await Promise.resolve();if(kind==='commit')version++;else now=1;
   if(clone!=='none') await expect(holder.text()).rejects.toThrow('Data access ended');
   await expect(copy.text()).rejects.toThrow('Data access ended');
+});
+
+it('carries the exact private-word deadline from a consumed HTTP response into an outer reply', async () => {
+  const {db} = fixture(); let now = 0;
+  const {keepReadUntil} = await import('./read-lease.js');
+  const app = dataHttp(db, () => ({viewer:{kind:'member',id:'sam'},valid:()=>true}), undefined, {
+    words:{type:GraphQLString,resolve:(_s,_a,context)=>{keepReadUntil(context,1);return 'PRIVATE NESTED';}},
+  }, {}, undefined, () => now);
+  const nested = await app.request('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{words}'})});
+  const lease = responseAvailability(nested); expect(lease).toBeDefined(); expect(lease!()).toBe(true);
+  const outer = guardedResponse(JSON.stringify({result:await nested.json()}), {}, lease!);
+  now = 1;
+  expect(lease!()).toBe(false);
+  await expect(outer.text()).rejects.toThrow('Data access ended');
+  app.stop(); await app.drain();
 });
