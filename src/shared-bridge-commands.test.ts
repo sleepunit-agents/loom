@@ -4,7 +4,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members,agents,secrets,tokens,memberAgents,bridgeConnections,bridgeChannelFilters,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends } from './core/data/schema.js';
+import { members,agents,secrets,tokens,memberAgents,bridgeConnections,bridgeChannelFilters,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeFiles } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const close:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const f of close.splice(0).reverse())await f();});
@@ -102,4 +102,20 @@ it('keeps retained receipts scoped to one connection identity while permitting c
  for(const changed of [{agent:'another'},{workspace:'another'},{botUser:'another'},{platform:'slack',appSecret:'APP'}])expect((await f.call({...f.config,...changed})).status).toBe(400);
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({platform:'discord',workspace:'w',botUser:'bot',agent:'art'});
  expect((await f.call({...f.config,tokenSecret:'APP'})).status).toBe(200);
+});
+
+it('lists and returns a kept Slack attachment for the connection\'s agent and owners, and for nobody else',async()=>{
+ const f=fixture();
+ expect((await f.call({...f.config,id:'slack',platform:'slack',appSecret:'APP',only:[],ignore:[]})).status).toBe(200);
+ f.root.writes.run(()=>{
+  f.db.insert(bridgeIncoming).values({id:'in-1',connection:'slack',channel:'c',isDm:false,user:'u',text:'see attached',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
+  f.db.insert(bridgeFiles).values({connection:'slack',file:'F1',incoming:'in-1',name:'pump.txt',contents:Buffer.from('25 mm hose'),fetchedAt:f.at}).run();
+ });
+ const read=async(input:unknown,token:string)=>{const res=await f.root.http.request('http://loom/api/bridges/file',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
+ expect(await read({incoming:'in-1'},credential.agent)).toEqual({status:200,body:{ok:true,value:{files:[{file:'F1',name:'pump.txt',bytes:10,fetchedAt:f.at}]}}});
+ const one=await read({incoming:'in-1',file:'F1'},credential.owner);
+ expect(Buffer.from(one.body.value.files[0].contents,'base64').toString()).toBe('25 mm hose');
+ expect((await read({incoming:'in-1',file:'F2'},credential.agent)).body).toMatchObject({code:'not-found'});
+ expect((await read({incoming:'in-1'},credential.member)).status).toBe(403);
+ expect((await read({incoming:'missing'},credential.agent)).status).toBe(403);
 });

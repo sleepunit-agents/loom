@@ -25,7 +25,7 @@ const actions: Record<string, Action> = Object.fromEntries([
   ...group('household','Sharing','/p/sharing-preview',{createProject:'Create project',setProjectMembers:'Save project members',setProjectAgents:'Save project agents'}),
   ...group('mind','Knowledge','/p/knowledge-preview',{knowledgeAdd:'Add knowledge page',knowledgeVerify:'Confirm knowledge page',knowledgeRecheck:'Request knowledge recheck',knowledgeEdit:'Edit knowledge page',knowledgeRestore:'Restore knowledge page version'}),
   ...group('mind','People','/p/people-preview',{personAdd:'Add person'}),
-  ...group('bridges','Bridges','/p/bridges-preview',{putVenues:'Save bridge venue',removeVenues:'Remove bridge venue',putRoutes:'Save bridge route',removeRoutes:'Remove bridge route',putLinks:'Save bridge person link',removeLinks:'Remove bridge person link',dismissSend:'Dismiss bridge send'}),
+  ...group('bridges','Bridges','/p/bridges-preview',{putVenues:'Save bridge venue',removeVenues:'Remove bridge venue',putRoutes:'Save bridge route',removeRoutes:'Remove bridge route',putLinks:'Save bridge person link',removeLinks:'Remove bridge person link',dismissSend:'Dismiss bridge send',file:'Read bridge attachment'}),
   ...group('core','Staging','/p/staging',{releaseEffect:'Release held effect'}),
 ]);
 function succeeded(name: string, result: Result): boolean {
