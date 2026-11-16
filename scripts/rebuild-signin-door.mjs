@@ -25,8 +25,8 @@ export async function signinDoorEvidence(){
   const link=async token=>{
    const response=await request('/api/signin/link',{},bearer(token));check(response.status===200,'member link issued at HTTP door');
    const value=await response.json(),path=value.value?.path;check(typeof path==='string'&&path.startsWith('/login/'),'link response shape');
-   secrets.push(path.split('/').at(-1));
-   const code=path.split('/').at(-1),fingerprint=await hash(code);check(db.select().from(signinLinks).all().some(row=>row.id===fingerprint),'link code fingerprint only');return path;
+   const code=path.split('/').at(-1);secrets.push(code);
+   const fingerprint=await hash(code);check(db.select().from(signinLinks).all().some(row=>row.id===fingerprint),'link code fingerprint only');return path;
   };
   const redeem=async(path,userAgent)=>{
    const response=await root.http.request(origin+path,{method:'POST',headers:{origin,'user-agent':userAgent}});
@@ -43,7 +43,7 @@ export async function signinDoorEvidence(){
    secrets.push(value.token);check(value.fingerprint===await hash(value.token)&&db.select().from(tokens).all().some(row=>row.fingerprint===value.fingerprint&&row.kind===input.kind),'issued token fingerprint row');return value;
   };
   const sam=await issue({kind:'owner',member:'sam',label:'Sam credential'}),agent=await issue({kind:'agent',agent:'art',label:'Agent credential'}),runner=await issue({kind:'runner',box:'worker',label:'Machine credential'});
-  for(const [issued,kind,id,selection] of [[sam,'member','sam','{ tasks { id } }'],[agent,'agent','art','{ tasks { id } }'],[runner,'runner','worker','{ boxes { id } }']]){
+  for(const [issued,kind,id,selection] of [[sam,'member','sam','{ tasks { id } }'],[agent,'agent','art','{ tasks { id } }'],[runner,'runner','worker',undefined]]){
    const auth=root.credentials.authenticate(new Request(origin+'/graphql',{headers:bearer(issued.token)}));
    check(auth?.valid()&&auth.viewer.kind===kind&&auth.viewer.id===id,'actual caller identity resolved');
    const response=kind==='runner'?await request('/api/runtime/health',{id:crypto.randomUUID(),input:{}},bearer(issued.token)):await query(selection,bearer(issued.token)),data=await response.json();check(response.status===200&&(kind==='runner'?data.ok===true:!data.errors&&!!data.data),kind+' caller reaches authenticated API');
