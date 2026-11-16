@@ -1,3 +1,4 @@
+import { assertReadSchema } from './core/data/read-schema.js';
 import { conversationTables, conversationVisibility } from './core/data/conversation-visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
 import { getTableColumns, sql, type AnyColumn } from 'drizzle-orm';
@@ -58,9 +59,9 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   // Start deadline scans only after an actual activity selection succeeds.
 
   const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
-  const schema = (viewer: Viewer) => {
+  const schema = (viewer: Viewer, full = false) => {
     const agents=taskVisibility(viewer),byAgent=(fields:Record<string,AnyColumn>)=>agents.agents!({id:fields.agent});
-    const records=programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
+    const records=full?undefined:programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
     return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
     visibility: { ...boxVisibility(viewer), ...agents, ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
@@ -76,6 +77,8 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     // Reuse its canonical SQL rather than maintain another sharing policy.
     ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
   });};
+  // Refuse unsupported extensions before admitting any HTTP/socket work.
+  assertReadSchema(schema({ kind: 'member', id: '' }, true));
   const socket = dataSocket({ live, clock, originAllowed, measure,
 
     authenticate(request) {

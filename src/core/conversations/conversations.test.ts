@@ -69,8 +69,9 @@ it('leaves muted mail waiting when a running job takes other mail in the same co
   db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, dim.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([muted.id]);
 });
-it('records one answer and read mark, and returns exactly one answer item to the agent', () => {
+it('records one public answer and read mark, and returns exactly one answer item to the agent', () => {
   const { db, service, cv, advance } = fixture();
+  db.update(conversations).set({member:null}).where(eq(conversations.id,cv.id)).run();
   const question = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', fromId: 'art', words: 'Order it?', answers: 'yes-no', ifYes: 'I order it today.', ifNo: 'I find a cheaper one.' });
   service.read(question.id, 'jonathan'); advance(); service.read(question.id, 'jonathan');
   expect(db.select().from(inboxReads).all()).toEqual([{ item: question.id, member: 'jonathan', readAt: service.now() }]);
@@ -79,7 +80,7 @@ it('records one answer and read mark, and returns exactly one answer item to the
   expect(service.answer(question.id, 'jonathan', 'no')).toEqual(answered);
   const answer = db.select().from(inbox).where(eq(inbox.source, 'answer')).all();
   expect(answer).toHaveLength(1);
-  expect(answer[0]).toMatchObject({ toKind: 'agent', to: 'art', sourceId: question.id, conversation: cv.id, seq: 2, words: 'yes\nOrder it?\nI order it today.', member: 'jonathan' });
+  expect(answer[0]).toMatchObject({ toKind: 'agent', to: 'art', sourceId: question.id, conversation: cv.id, seq: 2, words: 'yes\nOrder it?\nI order it today.', member: null });
 });
 it('keeps source decisions at their source and resolves linked questions without fabricating an answer', () => {
   const { db, service, cv } = fixture();

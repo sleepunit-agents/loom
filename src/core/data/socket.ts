@@ -6,7 +6,7 @@ import { execute, subscribe, validate, GraphQLError, type ExecutionArgs, type Ex
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
-import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
+import { ExecutionDrain } from './execution.js';
 import { readDeadline } from './read-lease.js';
 import { DataLive, type MeasureRead } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
@@ -33,7 +33,7 @@ export function dataSocket(options: {
   const executions = new ExecutionDrain();
   function run<T>(operation: () => T) {
     if (stopping) throw new Error('Data access ended');
-    return executions.scope(() => !stopping, operation);
+    return executions.run(operation);
   }
   const protocol = useServer({
     isProd: true,
@@ -45,9 +45,8 @@ export function dataSocket(options: {
       if (stopping || !auth?.valid() || stopping) throw new Error('Authentication ended');
       auth.activity?.();
       if (stopping || !auth.valid() || stopping) throw new Error('Data access ended');
-      const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid());
-      instrumentExecution(schema);
-      return schema;
+      const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid(), () => !stopping);
+      return executions.schema(schema, () => !stopping);
     },
     context(ctx) {
       if (stopping) throw new Error('Data access ended');
@@ -60,18 +59,18 @@ export function dataSocket(options: {
     validate: (...args) => run(() => validate(...args)),
     execute: (args: ExecutionArgs) => run(() => {
       options.live.captureRead(args.contextValue);
-      return options.measure ? options.measure(() => execute(executionArguments(args))) : execute(executionArguments(args));
+      return options.measure ? options.measure(() => execute(args)) : execute(args);
     }),
     subscribe: (args: ExecutionArgs) => run(async (): Promise<ExecutionResult | AsyncIterable<ExecutionResult>> => {
-      const result = await subscribe(executionArguments(args));
+      const result = await subscribe(args);
       if (stopping && Symbol.asyncIterator in result) {
         await result[Symbol.asyncIterator]().return?.();
         throw new Error('Data access ended');
       }
       if (!(Symbol.asyncIterator in result)) return result;
       const iterator = result[Symbol.asyncIterator]();
-      // graphql-ws pulls after subscribe() returns. Carry the socket admission
-      // scope into each pull, so Live child callbacks inherit both lifetimes.
+      // graphql-ws pulls after subscribe() returns. Retain those pulls too;
+      // the live reader checks the socket admission supplied above.
       const scoped: AsyncIterableIterator<ExecutionResult> = {
         [Symbol.asyncIterator]() { return this; },
         next: () => run(() => iterator.next()),

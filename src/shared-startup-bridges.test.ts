@@ -52,7 +52,10 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
   if(url.pathname==='/api/auth.test')return Response.json({ok:true,user_id:'UBOT',team_id:'TWORK',bot_id:'BBOT'});
   if(url.pathname==='/api/bots.info')return Response.json({ok:true,bot:{id:'BBOT',user_id:'UBOT',app_id:'AAPP',deleted:false}});
   if(url.pathname==='/api/conversations.info')return Response.json({ok:true,channel:{id:'CROOM',context_team_id:'TWORK',is_channel:true}});
-  if(url.pathname==='/api/chat.postMessage'){if(loseReply)throw Error('Fictitious lost receipt');return Response.json({ok:true,channel:'CROOM',ts:'1794765600.000009'});}
+  if(url.pathname==='/api/chat.postMessage'){
+   expect(JSON.parse(String(init?.body))).toMatchObject({channel:'CROOM',thread_ts:'1794765600.000001'});
+   if(loseReply)throw Error('Fictitious lost receipt');return Response.json({ok:true,channel:'CROOM',ts:'1794765600.000009'});
+  }
   throw Error('Unexpected platform endpoint');
  });
  vi.stubGlobal('fetch',platform);
@@ -78,6 +81,10 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  expect(incoming).toMatchObject({state:'delivered',member:program.signinMember,connection:'slack-example'});
  expect(db.select().from(s.inbox).all().filter(row=>row.source==='slack')).toHaveLength(1);
  expect(db.select().from(s.conversations).where(eq(s.conversations.id,incoming.conversation!)).get()).toMatchObject({agent:'assistant',venue:'slack'});
+ expect(incoming.thread).toBe('1794765600.000001');
+ const followup=JSON.parse(raw.toString('utf8'));followup.payload.event_id='thread-followup';followup.payload.event.ts='1794765600.000002';followup.payload.event.thread_ts='1794765600.000001';delete followup.payload.event.files;
+ await transport!.receive({},Buffer.from(JSON.stringify(followup)));clock.advance(0);await daemon.idle();
+ expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(2);expect(new Set(db.select().from(s.bridgeIncoming).all().map(row=>row.conversation))).toEqual(new Set([incoming.conversation]));
  const attachment=db.select().from(s.bridgeFiles).get()!;expect(attachment).toMatchObject({connection:'slack-example',incoming:incoming.id,file:'FGARDEN',contents:Buffer.from('FICTITIOUS_ATTACHMENT')});
  daemon.sends.queue({id:'reply',incoming:incoming.id,text:'A fictitious garden reply'});daemon.changed();await daemon.idle();
  expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'reply')).get()).toMatchObject({state:'sent',postedId:'1794765600.000009'});

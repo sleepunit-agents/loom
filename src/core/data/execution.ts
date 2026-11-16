@@ -1,25 +1,9 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { defaultFieldResolver, defaultTypeResolver, type ExecutionArgs, isObjectType, isInterfaceType, isUnionType, isScalarType, isEnumType, type GraphQLSchema } from 'graphql/index.js';
+import { defaultFieldResolver, type GraphQLSchema } from 'graphql/index.js';
+import { mapReadFields } from './query-fields.js';
 
 type Tracked<T> = T extends { then: (...args: never[]) => unknown } ? Promise<Awaited<T>> : T;
-type Scope = { drain: ExecutionDrain; admitted(): boolean };
-const scopes = new AsyncLocalStorage<readonly Scope[]>();
-const wrappers = new WeakMap<object, Map<string, (...args: unknown[]) => unknown>>();
 
-function invoke<T>(active: readonly Scope[], operation: () => T): Tracked<T> {
-  let call: () => unknown = operation;
-  for (const scope of [...active].reverse()) {
-    const next = call;
-    call = () => {
-      if (!scope.admitted()) throw new Error('Data execution ended');
-      return scope.drain.run(next);
-    };
-  }
-  return call() as Tracked<T>;
-}
-
-/** Retain real callback work after an executor/response has returned early.
- * Admission is a pure lifecycle fence; authentication stays at the door. */
+/** Retain actual read promises even when GraphQL returns a sibling error early. */
 export class ExecutionDrain {
   private active = 0;
   private waiters = new Set<() => void>();
@@ -37,59 +21,20 @@ export class ExecutionDrain {
       finish(); return value as Tracked<T>;
     } catch (error) { finish(); throw error; }
   }
-  scope<T>(admitted: () => boolean, operation: () => T): Tracked<T> {
-    const active = [...(scopes.getStore() ?? []), { drain: this, admitted }];
-    return scopes.run(active, () => invoke(active, operation));
-  }
-  /** The owner stops new admission before draining. */
   async drain() { while (this.active) await new Promise<void>(resolve => this.waiters.add(resolve)); }
-}
 
-function wrap(target: object, key: string) {
-  const record = target as Record<string, unknown>, original = record[key];
-  if (typeof original !== 'function' || wrappers.get(target)?.get(key) === original) return;
-  const wrapped = function(this: unknown, ...args: unknown[]) {
-    const active = scopes.getStore();
-    const call = () => Reflect.apply(original, this, args) as unknown;
-    return active?.length ? invoke(active, call) : call();
-  };
-  record[key] = wrapped;
-  let fields = wrappers.get(target);
-  if (!fields) { fields = new Map(); wrappers.set(target, fields); }
-  fields.set(key, wrapped);
-}
-
-/** Universal wrappers preserve type identities and use async-local scopes, so
- * retained schemas shared by concurrent callers never retain another's drain.
- * Unscoped installed callers keep the original behavior. */
-export function instrumentExecution(schema: GraphQLSchema) {
-  for (const type of Object.values(schema.getTypeMap())) {
-    if (type.name.startsWith('__')) continue;
-    if (isObjectType(type) || isInterfaceType(type)) {
-      for (const field of Object.values(type.getFields())) {
-        wrap(field, 'resolve');
-        wrap(field, 'subscribe');
-      }
-    }
-    if (isObjectType(type)) wrap(type, 'isTypeOf');
-    if (isInterfaceType(type) || isUnionType(type)) wrap(type, 'resolveType');
-    if (isScalarType(type) || isEnumType(type)) {
-      for (const key of ['serialize', 'parseValue', 'parseLiteral']) wrap(type, key);
-    }
+  schema(source: GraphQLSchema, admitted: () => boolean) {
+    // Each transport selection owns its resolver closures, reused for live
+    // reruns. No ambient scopes or mutation of a retained schema.
+    return mapReadFields(source, field => ({ ...field, resolve: (...values) => {
+      if (!admitted()) throw new Error('Data access ended');
+      return this.run(() => (field.resolve ?? defaultFieldResolver)(...values));
+    } }));
   }
 }
 
-/** Defaults belong to this execution, so a later unscoped installed caller can
- * still supply its own field/type resolver on the same schema. */
-export function executionArguments<T extends ExecutionArgs>(args: T): T {
-  const tracked = <F extends (...args: never[]) => unknown>(callback: F): F =>
-    function(this: unknown, ...values: never[]) {
-      const active = scopes.getStore();
-      const call = () => Reflect.apply(callback, this, values);
-      return active?.length ? invoke(active, call) : call();
-    } as F;
-  return { ...args, fieldResolver: tracked(args.fieldResolver ?? defaultFieldResolver),
-    typeResolver: tracked(args.typeResolver ?? defaultTypeResolver),
-    subscribeFieldResolver: tracked((args as T & { subscribeFieldResolver?: typeof defaultFieldResolver }).subscribeFieldResolver ?? defaultFieldResolver),
-  };
+/** A private projection owns every decrypt it starts, including failed batches. */
+export async function readAll<T>(reads: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>[]> {
+  const results = await Promise.allSettled(reads);
+  return results.map(result => { if (result.status === 'rejected') throw result.reason; return result.value; });
 }

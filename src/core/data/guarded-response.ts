@@ -1,3 +1,11 @@
+const availability = new WeakMap<ReadableStream<Uint8Array>, () => boolean>();
+
+/** Carry the exact execution lease into a trusted outer transport after it
+ * consumes this response. An unguarded response has no lease. */
+export function responseAvailability(response: Response): (() => boolean) | undefined {
+  return response.body ? availability.get(response.body) : undefined;
+}
+
 /** Release bytes only while their execution remains current. Native Response
  * clones, including wrapped responses, retain the same lazy tee guards. */
 export function guardedResponse(body:string,init:ResponseInit,available:()=>boolean):Response {
@@ -24,6 +32,7 @@ export function guardedResponse(body:string,init:ResponseInit,available:()=>bool
       stream.getReader(); // Match native tee's locked original-stream contract.
       return [guardedStream(), guardedStream()];
     };
+    availability.set(stream, available);
     return stream;
     };
     return new Response(guardedStream(), init);

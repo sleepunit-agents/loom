@@ -1,10 +1,12 @@
 import Database from 'better-sqlite3';
+import { runtimeAccountsQuery } from '../../web/src/pieces/runtime/model-query.js';
+import { deskTimeFields } from '../desk-time.js';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
-import { GraphQLString, GraphQLScalarType } from 'graphql/index.js';
+import { GraphQLString } from 'graphql/index.js';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
@@ -20,7 +22,8 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const selection = `modelAccounts { ... on RuntimeAccount { label level }
   ... on RuntimeAccountDetail { id owner provider usage usageReadAt resetsAt hasRoom signedInOn { id name } } }`;
 function fixture(fields?: Parameters<typeof nextData>[4]) {
-  const client = new Database(':memory:'); clean.push(() => { if (client.open) client.close(); });
+  const statements: string[] = [];
+  const client = new Database(':memory:', { verbose: value => statements.push(String(value)) }); clean.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   for (const id of ['alice', 'bob', 'guest', 'house']) db.insert(members).values({ id, role: id === 'house' ? 'owner' : 'member', joinedAt: now() }).run();
   db.insert(agents).values({ id: 'agent', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
@@ -33,11 +36,11 @@ function fixture(fields?: Parameters<typeof nextData>[4]) {
     db.insert(modelAccountWindows).values({ account: id, window: 'week', usage, usageReadAt: now(), resetsAt: reset, durationMs: 7 * 86400_000 }).run();
     db.insert(modelAccountBoxes).values({ account: id, box: 'private-box-id' }).run();
   }
-  const data = nextData(db, clock, () => true, undefined, fields); clean.push(() => data.close());
+  const data = nextData(db, clock, () => true, undefined, { ...deskTimeFields(db, clock), ...fields }); clean.push(() => data.close());
   const post = (who: keyof typeof keys, query = `{ ${selection} }`, variables?: unknown) => data.http.request('/graphql', {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + keys[who] }, body: JSON.stringify({ query, variables }),
   });
-  return { client, clock, now, db, data, post };
+  return { client, clock, now, db, data, post, statements };
 }
 const coarse = [{ label: 'Main subscription', level: 'plenty' }, { label: 'Other subscription', level: 'getting full' }];
 it('projects only label and coarse level for unrelated members and agents, even agents owned by household owners', async () => {
@@ -163,17 +166,14 @@ it('preserves socket credential expiry metadata without requiring another reques
   const closed = once(ws, 'close'); f.clock.advance(1000); expect((await closed)[0]).toBe(4403);
 });
 
-it('rechecks authority after frame serialization immediately before socket send', async () => {
-  const serialized = deferred();
-  const trigger = new GraphQLScalarType({ name: 'AccountFrameProbe', serialize: value => ({ toJSON() {
-    // Fictional trusted serializer changes authority after execute's check,
-    // with no refresh notification; only the final send fence can catch it.
-    f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); serialized.resolve(); return value;
-  } }) });
-  const f = fixture({ probe: { type: trigger, resolve: () => 'probe' } }), ws = await openSocket(f, 'alice');
+it('rechecks authority before sending a result whose sibling read changes account ownership', async () => {
+  const changed = deferred();
+  const f = fixture({ probe: { type: GraphQLString, resolve: () => {
+    f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run(); changed.resolve(); return 'probe';
+  } } }), ws = await openSocket(f, 'alice');
   const closed = once(ws, 'close'), frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'serialized', payload: { query: `{ ${selection} probe }` } }));
-  await serialized.promise; expect((await closed)[0]).toBe(4403); expect(frames.join('\n')).not.toContain('private-provider');
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'changed', payload: { query: `{ ${selection} probe }` } }));
+  await changed.promise; expect((await closed)[0]).toBe(4403); expect(frames.join('\n')).not.toContain('private-provider');
 });
 
 it('keeps public-only account selections valid across ownership transfer without a private witness', async () => {
@@ -210,17 +210,17 @@ for (const args of ['viewer:"house"', 'orderBy:"provider"', 'caller:{kind:"membe
   expect(result.errors).toHaveLength(1); expect(result.data).toBeUndefined();
 });
 
-it('checks current permission and exact Viewer independently at private column access', async () => {
+it.each([{}, {fieldNodes: []}])('checks current permission and exact Viewer independently at private column access with root info %j', async info => {
   const f = fixture(), viewer: Viewer = { kind: 'member', id: 'alice' };
   const projection = modelAccountQueries(f.db, f.now), field = projection.fields.modelAccounts;
-  const rows = await field.resolve!({}, {}, { viewer }, {} as never) as unknown[];
+  const rows = await field.resolve!({}, {}, { viewer }, info as never) as unknown[];
   const union = (field.type as GraphQLNonNull<GraphQLList<GraphQLNonNull<GraphQLUnionType>>>).ofType.ofType.ofType;
   const privateField = union.getTypes().find(type => type.name === 'RuntimeAccountDetail')!.getFields().provider;
   const read = (actor: Viewer) => privateField.resolve!(rows[0], {}, { viewer: actor }, {} as never);
-  expect(read(viewer)).toBe('private-provider');
+  expect(await read(viewer)).toBe('private-provider');
   expect(() => read({ kind: 'member', id: 'alice' })).toThrow('Account access ended');
   f.db.update(modelAccounts).set({ owner: 'bob' }).where(eq(modelAccounts.id, 'private-a')).run();
-  expect(() => read(viewer)).toThrow('Account access ended');
+  await expect(read(viewer)).rejects.toThrow('Account access ended');
 });
 it('does not establish ownership for a retained Viewer whose member no longer exists', async () => {
   const f = fixture(), viewer: Viewer = { kind: 'member', id: 'alice' };
@@ -241,4 +241,32 @@ it('registers a private witness when only account locations are selected', async
   release(); const response = await pending;
   expect(response.status).toBe(401);
   expect(await response.text()).not.toMatch(/private-box|Private worker/);
+});
+
+it.each(['http', 'socket', 'observe'])('keeps the shipped model-account page SQL count fixed as accounts grow via %s', async door => {
+  const counts: number[] = [];
+  for (const size of [2, 10]) {
+    const f = fixture();
+    for (let n = 2; n < size; n++) {
+      const id = `private-${n}`;
+      f.db.insert(modelAccounts).values({ id, owner: 'alice', label: `Subscription ${n}`, provider: 'private-provider', usage: 0.2, usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 86400000).toISOString(), hasRoom: true }).run();
+      f.db.insert(modelAccountWindows).values({ account: id, window: 'day', usage: 0.2, usageReadAt: f.now(), resetsAt: new Date(f.clock.now() + 86400000).toISOString(), durationMs: 86400000 }).run();
+      f.db.insert(modelAccountBoxes).values({ account: id, box: 'private-box-id' }).run();
+    }
+    const socket = door === 'http' ? undefined : await openSocket(f, 'house');
+    f.statements.length = 0;
+    let result: { errors?: unknown; data: {modelAccounts: {signedInOn: unknown[]}[]} };
+    if (!socket) result = await (await f.post('house', runtimeAccountsQuery)).json();
+    else {
+      const next = nextPayload(socket, 'growth');
+      const payload = door === 'socket' ? {query: runtimeAccountsQuery} : {query: 'subscription($query:String!){observe(query:$query){revision patches{path value}}}', variables: {query: runtimeAccountsQuery}};
+      socket.send(JSON.stringify({type: 'subscribe', id: 'growth', payload}));
+      const value = await next;
+      result = door === 'socket' ? value as typeof result : {data: (value.data.observe as {patches: {value: typeof result.data}[]}).patches[0].value};
+    }
+    expect(result.errors).toBeUndefined(); expect(result.data.modelAccounts).toHaveLength(size);
+    expect(result.data.modelAccounts.every(row => row.signedInOn.length === 1)).toBe(true);
+    counts.push(f.statements.filter(statement => /^select\b/i.test(statement)).length);
+  }
+  expect(counts).toEqual([counts[0], counts[0]]);
 });

@@ -1,5 +1,7 @@
+import {randomUUID} from 'node:crypto';
 import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
+import {conversationMailSteps} from './rebuild-conversation-mail.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {approvalRulesAndExpiry,approvalPreparedChanges} from './rebuild-approval-settings.mjs';
@@ -69,7 +71,7 @@ export async function verifyIsolation(page){
 export async function* walkthroughSteps(output) {
  const out=resolve(output);mkdirSync(out,{recursive:true});
  const parent=mkdtempSync(join(tmpdir(),'loom-walkthrough-')),home=join(parent,'home');
- const report={version:1,source:{commit:process.env.GITHUB_SHA??null,ref:process.env.GITHUB_REF??null,repository:process.env.GITHUB_REPOSITORY??null,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null},startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
+ const report={version:1,evidenceRun:randomUUID(),source:{commit:process.env.GITHUB_SHA??null,ref:process.env.GITHUB_REF??null,repository:process.env.GITHUB_REPOSITORY??null,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null},startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
  let app,browser,page,clock,retention,phase='first-run',navigation=0;
  const sockets=[];
  const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[],connections=new Set();
@@ -227,6 +229,7 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'approval-source',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxTaskSource({page,tile:await openApp('Inbox'),app,example:report.example,out,approval:report.actions.approvalInbox,open:openApp}));
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
+  for await(const step of conversationMailSteps({page,app,clock,example:report.example,out,open:openApp})){Object.assign(report.actions,step.actions);save();yield {phase:step.phase,actions:safeReport(report.actions)};}
   Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
   save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
 

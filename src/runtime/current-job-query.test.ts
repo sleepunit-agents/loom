@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { GraphQLString, GraphQLScalarType } from 'graphql/index.js';
+import { GraphQLString } from 'graphql/index.js';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, jobs, members, memberAgents, projects, projectMembers, projectAgents, tokens, boxes, agentModels, agentBoxes, agentRunSettings, modelAccounts, modelAccountBoxes, modelAccountWindows } from '../core/data/schema.js';
@@ -127,14 +127,13 @@ it('rejects a held socket publication when selected project access ends', async 
   expect(frames.join(' ')).not.toContain('Title project');
 });
 
-it('withholds titles when project access ends during final frame serialization', async () => {
-  let f!: ReturnType<typeof fixture>, serialized = false;
-  const probe = new GraphQLScalarType({ name: 'JobFrameProbe', serialize: value => value });
-  f = fixture({ frameProbe: { type: probe, resolve: () => ({ toJSON() {
-    if (!serialized) { serialized = true; f.root.writes.run(() => f.db.delete(projectMembers).run()); } return 'probe';
-  } }) } });
+it('withholds titles when a sibling read ends project access before publication', async () => {
+  let f!: ReturnType<typeof fixture>, changed = false;
+  f = fixture({ frameProbe: { type: GraphQLString, resolve: () => {
+    if (!changed) { changed = true; f.root.writes.run(() => f.db.delete(projectMembers).run()); } return 'probe';
+  } } });
   const ws = await openSocket(f, 'bob'), frames: string[] = []; ws.on('message', raw => frames.push(String(raw)));
   const closed = once(ws, 'close');
   ws.send(JSON.stringify({type:'subscribe',id:'publication',payload:{query:'{ currentJobs(agent:"mark") { title } frameProbe }'}}));
-  expect((await closed)[0]).toBe(1012); expect(serialized).toBe(true); expect(frames.join(' ')).not.toContain('Title project');
+  expect((await closed)[0]).toBe(1012); expect(changed).toBe(true); expect(frames.join(' ')).not.toContain('Title project');
 });

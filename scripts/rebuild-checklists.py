@@ -78,6 +78,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
+   if row['promise'].startswith('A piece of work one agent hands to another.'):row['probe']={'kind':'action','action':'nativeHandoff'}
+   if row['promise'].startswith('That need becomes a question in the inbox'):row['probe']={'kind':'action','action':'privateConversationQuestion'}
  for app,text,contains in ui.get(f.stem,[]):
   probe={'kind':'ui','app':app,'contains':contains}
   if app=='Activity':probe['patterns']=[r'Repair the garden pump\s+[^\n]*\b[1-9][0-9]* turns\b']
@@ -114,6 +116,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='inbox':
   for row in rows:
    if row['promise'].startswith("A task's question arrives as an item, with a link to the task."):row['probe']={'kind':'action','action':'inboxTaskArrival'}
+   if row['promise'].startswith("A subagent's brief arrives as an item;"):row['probe']={'kind':'action','action':'nativeHandoff'}
+   if row['promise'].startswith('The conversation it belongs to.'):row['probe']={'kind':'action','action':'conversationInboxIngress'}
    if row['promise'].startswith('Sends you to Approvals or the task when the answer belongs there.'):row['probe']={'kind':'action','action':'inboxSourceTargets'}
    if row['promise'].startswith('A question can name an approval or a task whose outcome settles it.'):row['probe']={'kind':'action','action':'inboxSourceOutcome'}
    if row['promise'].startswith(('Takes a yes, a no', 'An item that is a question says')):row['probe']={'kind':'action','action':'inboxDecisions'}
@@ -137,6 +141,15 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith('5 One query endpoint'):row['probe']={'kind':'legacy-data-socket'}
 
+ if f.stem=='signing-in':
+  for row in rows:
+   if row['promise'].startswith(('Gives each agent', "An agent's body and each machine carry")):row['probe']={'kind':'action','action':'nativeProtocol'}
+   if row['promise'].startswith('Sends notifications to the phones and browsers you turn on.'):row['probe']={'kind':'action','action':'signinNotifications'}
+   if row['promise'].startswith('Signs a person in with a passkey or a one-time link.'):row['probe']={'kind':'all','probes':[{'kind':'signin'},{'kind':'action','action':'signinPasskey'}]}
+   if row['promise'].startswith('Lists your signed-in browsers and passkeys, and lets you end them.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'signinPasskeyControls'},{'kind':'action','action':'signinBrowsers'}]}
+   if row['promise'].startswith("A person's token names the member."):row['probe']={'kind':'action','action':'signinMember'}
+   if row['promise'].startswith('A person gets a session with a passkey or by opening a one-time sign-in link.'):row['probe']={'kind':'action','action':'signinCounterRules'}
+   if row['promise'].startswith('a Your own.'):row['probe']={'kind':'action','action':'signinOwnSettings'}
  if f.stem=='tasks':
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}

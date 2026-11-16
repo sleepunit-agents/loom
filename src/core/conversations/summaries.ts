@@ -1,3 +1,4 @@
+import { readAll } from '../data/execution.js';
 import { conversationVisibility } from '../data/conversation-visibility.js';
 import { readRecentConversations, readConversationAnswers, type ConversationAnswerSet } from '../data/conversation-summaries.js';
 import { selectedQueryFields } from '../data/queries.js';
@@ -30,7 +31,7 @@ export class ConversationSummaries {
     const ids = rows.map(row => row.id), before = readConversationAnswers(this.db, viewer, ids, words);
     const service = new ConversationSummaries(this.db, this.key, this.now); service.readSet = before;
     const deadlines: number[] = [];
-    const result = await Promise.all(rows.map(async row => {
+    const result = await readAll(rows.map(async row => {
       let answer: Answer;
       if (words) answer = await service.lastAnswer(viewer, row.id, at => deadlines.push(at));
       else {

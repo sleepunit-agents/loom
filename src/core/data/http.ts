@@ -1,6 +1,8 @@
+export { withQueryFields } from './query-fields.js';
+import { withQueryFields } from './query-fields.js';
 import { guardedResponse } from './guarded-response.js';
 import { Hono } from 'hono';
-import { GraphQLObjectType, GraphQLSchema, GraphQLInterfaceType, GraphQLUnionType, GraphQLList, GraphQLNonNull, type execute, type ExecutionArgs, type GraphQLType, type GraphQLNamedType, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { GraphQLSchema, type execute, type ExecutionArgs, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { bodyLimit } from 'hono/body-limit';
 import type { Viewer } from '../../policy.js';
 import { createYoga } from 'graphql-yoga';
@@ -10,7 +12,7 @@ import { taskVisibility } from './visibility.js';
 import { dataAuthentication } from './authentication.js';
 import type { DataDatabase } from './database.js';
 import { readRetained } from './read-lease.js';
-import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
+import { ExecutionDrain } from './execution.js';
 
 /** Authenticated GraphQL HTTP door on the shared connection. Authentication is
  * supplied by the composition's session/token resolver, never a request viewer.
@@ -47,8 +49,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     const version = readVersion?.();
     const generated = typeof schemaOrFields === 'function' ? schemaOrFields(auth.viewer) : dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) });
     const extraFields = typeof schemaOrFields === 'function' ? fields : { ...schemaOrFields, ...fields };
-    const schema = withQueryFields(generated, extraFields);
-    instrumentExecution(schema);
+    const schema = executions.schema(withQueryFields(generated, extraFields), () => !stopping);
     const context = Object.freeze({ viewer: auth.viewer });
     let executionContext: unknown = context;
     const current = () => (!readVersion || version === readVersion()) && readRetained(executionContext, now());
@@ -59,12 +60,12 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
         // The adapter's fetch() can race abort and return before this handler.
         // Retain the actual pipeline, including result serialization, instead.
         onRequest({ requestHandler, setRequestHandler }) {
-          setRequestHandler((...args) => executions.scope(() => !stopping, () => requestHandler(...args)));
+          setRequestHandler((...args) => executions.run(() => requestHandler(...args)));
         },
         onExecute({ args, executeFn, setExecuteFn }: { args: ExecutionArgs; executeFn: typeof execute; setExecuteFn(fn: typeof execute): void }) {
           if (stopping || !auth!.valid() || stopping) throw new Error('Authentication ended');
           executionContext = args.contextValue;
-          setExecuteFn(args => executeFn(executionArguments(args)));
+          setExecuteFn(args => executions.run(() => executeFn(args)));
         },
         onSubscribe() { throw new Error('Use the websocket for subscriptions'); },
       }],
@@ -84,39 +85,4 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     return guardedResponse(body, { status: response.status, headers: response.headers }, available);
   });
   return Object.assign(app, { stop() { stopping = true; }, drain: () => executions.drain() });
-}
-
-/** Clone output types together: connected fields may point back at the query
- * root, so replacing that root alone would create duplicate named types. */
-export function withQueryFields(schema: GraphQLSchema, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }>): GraphQLSchema {
-  if (!Object.keys(fields).length) return schema;
-  const query = schema.getQueryType()!;
-  const copies = new Map<GraphQLNamedType, GraphQLNamedType>();
-  const type = (original: GraphQLType): GraphQLType => {
-    if (original instanceof GraphQLList) return new GraphQLList(type(original.ofType) as typeof original.ofType);
-    if (original instanceof GraphQLNonNull) return new GraphQLNonNull(type(original.ofType) as typeof original.ofType);
-    if (original.name.startsWith('__')) return original;
-    const prior = copies.get(original);
-    if (prior) return prior;
-    let copy: GraphQLNamedType = original;
-    if (original instanceof GraphQLObjectType || original instanceof GraphQLInterfaceType) {
-      const config = original.toConfig();
-      const options = { ...config,
-        interfaces: () => config.interfaces.map(item => type(item) as GraphQLInterfaceType),
-        fields: () => Object.fromEntries(Object.entries(original === query ? { ...config.fields, ...fields } : config.fields).map(([name, field]) => [name, { ...field, type: type(field.type) }])),
-      };
-      copy = original instanceof GraphQLObjectType ? new GraphQLObjectType(options as ConstructorParameters<typeof GraphQLObjectType>[0]) : new GraphQLInterfaceType(options as ConstructorParameters<typeof GraphQLInterfaceType>[0]);
-    } else if (original instanceof GraphQLUnionType) {
-      const config = original.toConfig();
-      copy = new GraphQLUnionType({ ...config, types: () => config.types.map(item => type(item) as GraphQLObjectType) });
-    }
-    copies.set(original, copy);
-    return copy;
-  };
-  const config = schema.toConfig();
-  return new GraphQLSchema({ ...config, query: type(query) as GraphQLObjectType,
-    mutation: config.mutation ? type(config.mutation) as GraphQLObjectType : undefined,
-    subscription: config.subscription ? type(config.subscription) as GraphQLObjectType : undefined,
-    types: config.types.map(item => type(item) as GraphQLNamedType),
-  });
 }
