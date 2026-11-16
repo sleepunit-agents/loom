@@ -5,10 +5,10 @@ import { bridgeReplyApi } from './reply-api.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
  * asynchronous metadata/drain work follows separately. Installed parts share the
  * database directly; all outside permissions live at their respective doors. */
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeFiles, inbox, inboxRefs } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeFiles, inbox, inboxRefs, secretChanges } from '../../core/data/schema.js';
 import type { DataWrites } from '../../core/data/writes.js';
 import type { SecretValueSource } from '../secrets/role.js';
 import type { HolderGeneration } from '../secrets/role.js';
@@ -33,7 +33,7 @@ export interface SharedBridgeOptions {
  discord?:typeof discordGateway;
  slack?:typeof bridgeSlackSocket;
 }
-type Life={connection:Connection;key:string;generation:string;active:boolean;authenticated:boolean;
+type Life={connection:Connection;key:string;generation:string;stamp:number;active:boolean;authenticated:boolean;
  secrets:ReturnType<typeof sharedBridgeSecretUse>;receipts?:ReturnType<typeof liveDiscordReceipts>;channels?:ReturnType<BridgeChannels['bind']>;
  transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
 const configuration=(row:Connection)=>JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,row.enabled]);
@@ -67,9 +67,23 @@ export class SharedBridges {
  private track<T>(work:Promise<T>):Promise<T>{this.active.add(work);void work.finally(()=>this.active.delete(work)).catch(()=>{});return work;}
  private notify(){if(this.closed)return;try{this.options.changed();}catch{this.report();}}
  private current(life:Life):boolean{
-  if(this.closed||!life.active||!this.options.effectsAllowed()||this.credentials.current()!==life.generation)return false;
+  if(this.closed||!life.active||!this.options.effectsAllowed())return false;
+  const generation=this.credentials.current();
+  // Its own secrets must be as they were when it started; then it follows the holder to whatever generation it is on.
+  if(!generation||!this.accept(life,generation))return false;
   const row=this.options.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,life.connection.id)).get();
   return !!row&&row.enabled&&configuration(row)===life.key;
+ }
+ /** The newest change to any of the secrets a connection uses. The holder has one generation for every
+  * secret, so it moves when any secret is written; this says whether one of ours was. */
+ private stamp(row:Connection):number{
+  const names=[row.tokenSecret,...(row.appSecret?[row.appSecret]:[])];
+  return this.options.db.select({id:sql<number>`coalesce(max(rowid),0)`}).from(secretChanges).where(inArray(secretChanges.secret,names)).get()!.id;
+ }
+ /** Carry a lifetime over to another holder generation when none of its own secrets changed. */
+ private accept(life:Life,generation:string):boolean{
+  if(this.stamp(life.connection)!==life.stamp)return false;
+  life.generation=generation;return true;
  }
  private state(id:string,state:Connection['state']){
   if(this.closed)return;
@@ -94,7 +108,8 @@ export class SharedBridges {
  changed(credentials=false){
   if(this.closed)return;
   let retired=false;
-  for(const life of this.lives.values())if(credentials||!this.current(life)){this.retire(life);retired=true;}
+  // A secret write retires only the connections that use that secret: current() compares each one's own stamp.
+  for(const life of this.lives.values())if(!this.current(life)){this.retire(life);retired=true;}
   // State publications reenter Root's write observer. Only changed input
   // settings or credentials may restart reconciliation; retrying our own
   // backoff state would starve the generation poll with microtasks.
@@ -121,8 +136,10 @@ export class SharedBridges {
     const old=this.lives.get(row.id);
     if(old){this.pump(old);continue;}
     const life={} as Life;
-    Object.assign(life,{connection:row,key:configuration(row),generation,active:true,authenticated:false,
-     secrets:sharedBridgeSecretUse({source:this.options.source,clock:this.options.clock,generation,
+    // The generation and stamp are set first: the secret reader reads them as it is made.
+    Object.assign(life,{connection:row,key:configuration(row),generation,stamp:this.stamp(row),active:true,authenticated:false});
+    Object.assign(life,{
+     secrets:sharedBridgeSecretUse({source:this.options.source,clock:this.options.clock,generation:()=>life.generation,accept:live=>life.active&&this.accept(life,live),
       names:[row.tokenSecret,...(row.appSecret?[row.appSecret]:[])],current:()=>this.current(life),
       invalidate:()=>{const valid=this.current(life);this.retire(life);if(valid){try{this.state(row.id,'backoff');}catch{this.report();}}}})});
     this.lives.set(row.id,life);this.state(row.id,'connecting');

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **A secret write no longer drops every bridge connection.** Only the connections that use the secret that changed are restarted.
+
 - **Remove and restore.** `household.propose` takes `remove` and `restore` for a member, agent, project or bridge connection. Nothing is deleted: the row gets `removed_at` and its history stays. A removed person or agent is no longer recognised as a caller, a removed agent does not run, a removed connection is switched off. An existing household database gains the four columns at its next start (schema number 2).
 
 - **Standing rules answer every kind of card.** Rules of kind `setting` and `dangerous` were stored but never consulted. A `household.propose` card is now answered by a matching rule when a known person is behind it and the last answer to the same thing was not a deny. A card that changes a rule always asks, and a rule that answers dangerous cards is itself a dangerous card to set. `household.propose` returns the card's `state`.

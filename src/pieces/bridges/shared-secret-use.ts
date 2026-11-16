@@ -7,10 +7,17 @@ import type { Clock } from '../../core/clock.js';
 import type { SecretValueSource, SecretUse, HolderGeneration } from '../secrets/role.js';
 const unavailable=()=>new Error('Bridge credential unavailable');
 export function sharedBridgeSecretUse(options:{
- source:SecretValueSource&HolderGeneration;clock:Clock;generation:string;names:readonly string[];
+ source:SecretValueSource&HolderGeneration;clock:Clock;names:readonly string[];
+ /** The holder generation this lifetime last accepted. */
+ generation():string;
+ /** The holder reports another generation. True when none of this lifetime's own secrets changed, so it carries on
+  * under the new one: writing an unrelated secret must not end it. */
+ accept(generation:string):boolean;
  current():boolean;invalidate():void;
 }):SecretUse&{close():void}{
- if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.generation))throw unavailable();
+ const valid=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+ if(!valid(options.generation()))throw unavailable();
+ const same=async()=>{const live=await options.source.generation();return valid(live)&&(live===options.generation()||options.accept(live));};
  const owned=new Set<Uint8Array>(),hashes=new Map<string,string>(),names=new Set(options.names);let closed=false;
  const current=()=>{if(closed)return false;try{return options.current();}catch{return false;}};
  const clear=()=>{closed=true;hashes.clear();for(const bytes of owned)bytes.fill(0);owned.clear();};
@@ -28,13 +35,13 @@ export function sharedBridgeSecretUse(options:{
    let borrowed:Uint8Array|undefined;
    try{
     const token=await bounded(async fresh=>{
-     if(!fresh()||await options.source.generation()!==options.generation||!fresh())throw unavailable();
+     if(!fresh()||!await same()||!fresh())throw unavailable();
      const found=await options.source.read(name);
      if(!(found instanceof Uint8Array))throw unavailable();
      borrowed=found;owned.add(found);
      try{
       if(!fresh()||found.byteLength<1||found.byteLength>65536||found.includes(0))throw unavailable();
-      if(await options.source.generation()!==options.generation||!fresh())throw unavailable();
+      if(!await same()||!fresh())throw unavailable();
       const hash=createHash('sha256').update('loom-bridge-credential-bytes-v1\0').update(name).update('\0').update(found).digest('hex'),old=hashes.get(name);
       if(old!==undefined&&old!==hash)throw unavailable();hashes.set(name,hash);
       return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(found);
@@ -43,7 +50,7 @@ export function sharedBridgeSecretUse(options:{
     if(!current())throw unavailable();
     const result=await use(token);
     if(!current())throw unavailable();
-    await bounded(async fresh=>{if(await options.source.generation()!==options.generation||!fresh())throw unavailable();});
+    await bounded(async fresh=>{if(!await same()||!fresh())throw unavailable();});
     return result;
    }catch{invalidate();throw unavailable();}
    finally{if(borrowed){borrowed.fill(0);owned.delete(borrowed);}}

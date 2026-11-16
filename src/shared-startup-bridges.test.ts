@@ -93,18 +93,18 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  const old=transport!;botToken='FICTITIOUS_REPLACEMENT_TOKEN';
  await command('secrets/set',{id:randomUUID(),name:'TOKEN',value:botToken,mode:'replace'});
  expect(old.beforeConnect()).toBe(false);await expect(old.receive({},raw)).rejects.toThrow();await connected(2);
- // Same bytes, new holder epoch, without a Root metadata write: the poll itself
- // must retire this lifetime. A constant-generation startup source fails here.
+ // The holder has one generation for every secret, so it moves whenever any secret is written. A move with
+ // no recorded change to this connection's own secrets, and the same bytes, must not end the connection.
  const before=await owner.source.generation(),older=transport!;
  await owner.holder.set({member:program.signinMember,writeId:randomUUID()},'TOKEN',Buffer.from(botToken),'replace');
- expect(await owner.source.generation()).not.toBe(before);await connected(3);
- expect(older.beforeConnect()).toBe(false);await expect(older.receive({},raw)).rejects.toThrow();
+ expect(await owner.source.generation()).not.toBe(before);daemon.changed();await daemon.idle();
+ expect(older.beforeConnect()).toBe(true);expect(transport).toBe(older);
  loseReply=true;daemon.sends.queue({id:'uncertain',incoming:incoming.id,text:'A fictitious unconfirmed reply'});daemon.changed();await daemon.idle();
  expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'uncertain')).get()?.state).toBe('uncertain');loseReply=false;
- await connected(4);
+ await connected(3);
  await command('bridges/command',{action:'disconnect',id:'slack-example'});await daemon.idle();
- await expect(transport!.receive({},raw)).rejects.toThrow();expect(transport!.beforeConnect()).toBe(false);expect(closed).toHaveBeenCalledTimes(4);
- await command('bridges/command',config);await connected(5);
+ await expect(transport!.receive({},raw)).rejects.toThrow();expect(transport!.beforeConnect()).toBe(false);expect(closed).toHaveBeenCalledTimes(3);
+ await command('bridges/command',config);await connected(4);
  expect(platform.mock.calls.filter(([input])=>String(input)==='https://slack.com/api/chat.postMessage')).toHaveLength(2);
  for(const secret of ['FICTITIOUS_BOT_TOKEN',botToken,'FICTITIOUS_APP_TOKEN'])expect(db.$client.serialize().includes(Buffer.from(secret))).toBe(false);
  let release!:()=>void,began!:()=>void;
@@ -115,7 +115,7 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  await started;expect(holderClose).toHaveBeenCalledOnce();await holderClose.mock.results[0].value;
  expect(()=>daemon.sends.queue({id:'after-close',incoming:incoming.id,text:'Must not leave'})).toThrow('closed');
  expect(db.$client.open).toBe(true);expect(db.$client.prepare('select count(*) as n from bridge_connections').get()).toEqual({n:1});expect(settled).toBe(false);
- release();await stopping;expect(db.$client.open).toBe(false);expect(closed).toHaveBeenCalledTimes(5);
+ release();await stopping;expect(db.$client.open).toBe(false);expect(closed).toHaveBeenCalledTimes(4);
  // Restart owns the persisted file deadline without simulating fourteen days
  // of unrelated periodic work on the stopped app.
  const expiry=new FakeClock(Date.parse(attachment.fetchedAt)+14*86400000-1);
