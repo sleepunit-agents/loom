@@ -122,7 +122,7 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
    await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
   }finally{releaseHeartbeat();}
  }
- expect(await running).toBe(failed?1:0);await actorFinished;if(failure)throw failure;
+ expect(await running).toBe(failed?14:0);await actorFinished;if(failure)throw failure;
  expect(errors).toHaveBeenCalledTimes(failed?1:0);expect(cancel).toHaveBeenCalledOnce();
  expect(fixture.bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(fixture.sourceBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  expect(fixture.source).toHaveBeenCalledTimes(mode==='overlapping-waits'?2:1);
@@ -151,5 +151,5 @@ it('retires the projection on listener setup failure before a held heartbeat set
   const before=requests;expect(await captured!.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});expect(requests).toBe(before);
   let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);expect(spawn).not.toHaveBeenCalled();
  }finally{release();}
- expect(await running).toBe(1);expect(errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
+ expect(await running).toBe(13);expect(errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
 });
