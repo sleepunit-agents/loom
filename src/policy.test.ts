@@ -193,3 +193,12 @@ it('shares general records through either project or agent, with task project pr
   access.projects.other.members = [];
   expect(maySee(member, record, access)).toBe(false);
 });
+
+it('shares unscoped Knowledge with authenticated agents without opening member or agent private scopes',()=>{
+ const agent:Viewer={kind:'agent',id:'terminal-agent'};
+ expect(maySee(agent,{type:'knowledge'},sharing)).toBe(true);
+ for(const operation of ['mind.knowledgeAdd','mind.knowledgeVerify','mind.knowledgeRecheck'])expect(mayAct(agent,{type:'knowledge'},sharing,'act',operation)).toBe(true);
+ expect(maySee(agent,{type:'knowledge',member:'private-member'},sharing)).toBe(false);
+ expect(maySee(agent,{type:'knowledge',agent:'other-agent'},sharing)).toBe(false);
+ expect(maySee(agent,{type:'memory'},sharing)).toBe(false);
+});
