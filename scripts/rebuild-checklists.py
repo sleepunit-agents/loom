@@ -25,7 +25,7 @@ class Parser(HTMLParser):
   for i in range(len(self.stack)-1,0,-1):
    if self.stack[i].tag==tag: self.stack=self.stack[:i];break
  def handle_data(self,data): self.stack[-1].children.append(data)
-owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t-2239','tempo':'t-2238','changes':'t-2239','inbox':'t-2237','memory':'t-2243','machines':'t-2241','models':'t-2241','bridges':'t-2242','secrets':'t-2242','people':'t-2236','signing-in':'t-2236','outside':'t-2236','data':'t-2235','measuring':'t-2234','decided':'t-2190','index':'t-2190'}
+owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t-2239','tempo':'t-2238','changes':'t-2239','inbox':'t-2237','memory':'t-2243','machines':'t-2241','models':'t-2241','bridges':'t-2242','secrets':'t-2242','people':'t-2236','signing-in':'t-2236','outside':'t-2236','data':'t-2254','measuring':'t-2234','decided':'t-2190','index':'t-2190'}
 # Narrow observable criteria supplement broad prose. Text presence proves only
 # these visible facts, never the whole behavioral promise it came from.
 ui={
@@ -73,6 +73,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  if f.stem=='conversations':
   for row in rows:
+   if row['promise'].startswith('A job works in one conversation, and a conversation points at the job working in it now.'):row['probe']={'kind':'action','action':'nativeProtocol'}
    if row['promise'].startswith('A private chat in Comms between one person and one agent.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':action} for action in ['conversationPrivatePair','commsSend','commsPrivacy']]}
    if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
    if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
@@ -146,7 +147,7 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='data':
   for row in rows:
    if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}
-   if row['promise'].startswith(('Loom runs one query', 'Loom turns the request into one database query')):row['probe']={'kind':'action','action':'dataSharingSQL'}
+   if row['promise'].startswith(('Loom runs one query', 'Loom turns the request into one database query', 'A page reads with one API call', 'Loom handles the request in one API call')):row['probe']={'kind':'action','action':'dataReadBounds'}
    if row['promise'].startswith(('After the first rows, loom sends only', 'After the first rows, changes arrive')):row['probe']={'kind':'action','action':'dataTaskPatches'}
    if row['promise'].startswith('A new inbox item reaches an open Inbox'):row['probe']={'kind':'action','action':'dataInboxChange'}
  if f.stem=='desk':

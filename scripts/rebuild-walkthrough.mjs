@@ -1,3 +1,4 @@
+import {nativeProtocolAction} from './rebuild-native-protocol.mjs';
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {conversationMail} from './rebuild-conversation-mail.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
@@ -33,7 +34,7 @@ import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
 import {prepareRetention} from './rebuild-retention.mjs';
-import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
+import {installDataProbe,auditDataDoor,dataActions,sharingGrowth,homeReadGrowth} from './rebuild-data-actions.mjs';
 
 import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
@@ -124,6 +125,8 @@ export async function* walkthroughSteps(output) {
   yield {phase:'ready',report:safeReport(report)};
   report.actions={...report.actions,conversationRetention:await retention({page,clock,out})};
   save();yield {phase:'retention',actions:safeReport(report.actions)};
+  {const tile=await openApp('Project sharing');await tile.getByText('Example garden',{exact:true}).first().waitFor();report.actions.dataSharingSQL=await sharingGrowth({page,app,subscriptions,out});await tile.getByRole('button',{name:'Close Project sharing',exact:true}).click();await tile.waitFor({state:'detached'});}
+  save();yield {phase:'data-growth',actions:safeReport(report.actions)};
   const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
   const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?'],'Agents':['DESCRIPTION']};
   const selections={'Tasks':'Measure the hose','Approvals':'Inspect the example pump','Changes':'Plan the pump repair (t-1)','Inbox':'Spend up to 180 example dollars on the pump?','Tempo':'Continue the pump inspection','Comms':'Repair the garden pump','Agents':'Fern'};
@@ -215,8 +218,10 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   Object.assign(report.actions,await appearanceActions({page,app,out}));
   save();yield {phase:'appearance',actions:safeReport(report.actions)};
-  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
+  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out,sharingSQL:report.actions.dataSharingSQL}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await homeReadGrowth({page,app,subscriptions,out,sharing:report.actions.dataSharingSQL}));
+  save();yield {phase:'home-read-growth',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
   report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
@@ -225,6 +230,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'task-source',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationMail({page,app,clock,example:report.example,out,open:openApp}));
   save();yield {phase:'conversation-mail',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await nativeProtocolAction({page,open:openApp,out,app,example:report.example,clock,home}));
+  save();yield {phase:'native-protocol',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

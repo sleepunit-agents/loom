@@ -5,7 +5,8 @@ import type {Viewer} from './policy.js';
 import {maySee} from './policy.js';
 import {sharedSharing} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
-import {tasks,approvals,members,inbox} from './core/data/schema.js';
+import {tasks,approvals,members,inbox,secretRequests} from './core/data/schema.js';
+import {bridgeSecretsVisibility} from './core/data/bridge-secrets-visibility.js';
 import {taskVisibility} from './core/data/visibility.js';
 import {workVisibility} from './core/data/work-visibility.js';
 import type {BodyQuestionAuthority} from './core/conversations/body-operations.js';
@@ -22,6 +23,8 @@ export function conversationQuestionPolicy(db:DataDatabase){
   (${f.waitsOnKind} is null and ${f.waitsOnId} is null)
   or (${f.waitsOnKind}='task' and ${visibleSource(viewer,'task',f.waitsOnId)})
   or (${f.waitsOnKind}='approval' and ${visibleSource(viewer,'approval',f.waitsOnId)})
+  or (${f.waitsOnKind}='secret-request' and exists(select 1 from ${secretRequests}
+    where ${secretRequests.id}=${f.waitsOnId} and ${bridgeSecretsVisibility(viewer).secretRequests!(getTableColumns(secretRequests))}))
  )`;
  const visibility=(viewer:Viewer,f:Fields)=>sql`(${workVisibility(viewer).approvals!(f)}) and ${sourceVisibility(viewer,f)}`;
  const ask:BodyQuestionAuthority=(viewer,cv,q)=>{
@@ -44,5 +47,5 @@ export function conversationQuestionPolicy(db:DataDatabase){
  };
  // Additional source constraint only; callers still establish recipient authority.
  const sourceAllowsItem=(viewer:Viewer,id:string)=>!!db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),sourceVisibility(viewer,getTableColumns(inbox)))).get();
- return {visibility,ask,sourceAllowsItem};
+ return {visibility,ask,sourceAllowsItem,sourceVisibility};
 }
