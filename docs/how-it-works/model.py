@@ -586,6 +586,15 @@ area("models", "Models and accounts",
   T("model_account_boxes", "Which worker machines an account is signed in on.", [
     ("account", "id", "The account.", "model_accounts"),
     ("box", "id", "A worker machine it is signed in on.", "boxes")]),
+  T("account_signins", "A request to sign an account in on a worker machine, and how far it has got. The worker runs the provider's own sign-in; loom carries only the page to open and the code it shows.", [
+    ("id", "id", "Its identifier.", ""),
+    ("account", "id", "The account to sign in.", "model_accounts"),
+    ("box", "id", "The worker machine to sign it in on.", "boxes"),
+    ("asked_by_kind, asked_by", "choice(member, agent) + id", "Who asked for it.", "members, agents"),
+    ("state", "choice(asked, started, waiting, done, failed)", "Asked, picked up by the worker, waiting on the person, signed in, or failed.", ""),
+    ("item", "id", "The inbox item that carries the page to open, once there is one.", "inbox"),
+    ("why", "text", "On failure, one plain line saying why.", ""),
+    ("asked_at, changed_at", "time", "When it was asked for and when it last moved.", "")]),
   T("agent_models", "An agent's allowed and preferred models, in order.", [
     ("agent", "id", "The agent.", "agents"),
     ("model", "text", "A model it may use.", ""),

@@ -85,6 +85,16 @@ export function reportWorkerHealth(input: WorkerHttpOptions & { facts?: readonly
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   return operationCaller(input)('health', facts === undefined ? {} : { facts }, z.object({ ok: z.literal(true) }).strict());
 }
+/** The worker's side of a relayed account sign-in: see account-signin-relay.ts. */
+export function workerSignIn(input: WorkerHttpOptions) {
+  const call = operationCaller(input), saved = z.object({ saved: z.literal(true) }).strict();
+  return {
+    next: () => call('signInNext', {}, z.object({ id: z.string(), account: z.string(), owner: z.string(), provider: z.string() }).strict().nullable()),
+    page: async (page: { id: string; link: string; userCode?: string }) => { await call('signInPage', page, saved); },
+    code: (id: string) => call('signInCode', { id }, z.object({ code: z.string().nullable(), stop: z.boolean() }).strict()),
+    done: async (done: { id: string; signedIn: boolean; why?: string }) => { await call('signInDone', done, saved); },
+  };
+}
 export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[] }): WorkerControl {
   const facts = input.facts === undefined ? undefined : machineFacts.parse(input.facts);
   const call = operationCaller(input);

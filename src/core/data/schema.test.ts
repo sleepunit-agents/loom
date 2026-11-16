@@ -30,7 +30,7 @@ describe('the approved data model', () => {
       if (column && current) expected[current].push(...column[1].split(', '));
       if (line.trim().endsWith(')]),')) current = undefined;
     }
-    expect(Object.keys(expected)).toHaveLength(80);
+    expect(Object.keys(expected)).toHaveLength(81);
     const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton')]));
     // Runtime placement and per-provider windows fill in details the approved
     // summary is silent on; preserve exact coverage for all approved columns.

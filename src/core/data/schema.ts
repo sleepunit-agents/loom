@@ -1068,6 +1068,26 @@ export const agentModels = sqliteTable('agent_models', {
   primaryKey({ columns: [t.agent, t.model] }),
 ]);
 
+/** A request to sign a model account in on a worker machine, and how far it has got. */
+export const accountSignins = sqliteTable('account_signins', {
+  id: text('id').primaryKey().notNull(),
+  account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
+  box: text('box').notNull().references((): AnySQLiteColumn => boxes.id),
+  askedByKind: text('asked_by_kind', { enum: ["member", "agent"] }).notNull(),
+  askedBy: text('asked_by').notNull(),
+  state: text('state', { enum: ["asked", "started", "waiting", "done", "failed"] }).notNull(),
+  item: text('item'),
+  why: text('why'),
+  askedAt: text('asked_at').notNull(),
+  changedAt: text('changed_at').notNull(),
+}, t => [
+  check('account_signins_asked_at_utc', utc(t.askedAt)),
+  check('account_signins_changed_at_utc', utc(t.changedAt)),
+  check('account_signins_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'agent')`),
+  check('account_signins_state_choice', sql`${t.state} in ('asked', 'started', 'waiting', 'done', 'failed')`),
+  index('account_signins_box_state_idx').on(t.box, t.state),
+]);
+
 /** One row per bot signed in to a server or workspace. */
 export const bridgeConnections = sqliteTable('bridge_connections', {
   id: text('id').primaryKey().notNull(),
@@ -1606,6 +1626,7 @@ export const boxesRelations = relations(boxes, ({ one, many }) => ({
   jobsByBox: many(jobs, { relationName: 'jobs_box' }),
   agentBoxesByBox: many(agentBoxes, { relationName: 'agent_boxes_box' }),
   modelAccountBoxesByBox: many(modelAccountBoxes, { relationName: 'model_account_boxes_box' }),
+  accountSigninsByBox: many(accountSignins, { relationName: 'account_signins_box' }),
 }));
 
 export const boxAgentsRelations = relations(boxAgents, ({ one }) => ({
@@ -1672,10 +1693,16 @@ export const modelAccountsRelations = relations(modelAccounts, ({ one, many }) =
   modelAccountWindowsByAccount: many(modelAccountWindows, { relationName: 'model_account_windows_account' }),
   ownerRow: one(members, { fields: [modelAccounts.owner], references: [members.id], relationName: 'model_accounts_owner' }),
   modelAccountBoxesByAccount: many(modelAccountBoxes, { relationName: 'model_account_boxes_account' }),
+  accountSigninsByAccount: many(accountSignins, { relationName: 'account_signins_account' }),
 }));
 
 export const modelAccountWindowsRelations = relations(modelAccountWindows, ({ one }) => ({
   accountRow: one(modelAccounts, { fields: [modelAccountWindows.account], references: [modelAccounts.id], relationName: 'model_account_windows_account' }),
+}));
+
+export const accountSigninsRelations = relations(accountSignins, ({ one }) => ({
+  accountRow: one(modelAccounts, { fields: [accountSignins.account], references: [modelAccounts.id], relationName: 'account_signins_account' }),
+  boxRow: one(boxes, { fields: [accountSignins.box], references: [boxes.id], relationName: 'account_signins_box' }),
 }));
 
 export const modelAccountBoxesRelations = relations(modelAccountBoxes, ({ one }) => ({
@@ -1928,6 +1955,7 @@ export const tables = {
   modelAccounts,
   modelAccountWindows,
   modelAccountBoxes,
+  accountSignins,
   agentModels,
   bridgeConnections,
   bridgeChannelFilters,
@@ -2008,6 +2036,7 @@ export const schema = { ...tables, ...plumbing,
   modelAccountsRelations,
   modelAccountWindowsRelations,
   modelAccountBoxesRelations,
+  accountSigninsRelations,
   agentModelsRelations,
   bridgeConnectionsRelations,
   bridgeChannelFiltersRelations,

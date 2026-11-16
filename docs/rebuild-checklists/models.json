@@ -2,7 +2,7 @@
   "page": "models",
   "title": "Models and accounts",
   "ownerTask": "t-2241",
-  "sourceSha256": "2a0ad950d3034b4057e291ad43bd1e34db8ac2bc0cb86dc54ad5cfe6a3376e78",
+  "sourceSha256": "3054ebb282fe3c1bb6ecd4bebb366bf2ef9813d93d57cfe4bf753c206d8ba0b9",
   "promises": [
     {
       "id": "models-001",
@@ -92,6 +92,7 @@
   "modelTables": [
     "model_accounts",
     "model_account_boxes",
+    "account_signins",
     "agent_models"
   ]
 }

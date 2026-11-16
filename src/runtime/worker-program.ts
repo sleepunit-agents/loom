@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { signInAccount } from './account-signin.js';
+import { relaySignIn } from './account-signin-relay.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
-import { httpWorkerControl, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
+import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
@@ -25,6 +26,10 @@ const configSchema = z.object({
   build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), runnerCommand),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
+  /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
+   * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests. */
+  accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
+    intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(900_000).optional() }).strict().optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
     setupTimeoutMs: containerDeadline.optional(),
     cleanupTimeoutMs: containerDeadline.optional() }).strict().optional(),
@@ -44,6 +49,8 @@ export async function workerProgram(input: {
   /** Local structured observations only; never private command diagnostics. */
   output?: (text: string) => void;
   signIn?: typeof signInAccount;
+  relaySignIn?: typeof relaySignIn;
+  signInRemote?: typeof workerSignIn;
   usage?: typeof commandUsageProvider;
   reportUsage?: typeof reportWorkerAccountUsage;
   usageBasis?: typeof readWorkerAccountBasis;
@@ -139,8 +146,25 @@ export async function workerProgram(input: {
     // Attach a handler immediately; an unexpected timer failure stops the slot.
     const settled = refresh?.catch(() => { abort.abort(); throw new Error('Quota refresh stopped'); });
     settled?.catch(() => {});
+    // Sign-ins asked for through loom run beside the job slot, one at a time. A failed poll is tried again
+    // at the next interval; it never stops the worker.
+    const wait = input.pause ?? (async (ms: number, signal: AbortSignal) => { await delay(ms, undefined, { signal }); });
+    const signIns = config.accountSignIn ? (async () => {
+      const remoteSignIn = (input.signInRemote ?? workerSignIn)(remote);
+      while (!abort.signal.aborted) {
+        try {
+          const request = await remoteSignIn.next();
+          if (request) {
+            const program = config.accountSignIn!.programs.find(entry => entry.provider === request.provider);
+            if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'This machine has no sign-in program for ' + request.provider.slice(0, 100) });
+            else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: config.accountSignIn!.timeoutMs });
+          }
+        } catch { if (!abort.signal.aborted) input.error('Worker sign-in check unavailable\n'); }
+        try { await wait(config.accountSignIn!.intervalMs ?? 10_000, abort.signal); } catch { return; }
+      }
+    })().catch(() => {}) : undefined;
     try { if (!abort.signal.aborted) await (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor }); }
-    finally { abort.abort(); await settled; }
+    finally { abort.abort(); await settled; await signIns; }
     return 0;
   } catch {
     input.error('Worker stopped: invalid configuration or unavailable execution\n');

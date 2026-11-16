@@ -1,0 +1,89 @@
+import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
+import { afterEach, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { FakeClock } from './core/clock.js';
+import { createDataSchema } from './core/data/database.js';
+import { accountSignins, boxes, inbox, members, modelAccounts, modelAccountBoxes, tokens } from './core/data/schema.js';
+import { sharedRoot } from './shared-root.js';
+import { wordsKey } from './pieces/comms/crypto.js';
+import { generateX25519Identity } from 'age-encryption';
+const cleanup: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
+const worker = 'a'.repeat(64), otherWorker = 'b'.repeat(64), owner = 'c'.repeat(64), stranger = 'd'.repeat(64);
+async function fixture() {
+  const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
+  const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
+  db.insert(members).values([{ id: 'member', role: 'owner', joinedAt: now() }, { id: 'stranger', role: 'member', joinedAt: now() }]).run();
+  for (const id of ['box', 'other']) db.insert(boxes).values({ id, owner: 'member', name: id === 'box' ? 'the art box' : 'another', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: now() }).run();
+  const hash = (key: string) => createHash('sha256').update(key).digest('hex');
+  db.insert(tokens).values([{ fingerprint: hash(worker), label: 'box', kind: 'runner', box: 'box', createdAt: now() }, { fingerprint: hash(otherWorker), label: 'other', kind: 'runner', box: 'other', createdAt: now() },
+    { fingerprint: hash(owner), label: 'owner', kind: 'owner', member: 'member', createdAt: now() }, { fingerprint: hash(stranger), label: 'stranger', kind: 'owner', member: 'stranger', createdAt: now() }]).run();
+  db.insert(modelAccounts).values({ id: 'account', owner: 'member', provider: 'provider', label: 'Codex subscription', hasRoom: false }).run();
+  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, modelRoles: () => [], commsKey: wordsKey(await generateX25519Identity()) }); cleanup.push(() => root.close());
+  let n = 0;
+  const call = async (key: string, name: string, input: unknown = {}) => {
+    const reply = await root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'call-' + ++n, input }) });
+    return { status: reply.status, ...(await reply.json() as { ok: boolean; value?: any; code?: string; message?: string }) };
+  };
+  return { db, clock, call, item: (id: string) => db.select().from(inbox).where(eq(inbox.id, id)).get()!, row: (id: string) => db.select().from(accountSignins).where(eq(accountSignins.id, id)).get()! };
+}
+
+it('carries a page out and a code back, once, and records the sign-in only on the worker\'s word', async () => {
+  const f = await fixture();
+  expect((await f.call(stranger, 'runtime.accountSignIn', { account: 'account', box: 'box' })).ok).toBe(false);
+  expect((await f.call(worker, 'runtime.accountSignIn', { account: 'account', box: 'box' })).ok).toBe(false);
+  const asked = await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' }); expect(asked.ok).toBe(true);
+  const id = asked.value.id as string;
+  // Asking again while one is open is the same request.
+  expect((await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' })).value.id).toBe(id);
+  expect(f.row(id)).toMatchObject({ state: 'asked', askedByKind: 'member', askedBy: 'member' });
+  // Only the worker of the machine named gets it, and only once.
+  expect((await f.call(otherWorker, 'runtime.signInNext')).value).toBeNull();
+  expect((await f.call(owner, 'runtime.signInNext')).ok).toBe(false);
+  expect((await f.call(worker, 'runtime.signInNext')).value).toEqual({ id, account: 'account', owner: 'member', provider: 'provider' });
+  expect((await f.call(worker, 'runtime.signInNext')).value).toBeNull();
+  for (const name of ['runtime.signInCode', 'runtime.signInDone']) expect((await f.call(otherWorker, name, name.endsWith('Done') ? { id, signedIn: true } : { id })).ok).toBe(false);
+  expect((await f.call(worker, 'runtime.signInPage', { id, link: 'http://not-https.example/x' })).ok).toBe(false);
+  expect((await f.call(worker, 'runtime.signInPage', { id, link: 'https://provider.example/oauth?state=1' })).ok).toBe(true);
+  const item = f.item(f.row(id).item!);
+  expect(item).toMatchObject({ toKind: 'person', to: 'member', member: 'member', source: 'notice', state: 'waiting', answers: 'words', link: 'https://provider.example/oauth?state=1',
+    words: 'Sign Codex subscription in on the art box. Open the page, sign in, then answer with the code it shows.' });
+  expect((await f.call(owner, 'runtime.accountSignInStatus', { id })).value).toEqual({ state: 'waiting', why: null, item: item.id });
+  expect((await f.call(stranger, 'runtime.accountSignInStatus', { id })).ok).toBe(false);
+  expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: null, stop: false });
+  // The owner answers the inbox item with the code the page showed; a stranger cannot.
+  expect((await f.call(stranger, 'inbox.answer', { item: item.id, answer: 'words', words: '4/0AbCdEf_code-123' })).ok).toBe(false);
+  const answered = await f.call(owner, 'inbox.answer', { item: item.id, answer: 'words', words: '4/0AbCdEf_code-123' }); expect(answered).toMatchObject({ ok: true });
+  expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: '4/0AbCdEf_code-123', stop: false });
+  expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: null, stop: false });
+  expect(f.item(item.id).answerText).toBe('(used)');
+  expect(f.db.select().from(modelAccountBoxes).all()).toEqual([]);
+  expect((await f.call(worker, 'runtime.signInDone', { id, signedIn: true })).ok).toBe(true);
+  expect(f.db.select().from(modelAccountBoxes).all()).toEqual([{ account: 'account', box: 'box' }]);
+  expect((await f.call(owner, 'runtime.accountSignInStatus', { id })).value).toMatchObject({ state: 'done', why: null });
+  expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: null, stop: true });
+  // A finished request is finished: a new ask is a new request.
+  expect((await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' })).value.id).not.toBe(id);
+});
+it('shows a device code with nothing to answer, and clears the item when the worker reports', async () => {
+  const f = await fixture(), id = (await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' })).value.id as string;
+  await f.call(worker, 'runtime.signInNext');
+  expect((await f.call(worker, 'runtime.signInPage', { id, link: 'https://auth.example/device', userCode: 'ABCD-12345' })).ok).toBe(true);
+  const item = f.item(f.row(id).item!);
+  expect(item).toMatchObject({ answers: null, state: 'waiting', link: 'https://auth.example/device' }); expect(item.words).toContain('enter the code ABCD-12345');
+  expect((await f.call(worker, 'runtime.signInDone', { id, signedIn: false, why: 'The CLI still reports it is not signed in' })).ok).toBe(true);
+  expect(f.item(item.id)).toMatchObject({ state: 'resolved', resolution: 'The CLI still reports it is not signed in' });
+  expect(f.row(id)).toMatchObject({ state: 'failed', why: 'The CLI still reports it is not signed in' }); expect(f.db.select().from(modelAccountBoxes).all()).toEqual([]);
+});
+it('ends a request nobody finished, refuses a pasted answer that is not a code, and never hands a late request to a worker', async () => {
+  const f = await fixture(), id = (await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' })).value.id as string;
+  f.clock.advance(21 * 60_000);
+  expect((await f.call(owner, 'runtime.accountSignInStatus', { id })).value.state).toBe('failed');
+  expect((await f.call(worker, 'runtime.signInNext')).value).toBeNull(); expect(f.row(id)).toMatchObject({ state: 'failed', why: 'It ran out of time' });
+  const second = (await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' })).value.id as string; expect(second).not.toBe(id);
+  await f.call(worker, 'runtime.signInNext'); await f.call(worker, 'runtime.signInPage', { id: second, link: 'https://provider.example/x' });
+  await f.call(owner, 'inbox.answer', { item: f.row(second).item!, answer: 'words', words: 'sure, one moment; rm -rf' });
+  expect((await f.call(worker, 'runtime.signInCode', { id: second })).value).toEqual({ code: null, stop: true });
+  expect(f.row(second)).toMatchObject({ state: 'failed', why: 'That did not look like a sign-in code' });
+});

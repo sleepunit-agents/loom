@@ -1001,6 +1001,26 @@ CREATE TABLE `model_account_boxes` (
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE `account_signins` (
+	`id` text PRIMARY KEY NOT NULL,
+	`account` text NOT NULL,
+	`box` text NOT NULL,
+	`asked_by_kind` text NOT NULL,
+	`asked_by` text NOT NULL,
+	`state` text NOT NULL,
+	`item` text,
+	`why` text,
+	`asked_at` text NOT NULL,
+	`changed_at` text NOT NULL,
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "account_signins_asked_at_utc" CHECK("account_signins"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_signins"."asked_at") = "account_signins"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_signins"."asked_at") = "account_signins"."asked_at", 0)),
+	CONSTRAINT "account_signins_changed_at_utc" CHECK("account_signins"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "account_signins"."changed_at") = "account_signins"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "account_signins"."changed_at") = "account_signins"."changed_at", 0)),
+	CONSTRAINT "account_signins_asked_by_kind_choice" CHECK("account_signins"."asked_by_kind" in ('member', 'agent')),
+	CONSTRAINT "account_signins_state_choice" CHECK("account_signins"."state" in ('asked', 'started', 'waiting', 'done', 'failed'))
+);
+
+CREATE INDEX `account_signins_box_state_idx` ON `account_signins` (`box`,`state`);
 CREATE TABLE `agent_models` (
 	`agent` text NOT NULL,
 	`model` text NOT NULL,

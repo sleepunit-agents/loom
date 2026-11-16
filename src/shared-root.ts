@@ -19,6 +19,7 @@ import {registerMachineRegistry} from './shared-machine-registry.js';
 import { applyAgentModels } from './shared-agent-models.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
+import { registerSharedAccountSignIn } from './shared-account-signin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
@@ -186,6 +187,7 @@ export function sharedRoot(options: {
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);
+  registerSharedAccountSignIn(operations, db, now, credentials.runner);
   let tempo!: ReturnType<typeof installSharedTempo>;
 
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});

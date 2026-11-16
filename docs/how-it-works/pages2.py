@@ -708,7 +708,7 @@ def models():
         [("The owner and household owners.", "They see everything about an account: usage, when it resets, and where it is signed in."),
          ("Anyone else.", "They see only the account's label and a coarse level: plenty, getting full, or almost full."),
          ("Checked at the door.", DOOR)],
-        [("", ["model_accounts", "model_account_boxes", "agent_models"])])
+        [("", ["model_accounts", "model_account_boxes", "account_signins", "agent_models"])])
 
 # ───────────────────────── Outside programs
 def outside():
