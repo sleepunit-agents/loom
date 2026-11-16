@@ -8,6 +8,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { BridgeIncoming, type IncomingMessage } from './incoming.js';
+import {normalizeSlack} from './normalize.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
 function fixture(platform: 'discord' | 'slack' = 'discord') {
@@ -26,6 +27,23 @@ function fixture(platform: 'discord' | 'slack' = 'discord') {
   return { client, db, ingress, message, now };
 }
 describe('shared-schema bridge ingress', () => {
+  it.each(['channel','group'] as const)('keeps independent Slack %s roots separate and children with their root',kind=>{
+    const f=fixture('slack');
+    const receive=(ts:string,thread_ts?:string)=>f.ingress.receive(normalizeSlack({id:'c',workspace:'w'},{type:'event_callback',team_id:'w',event:{type:'message',channel:'room',channel_type:kind,user:'outside',ts,thread_ts,text:'Channel words'}})!);
+    const first=receive('1794672000.000001'),second=receive('1794672001.000001'),child=receive('1794672002.000001','1794672000.000001');
+    expect([first.state,second.state,child.state]).toEqual(['delivered','delivered','delivered']);
+    expect(second.conversation).not.toBe(first.conversation);expect(child.conversation).toBe(first.conversation);
+    expect(f.db.select().from(conversations).all()).toHaveLength(2);expect(f.db.select().from(inbox).all()).toHaveLength(3);
+  });
+  it.each(['im','mpim'] as const)('keeps successive unthreaded Slack %s messages in one conversation',kind=>{
+    const f=fixture('slack');
+    const receive=(ts:string)=>f.ingress.receive(normalizeSlack({id:'c',workspace:'w'},{type:'event_callback',team_id:'w',event:{type:'message',channel:'direct',channel_type:kind,user:'outside',ts,text:'Direct words'}})!);
+    const first=receive('1794672000.000001'),second=receive('1794672001.000001');
+    expect(first.state).toBe('delivered');expect(second.state).toBe('delivered');
+    expect(second.conversation).toBe(first.conversation);expect(first.thread).toBeNull();
+    expect(f.db.select().from(conversations).all()).toHaveLength(1);
+    expect(f.db.select().from(inbox).all()).toHaveLength(2);
+  });
   it.each(['discord', 'slack'] as const)('delivers %s once into conversation, turn and inbox', platform => {
     const f = fixture(platform);
     const row = f.ingress.receive(f.message);

@@ -72,9 +72,13 @@ describe('authenticated Slack message normalisation', () => {
     expect(normalizeSlack(slack, sl({ text }))).toMatchObject({ text, mentions: ['U2', 'U5'] });
     expect(normalizeSlack(slack, sl({ text: '```<@U7>' }))?.mentions).toEqual([]);
   });
-  it('retains thread roots without conflating independent channel messages', () => {
-    expect(normalizeSlack(slack, sl({ thread_ts: '1794671900.000001' }))?.thread).toBe('1794671900.000001');
-    expect(normalizeSlack(slack, sl())?.thread).toBeUndefined();
+  it.each(['channel','group'] as const)('retains %s thread roots from event or resolved metadata without conflating independent posts',kind => {
+    for(const channel_type of [kind,undefined]){
+      const channel={id:'C1',kind};
+      expect(normalizeSlack(slack, sl({channel_type,thread_ts:'1794671900.000001'}),channel)?.thread).toBe('1794671900.000001');
+      expect(normalizeSlack(slack, sl({channel_type}),channel)?.thread).toBe('1794672000.123456');
+      expect(normalizeSlack(slack, sl({channel_type,ts:'1794672000.123457'}),channel)?.thread).toBe('1794672000.123457');
+    }
   });
   it('recognises direct and group direct messages from the authenticated channel type', () => {
     for (const channel_type of ['im', 'mpim']) expect(normalizeSlack(slack, sl({ channel_type }))?.isDm).toBe(true);
