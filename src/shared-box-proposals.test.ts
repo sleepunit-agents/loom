@@ -21,7 +21,7 @@ it('records exact private chat provenance and before/after; only Allow applies h
  f.db.update(s.boxes).set({name:'Later'}).run();expect((await f.answer(card.id)).status).toBe(200);expect(f.read().box?.name).toBe('Later');
 });
 it('preserves body authority and refuses forged, unbound, public and unavailable targets',async()=>{
- const f=await fixture();expect((await f.post('runtime/boxSettingsSet',f.value,'direct')).status).toBe(403);
+ const f=await fixture();expect((await f.post('runtime/boxSettingsSet',f.value,'direct')).status).toBe(404); // there is no direct command: a change is proposed
  expect((await f.propose('unbound',undefined,bodyCredentials.agent)).status).toBe(403);
  expect((await f.propose('forged',{...f.value,member:'alice'})).status).toBe(400);
  expect((await f.propose('missing',{...f.value,box:'missing'})).status).toBe(403);

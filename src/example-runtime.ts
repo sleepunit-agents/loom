@@ -19,11 +19,14 @@ export async function exampleRuntime(root:ReturnType<typeof sharedRoot>,clock:Fa
   return result.data.value;
  };
  const box=(await ownerCommand('runtime.boxCreate',{name:'Example workshop',sameMachineAsLoom:true},z.object({id:z.string()}).strict())).id;
- await ownerCommand('runtime.boxSettingsSet',{box,name:'Example workshop',hostsAny:false,reportOnly:false,alwaysOn:false,agents:[{agent:'fern',lent:false},{agent:'moss',lent:false}],facts:['cpu:example']},z.object({saved:z.literal(true)}).strict());
+ // Setting a machine and an agent up is installed code's own business here; from outside it is a proposal an owner allows.
+ root.writes.run(()=>root.services.setup.machine({box,name:'Example workshop',hostsAny:false,reportOnly:false,alwaysOn:false,agents:[{agent:'fern',lent:false},{agent:'moss',lent:false}],facts:['cpu:example']}));
  await ownerCommand('runtime.accountSignedIn',{account:identity.account,box},z.object({saved:z.literal(true)}).strict());
  for(const agent of ['fern','moss']){
-  await ownerCommand('runtime.agentModelsSet',{agent,models:exampleModelRoles.map(role=>role.model)},z.object({saved:z.literal(true)}).strict());
-  await ownerCommand('runtime.agentRunSettingsSet',{agent,houseRepository:'https://example.invalid/house.git',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false,boxes:[box],ports:[]},z.object({saved:z.literal(true)}).strict());
+  root.writes.run(()=>{
+   root.services.setup.models({agent,models:exampleModelRoles.map(role=>role.model)});
+   root.services.setup.run('alex',{agent,houseRepository:'https://example.invalid/house.git',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false,boxes:[box],ports:[]});
+  });
  }
  const worker=root.writes.run(()=>root.services.signin.issue({kind:'runner',box,label:'Example worker setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
  try{

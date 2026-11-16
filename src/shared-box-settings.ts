@@ -34,16 +34,3 @@ export function mayChangeBoxSettings(db:DataDatabase,viewer:Viewer,id:string){
  const box=db.select().from(boxes).where(eq(boxes.id,id)).get();
  return !!box&&!box.revokedAt&&viewer.kind==='member'&&mayAct(viewer,{type:'runtime.box',member:box.owner},sharedSharing(db));
 }
-export function registerBoxSettings(operations:Operations,db:DataDatabase,changed:()=>void){
- const applied=new WeakSet<object>();
- operations.register({name:'runtime.boxSettingsSet',write:true,recheckPolicy:true,doors:['http'],
-  input:boxSettingsInput,
-  output:z.object({saved:z.literal(true)}).strict(),
-  may:(viewer,input)=>mayChangeBoxSettings(db,viewer,input.box),
-  run(ctx,input){
-   applyBoxSettings(db,input);
-   applied.add(input);ctx.changed('boxes',input.box);ctx.changed('boxAgents',input.box);ctx.changed('boxFacts',input.box);return{saved:true as const};
-  },
-  after(input){if(applied.delete(input))changed();},
- });
-}

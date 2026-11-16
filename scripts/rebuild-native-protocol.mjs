@@ -29,10 +29,8 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
  const abort=new AbortController(),runs=[],assigned=new Set();let owner,runner,changed=false,configurationCreated=false;
  const stop=()=>abort.abort();signal?.addEventListener('abort',stop,{once:true});if(signal?.aborted)stop();
  const deadline=setTimeout(stop,12_000);
- const command=async(input,requestSignal=abort.signal)=>{
-  const response=await fetch(app.url+'/api/runtime/boxSettingsSet',{method:'POST',headers:{authorization:'Bearer '+owner.token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input}),signal:requestSignal});
-  const result=await response.json();if(!response.ok||result.ok!==true)throw Error('Native fixture worker settings were unavailable');
- };
+ // The fixture is installed code: it sets the machine up directly, as the program's own parts do.
+ const command=async input=>{app.writes.run(()=>app.services.setup.machine(input));};
  try{
   if(abort.signal.aborted)throw Error('Native fixture cancelled');
   owner=app.writes.run(()=>app.services.signin.issue({kind:'owner',member:'alex',label:'Native protocol fixture setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;

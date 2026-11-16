@@ -11,14 +11,14 @@ import { sharedAccount, sharedAccountFields, registerSharedAccount } from './cor
 import {sharedBoxProposals} from './shared-box-proposals.js';
 import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
-import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
+import { saveAgentBodyPolicy } from './shared-agent-body-policy.js';
 
-import { registerAgentRunSettings } from './shared-agent-run-settings.js';
+import { applyAgentRunSettings } from './shared-agent-run-settings.js';
 import { sharedRunProposals } from './shared-run-proposals.js';
 
-import { registerBoxSettings } from './shared-box-settings.js';
+import { applyBoxSettings } from './shared-box-settings.js';
 import {registerMachineRegistry} from './shared-machine-registry.js';
-import { registerAgentModels } from './shared-agent-models.js';
+import { applyAgentModels } from './shared-agent-models.js';
 import { sharedModelProposals } from './shared-model-proposals.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
@@ -30,8 +30,8 @@ import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
 import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
-import { sql } from 'drizzle-orm';
-import { secretChanges } from './core/data/schema.js';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { boxes, secretChanges } from './core/data/schema.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
@@ -152,7 +152,8 @@ export function sharedRoot(options: {
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
-  const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now);
+  const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
+    { roles, setAccounts: input => householdAccess.setAccounts(input) });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation, householdProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
@@ -195,16 +196,12 @@ export function sharedRoot(options: {
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
   registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer)||!!credentials.agentSession(viewer));
-  registerAgentBodyPolicy(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
-  registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
 
-  registerBoxSettings(operations, db, () => tempo?.capacityChanged());
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
-  registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {
       tempo?.sources.job(id);
@@ -262,7 +259,18 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
   comms?.install(operations);
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion);
+  // How machines and agents are set up. Installed code calls these directly, inside a write;
+  // anything outside goes through household.propose and a household owner's Allow.
+  const recount = () => queueMicrotask(() => { try { tempo?.capacityChanged(); } catch (error) { report(error); } });
+  const setup = {
+    machine(input: Parameters<typeof applyBoxSettings>[1]) { applyBoxSettings(db, input); recount(); },
+    run(member: string, input: Parameters<typeof applyAgentRunSettings>[2]) { applyAgentRunSettings(db, { kind: 'member', id: member }, input); recount(); },
+    models(input: Parameters<typeof applyAgentModels>[1]) { applyAgentModels(db, input, roles()); recount(); },
+    bodyPolicy(input: Parameters<typeof saveAgentBodyPolicy>[1]) { saveAgentBodyPolicy(db, input); },
+    revokeMachine(id: string) { db.update(boxes).set({ revokedAt: now() }).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).run(); recount(); },
+  };
   const services = {
+    setup,
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks,
     changes: changeService(db,options.changes?.rule ?? (()=>undefined),now,run=>{

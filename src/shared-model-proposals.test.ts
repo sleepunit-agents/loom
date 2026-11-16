@@ -26,7 +26,7 @@ it('files a bound inline before/after card and changes model order only on actua
  expect((await f.answer(card.id)).status).toBe(200);expect(f.read()).toEqual(['first']);
 });
 it('keeps owner commands forbidden to bodies and rejects forged, public or stale proposal provenance',async()=>{
- const f=await fixture();expect((await f.post('runtime/agentModelsSet',{agent:'art',models:['second']},'direct')).status).toBe(403);
+ const f=await fixture();expect((await f.post('runtime/agentModelsSet',{agent:'art',models:['second']},'direct')).status).toBe(404); // there is no direct command: a change is proposed
  expect((await f.propose('unbound',undefined,bodyCredentials.agent)).status).toBe(403);
  for(const [index,extra]of [{member:'alice'},{conversation:f.thread.conversation},{operation:'other'},{actingFor:'alice'}].entries())expect((await f.propose('forged-'+index,{agent:'art',models:['second'],...extra})).status).toBe(400);
  expect((await f.propose('other',{agent:'mark',models:['second']})).status).toBe(403);

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Machine and agent settings are proposed, not commanded.** Removed `runtime.boxSettingsSet`, `runtime.agentRunSettingsSet`, `runtime.agentModelsSet`, `runtime.agentBodyPolicySet` and `runtime.boxRevoke`. `household.propose` gains `boxSettings`, `runSettings`, `models` and `agentAccounts`, so each of these is a card a household owner allows. Installed code uses `services.setup`.
+
+- Operations can declare `refuses`, so a service's own refusal reaches the caller as `invalid` with its words instead of `unavailable`.
+
 - **Remove the older program.** The stdio memory server, its command line (`loom wake`, `recall`, `remember`, `memory`, `knowledge`, `migrate`, `bootstrap`, `inject`, `install`, `doctor` and the rest), its server-rendered pages, the installable pieces and their client binaries, the MCP-app widgets and the old-home migration tools are gone: about 139,000 lines. `loom serve` now always runs the household program and `loom mcp` proxies its door; `--next` is accepted and ignored. Removed binaries: `loom-secret-holder`, `loom-secrets-client`, `loom-bridges`, `loom-changes`, `loom-approvals-client`, `loom-secret-worker`.
 
 - The MCP door gains twenty named tools: `memory_propose`, `memory_drafts`, `memory_ratify`, `memory_archive`, `memory_restore`, `memory_history`, `knowledge_read`, `knowledge_edit`, `knowledge_check`, `knowledge_restore`, `task_ready`, `task`, `task_create`, `task_edit`, `task_claim`, `task_close`, `task_comment`, `propose`, `approvals` and `inbox`.

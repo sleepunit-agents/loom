@@ -42,15 +42,3 @@ export function applyAgentRunSettings(db:DataDatabase,viewer:Viewer,input:z.infe
    db.delete(agentHousePorts).where(eq(agentHousePorts.agent,agent)).run();
    if(input.ports.length)db.insert(agentHousePorts).values(input.ports.map(port=>({agent,...port}))).run();
 }
-
-export function registerAgentRunSettings(operations:Operations,db:DataDatabase,changed:()=>void){
- const applied=new WeakSet<object>();
- operations.register({name:'runtime.agentRunSettingsSet',write:true,recheckPolicy:true,doors:['http'],
-  input:agentRunSettingsInput,output:z.object({saved:z.literal(true)}).strict(),
-  may:(viewer,input)=>mayChangeAgentRunSettings(db,viewer,input.agent),
-  run(ctx,input){
-   applyAgentRunSettings(db,ctx.viewer,input);
-   applied.add(input);for(const type of ['agentRunSettings','agentBoxes','agentHousePorts'])ctx.changed(type,input.agent);return{saved:true as const};
-  },after(input){if(applied.delete(input))changed();},
- });
-}

@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { mayAct } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agentDeniedTools, agentPeople } from './core/data/schema.js';
-import type { Operations } from './core/operations/index.js';
+import { agentDeniedTools, agentPeople, agents } from './core/data/schema.js';
+import { OperationError } from './core/operations/index.js';
 const text=(max:number)=>z.string().min(1).max(max).refine(value=>value.trim().length>0).refine(value=>!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value));
 const outsidePerson=z.object({platform:z.enum(['discord','slack']),workspace:text(200),user:text(200),tier:z.union([z.literal(1),z.literal(2),z.literal(3)])}).strict();
 const key=(person:z.infer<typeof outsidePerson>)=>JSON.stringify([person.platform,person.workspace,person.user]);
@@ -21,15 +21,9 @@ export function readAgentBodyPolicy(db:DataDatabase,agent:string):BodyPolicy{
  return{agent,people:people.sort(order),deniedTools:deniedTools.sort(order)};
 }
 export function saveAgentBodyPolicy(db:DataDatabase,input:BodyPolicy){
+ if(!db.select({id:agents.id}).from(agents).where(eq(agents.id,input.agent)).get())throw new OperationError('invalid','Unknown agent');
  db.delete(agentPeople).where(eq(agentPeople.agent,input.agent)).run();
  if(input.people.length)db.insert(agentPeople).values(input.people.map(person=>({agent:input.agent,person:key(person),tier:person.tier}))).run();
  db.delete(agentDeniedTools).where(eq(agentDeniedTools.agent,input.agent)).run();
  if(input.deniedTools.length)db.insert(agentDeniedTools).values(input.deniedTools.map(rule=>({agent:input.agent,...rule}))).run();
-}
-export function registerAgentBodyPolicy(operations:Operations,db:DataDatabase){
- operations.register({name:'runtime.agentBodyPolicySet',write:true,recheckPolicy:true,doors:['http'],
-  input:agentBodyPolicyInput,output:z.object({saved:z.literal(true)}).strict(),
-  may:(viewer,input)=>mayAct(viewer,{type:'runtime.agent-body-policy',agent:input.agent},sharedSharing(db),'agent-setup'),
-  run(ctx,input){saveAgentBodyPolicy(db,input);ctx.changed('agentPeople',input.agent);ctx.changed('agentDeniedTools',input.agent);return{saved:true as const};},
- });
 }

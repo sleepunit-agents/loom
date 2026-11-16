@@ -75,7 +75,8 @@ it('builds fictitious data through services, then normal startup signs in and qu
   }finally{app.writes.run(()=>app!.services.signin.revoke(token.fingerprint));}
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({__typename:'RuntimeAccountDetail',id:manifest.account.id,label:'Example model subscription',usage:0.25,hasRoom:true,signedInOn:[{id:manifest.runtime.box,name:'Example workshop'}]})]);
   expect(result.data.currentJobs).toEqual(expect.arrayContaining([manifest.runtime.job]));
-  const models=await fetch(app.url+'/api/runtime/agentModelsSet',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'restarted-example-models',input:{agent:'moss',models:['example-model']}})});expect(models.status).toBe(200);
+  // Models are set by installed code or by a proposal; the restarted program still knows its configured roles.
+  app.writes.run(()=>app!.services.setup.models({agent:'moss',models:['example-model']}));
   const ordinary=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Example ordinary member',expiresAt:new Date(Date.now()+60_000).toISOString()})).value;
   try{
    const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+ordinary.token,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id} modelAccounts{__typename ...on RuntimeAccountDetail{id usage signedInOn{id}} ...on RuntimeAccountSummary{label level}}}'})});
@@ -145,11 +146,11 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
  }finally{await app?.close();if(app)expect(()=>holderValueAbsent(home,'no-such-fictitious-secret')).toThrow('not active');rmSync(parent,{recursive:true,force:true});}
 });
 
-it.each(['runtime.boxSettingsSet','runtime.health','tempo.set']as const)('revokes temporary setup authority when %s is refused',async operation=>{
+it.each(['runtime.accountSignedIn','runtime.health','tempo.set']as const)('revokes temporary setup authority when %s is refused',async operation=>{
  const parent=mkdtempSync(join(tmpdir(),'loom-example-runtime-failed-')),home=join(parent,'home'),call=Operations.prototype.callAsync;
  vi.spyOn(Operations.prototype,'callAsync').mockImplementation(async function(this:Operations,...args:Parameters<Operations['callAsync']>){if(args[2]===operation)return{ok:false as const,code:'denied' as const,message:'Fictitious health refusal'};return call.apply(this,args);});
  try{
   await expect(exampleHome(home)).rejects.toThrow(operation==='runtime.health'?'Worker health failed':'Example Runtime setup failed at '+operation);
-  const database=new Database(join(home,'app.db'),{readonly:true});try{expect(database.prepare("select label,revoked_at from tokens where label in ('Example setup','Example worker setup') order by label").all()).toEqual(operation==='runtime.boxSettingsSet'?[{label:'Example setup',revoked_at:expect.any(String)}]:[{label:'Example setup',revoked_at:expect.any(String)},{label:'Example worker setup',revoked_at:expect.any(String)}]);}finally{database.close();}
+  const database=new Database(join(home,'app.db'),{readonly:true});try{expect(database.prepare("select label,revoked_at from tokens where label in ('Example setup','Example worker setup') order by label").all()).toEqual(operation==='runtime.accountSignedIn'?[{label:'Example setup',revoked_at:expect.any(String)}]:[{label:'Example setup',revoked_at:expect.any(String)},{label:'Example worker setup',revoked_at:expect.any(String)}]);}finally{database.close();}
  }finally{rmSync(parent,{recursive:true,force:true});}
 });

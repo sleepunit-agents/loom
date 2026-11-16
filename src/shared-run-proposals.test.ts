@@ -21,7 +21,7 @@ it('files complete trusted before/after for an unconfigured agent and applies on
  f.db.update(s.agentRunSettings).set({houseBranch:'later'}).run();expect((await f.answer(card.id)).status).toBe(200);expect(f.read().settings?.houseBranch).toBe('later');
 });
 it('keeps direct body edits forbidden and rejects unbound or forged provenance and credential-bearing repositories',async()=>{
- const f=await fixture();expect((await f.post('runtime/agentRunSettingsSet',f.value,'direct')).status).toBe(403);
+ const f=await fixture();expect((await f.post('runtime/agentRunSettingsSet',f.value,'direct')).status).toBe(404); // there is no direct command: a change is proposed
  expect((await f.propose('unbound',undefined,bodyCredentials.agent)).status).toBe(403);
  for(const input of [{...f.value,member:'alice'},{...f.value,repositorySecret:'private'},{...f.value,houseRepository:'https://user:secret@example.invalid/repo'},{...f.value,houseFile:'../escape'}])expect((await f.propose('invalid',input)).status).toBe(400);
  expect((await f.propose('other-agent',{...f.value,agent:'mark'})).status).toBe(403);f.db.update(s.conversations).set({job:null}).run();expect((await f.propose('stale-body')).status).toBe(403);

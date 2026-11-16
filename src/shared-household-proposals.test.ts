@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentPeople, agentDeniedTools, approvals, boxes, members, sessions, tokens, projects } from './core/data/schema.js';
+import { agents, agentAccounts, agentBoxes, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -143,4 +143,33 @@ it('proposes revoking a machine and signing out a browser; a deny needs no confi
   // An ordinary settings card is allowed with one answer.
   const setting = await propose('settings', { commsDays: 7 });
   expect((await f.call('approvals/answer', { id: setting.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+});
+it('proposes a machine\'s settings, how an agent runs, and its outside accounts', async () => {
+  const f = fixture(), at = new Date(0).toISOString();
+  f.root.writes.run(() => {
+    f.db.insert(boxes).values({ id: 'box-1', name: 'workshop', owner: 'sam', hostsAny: false, sameMachineAsLoom: false, reportOnly: true, alwaysOn: false, enrolledAt: at }).run();
+    f.db.insert(memberAgents).values({ member: 'sam', agent: 'art' }).run();
+  });
+  const propose = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Asked in chat' }, 'art');
+  const allow = (id: string) => f.call('approvals/answer', { id, answer: 'allow' }, 'sam');
+  const machine = { box: 'box-1', name: 'workshop', hostsAny: false, reportOnly: false, alwaysOn: true, agents: [{ agent: 'art', lent: false }], facts: ['gpu:5090'] };
+  expect((await propose('boxSettings', { ...machine, box: 'no-such-box' })).body).toMatchObject({ code: 'not-found' });
+  expect((await propose('boxSettings', { ...machine, agents: [{ agent: 'art', lent: true }] })).body).toMatchObject({ ok: false, code: 'invalid', message: 'Lending must match current agent ownership' });
+  const settings = await propose('boxSettings', machine);
+  expect(f.db.select().from(approvals).all().find(row => row.id === settings.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change settings of machine workshop?', target: 'household:boxSettings:box-1' });
+  expect((await allow(settings.body.value!.id)).body.ok).toBe(true);
+  expect(f.db.select().from(boxes).get()).toMatchObject({ reportOnly: false, alwaysOn: true });
+  expect(f.db.select().from(boxAgents).all()).toEqual([{ box: 'box-1', agent: 'art', lent: false }]);
+  const run = { agent: 'art', houseRepository: 'https://example.invalid/house.git', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: true, boxes: ['box-1'], ports: [] };
+  const filed = await propose('runSettings', run);
+  expect(f.db.select().from(agentRunSettings).all()).toEqual([]);
+  expect((await allow(filed.body.value!.id)).body.ok).toBe(true);
+  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseBranch: 'main', gpu: true });
+  expect(f.db.select().from(agentBoxes).all()).toEqual([{ agent: 'art', box: 'box-1', position: 0 }]);
+  expect((await propose('runSettings', { ...run, boxes: ['no-such-box'] })).body).toMatchObject({ ok: false, code: 'invalid' });
+  const accounts = await propose('agentAccounts', { agent: 'art', github: ['Art-E-Fish', 'art-e-fish'] });
+  expect((await allow(accounts.body.value!.id)).body.ok).toBe(true);
+  expect(f.db.select().from(agentAccounts).all()).toEqual([{ agent: 'art', service: 'github', login: 'art-e-fish' }]);
+  // A model that is not configured for this household is refused when the card is filed.
+  expect((await propose('models', { agent: 'art', models: ['not-a-model'] })).body).toMatchObject({ ok: false, code: 'invalid', message: 'Choose configured models' });
 });

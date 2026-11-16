@@ -8,11 +8,15 @@
  *
  * Unlike the runtime proposals this needs no job: a terminal session with the
  * agent's own token may propose. The owner who allows is the authority. */
-import {and,eq,isNull} from 'drizzle-orm';
+import {and,asc,eq,isNull} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agents,approvals,members,tokens,boxes,sessions} from './core/data/schema.js';
+import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,members,tokens,boxes,sessions} from './core/data/schema.js';
+import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
+import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
+import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
+import type {ModelRole} from './runtime/placement.js';
 import {endBrowser} from './core/signin/shared-browser.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
@@ -24,6 +28,9 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 const operation='household.change';
 const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
  // Dangerous, not a setting: it cannot be put back. Named by label because an agent cannot read fingerprints.
+ // How things run: a machine's settings, how an agent runs, the models it may use, and its outside accounts.
+ boxSettings:boxSettingsInput,runSettings:agentRunSettingsInput,models:agentModelsInput,
+ agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
  // A machine by the name people see; a signed-in browser by whose it is and its description.
  boxRevoke:z.object({name:z.string().trim().min(1).max(200)}).strict(),
@@ -36,23 +43,26 @@ const danger={
 } as const;
 const dangerOf=(value:{change:string})=>value.change in danger?danger[value.change as keyof typeof danger]:undefined;
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
-const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
+const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
 type Proposal=z.infer<typeof proposal>;
-const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
+const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','boxSettings','runSettings','models','agentAccounts','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
 // Rule scopes are matched lower-case for merges; name the card the same way the rule is stored.
 const ruleScope=(input:{kind:string;scope:string})=>input.kind==='merge'&&!input.scope.startsWith('project:')?input.scope.toLowerCase():input.scope;
 const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?[value.input.kind,ruleScope(value.input),value.input.person].join(' ').trim()
- :value.change==='bodyPolicy'?value.input.agent:value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member:value.input.id;
-const label=(value:Proposal)=>value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
+ :value.change==='bodyPolicy'?value.input.agent:value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
+ :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member:value.input.id;
+const label=(value:Proposal)=>value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
+ :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
 const target=(value:Proposal)=>'household:'+(value.change==='settings'?'settings':value.change+':'+name(value));
 const summary=(value:Proposal,before:unknown)=>dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
 const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
  :{ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'};
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
-export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string){
+export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
+ runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown}){
  const liveBox=(name:string)=>db.select().from(boxes).where(and(eq(boxes.name,name),isNull(boxes.revokedAt))).get();
  const browsers=(input:{member:string;device:string})=>db.select({id:sessions.id}).from(sessions).innerJoin(tokens,eq(sessions.token,tokens.fingerprint)).where(and(eq(tokens.member,input.member),eq(sessions.device,input.device))).all();
  const liveToken=(label:string)=>db.select().from(tokens).where(and(eq(tokens.label,label),isNull(tokens.revokedAt))).all().find(row=>!row.expiresAt||row.expiresAt>now());
@@ -64,6 +74,20 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='agent'){const row=db.select().from(agents).where(eq(agents.id,value.input.id)).get();return row?sorted({id:row.id,about:row.about,markBg:row.markBg,markFg:row.markFg,faceShape:row.faceShape,faceEyes:row.faceEyes}):null;}
   if(value.change==='rule'){const scope=ruleScope(value.input),row=rules.list().find(row=>row.kind===value.input.kind&&row.scope===scope&&row.person===value.input.person);return row?sorted({kind:row.kind,scope:row.scope,person:row.person,tier:row.tier}):null;}
   if(value.change==='bodyPolicy')return db.select({id:agents.id}).from(agents).where(eq(agents.id,value.input.agent)).get()?sorted(readAgentBodyPolicy(db,value.input.agent)):null;
+  if(value.change==='boxSettings'){
+   const row=db.select().from(boxes).where(and(eq(boxes.id,value.input.box),isNull(boxes.revokedAt))).get();if(!row)return null;
+   return sorted({box:row.id,name:row.name,hostsAny:row.hostsAny,reportOnly:row.reportOnly,alwaysOn:row.alwaysOn,
+    agents:db.select({agent:boxAgents.agent,lent:boxAgents.lent}).from(boxAgents).where(eq(boxAgents.box,row.id)).orderBy(asc(boxAgents.agent)).all(),
+    facts:db.select({fact:boxFacts.fact}).from(boxFacts).where(and(eq(boxFacts.box,row.id),eq(boxFacts.fromOwner,true))).orderBy(asc(boxFacts.fact)).all().map(entry=>entry.fact)});
+  }
+  if(value.change==='runSettings'){
+   const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,value.input.agent)).get();if(!row)return null;
+   return sorted({agent:row.agent,houseRepository:row.houseRepository,houseFile:row.houseFile,houseBranch:row.houseBranch,nestedContainers:row.nestedContainers,gpu:row.gpu,
+    boxes:db.select().from(agentBoxes).where(eq(agentBoxes.agent,row.agent)).orderBy(asc(agentBoxes.position)).all().map(entry=>entry.box),
+    ports:db.select({address:agentHousePorts.address,port:agentHousePorts.port}).from(agentHousePorts).where(eq(agentHousePorts.agent,row.agent)).orderBy(asc(agentHousePorts.address),asc(agentHousePorts.port)).all()});
+  }
+  if(value.change==='models')return sorted({agent:value.input.agent,models:db.select().from(agentModels).where(eq(agentModels.agent,value.input.agent)).orderBy(asc(agentModels.position)).all().map(row=>row.model)});
+  if(value.change==='agentAccounts')return sorted({agent:value.input.agent,github:db.select().from(agentAccounts).where(eq(agentAccounts.agent,value.input.agent)).all().map(row=>row.login.toLowerCase()).sort()});
   if(value.change==='tokenRevoke'){const row=liveToken(value.input.label);return row?sorted({label:row.label,kind:row.kind,for:row.member??row.agent??row.box}):null;}
   if(value.change==='boxRevoke'){const row=liveBox(value.input.name);return row?sorted({name:row.name,owner:row.owner}):null;}
   if(value.change==='browserSignOut'){const rows=browsers(value.input);return rows.length?sorted({member:value.input.member,device:value.input.device,browsers:rows.length}):null;}
@@ -80,6 +104,11 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // A rule records who set it: the owner who allowed the card.
    else if(value.change==='rule')rules.set(value.input,by);
    else if(value.change==='bodyPolicy')saveAgentBodyPolicy(db,value.input);
+   else if(value.change==='boxSettings')applyBoxSettings(db,value.input);
+   // Run settings are checked as the owner who allowed the card: which machines that person may offer the agent.
+   else if(value.change==='runSettings')applyAgentRunSettings(db,{kind:'member',id:by},value.input);
+   else if(value.change==='models')applyAgentModels(db,value.input,runtime.roles());
+   else if(value.change==='agentAccounts')runtime.setAccounts(value.input);
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
    else if(value.change==='boxRevoke')db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,liveBox(value.input.name)!.id)).run();
    else for(const row of browsers(value.input))endBrowser(db,row.id);
@@ -111,6 +140,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     run(ctx,raw){
      const value=proposal.parse({change:raw.change,input:raw.input}),was=before(value);
      if(value.change==='bodyPolicy'&&was===null)throw new OperationError('invalid','Unknown agent');
+     if(value.change==='boxSettings'&&was===null)throw new OperationError('not-found','No live machine has that id');
      if(dangerOf(value)&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
      if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
      if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');

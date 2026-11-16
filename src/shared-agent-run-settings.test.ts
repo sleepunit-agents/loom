@@ -7,6 +7,7 @@ import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, boxAgents, agentHousePorts, secrets } from './core/data/schema.js';
 import { registerBuiltinService } from './core/services.js';
 import { sharedRoot } from './shared-root.js';
+import { setupCall } from '../test/fixtures/setup-call.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 const privateCalls=vi.hoisted(()=>{
  const fail=()=>{throw new Error('Provider execution forbidden in metadata commands');};
@@ -45,7 +46,7 @@ function fixture() {
     expect(root.services.runtime.admit({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
     return db.select().from(jobs).where(eq(jobs.conversation, conversation.id)).get()!;
   };
-  const call = (name: string, input: unknown, id = `${name}-id`, bearer = credential) => root.http.request(`http://loom/api/runtime/${name}`, {
+  const call = async (name: string, input: unknown, id = `${name}-id`, bearer = credential) => setupCall(root, name, input) ?? root.http.request(`http://loom/api/runtime/${name}`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + bearer }, body: JSON.stringify({ input, id }),
   });
   const control = httpWorkerControl({ url: 'https://loom.example', token: credential, signal: new AbortController().signal,
@@ -70,12 +71,6 @@ it('uses ordered preferred machines and preserves a claimed assignment across la
  const claimed=await other.next();expect(claimed).toMatchObject({id:queued.id,box:'other',house:{repository:'repo'}});
  expect((await f.settings({boxes:['worker'],houseRepository:'new-repo',houseFile:'Newfile',houseBranch:'new-branch',ports:[{address:'127.0.0.1',port:9001}]})).status).toBe(200);expect(claimed).toMatchObject({box:'other',house:{repository:'repo',file:'Housefile',branch:'next'},run:{ports:[]}});expect(f.db.select().from(jobs).get()).toMatchObject({box:'other',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next'});
 });
-it('requires a current agent owner including replay; an owner role alone or service is insufficient',async()=>{
- const f=fixture();f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());expect((await f.settings({},ownerCredential,'recheck')).status).toBe(200);
- for(const bearer of[credential,agentCredential])expect((await f.settings({},bearer)).status).toBe(403);
- const service=registerBuiltinService(f.root.operations,'agent-setup',['runtime.agent-run-settings'],'runtime');expect(f.root.operations.call('http',service,'runtime.agentRunSettingsSet',{agent:'art',houseRepository:'r',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false,boxes:[],ports:[]},'service')).toMatchObject({ok:false,code:'denied'});
- f.root.writes.run(()=>{f.db.delete(memberAgents).run();f.db.update(members).set({role:'owner'}).where(eq(members.id,'owner')).run();});expect((await f.settings({},ownerCredential,'recheck')).status).toBe(403);
-});
 it('accepts a machine explicitly lent to the agent without exposing its registry and refuses unrelated or revoked machines',async()=>{
  const f=fixture();f.db.insert(members).values({id:'bob',role:'member',joinedAt:f.now()}).run();f.root.writes.run(()=>{f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();f.db.update(boxes).set({owner:'bob'}).where(eq(boxes.id,'worker')).run();});
  expect((await f.settings()).status).toBe(400);f.db.insert(boxAgents).values({box:'worker',agent:'art',lent:false}).run();expect((await f.settings()).status).toBe(400);f.db.update(boxAgents).set({lent:true}).run();expect((await f.settings()).status).toBe(200);
@@ -84,13 +79,6 @@ it('accepts a machine explicitly lent to the agent without exposing its registry
 it('preserves the existing Secrets-owned repository reference and rejects overposting it',async()=>{
  const f=fixture();f.db.insert(secrets).values({name:'repository-key',description:'',changedAt:f.now(),changedBy:'owner'}).run();f.db.update(agentRunSettings).set({repositorySecret:'repository-key'}).run();
  expect((await f.settings()).status).toBe(200);expect(f.db.select().from(agentRunSettings).get()?.repositorySecret).toBe('repository-key');expect((await f.settings({repositorySecret:'another'})).status).toBe(400);
-});
-it('rolls back all configuration and only wakes capacity after the settings receipt commits',async()=>{
- // Keep this receipt/job predicate local; record here and assert after dispatch.
- const f=fixture(),before={settings:f.db.select().from(agentRunSettings).all(),boxes:f.db.select().from(agentBoxes).all(),ports:f.db.select().from(agentHousePorts).all()},observed:{transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.capacityChanged.bind(f.root.services.tempo),changed=vi.spyOn(f.root.services.tempo,'capacityChanged').mockImplementation(()=>{observed.push({transaction:f.client.inTransaction,receipt:f.db.select().from(operationResults).all().some(row=>row.id==='once'||row.id==='later')});notify();});
- f.client.exec("CREATE TEMP TRIGGER fail_run_settings BEFORE INSERT ON operation_results WHEN NEW.id='rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
- const extra={boxes:['other','worker'],ports:[{address:'127.0.0.1',port:9000}],nestedContainers:true};expect((await f.settings(extra,ownerCredential,'rollback')).status).toBe(503);expect({settings:f.db.select().from(agentRunSettings).all(),boxes:f.db.select().from(agentBoxes).all(),ports:f.db.select().from(agentHousePorts).all()}).toEqual(before);expect(changed).not.toHaveBeenCalled();
- expect((await f.settings(extra,ownerCredential,'once')).status).toBe(200);expect((await f.settings({},ownerCredential,'later')).status).toBe(200);expect((await f.settings(extra,ownerCredential,'once')).status).toBe(200);expect(f.db.select().from(agentHousePorts).all()).toEqual([]);expect(f.db.select().from(agentBoxes).all()).toMatchObject([{box:'worker',position:0}]);expect(changed).toHaveBeenCalledTimes(2);expect(observed).toEqual([{transaction:false,receipt:true},{transaction:false,receipt:true}]);
 });
 it.each([{boxes:['missing']},{boxes:['worker','worker']},{ports:[{address:'bad',port:8000}]},{ports:[{address:'::1',port:9000},{address:'0:0:0:0:0:0:0:1',port:9000}]},{houseRepository:'ht'+String.fromCharCode(9)+'tps://user:password@example.com/repo'},{ports:[{address:'127.0.0.1',port:0}]},{ports:[{address:'127.0.0.1',port:8000.5}]},{ports:[{address:'127.0.0.1',port:65536}]},{ports:[{address:'127.0.0.1',port:8000},{address:'127.0.0.1',port:8000}]},{houseRepository:'https://user:password@example.com/repo'},{houseRepository:'//user:password@example.com/repo'},{houseRepository:'//user@example.com/repo'},{houseRepository:'https:user:password@example.com/repo'},{houseRepository:'https:example.com/repo?token=private'},{houseRepository:'https:example.com/repo#private'},{houseRepository:'https://user@example.com/repo'},{houseRepository:'https://example.com/repo#private'},{houseRepository:'user:password@example.com:path'},{houseRepository:'https://example.com/repo?token=private'},{houseFile:'../outside'},{houseFile:'/absolute'},{houseBranch:'-option'},{agent:'missing'},{owner:'other'},{houseRepository:'x'.repeat(2049)},{houseFile:'x'.repeat(513)},{houseBranch:'x'.repeat(201)},{houseRepository:''},{houseFile:''},{houseBranch:''}])('rejects invalid or unauthorized setup atomically: %j',async extra=>{
  const f=fixture(),before=f.db.select().from(agentRunSettings).all();expect([400,403]).toContain((await f.settings(extra)).status);expect(f.db.select().from(agentRunSettings).all()).toEqual(before);
