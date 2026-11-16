@@ -1,6 +1,6 @@
 import { clearReadDeadline } from './read-lease.js';
 import { ExecutionDrain } from './execution.js';
-import { getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
+import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
  * transport data, never opaque database records. A missing value means remove. */
@@ -64,10 +64,10 @@ export class DataLive {
    * whose consumer already cancelled. Cancellation cannot cancel their IO. */
   async drain() { await this.executions.drain(); }
 
-  private async read(args: ExecutionArgs, initial: boolean, valid: () => boolean) {
+  private async read(args: ExecutionArgs, initial: boolean) {
     if (this.stopped) throw new Error('Live data access ended');
     this.captureRead(args.contextValue);
-    const read = () => this.executions.read(args, () => !this.stopped && valid());
+    const read = () => execute(args);
     return this.executions.run(() => initial && this.measure ? this.measure(read) : read());
   }
 
@@ -79,12 +79,15 @@ export class DataLive {
     /** Trusted executor context; never derive this from query variables. */
     contextValue?: unknown;
     valid(): boolean;
+    /** Pure transport lifecycle check; authentication stays at read/release. */
+    active?(): boolean;
   }): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
     const document = parse(options.query);
     const errors = validate(options.schema, document);
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
+    const schema = this.executions.schema(options.schema, () => !this.stopped && (options.active?.() ?? true));
     let initial = true;
     let ended = false, dirty = true, previous: unknown, revision = 0, reading = false;
     let wake: (() => void) | undefined;
@@ -110,7 +113,7 @@ export class DataLive {
           const measure = initial; initial = false;
           const readVersion = this.version;
           const result = await Promise.race([
-            this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure, options.valid),
+            this.read({ schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }, measure),
             cancellation,
           ]);
           cancel = undefined;

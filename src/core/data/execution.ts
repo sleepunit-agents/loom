@@ -1,4 +1,4 @@
-import { execute, defaultFieldResolver, type ExecutionArgs } from 'graphql/index.js';
+import { defaultFieldResolver, type GraphQLSchema } from 'graphql/index.js';
 import { mapReadFields } from './query-fields.js';
 
 type Tracked<T> = T extends { then: (...args: never[]) => unknown } ? Promise<Awaited<T>> : T;
@@ -23,14 +23,13 @@ export class ExecutionDrain {
   }
   async drain() { while (this.active) await new Promise<void>(resolve => this.waiters.add(resolve)); }
 
-  read(args: ExecutionArgs, admitted: () => boolean) {
-    // Each read owns its resolver closures. No ambient scopes or mutation of a
-    // retained schema; scalar coercion and type resolution use GraphQL itself.
-    const schema = mapReadFields(args.schema, field => ({ ...field, resolve: (...values) => {
+  schema(source: GraphQLSchema, admitted: () => boolean) {
+    // Each transport selection owns its resolver closures, reused for live
+    // reruns. No ambient scopes or mutation of a retained schema.
+    return mapReadFields(source, field => ({ ...field, resolve: (...values) => {
       if (!admitted()) throw new Error('Data access ended');
       return this.run(() => (field.resolve ?? defaultFieldResolver)(...values));
     } }));
-    return this.run(() => execute({ ...args, schema }));
   }
 }
 

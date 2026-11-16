@@ -4,7 +4,7 @@ import type { Viewer } from '../../policy.js';
 /** Clone output types together: connected fields may point back at the query
  * root, so replacing that root alone would create duplicate named types. */
 export function withQueryFields(schema: GraphQLSchema, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }>): GraphQLSchema {
-  return mapReadFields(schema, field => field, fields);
+  return Object.keys(fields).length ? mapReadFields(schema, field => field, fields) : schema;
 }
 
 export function mapReadFields(schema: GraphQLSchema, transform: (field: GraphQLFieldConfig<unknown, { viewer: Viewer }>) => GraphQLFieldConfig<unknown, { viewer: Viewer }>, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}): GraphQLSchema {

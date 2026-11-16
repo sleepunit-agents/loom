@@ -2,7 +2,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { useServer } from 'graphql-ws/use/ws';
-import { subscribe, validate, GraphQLError, type ExecutionArgs, type ExecutionResult, type GraphQLSchema } from 'graphql/index.js';
+import { execute, subscribe, validate, GraphQLError, type ExecutionArgs, type ExecutionResult, type GraphQLSchema } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
@@ -45,8 +45,8 @@ export function dataSocket(options: {
       if (stopping || !auth?.valid() || stopping) throw new Error('Authentication ended');
       auth.activity?.();
       if (stopping || !auth.valid() || stopping) throw new Error('Data access ended');
-      const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid());
-      return schema;
+      const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid(), () => !stopping);
+      return executions.schema(schema, () => !stopping);
     },
     context(ctx) {
       if (stopping) throw new Error('Data access ended');
@@ -59,7 +59,7 @@ export function dataSocket(options: {
     validate: (...args) => run(() => validate(...args)),
     execute: (args: ExecutionArgs) => run(() => {
       options.live.captureRead(args.contextValue);
-      return options.measure ? options.measure(() => executions.read(args, () => !stopping)) : executions.read(args, () => !stopping);
+      return options.measure ? options.measure(() => execute(args)) : execute(args);
     }),
     subscribe: (args: ExecutionArgs) => run(async (): Promise<ExecutionResult | AsyncIterable<ExecutionResult>> => {
       const result = await subscribe(args);

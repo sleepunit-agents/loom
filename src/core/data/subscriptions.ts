@@ -19,12 +19,12 @@ const delta = new GraphQLObjectType({ name: 'DataDelta', fields: {
  * its initial result; later revisions contain changed paths only. Reconnection
  * starts at revision 1, so a cache cannot reuse another connection's authority.
  */
-export function dataSubscriptions(schema: GraphQLSchema, live: DataLive, valid: () => boolean) {
+export function dataSubscriptions(schema: GraphQLSchema, live: DataLive, valid: () => boolean, active: () => boolean = () => true) {
   return new GraphQLSchema({ ...schema.toConfig(), subscription: new GraphQLObjectType({ name: 'Subscription', fields: {
     observe: {
       type: new GraphQLNonNull(delta),
       args: { query: { type: new GraphQLNonNull(GraphQLString) }, variables: { type: dataValue }, operationName: { type: GraphQLString } },
-      subscribe: (_source, args, contextValue) => live.watch({ schema, contextValue, query: args.query, variables: args.variables, operationName: args.operationName, valid }),
+      subscribe: (_source, args, contextValue) => live.watch({ schema, contextValue, query: args.query, variables: args.variables, operationName: args.operationName, valid, active }),
       resolve: event => event,
     },
   } }) });

@@ -49,7 +49,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     const version = readVersion?.();
     const generated = typeof schemaOrFields === 'function' ? schemaOrFields(auth.viewer) : dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) });
     const extraFields = typeof schemaOrFields === 'function' ? fields : { ...schemaOrFields, ...fields };
-    const schema = withQueryFields(generated, extraFields);
+    const schema = executions.schema(withQueryFields(generated, extraFields), () => !stopping);
     const context = Object.freeze({ viewer: auth.viewer });
     let executionContext: unknown = context;
     const current = () => (!readVersion || version === readVersion()) && readRetained(executionContext, now());
@@ -62,10 +62,10 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
         onRequest({ requestHandler, setRequestHandler }) {
           setRequestHandler((...args) => executions.run(() => requestHandler(...args)));
         },
-        onExecute({ args, setExecuteFn }: { args: ExecutionArgs; executeFn: typeof execute; setExecuteFn(fn: typeof execute): void }) {
+        onExecute({ args, executeFn, setExecuteFn }: { args: ExecutionArgs; executeFn: typeof execute; setExecuteFn(fn: typeof execute): void }) {
           if (stopping || !auth!.valid() || stopping) throw new Error('Authentication ended');
           executionContext = args.contextValue;
-          setExecuteFn(args => executions.read(args, () => !stopping));
+          setExecuteFn(args => executions.run(() => executeFn(args)));
         },
         onSubscribe() { throw new Error('Use the websocket for subscriptions'); },
       }],
