@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
 import { inbox } from './schema.js';
 
@@ -40,3 +40,29 @@ export function readInboxSet(db:DataDatabase,ids:string[],allowed:SQL,words=true
   };
 }
 export type InboxReadSet=ReturnType<typeof readInboxSet>;
+
+/** Counts share one generated metadata scan; the SQL predicate constrains the
+ * recipient, source and volume before any row enters the projection. */
+export function readInboxFolders(db: DataDatabase, allowed: SQL) {
+  const rows = db.query.inbox.findMany({
+    columns: { agent: true, state: true, source: true, answers: true },
+    where: () => sql`${{ getSQL: () => allowed }}`, orderBy: f => asc(f.agent),
+  }).sync();
+  const totals = { needs: 0, alerts: 0, answered: 0, fyi: 0, all: rows.length };
+  const agents = new Map<string, { id: string; count: number; needs: number }>();
+  for (const row of rows) {
+    const needs = row.state === 'waiting' && row.answers !== null;
+    if (needs) totals.needs++;
+    if (row.state === 'waiting' && row.answers === null) {
+      totals.fyi++;
+      if (row.source === 'notice') totals.alerts++;
+    }
+    if (['answered', 'resolved', 'done'].includes(row.state)) totals.answered++;
+    if (row.agent !== null) {
+      const agent = agents.get(row.agent) ?? { id: row.agent, count: 0, needs: 0 };
+      agent.count++; if (needs) agent.needs++;
+      agents.set(row.agent, agent);
+    }
+  }
+  return { ...totals, agents: [...agents.values()] };
+}

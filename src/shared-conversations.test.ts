@@ -285,7 +285,7 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
   }
   const large=await read();expect(large.rows).toHaveLength(10);
   expect(large.count).toBe(small);
-  expect(large.count).toBe(18);
+  expect(large.count).toBe(17);
   expect(large.rows.every(row=>row.body?.words.startsWith('PRIVATE QUESTION'))).toBe(true);
   for(const row of large.rows){expect(row.refs).toEqual(['a-ref','z-ref']);expect(row.read).toBe(true);}
   f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(f.statements.length).toBe(smallSearch);expect(search.body.data!.inboxItems).toHaveLength(10);expect((search.body.data!.inboxItems as {body:{words:string}}[]).every(row=>row.body.words.startsWith('PRIVATE QUESTION'))).toBe(true);
