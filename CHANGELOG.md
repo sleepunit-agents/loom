@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Two more things to propose.** `household.propose` takes `order` (the order people or agents are listed in) and `secretDescription` (what a secret is for, without touching its value). `mind.knowledgeEdit` can add a source.
+
 - **How an agent runs can be read.** `boxAgents`, `boxFacts`, `agentRunSettings`, `agentBoxes`, `agentHousePorts`, `agentHouseSecrets` (names only), `agentPeople` and `agentDeniedTools` are readable. Run settings follow the agent's visibility; a machine's lists follow the machine's; an agent sees only its own "may run there" rows.
 
 - **No direct settings commands remain.** Removed `household.setMember`, `household.setAgent`, `household.setProject`, `household.setSettings`, `household.setAgentAccounts` and `approvals.setRule`. `secrets.command` keeps only the answers to a request (answer, cancel, revoke) and `bridges.command` keeps only the review of a held reply. Every one of these changes is now a `household.propose` card a household owner allows. `loom-household` is read-only.

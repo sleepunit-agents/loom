@@ -200,3 +200,27 @@ it('proposes secret rules, the secrets default, bridge settings, tempo timings a
   await (await f.root.measuring).settled(); expect((await f.root.measuring).enabled()).toBe(true);
   expect((await propose('measuring', { on: true, send_outside: false, outside_address: '', keep_days: 0 })).status).toBe(400);
 });
+it('proposes the order of people or agents, naming every one once, and what a secret is for', async () => {
+  const f = fixture(), at = new Date().toISOString();
+  const ask = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Tidying' }, 'art');
+  for (const ids of [['mark'], ['mark', 'mark'], ['mark', 'art', 'nobody']]) expect((await ask('order', { of: 'agents', ids })).status).toBe(400);
+  expect((await ask('order', { of: 'agents', ids: ['art', 'mark'] })).status).toBe(400);
+  const order = await ask('order', { of: 'agents', ids: ['mark', 'art'] });
+  expect(order.status).toBe(200);
+  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:order:agents', kind: 'setting' });
+  expect((await f.call('approvals/answer', { id: order.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200);
+  expect(f.db.select({ id: agents.id, position: agents.position }).from(agents).all().sort((a, b) => a.position - b.position)).toEqual([{ id: 'mark', position: 0 }, { id: 'art', position: 1 }]);
+  // Nobody has been placed yet, so people are listed by id: asking for that order changes nothing.
+  expect((await ask('order', { of: 'members', ids: ['lee', 'sam'] })).status).toBe(400);
+  const swapped = await ask('order', { of: 'members', ids: ['sam', 'lee'] });
+  expect((await f.call('approvals/answer', { id: swapped.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200);
+  expect(f.db.select({ id: members.id }).from(members).orderBy(members.position).all().map(row => row.id)).toEqual(['sam', 'lee']);
+
+  expect((await ask('secretDescription', { secret: 'FORGE', description: 'x' })).status).toBe(404);
+  f.db.insert(secrets).values({ name: 'FORGE', description: '', changedAt: at, changedBy: 'lee' }).run();
+  const described = await ask('secretDescription', { secret: 'FORGE', description: 'The example forge token' });
+  expect(described.status).toBe(200);
+  expect(f.db.select().from(secrets).get()).toMatchObject({ description: '' });
+  expect((await f.call('approvals/answer', { id: described.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200);
+  expect(f.db.select().from(secrets).get()).toMatchObject({ name: 'FORGE', description: 'The example forge token', changedBy: 'sam' });
+});

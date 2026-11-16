@@ -12,7 +12,7 @@ import {and,asc,eq,isNull} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,members,tokens,boxes,sessions} from './core/data/schema.js';
+import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,members,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
 import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
 import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
@@ -45,6 +45,10 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  // How things run: a machine's settings, how an agent runs, the models it may use, and its outside accounts.
  boxSettings:boxSettingsInput,runSettings:agentRunSettingsInput,models:agentModelsInput,
  agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
+ // The order people or agents are listed in: every one of them, once.
+ order:z.object({of:z.enum(['members','agents']),ids:z.array(z.string().min(1).max(100)).min(1).max(1000)}).strict(),
+ // What a secret is for. Its value is never on a card.
+ secretDescription:z.object({secret:z.string().min(1).max(200),description:z.string().max(4000)}).strict(),
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
  // A machine by the name people see; a signed-in browser by whose it is and its description.
  boxRevoke:z.object({name:z.string().trim().min(1).max(200)}).strict(),
@@ -57,20 +61,20 @@ const danger={
 } as const;
 const dangerOf=(value:{change:string})=>value.change in danger?danger[value.change as keyof typeof danger]:undefined;
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
-const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
+const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('order',more),one('secretDescription',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
 type Proposal=z.infer<typeof proposal>;
-const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
+const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
 // Rule scopes are matched lower-case for merges; name the card the same way the rule is stored.
 const ruleScope=(input:{kind:string;scope:string})=>input.kind==='merge'&&!input.scope.startsWith('project:')?input.scope.toLowerCase():input.scope;
 const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?[value.input.kind,ruleScope(value.input),value.input.person].join(' ').trim()
- :value.change==='bodyPolicy'?value.input.agent:value.change==='secretRule'?value.input.secret:value.change==='secretDefault'||value.change==='measuring'?'':value.change==='houseSecrets'?value.input.agent
+ :value.change==='bodyPolicy'?value.input.agent:value.change==='order'?value.input.of:value.change==='secretRule'||value.change==='secretDescription'?value.input.secret:value.change==='secretDefault'||value.change==='measuring'?'':value.change==='houseSecrets'?value.input.agent
  :value.change==='bridge'?[value.input.action,...('id' in value.input?[value.input.id]:'channel' in value.input?[value.input.platform,value.input.workspace,value.input.channel]:[value.input.platform,value.input.workspace,value.input.user])].join(' ')
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
  :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member:value.input.id;
-const label=(value:Proposal)=>value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
+const label=(value:Proposal)=>value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
@@ -85,6 +89,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  parts:{secrets:Pick<SecretRequests,'setRule'>;bridges:Pick<BridgeSettings,'read'|'change'>;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
   measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void}}){
+ const listed=(of:'members'|'agents')=>(of==='members'?db.select({id:members.id}).from(members).orderBy(asc(members.position),asc(members.id)):db.select({id:agents.id}).from(agents).orderBy(asc(agents.position),asc(agents.id))).all().map(row=>row.id);
  const liveBox=(name:string)=>db.select().from(boxes).where(and(eq(boxes.name,name),isNull(boxes.revokedAt))).get();
  const browsers=(input:{member:string;device:string})=>db.select({id:sessions.id}).from(sessions).innerJoin(tokens,eq(sessions.token,tokens.fingerprint)).where(and(eq(tokens.member,input.member),eq(sessions.device,input.device))).all();
  const liveToken=(label:string)=>db.select().from(tokens).where(and(eq(tokens.label,label),isNull(tokens.revokedAt))).all().find(row=>!row.expiresAt||row.expiresAt>now());
@@ -95,6 +100,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='member'){const row=household.members().find(row=>row.id===value.input.id);return row?sorted({id:row.id,role:row.role,fullOwner:row.fullOwner,agents:row.agents}):null;}
   if(value.change==='agent'){const row=db.select().from(agents).where(eq(agents.id,value.input.id)).get();return row?sorted({id:row.id,about:row.about,markBg:row.markBg,markFg:row.markFg,faceShape:row.faceShape,faceEyes:row.faceEyes}):null;}
   if(value.change==='rule'){const scope=ruleScope(value.input),row=rules.list().find(row=>row.kind===value.input.kind&&row.scope===scope&&row.person===value.input.person);return row?sorted({kind:row.kind,scope:row.scope,person:row.person,tier:row.tier}):null;}
+  if(value.change==='order')return sorted({of:value.input.of,ids:listed(value.input.of)});
+  if(value.change==='secretDescription'){const row=db.select().from(secrets).where(eq(secrets.name,value.input.secret)).get();return row?sorted({secret:row.name,description:row.description}):null;}
   if(value.change==='bodyPolicy')return db.select({id:agents.id}).from(agents).where(eq(agents.id,value.input.agent)).get()?sorted(readAgentBodyPolicy(db,value.input.agent)):null;
   if(value.change==='secretRule'){
    const row=db.select().from(secretRules).where(eq(secretRules.secret,value.input.secret)).get();if(!row)return null;
@@ -146,6 +153,12 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='runSettings')applyAgentRunSettings(db,{kind:'member',id:by},value.input);
    else if(value.change==='models')applyAgentModels(db,value.input,runtime.roles());
    else if(value.change==='agentAccounts')runtime.setAccounts(value.input);
+   else if(value.change==='order'){
+    const table=value.input.of==='members'?members:agents,have=listed(value.input.of);
+    if(new Set(value.input.ids).size!==value.input.ids.length||have.length!==value.input.ids.length||have.some(id=>!value.input.ids.includes(id)))throw new OperationError('invalid','Name every one of the '+value.input.of+' exactly once');
+    value.input.ids.forEach((id,position)=>db.update(table).set({position}).where(eq(table.id,id)).run());
+   }
+   else if(value.change==='secretDescription'){if(!db.update(secrets).set({description:value.input.description,changedAt:now(),changedBy:by}).where(eq(secrets.name,value.input.secret)).run().changes)throw new OperationError('not-found','No secret has that name');}
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
    else if(value.change==='boxRevoke')db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,liveBox(value.input.name)!.id)).run();
    else for(const row of browsers(value.input))endBrowser(db,row.id);
