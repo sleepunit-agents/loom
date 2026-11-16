@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
-import { claudeBody } from './claude-body.js';
+import { bodyHarnesses } from './body-harnesses.js';
+import type { HarnessRun } from './body-harness.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
@@ -23,7 +24,7 @@ const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
 export async function bodyProgram(input: {
   args: readonly string[]; read: (path: string) => Promise<string>;
   stdin: () => Promise<Uint8Array>; env: NodeJS.ProcessEnv; signal: AbortSignal;
-  fetch?: typeof fetch; clock?: Clock; schedule?: WorkerSchedule; native?: ReturnType<typeof claudeBody>;
+  fetch?: typeof fetch; clock?: Clock; schedule?: WorkerSchedule; native?: HarnessRun;
   /** Runs inside the receiving child, before any model sees startup aliases. */
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
   /** Trusted in-process seam; production reads the current body's declared Memory. */
@@ -55,7 +56,7 @@ export async function bodyProgram(input: {
     const { job } = bodyInput(parsed.job, parsed.build, bootstrap, true);
     const bridge=job.venue==='discord'||job.venue==='slack';
     const background=job.venue==='wake'||job.venue==='handoff';
-    if (job.harness !== 'claude' || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
+    if (!Object.hasOwn(bodyHarnesses, job.harness) || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
@@ -101,7 +102,7 @@ export async function bodyProgram(input: {
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();
-    const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const native = input.native ?? bodyHarnesses[job.harness]({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }

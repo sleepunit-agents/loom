@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Codex bodies.** A body can now run on Codex as well as Claude. The body program picks the harness by the name a model's role gives it, from one list (`src/runtime/body-harnesses.ts`); adding another harness is one file and one line there. Codex runs isolated from the machine's own Codex settings, with loom's tools and the same identity and mail as a Claude body. Two limits, both because Codex always has its shell: it only runs where the machine gives bodies full reach, and not for a body with denied tools. Its replies carry the model the job asked for, since Codex does not name the one that answered.
+
 - **A body is told how to work where it was started.** With its identity, a body now gets the agent's authored page for the venue of its conversation: `roles/<venue>.md` beside the creed. A body started by a trigger is on the `wake` venue, so `roles/wake.md` is what every lane is told, in one place, instead of a preamble and coda pasted around each lane's instructions.
 
 - **Turn one trigger off and on, and edit it.** `tempo.start` turns a stopped trigger back on; its next time is worked out from now, so nothing it missed fires. `tempo.edit` changes a trigger's words, file, times, days or label. Each edit is recorded in the new `trigger_edits` table with who made it and what the changed parts said before. Whoever could set the trigger may edit it; a project member who can stop a shared trigger cannot rewrite it. A trigger's words are now limited to 100,000 characters. An existing household database gains the table at start (schema number 3).

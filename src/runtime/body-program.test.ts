@@ -48,7 +48,7 @@ it.each(['token', 'job', 'origin', 'harness', 'conversation', 'thread', 'malform
   if (mode === 'token') value.bootstrap.token = 'machine-credential';
   if (mode === 'job') value.bootstrap.job = 'other-job';
   if (mode === 'origin') value.bootstrap.origin = 'https://loom.example/private/..';
-  if (mode === 'harness') value.job.harness = 'codex';
+  if (mode === 'harness') value.job.harness = 'constructor'; // not a harness a body can run on, though every object has one
   if (mode === 'conversation') value.job.conversation = null;
   if (mode === 'thread') value.job.thread = null;
   if (mode === 'pre-abort') f.abort.abort();
