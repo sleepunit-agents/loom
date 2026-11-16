@@ -1,3 +1,4 @@
+import {readProgramSetupTokens} from './core/data/program-setup-read.js';
 /** Trusted owner-setup logic. Outside ownership and reply release belong at
  * Root's door; persistence is supplied by the schema-owned same-DB adapter. */
 import {z} from 'zod';
@@ -13,7 +14,7 @@ const grants={records:z.array(z.string().min(1).max(200)).max(200),operations:z.
 export const programIssueInput=sharedTokenInput.options[0].omit({kind:true}).extend(grants).strict();
 export const programEditInput=z.object({fingerprint:z.string().regex(/^[0-9a-f]{64}$/),...grants}).strict();
 export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGrantStore,choices:()=>ProgramGrants){
- if(types.isAsyncFunction(store.read)||types.isAsyncFunction(store.write))throw Error('Program persistence must be synchronous SQLite');
+ if(types.isAsyncFunction(store.read)||types.isAsyncFunction(store.readMany)||types.isAsyncFunction(store.write))throw Error('Program persistence must be synchronous SQLite');
  const issuer=sharedTokens(db,clock);
  const catalogue=()=>{
   const value=choices();return normalizeProgramGrants({records:value.records,operations:value.operations.filter(name=>!isReservedProgramOperation(name))});
@@ -34,11 +35,13 @@ export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGran
  return {
   catalogue,
   list(){
-   return db.select().from(tokens).all().flatMap(token=>{
-    if(token.kind!=='owner'||!token.member)return[];
-    const value=programSnapshot(id=>store.read(id),token.fingerprint);if(!value)return[];
-    return[{fingerprint:token.fingerprint,label:token.label,member:token.member,createdAt:token.createdAt,expiresAt:token.expiresAt,revokedAt:token.revokedAt,
-     ended:!!token.revokedAt||!!token.expiresAt&&Date.parse(token.expiresAt)<=clock.now(),...value}];
+   return db.transaction(()=>{
+    const rows=readProgramSetupTokens(db),grants=store.readMany(rows.map(row=>row.fingerprint));
+    return rows.flatMap(token=>{
+     const input=grants.get(token.fingerprint);if(!input)return[];
+     const value=normalizeProgramGrants(input);
+     return[{...token,ended:!!token.revokedAt||!!token.expiresAt&&Date.parse(token.expiresAt)<=clock.now(),...value}];
+    });
    });
   },
   issue(input:z.input<typeof programIssueInput>){

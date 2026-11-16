@@ -15,7 +15,7 @@ function fixture(){
  const client=new Database(':memory:');cleanup.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  for(const id of ['owner','sam'])db.insert(members).values({id,role:id==='owner'?'owner':'member',joinedAt:at}).run();
  // This is only the explicit persistence test port, not a production fallback.
- const values=new Map<string,ProgramGrants>(),write=vi.fn((id:string,value:ProgramGrants)=>{expect(client.inTransaction).toBe(true);values.set(id,value);return undefined;}),store={read:(id:string)=>values.get(id),write};
+ const values=new Map<string,ProgramGrants>(),write=vi.fn((id:string,value:ProgramGrants)=>{expect(client.inTransaction).toBe(true);values.set(id,value);return undefined;}),store={read:(id:string)=>values.get(id),readMany:(ids:readonly string[])=>new Map([...values].filter(([id])=>ids.includes(id))),write};
  let choices:ProgramGrants={records:['tasks','projects'],operations:['tasks.command','household.setProject','runtime.boxRevoke','token.revoke','account.read','signin.rotate','sessions.revoke','program.grantsSet']};
  const service=sharedProgramSetup(db,clock,store,()=>choices);
  const root=sharedRoot({db,clock,programGrants:store.read,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>root.close());

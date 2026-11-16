@@ -1,6 +1,6 @@
 /** Canonical SQLite port. Restriction markers are never removed by grant edits. */
 import {statement} from '../db/index.js';
-import {eq} from 'drizzle-orm';
+import {eq,inArray} from 'drizzle-orm';
 import type {DataDatabase} from './database.js';
 import {programTokens,programRecordGrants,programOperationGrants} from './schema.js';
 import {normalizeProgramGrants,type ProgramGrantStore} from '../../shared-program-access.js';
@@ -15,6 +15,18 @@ export function programGrantStore(db:DataDatabase):ProgramGrantStore{
    const rows=read.all(fingerprint,fingerprint,fingerprint) as Array<{kind:string;name:string|null}>;
    if(!rows.some(row=>row.kind==='marker'))return undefined;
    return normalizeProgramGrants({records:rows.filter(row=>row.kind==='record').map(row=>row.name!),operations:rows.filter(row=>row.kind==='operation').map(row=>row.name!)});
+  },
+  readMany(fingerprints){
+   if(!fingerprints.length)return new Map();
+   return db.transaction(()=>{
+    const markers=db.query.programTokens.findMany({where:f=>inArray(f.token,fingerprints)}).sync();
+    const records=db.query.programRecordGrants.findMany({where:f=>inArray(f.token,fingerprints)}).sync();
+    const operations=db.query.programOperationGrants.findMany({where:f=>inArray(f.token,fingerprints)}).sync();
+    const result=new Map(markers.map(row=>[row.token,{records:[] as string[],operations:[] as string[]}]));
+    for(const row of records)result.get(row.token)?.records.push(row.recordType);
+    for(const row of operations)result.get(row.token)?.operations.push(row.operation);
+    return new Map([...result].map(([id,value])=>[id,normalizeProgramGrants(value)]));
+   });
   },
   write(fingerprint,input){
    if(!db.$client.inTransaction)throw Error('Program grants require the token transaction');

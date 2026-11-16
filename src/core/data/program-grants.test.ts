@@ -50,3 +50,15 @@ it('enforces both grant lists uniqueness and both name-length bounds',()=>{
  const f=fixture();f.db.transaction(()=>f.store.write(f.fingerprint,{records:['tasks'],operations:['tasks.command']}));expect(()=>f.db.insert(programOperationGrants).values({token:f.fingerprint,operation:'tasks.command'}).run()).toThrow();
  for(const name of ['', 'x'.repeat(201)]){expect(()=>f.db.insert(programRecordGrants).values({token:f.fingerprint,recordType:name}).run()).toThrow();expect(()=>f.db.insert(programOperationGrants).values({token:f.fingerprint,operation:name}).run()).toThrow();}
 });
+
+it('keeps a coherent batch snapshot while another connection replaces both grant lists',()=>{
+ const home=mkdtempSync(join(tmpdir(),'loom-program-batch-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));let replace!:()=>void,interleaved=false;
+ const f=fixture(join(home,'fiction.db'),client=>{const prepare=client.prepare.bind(client);vi.spyOn(client,'prepare').mockImplementation(source=>{const prepared=prepare(source);if(/^\s*select/i.test(source)&&source.includes('"program_tokens"')){const all=prepared.all.bind(prepared);vi.spyOn(prepared,'all').mockImplementation((...args:unknown[])=>{const rows=all(...args);if(!interleaved){interleaved=true;replace();}return rows;});}return prepared;});});
+ f.client.pragma('journal_mode = WAL');f.db.transaction(()=>f.store.write(f.fingerprint,{records:['tasks'],operations:['tasks.command']}));
+ const other=new Database(join(home,'fiction.db'));other.pragma('foreign_keys = ON');clean.push(()=>other.close());const otherDb=dataDatabase(other),otherStore=programGrantStore(otherDb);
+ replace=()=>otherDb.transaction(()=>otherStore.write(f.fingerprint,{records:['projects'],operations:['projects.read']}));
+ const snapshot=f.store.readMany([f.fingerprint,'missing']);expect(interleaved).toBe(true);
+ expect(snapshot.get(f.fingerprint)).toEqual({records:['tasks'],operations:['tasks.command']});expect(snapshot.has('missing')).toBe(false);
+ expect(otherStore.read(f.fingerprint)).toEqual({records:['projects'],operations:['projects.read']});expect(Object.isFrozen(snapshot.get(f.fingerprint))).toBe(true);
+ f.db.transaction(()=>f.store.write(f.fingerprint,{records:[],operations:[]}));expect(f.store.readMany([f.fingerprint]).get(f.fingerprint)).toEqual({records:[],operations:[]});
+});

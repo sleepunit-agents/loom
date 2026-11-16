@@ -18,7 +18,7 @@ const raw={owner:'a'.repeat(64),sam:'b'.repeat(64)},hash=(value:string)=>createH
 function fixture(fields?:Parameters<typeof sharedRoot>[0]['fields']){
  const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  for(const id of ['owner','sam'] as const){db.insert(members).values({id,role:id==='owner'?'owner':'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw[id]),kind:'owner',member:id,label:id,createdAt:at}).run();}
- const grants=new Map<string,ProgramGrants>(),store={read:(id:string)=>grants.get(id),write:(id:string,value:ProgramGrants)=>{if(!client.inTransaction)throw Error('Grant write escaped token transaction');grants.set(id,value);return undefined;}};
+ const grants=new Map<string,ProgramGrants>(),store={read:(id:string)=>grants.get(id),readMany:(ids:readonly string[])=>new Map([...grants].filter(([id])=>ids.includes(id))),write:(id:string,value:ProgramGrants)=>{if(!client.inTransaction)throw Error('Grant write escaped token transaction');grants.set(id,value);return undefined;}};
  // A supplied writer owns the reader too. An old reader option cannot widen it.
  const root=sharedRoot({db,clock,programStore:store,programGrants:()=>undefined,fields,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
  const request=(path:string,input:unknown,who='owner')=>root.http.request('http://loom'+path,{method:'POST',headers:{authorization:'Bearer '+(who in raw?raw[who as keyof typeof raw]:who),'content-type':'application/json'},body:JSON.stringify(input)});
