@@ -2,7 +2,7 @@
   "page": "tasks",
   "title": "Tasks",
   "ownerTask": "t-2239",
-  "sourceSha256": "48d0260353e64fe1fa872f7f1214f0b6c22711d65ef824a53d2fdf9d7b181427",
+  "sourceSha256": "90d087a002228597d0ed613a1bbd23963d44a07782fac31cc62138c4e4930ff5",
   "promises": [
     {
       "id": "tasks-001",
@@ -15,7 +15,7 @@
     },
     {
       "id": "tasks-002",
-      "promise": "Lets a person or an agent claim work, comment on it and close it.",
+      "promise": "Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.",
       "source": "docs/how-it-works/site/tasks.html",
       "probe": {
         "kind": "action",
@@ -87,21 +87,8 @@
     },
     {
       "id": "tasks-010",
-      "promise": "A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress. Closing it takes a reason, and the reason cancelled marks it cancelled.",
-      "source": "docs/how-it-works/site/tasks.html#how-h",
-      "probe": {
-        "kind": "all",
-        "probes": [
-          {
-            "kind": "action",
-            "action": "taskStructure"
-          },
-          {
-            "kind": "action",
-            "action": "taskLifecycle"
-          }
-        ]
-      }
+      "promise": "A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress, and unclaiming puts it back. Closing it takes a reason, and the reason cancelled marks it cancelled. A closed task can be reopened.",
+      "source": "docs/how-it-works/site/tasks.html#how-h"
     },
     {
       "id": "tasks-011",

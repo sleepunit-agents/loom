@@ -28,6 +28,7 @@ PATH = [
     ("people.html", "People and projects", "Who is in the household, which agents they own, which projects they share.", "amber"),
     ("signing-in.html", "Signing in", "How a person, an agent or a machine proves who it is.", "violet"),
     ("outside.html", "Outside programs", "The one door: the API with a token.", "amber"),
+    ("tools.html", "Tools for agents", "What an agent can do through the door, part by part.", "cyan"),
     ("data.html", "How a tile gets its data", "One live connection. A tile says what it wants and then gets only changes.", "cyan"),
     ("measuring.html", "Measuring", "How long things take, counted when you turn it on, and readable by agents.", "violet"),
     ("decided.html", "What we decided", "Every decision in plain words, with the page where it shows up.", "pink"),
@@ -292,6 +293,7 @@ def index():
         <li class="node">{key("People and projects")}<div class="node__body"><b>{plink("People and projects")}</b><span>Project, agent and member labels on each record decide who sees it.</span></div></li>
         <li class="node">{key("Signing in")}<div class="node__body"><b>{plink("Signing in")}</b><span>A person, an agent or a machine proves who it is at the door.</span></div></li>
         <li class="node">{key("Outside programs")}<div class="node__body"><b>{plink("Outside programs")}</b><span>One API with a token, for anything outside loom.</span></div></li>
+        <li class="node">{key("Tools for agents")}<div class="node__body"><b>{plink("Tools for agents")}</b><span>What an agent can do through the door, part by part.</span></div></li>
         <li class="node">{key("Secrets")}<div class="node__body"><b>{plink("Secrets")}</b><span>Credentials an agent may be handed, and a record of each use.</span></div></li>
         <li class="node">{key("Models and accounts")}<div class="node__body"><b>{plink("Models and accounts")}</b><span>Which model a body runs on, and the account it draws from.</span></div></li>
         <li class="node">{key("How a tile gets its data")}<div class="node__body"><b>{plink("How a tile gets its data")}</b><span>One live connection feeds every tile on the desk.</span></div></li>
@@ -311,7 +313,7 @@ def index():
       <li class="t-violet"><span class="key" aria-hidden="true">3</span><b>A small team that trusts each other</b><span>The project is the unit of sharing. No fine-grained permissions. Household owners see everything.</span></li>
       <li class="t-amber"><span class="key" aria-hidden="true">4</span><b>Real columns</b><span>Every fact is a named column, defined once with Drizzle. The database does the work. SQLite by default; the database is a configuration choice.</span></li>
       <li class="t-pink"><span class="key" aria-hidden="true">5</span><b>One query endpoint</b><span>A GraphQL endpoint generated from the same schema. A tile names the fields it wants, and changes arrive as subscriptions over one websocket.</span></li>
-      <li class="t-cyan"><span class="key" aria-hidden="true">6</span><b>Only memories are precious</b><span>Agents' memories are the one kind of data loom treats as irreplaceable.</span></li>
+      <li class="t-cyan"><span class="key" aria-hidden="true">6</span><b>Only memories are precious</b><span>Agents' memories are the one kind of data loom treats as irreplaceable. Notes come second: looked after, but not irreplaceable.</span></li>
       <li class="t-violet"><span class="key" aria-hidden="true">7</span><b>One program, one data folder</b><span>Quick for someone else to install. One API for the command line, the web app and agents. A restart is an acceptable deploy.</span></li>
       <li class="t-amber"><span class="key" aria-hidden="true">8</span><b>Parts can be replaced</b><span>Each part is a module with a typed interface, so the task store or a bridge can be swapped for another.</span></li>
     </ol>
@@ -578,7 +580,7 @@ def tasks():
     tchat = chat("Pond pump", c_me("Can you find a pump that fits the old hose?") + c_art('Three fit. I filed <span class="chip">t-2188</span> to pick one.')
                  + c_ref("Task", "Pick a replacement pond pump", "open") + c_work(("Pick a replacement pond pump", "open · t-2188 · Made here")))
     hero = hero_two(NUM["Tasks"], "violet", "an app", "Tasks", "<b>The household's work queue.</b> A task is one piece of work with a plain title, a goal and a reason.",
-        ["Shows what is ready to pick up, most urgent first.", "Lets a person or an agent claim work, comment on it and close it.",
+        ["Shows what is ready to pick up, most urgent first.", "Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.",
          "Groups work under a parent and holds back what is blocked.", "Carries a question to a person when the work needs a decision."],
         tile("violet", "tasks", "Tasks", mock), tchat,
         "One task shown two ways, with example content. In a chat a task is a reference: its card shows the title and state and opens the tile, where it is claimed and closed. The thread also lists the work made in it.", "Tasks")
@@ -602,7 +604,7 @@ def tasks():
         <span class="stamp">READY</span>
         <div class="flow"><span>open</span><i class="wire"><em>claim</em></i><span>in progress</span><i class="wire"><em>close</em></i><span>closed</span></div>
       </div>
-      <p>A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress. Closing it takes a reason, and the reason cancelled marks it cancelled.</p>
+      <p>A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress, and unclaiming puts it back. Closing it takes a reason, and the reason cancelled marks it cancelled. A closed task can be reopened.</p>
     </div>
     <div class="how__p t-amber">
       <h3>Parents and blockers</h3>

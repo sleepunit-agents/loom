@@ -2,7 +2,7 @@
   "page": "signing-in",
   "title": "Signing in",
   "ownerTask": "t-2236",
-  "sourceSha256": "55af0ba011b004d7b4c320fd1b14b153b954594807170363b300519c6f8875cb",
+  "sourceSha256": "47c42c573256984b5e02647fcb2680fc2eaa85abfcdaca901a56921d011256a4",
   "promises": [
     {
       "id": "signing-in-001",

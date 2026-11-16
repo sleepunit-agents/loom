@@ -25,7 +25,7 @@ class Parser(HTMLParser):
   for i in range(len(self.stack)-1,0,-1):
    if self.stack[i].tag==tag: self.stack=self.stack[:i];break
  def handle_data(self,data): self.stack[-1].children.append(data)
-owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t-2239','tempo':'t-2238','changes':'t-2239','inbox':'t-2237','memory':'t-2243','machines':'t-2241','models':'t-2241','bridges':'t-2242','secrets':'t-2242','people':'t-2236','signing-in':'t-2236','outside':'t-2236','data':'t-2254','measuring':'t-2234','decided':'t-2190','index':'t-2190'}
+owners={'conversations':'t-2237','desk':'t-2240','tasks':'t-2239','approvals':'t-2239','tempo':'t-2238','changes':'t-2239','inbox':'t-2237','memory':'t-2243','machines':'t-2241','models':'t-2241','bridges':'t-2242','secrets':'t-2242','people':'t-2236','signing-in':'t-2236','outside':'t-2236','data':'t-2254','measuring':'t-2234','decided':'t-2190','tools':'t-2190','index':'t-2190'}
 # Narrow observable criteria supplement broad prose. Text presence proves only
 # these visible facts, never the whole behavioral promise it came from.
 ui={

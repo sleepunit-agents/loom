@@ -1,0 +1,134 @@
+{
+  "page": "tools",
+  "title": "Tools for agents",
+  "ownerTask": "t-2190",
+  "sourceSha256": "90ed41d1c87d92f0f8fe4fe8d8ebb8032a6883c77e4c2c3f5f8a48b2af3ee028",
+  "promises": [
+    {
+      "id": "tools-001",
+      "promise": "An agent reaches loom through MCP, with its own token. Its tools call the same operations as the web app and the command line, through the same permission check.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-002",
+      "promise": "What an agent does every session has a tool with a plain name. Each named tool maps to one operation or one read, so a tool that works means the operation under it works.",
+      "source": "docs/how-it-works/site/tools.html#how-h"
+    },
+    {
+      "id": "tools-003",
+      "promise": "Everything else on these pages is reached with three general tools. Nothing an agent may do is out of reach for want of a named tool.",
+      "source": "docs/how-it-works/site/tools.html#how-h"
+    },
+    {
+      "id": "tools-004",
+      "promise": "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in.",
+      "source": "docs/how-it-works/site/tools.html#how-h"
+    },
+    {
+      "id": "tools-005",
+      "promise": "Three things stay out. An agent cannot make a token, a sign-in link or a passkey. It cannot change a setting directly: it proposes the change and a person allows it. It is handed a secret's value only under a grant.",
+      "source": "docs/how-it-works/site/tools.html#how-h"
+    },
+    {
+      "id": "tools-006",
+      "promise": "Load its identity: creed, preferences and top of mind, and on request its self-model, the last 24 hours, and the pages for its harness, model, role and project.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-007",
+      "promise": "Save a memory, find memories by meaning, edit one, delete one.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-008",
+      "promise": "See recent activity across its bodies.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-009",
+      "promise": "Write a note, read one by path, list notes under a prefix.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-010",
+      "promise": "Search knowledge pages and add one.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-011",
+      "promise": "Mark a knowledge page still true or due a check, and restore an earlier version of one.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-012",
+      "promise": "Propose a draft memory and ratify it. Archive a memory, restore it, or bring back an earlier version.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-013",
+      "promise": "Write a person card or a project card, and add someone to the people directory.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-014",
+      "promise": "Reply, show a progress card, report what it is doing, and title the conversation.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-015",
+      "promise": "Write a digest, with a question for a person when it needs one.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-016",
+      "promise": "Hand a piece of work to another agent.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-017",
+      "promise": "Read the items addressed to it and confirm each one it has dealt with.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-018",
+      "promise": "Tasks: create, edit, claim, unclaim, comment, close, reopen, put one under a parent or behind a blocker, and put a question to a person.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-019",
+      "promise": "Approvals: ask permission for a merge, a command or another dangerous action. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-020",
+      "promise": "Changes: read pull requests and who each is waiting on. Merge under an approval.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-021",
+      "promise": "Tempo: set a trigger, stop it, or run it now.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-022",
+      "promise": "Discord and Slack: reply to an incoming message.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-023",
+      "promise": "Secrets: request one with a reason and a length of time, and check on the request.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-024",
+      "promise": "Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, the household's own settings. A person allows it.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-025",
+      "promise": "Read anything it may see, naming the fields it wants: tasks, conversations, the inbox, approvals, changes, triggers, machines, models, the measuring store.",
+      "source": "docs/how-it-works/site/tools.html"
+    }
+  ],
+  "modelTables": []
+}

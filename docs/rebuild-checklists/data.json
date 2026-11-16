@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "3784ae68e14bae9ba8dc01121dee5b83c45f6becb80b2f9cb258d238460ab07e",
+  "sourceSha256": "565b3bb013711b4f826860c48267cf775d5740d2d75b1704ac56b95d7c8355ec",
   "promises": [
     {
       "id": "data-001",

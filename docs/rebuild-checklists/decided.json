@@ -2,7 +2,7 @@
   "page": "decided",
   "title": "What we decided",
   "ownerTask": "t-2190",
-  "sourceSha256": "29af64bcfe0fb345eba12c190c5f2d7e3f383f4dd279ae309a6ca5d553f49d53",
+  "sourceSha256": "a863884862d2f8a7b96522e913871fe7b25f9d329c55f8f01ec0654089a7add7",
   "promises": [
     {
       "id": "decided-001",
@@ -81,56 +81,66 @@
     },
     {
       "id": "decided-016",
-      "promise": "Every task has an owner.",
+      "promise": "An agent reaches loom through MCP: named tools for what it does every session, three general tools for everything else. It cannot make credentials, and it proposes a settings change instead of making it.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-017",
-      "promise": "A concrete data model in real columns, defined once in Drizzle. The database does the work.",
+      "promise": "Every task has an owner.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-018",
-      "promise": "SQLite by default. The database is a configuration choice.",
+      "promise": "A concrete data model in real columns, defined once in Drizzle. The database does the work.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-019",
-      "promise": "One query endpoint in a community standard, GraphQL, generated from the same schema. Changes arrive as subscriptions over a websocket.",
+      "promise": "SQLite by default. The database is a configuration choice.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-020",
-      "promise": "Agents' memories are the only data loom treats as precious.",
+      "promise": "One query endpoint in a community standard, GraphQL, generated from the same schema. Changes arrive as subscriptions over a websocket.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-021",
-      "promise": "The clock is part of tempo: triggers, the inbox as the pile, the sweep, volume.",
+      "promise": "Agents' memories are the only data loom treats as precious.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-022",
-      "promise": "Measuring is off unless a household owner turns it on. Loom is instrumented once in the standard way, and measurements go to a monitoring tool you already run, to loom's own store, or both. Agents can read the local store.",
+      "promise": "Notes come second to memories. Every backup and every move carries all of them, whatever their lifespan, but they are not irreplaceable.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-023",
-      "promise": "There are always two programs, loom and a worker. Nothing runs inside loom itself. A worker may share loom's machine.",
+      "promise": "The clock is part of tempo: triggers, the inbox as the pile, the sweep, volume.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-024",
-      "promise": "Tempo's timings are adjustable per person, with defaults.",
+      "promise": "Measuring is off unless a household owner turns it on. Loom is instrumented once in the standard way, and measurements go to a monitoring tool you already run, to loom's own store, or both. Agents can read the local store.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-025",
-      "promise": "The runtime handles model accounts, runners and which model a body uses.",
+      "promise": "There are always two programs, loom and a worker. Nothing runs inside loom itself. A worker may share loom's machine.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {
       "id": "decided-026",
+      "promise": "Tempo's timings are adjustable per person, with defaults.",
+      "source": "docs/how-it-works/site/decided.html"
+    },
+    {
+      "id": "decided-027",
+      "promise": "The runtime handles model accounts, runners and which model a body uses.",
+      "source": "docs/how-it-works/site/decided.html"
+    },
+    {
+      "id": "decided-028",
       "promise": "An account's owner and household owners see its detail. Everyone else sees a summary.",
       "source": "docs/how-it-works/site/decided.html"
     }

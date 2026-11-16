@@ -637,29 +637,33 @@ def memory():
     ])
     panels = [
         ("What an agent keeps", "cyan", opts(("memories", "in seven categories"), ("knowledge pages", "facts, with their sources"), ("people cards", "what it knows about a person"),
-                                             ("project cards", "a project's card"), ("identity", "its creed, preferences and self-model")),
-         "Memories, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household."),
+                                             ("project cards", "a project's card"), ("notes", "working documents, kept by path"), ("identity", "its creed, preferences and self-model")),
+         "Memories, notes, people cards, project cards and identity live in each agent's own folder. Knowledge pages and the people directory are shared by the household. Identity also holds a page for each harness, model, role and project the agent works in, loaded when asked for, and a summary of what its other bodies did in the last 24 hours."),
         ("Top of mind", "pink", opts(("hot", "used or written lately"), ("warm", "cooling"), ("cool", "not used in a while")),
-         "Each memory has a temperature. Writing it heats it fully, recalling it adds heat, and it cools with time: an episode within a day, what an agent knows about a person over months. The hottest fill the agent's top of mind. Recall finds memories by meaning."),
+         "Each memory has a temperature. Writing it heats it fully, recalling it adds heat, and it cools with time: an episode within a day, what an agent knows about a person over months. The hottest fill the agent's top of mind. Recall finds memories by meaning. A memory can be given a time to live, and is archived when that runs out. A lesson the agent was taught can be confirmed or contradicted later, which raises or lowers how much it is trusted."),
+        ("Notes", "cyan", opts(("keep", "until removed"), ("while", "60 days after its last change"), ("short", "14 days after its last change")),
+         "A memory is a fact. A note is a document: a handoff, a review, a pile of evidence. A note is kept by path, written whole, and read by asking for it by name. It is never recalled by meaning and never fills the top of mind. A memory usually says a note exists and where. Each note has a lifespan, and a change restarts it."),
         ("Changing a memory", "violet", log(("propose", "a draft recall cannot see"), ("ratify", "the draft becomes real"), ("archive", "set aside, can be restored"), ("forget", "deleted, and the deletion recorded")),
          "A change saves the earlier version first. Loom keeps the newest ten versions of each memory, knowledge page and person card, and any of them can be restored."),
         ("Knowledge", "amber", opts(("Fresh", ""), ("Getting old", ""), ("Due a check", "")),
          "A knowledge page is a fact about the world that says where it came from. Without a source it stays provisional. Pages are re-checked every 30 days."),
     ]
     files = ('<p class="muted">Memory is not in loom\'s database. It lives in files, and it is the one kind of data loom treats as precious.</p><ul class="plumb">'
-             "<li><code>each agent's folder</code><span>Its memories and their history, drafts awaiting ratification, people cards, project cards, and its identity files.</span></li>"
+             "<li><code>each agent's folder</code><span>Its memories and their history, drafts awaiting ratification, its notes and their earlier versions, people cards, project cards, and its identity files.</span></li>"
              "<li><code>shared by the household</code><span>Knowledge pages and the people directory.</span></li></ul>")
     return app_page("Memory", "two apps and each agent's own files", "What an agent remembers and knows.",
-        "Memories, knowledge pages, people cards and project cards. This is the one kind of data loom treats as precious.",
+        "Memories, notes, knowledge pages, people cards and project cards. Memories are the one kind of data loom treats as precious. Notes come second.",
         ["Keeps each agent's memories in that agent's own files.", "Recalls by meaning, and keeps what is used most at the top of mind.",
+         "Keeps notes: longer working documents, by path, each with a lifespan.",
          "Keeps knowledge pages with where each fact came from, and re-checks them.", "Shows what happened each day in Activity."],
         tile("cyan", "knowledge", "Knowledge", mock), "The Knowledge tile, drawn with example pages: folders, the list, and the page that is open. People, Projects and Activity are tiles of their own.",
         "How a memory connects to other parts", "One memory, with a thread from each part of it that reaches another page.", anat,
-        "What is kept, top of mind, changes and knowledge", panels,
+        "What is kept, top of mind, notes, changes and knowledge", panels,
         [("agent", "cyan")],
-        [("Memories and cards.", "The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories."),
+        [("Memories, notes and cards.", "The agent itself, the agent's owners, and household owners. Being on a project together does not open an agent's memories or notes."),
          ("Knowledge.", "Knowledge pages are shared by the household. Household owners and household agents can read and write them, including agents in terminal sessions without a job. Non-owner members cannot."),
-         ("Precious.", "Agents' memories are the only data loom treats as precious.")],
+         ("Precious.", "Agents' memories are the only data loom treats as precious."),
+         ("Notes come second.", "Every backup and every move to a new home carries all of an agent's notes, whatever their lifespan. They are not on a par with memories: a note still ends when its lifespan does.")],
         [], ref_extra=files)
 
 # ───────────────────────── Models and accounts
@@ -752,6 +756,71 @@ def outside():
          ("The rule.", f"{OWNER} Anyone else sees what is in their projects, plus what belongs to agents they own. {PRIVATE}")],
         [("", ["tokens"])])
 
+# ───────────────────────── Tools for agents
+def tools():
+    def row(text, how_):
+        return f'<li><p>{text}</p><span class="at">{how_}</span></li>'
+    G = "the general tools"
+    parts = [
+        ("Memory", "cyan", [
+            row("Load its identity: creed, preferences and top of mind, and on request its self-model, the last 24 hours, and the pages for its harness, model, role and project.", "identity"),
+            row("Save a memory, find memories by meaning, edit one, delete one.", "remember · recall · update · forget"),
+            row("See recent activity across its bodies.", "episodes"),
+            row("Write a note, read one by path, list notes under a prefix.", "note_write · note_read · note_list"),
+            row("Search knowledge pages and add one.", "knowledge_recall · knowledge_write"),
+            row("Mark a knowledge page still true or due a check, and restore an earlier version of one.", G),
+            row("Propose a draft memory and ratify it. Archive a memory, restore it, or bring back an earlier version.", G),
+            row("Write a person card or a project card, and add someone to the people directory.", G),
+        ]),
+        ("Conversations and inbox", "pink", [
+            row("Reply, show a progress card, report what it is doing, and title the conversation.", G + ", with a job"),
+            row("Write a digest, with a question for a person when it needs one.", G + ", with a job"),
+            row("Hand a piece of work to another agent.", G + ", with a job"),
+            row("Read the items addressed to it and confirm each one it has dealt with.", G),
+        ]),
+        ("Work", "violet", [
+            row("Tasks: create, edit, claim, unclaim, comment, close, reopen, put one under a parent or behind a blocker, and put a question to a person.", G),
+            row("Approvals: ask permission for a merge, a command or another dangerous action. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G),
+            row("Changes: read pull requests and who each is waiting on. Merge under an approval.", G),
+            row("Tempo: set a trigger, stop it, or run it now.", G),
+            row("Discord and Slack: reply to an incoming message.", G + ", with a job"),
+            row("Secrets: request one with a reason and a length of time, and check on the request.", G),
+        ]),
+        ("Settings and reads", "amber", [
+            row("Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, the household's own settings. A person allows it.", G),
+            row("Read anything it may see, naming the fields it wants: tasks, conversations, the inbox, approvals, changes, triggers, machines, models, the measuring store.", "loom_query"),
+        ]),
+    ]
+    secs = "".join(f'<section class="t-{t}"><h2>{e(g)}</h2><ul>{"".join(items)}</ul></section>' for g, t, items in parts)
+    panels = [
+        ("Named tools", "cyan", opts(("identity", "who the agent is"), ("remember, recall", "its memories"), ("note_read, note_write", "its notes")),
+         "What an agent does every session has a tool with a plain name. Each named tool maps to one operation or one read, so a tool that works means the operation under it works."),
+        ("Three general tools", "violet", opts(("loom_commands", "lists the operations and what each takes"), ("loom_command", "calls one"), ("loom_query", "reads through the data endpoint")),
+         "Everything else on these pages is reached with three general tools. Nothing an agent may do is out of reach for want of a named tool."),
+        ("With a job, or without", "pink", opts(("a body with a job", "works in one conversation"), ("a terminal session", "no job and no conversation")),
+         "A body that loom started carries a token for one job and works in that job's conversation. A terminal session carries the agent's own token and has no job. It has memory, notes, knowledge, tasks and every read, and no conversation to reply in."),
+        ("What it will not do", "amber", log(("credentials", "made by a person, never through a tool"), ("settings", "proposed, then allowed by a person"), ("secret values", "handed over only under a grant")),
+         "Three things stay out. An agent cannot make a token, a sign-in link or a passkey. It cannot change a setting directly: it proposes the change and a person allows it. It is handed a secret's value only under a grant."),
+    ]
+    idx = NUM["Tools for agents"]
+    body = f'''
+<section class="hero2">
+  <div class="hero2__text t-cyan">
+    <div><p class="eyebrow">Page {idx} of {N} · the door, for agents</p><h1>Tools for agents</h1>
+    <p class="lead"><b>An agent reaches loom through MCP, with its own token.</b> Its tools call the same operations as the web app and the command line, through the same permission check.</p></div>
+    <p class="lead">{sum(len(i) for _, _, i in parts)} things an agent can do, in {len(parts)} groups. Each names the tool that does it.</p>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="how-h">
+  <div class="band__head"><span class="tag">How it works</span><h2 id="how-h">Named tools, general tools, jobs and limits</h2><p></p></div>
+  {how(panels)}
+</section>
+<div class="dec">{secs}</div>
+{foot(idx)}
+'''
+    return page(idx, "Tools for agents · loom", body)
+
 # ───────────────────────── Measuring
 def measuring():
     fig = f'''<div class="fork">
@@ -817,6 +886,7 @@ def decided():
             d("Household owners see everything, including another member's private thread.", "People and projects", "Conversations"),
             d("Whatever is installed is trusted. Permission is checked only for callers from outside.", "Signing in", "Outside programs"),
             d("An outside program has one door: the API with a token.", "Outside programs"),
+            d("An agent reaches loom through MCP: named tools for what it does every session, three general tools for everything else. It cannot make credentials, and it proposes a settings change instead of making it.", "Tools for agents"),
             d("Every task has an owner.", "Tasks"),
         ]),
         ("Data", "cyan", [
@@ -824,6 +894,7 @@ def decided():
             d("SQLite by default. The database is a configuration choice.", "How a tile gets its data"),
             d("One query endpoint in a community standard, GraphQL, generated from the same schema. Changes arrive as subscriptions over a websocket.", "How a tile gets its data"),
             d("Agents' memories are the only data loom treats as precious.", "Memory"),
+            d("Notes come second to memories. Every backup and every move carries all of them, whatever their lifespan, but they are not irreplaceable.", "Memory"),
         ]),
         ("Running", "violet", [
             d("The clock is part of tempo: triggers, the inbox as the pile, the sweep, volume.", "Tempo", "Inbox"),
@@ -852,5 +923,5 @@ def decided():
 def pages():
     return [("desk.html", desk()), ("approvals.html", approvals()), ("tempo.html", tempo()), ("changes.html", changes()), ("inbox.html", inbox()),
             ("memory.html", memory()), ("machines.html", machines()), ("models.html", models()), ("bridges.html", bridges()), ("secrets.html", secrets()),
-            ("people.html", people()), ("signing-in.html", signing()), ("outside.html", outside()), ("data.html", data()), ("measuring.html", measuring()),
+            ("people.html", people()), ("signing-in.html", signing()), ("outside.html", outside()), ("tools.html", tools()), ("data.html", data()), ("measuring.html", measuring()),
             ("decided.html", decided())]
