@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- The MCP door gains nineteen named tools: `memory_propose`, `memory_drafts`, `memory_ratify`, `memory_archive`, `memory_restore`, `memory_history`, `knowledge_read`, `knowledge_edit`, `knowledge_check`, `knowledge_restore`, `task_ready`, `task`, `task_create`, `task_edit`, `task_claim`, `task_close`, `task_comment`, `propose`, `approvals` and `inbox`.
+- The MCP door gains twenty named tools: `memory_propose`, `memory_drafts`, `memory_ratify`, `memory_archive`, `memory_restore`, `memory_history`, `knowledge_read`, `knowledge_edit`, `knowledge_check`, `knowledge_restore`, `task_ready`, `task`, `task_create`, `task_edit`, `task_claim`, `task_close`, `task_comment`, `propose`, `approvals` and `inbox`.
 
 - Allowing a dangerous approval card now needs `confirm: true` on `approvals.answer`. `household.propose` can also file two more dangerous actions: revoking a machine and signing out a browser.
 
