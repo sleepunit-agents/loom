@@ -19,7 +19,7 @@ export async function conversationMail({page,app,clock,example,out,open}){
  const body=async cv=>{
   const queued=cv.job?db.select().from(jobs).where(eq(jobs.id,cv.job)).get():undefined;
   check(!cv.job||queued?.state==='queued'&&queued.agent===cv.agent&&queued.member===cv.member&&queued.project===cv.project,'The new fixture conversation already has a different active body');
-  const box=db.select({id:boxes.id}).from(boxes).get();check(!!box,'The normal example has no configured worker box');
+  const box=db.select({id:boxes.id,revokedAt:boxes.revokedAt}).from(boxes).where(eq(boxes.id,example.runtime.box)).get();check(!!box&&!box.revokedAt,'The normal example worker box is unavailable');
   const id=queued?.id??'walkthrough-'+randomUUID(),token='body_'+randomBytes(32).toString('hex');
   write(()=>{
    if(queued)db.update(jobs).set({state:'running',box:box.id,startedAt:now()}).where(eq(jobs.id,id)).run();

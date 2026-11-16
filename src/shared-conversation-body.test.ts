@@ -30,11 +30,10 @@ it('binds retry fingerprints to the authenticated run and never guesses a reques
  expect((await f.call('turn',{kind:'note'},'same')).status).toBe(409);expect(f.db.select().from(s.turns).all()).toHaveLength(1);
  expect((await f.call('turn',{kind:'note'},'new')).status).toBe(200);expect(f.db.select().from(s.turns).all()).toMatchObject([{run:'job',model:null},{run:'job2',model:null}]);
 });
-it('refuses member-private non-Comms questions before plaintext storage and keeps private fingerprints keyed',async()=>{
+it('encrypts member-private non-Comms questions and keeps private fingerprints keyed',async()=>{
  const f=await fixture();f.root.writes.run(()=>f.db.update(s.conversations).set({venue:'wake'}).where(eq(s.conversations.id,f.thread.conversation)).run());
  const input={summary:'Work',question:{to:'alice',answers:'words',words:'PRIVATE WAKE QUESTION'}};
- expect((await f.call('digest',input,'unsupported')).status).toBe(403);expect(f.db.select().from(s.inbox).all()).toEqual([]);expect(f.db.select().from(s.operationResults).all()).toEqual([]);
- f.root.writes.run(()=>f.db.update(s.conversations).set({venue:'loom'}).where(eq(s.conversations.id,f.thread.conversation)).run());
+ expect((await f.call('digest',input,'private')).status).toBe(200);expect(JSON.stringify(f.db.select().from(s.inbox).all())).not.toContain('PRIVATE WAKE QUESTION');
  expect((await f.call('digest',input,'private')).status).toBe(200);
  const receipt=f.db.select().from(s.operationResults).get()!;
  const canonical='{"question":{"answers":"words","to":"alice","words":"PRIVATE WAKE QUESTION"},"summary":"Work"}';
