@@ -34,7 +34,7 @@ it('lists the names a terminal session already calls',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
   expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
-   ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','loom_query','loom_command','loom_commands']));
+   ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
 },30_000);
 
@@ -125,5 +125,28 @@ it('loads identity as a core with an index, and further pieces by name',async()=
   expect(foreign.data).toEqual({memoryIdentity:null});
   const escape=JSON.parse((await art.call('loom_query',{query:'{memoryIdentity(agent:"art"){a:page(kind:"harness",name:"..") b:page(kind:"__proto__",name:"x") c:page(kind:"role",name:"tend")}}'})).text);
   expect(escape.data).toEqual({memoryIdentity:{a:null,b:null,c:'FICTIONAL_ROLE'}});
+ }finally{await art.client.close();await mark.client.close();await p.close();}
+},30_000);
+
+it('writes, reads and lists person and project cards, and keeps them from another agent',async()=>{
+ const {p,connect}=await program(),art=await connect('art'),mark=await connect('mark');
+ try{
+  expect((await art.call('person_write',{slug:'fictional-pat',name:'Pat Fictional',summary:'FICTIONAL_PERSON_SUMMARY'})).error).toBe(false);
+  const person=(await art.call('person',{slug:'fictional-pat'})).text;
+  expect(person).toContain('# Pat Fictional');expect(person).toContain('FICTIONAL_PERSON_SUMMARY');
+  expect((await art.call('person',{})).text).toContain('- fictional-pat (Pat Fictional)');
+  expect((await art.call('person',{slug:'nobody-here'})).text).toBe('No person card for nobody-here');
+  expect((await art.call('person_write',{slug:'fictional-pat',summary:'FICTIONAL_SECOND_SUMMARY',merge:true})).error).toBe(false);
+  const merged=(await art.call('person',{slug:'fictional-pat'})).text;
+  expect(merged).toContain('# Pat Fictional');expect(merged).toContain('FICTIONAL_SECOND_SUMMARY');
+  expect((await art.call('project_write',{slug:'fictional-pond',name:'Fictional Pond',status:'active',summary:'FICTIONAL_PROJECT_SUMMARY',goal:'FICTIONAL_GOAL'})).error).toBe(false);
+  const project=(await art.call('project',{slug:'fictional-pond'})).text;
+  expect(project).toContain('# Fictional Pond');expect(project).toContain('active');expect(project).toContain('FICTIONAL_PROJECT_SUMMARY');expect(project).toContain('FICTIONAL_GOAL');
+  expect((await art.call('project',{})).text).toContain('- fictional-pond (Fictional Pond)');
+  expect((await art.call('person_write',{slug:'Not A Slug'})).error).toBe(true);
+  // Mark has his own store: Art's cards are not in his lists or readable by slug.
+  expect((await mark.call('person',{slug:'fictional-pat'})).text).toBe('No person card for fictional-pat');
+  expect((await mark.call('person',{})).text).not.toContain('fictional-pat');
+  expect((await mark.call('project',{slug:'fictional-pond'})).text).toBe('No project card for fictional-pond');
  }finally{await art.client.close();await mark.client.close();await p.close();}
 },30_000);

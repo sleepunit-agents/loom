@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- The MCP door gains four named tools: `person`, `person_write`, `project` and `project_write`, for an agent's own person and project cards.
+
 - `tasks.command` gains `move` (place a task before another in the hand-kept order, or last) and `create` accepts the spec line a task implements.
 
 - Add the `bridges.file` read: list the Slack attachments a message carried, or return one, for the connection's agent and household owners.

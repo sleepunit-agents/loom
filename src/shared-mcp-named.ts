@@ -153,6 +153,58 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    if(!data.memoryNotes.length)return 'No notes'+(input.prefix?' under '+input.prefix:'')+'.';
    return data.memoryNotes.map(note=>'- '+note.path+' ('+note.lifespan+', '+note.bytes+' bytes'+(note.files?', '+note.files+' files':'')+', updated '+note.updated+(note.expires?', expires '+note.expires:'')+')').join('\n');
   });
+
+ // Cards: what you know about a person, and a project's card. Each lives in your own store, addressed by slug.
+ const slug=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),facts=z.record(z.string(),z.unknown());
+ const shown=(value:CardValue|string|null|undefined)=>value==null?'':typeof value==='string'?value:value.text??(value.strings?value.strings.join(', '):value.number!=null?String(value.number):value.boolean!=null?String(value.boolean):'');
+ tool('person','Read your card on one person by slug, or list the people you have cards on.',
+  z.object({slug:slug.optional()}).strict(),
+  async(input,agent)=>{
+   if(!input.slug){
+    const data=await read<{memoryPeople:{slug:string;name:string;agent:string}[]|null}>('{memoryPeople{slug name agent}}',{});
+    const mine=(data.memoryPeople??[]).filter(row=>row.agent===agent);
+    return mine.length?mine.map(row=>'- '+row.slug+' ('+row.name+')').join('\n'):'No person cards.';
+   }
+   const data=await read<{memoryPerson:PersonCard|null}>('query($id:String!){memoryPerson(id:$id){slug name updated card{summary where{key label source verified_at value{text number boolean strings}} how{key value{text number boolean strings}} may{text source}}}}',{id:agent+':'+input.slug});
+   const person=data.memoryPerson;if(!person)return 'No person card for '+input.slug;
+   const card=person.card,lines=['# '+person.name,'_'+person.slug+' · updated '+person.updated+'_'];
+   if(card?.summary)lines.push('',card.summary);
+   if(card?.where?.length)lines.push('','## Where',...card.where.map(row=>'- '+(row.label||row.key)+': '+shown(row.value)+(row.verified_at?' (verified '+row.verified_at+')':'')));
+   if(card?.how?.length)lines.push('','## How',...card.how.map(row=>'- '+row.key+': '+shown(row.value)));
+   if(card?.may?.length)lines.push('','## May',...card.may.map(row=>'- '+row.text+' ('+row.source+')'));
+   return lines.join('\n');
+  });
+
+ tool('person_write','Write your card on a person. Pass merge: true to change only the fields you name.',
+  z.object({slug,name:z.string().max(200).optional(),summary:z.string().max(4000).optional(),where:facts.optional(),how:facts.optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict(),
+  async input=>{await run('memory.personWrite',input);return 'Saved person card '+input.slug;});
+
+ tool('project','Read one of your project cards by slug, or list them.',
+  z.object({slug:slug.optional()}).strict(),
+  async(input,agent)=>{
+   if(!input.slug){
+    const data=await read<{memoryProjects:{slug:string;name:string;agent:string}[]|null}>('{memoryProjects{slug name agent}}',{});
+    const mine=(data.memoryProjects??[]).filter(row=>row.agent===agent);
+    return mine.length?mine.map(row=>'- '+row.slug+' ('+row.name+')').join('\n'):'No project cards.';
+   }
+   const data=await read<{memoryProject:ProjectCard|null}>('query($id:String!){memoryProject(id:$id){slug name updated card{status summary goal where{key value verified_at} links{aliases notes epic repos venues}}}}',{id:agent+':'+input.slug});
+   const project=data.memoryProject;if(!project)return 'No project card for '+input.slug;
+   const card=project.card,lines=['# '+project.name,'_'+project.slug+(card?.status?' · '+card.status:'')+' · updated '+project.updated+'_'];
+   if(card?.summary)lines.push('',card.summary);
+   if(card?.goal)lines.push('','## Goal','',card.goal);
+   if(card?.where?.length)lines.push('','## Where',...card.where.map(row=>'- '+row.key+': '+shown(row.value)+(row.verified_at?' (verified '+row.verified_at+')':'')));
+   const links=Object.entries(card?.links??{}).filter(([,value])=>Array.isArray(value)?value.length:value);
+   if(links.length)lines.push('','## Links',...links.map(([key,value])=>'- '+key+': '+(Array.isArray(value)?value.join(', '):value)));
+   return lines.join('\n');
+  });
+
+ tool('project_write','Write one of your project cards. Pass merge: true to change only the fields you name.',
+  z.object({slug,name:z.string().max(200).optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().max(4000).optional(),goal:z.string().max(4000).optional(),where:facts.optional(),
+   links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict(),
+  async input=>{await run('memory.projectWrite',input);return 'Saved project card '+input.slug;});
 }
+interface CardValue{text?:string|null;number?:number|null;boolean?:boolean|null;strings?:string[]|null}
+interface PersonCard{slug:string;name:string;updated:string;card:{summary:string|null;where:{key:string;label:string|null;source:string|null;verified_at:string|null;value:CardValue|null}[]|null;how:{key:string;value:CardValue|null}[]|null;may:{text:string;source:string}[]|null}|null}
+interface ProjectCard{slug:string;name:string;updated:string;card:{status:string|null;summary:string|null;goal:string|null;where:{key:string;value:string|null;verified_at:string|null}[]|null;links:Record<string,string|string[]|null>|null}|null}
 /** A refusal whose words are safe to show the caller. */
 class Refusal extends Error{}
