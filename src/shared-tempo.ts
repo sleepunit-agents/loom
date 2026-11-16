@@ -25,10 +25,8 @@ export interface SharedTempoOptions {
   operation?: TempoOptions['operation'];
   instructions?: TempoOptions['instructions'];
   changeRevision?: TempoOptions['changeRevision'];
-  settings?: TempoOperationOptions['settings'];
   mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
   chatMember?(viewer: Viewer): string | undefined;
-  settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
 }
@@ -53,13 +51,10 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => {
       // Chat is the control surface. A current body may carry out its recorded
       // member's ordinary mailbox preference, without becoming that member.
-      const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
-      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).sourceAllowsItem({kind:'member',id:person},access.item.id)
-        : access.action === 'settings' && access.who.kind === 'person' && access.who.id === person);
-      return (tempoCommandAllowed(db, viewer, access) || delegated) &&
-        (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who));
+      const person = access.action === 'volume' ? options.chatMember?.(viewer) : undefined;
+      const delegated = !!person && access.action === 'volume' && access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).sourceAllowsItem({kind:'member',id:person},access.item.id);
+      return tempoCommandAllowed(db, viewer, access) || delegated;
     },
-      settings: options.settings ?? (() => { throw new Error('Settings proposal needs authenticated chat context'); }),
     },
   });
 }

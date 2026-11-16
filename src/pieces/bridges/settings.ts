@@ -19,6 +19,19 @@ export const bridgeSetting=z.discriminatedUnion('action',[...bridgeConfiguration
 ]);
 export class BridgeSettings {
  constructor(private db:DataDatabase,private now:()=>string,private commit:<T>(write:()=>T)=>T){}
+ /** What a configuration change would replace, or null when there is nothing there yet. */
+ read(value:z.infer<typeof bridgeConfiguration>):Record<string,unknown>|null{
+  const sorted=(values:string[])=>[...new Set(values)].sort();
+  switch(value.action){
+   case 'connection':case 'disconnect':{
+    const row=this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,value.id)).get();if(!row)return null;
+    const {state:_state,stateAt:_at,...config}=row,filters=this.db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection,value.id)).all();
+    return {...config,only:sorted(filters.filter(row=>row.rule==='only').map(row=>row.channel)),ignore:sorted(filters.filter(row=>row.rule==='ignore').map(row=>row.channel))};
+   }
+   case 'channel':case 'removeChannel':return this.db.select().from(bridgeChannels).where(and(eq(bridgeChannels.platform,value.platform),eq(bridgeChannels.workspace,value.workspace),eq(bridgeChannels.channel,value.channel))).get()??null;
+   case 'person':case 'removePerson':return this.db.select().from(bridgePeople).where(and(eq(bridgePeople.platform,value.platform),eq(bridgePeople.workspace,value.workspace),eq(bridgePeople.user,value.user))).get()??null;
+  }
+ }
  change(raw:z.input<typeof bridgeSetting>){
   const input=bridgeSetting.parse(raw);
   return this.commit(()=>this.db.transaction(()=>{

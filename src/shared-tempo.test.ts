@@ -53,19 +53,6 @@ it('holds paused triggers, resumes through shared commands, then stops timers be
  expect(f.db.select().from(jobs).all()).toEqual(before);
 });
 
-it('fails settings closed without chat provenance and forwards configured adapters from trusted composition',async()=>{
- const f=fixture();
- expect((await f.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).status).toBe(403);
- const settings=vi.fn(()=>({id:'proposal'})),admit=vi.fn(()=>true),operation=vi.fn(),instructions=vi.fn(()=> 'From repository');
- const g=fixture({settings,admit,operation,instructions,repository:'/must-not-be-read'});
- expect(await (await g.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).json()).toEqual({ok:true,value:{id:'proposal'}});
- expect(settings).toHaveBeenCalledWith({kind:'member',id:'owner'},{kind:'agent',id:'art'},{settleSeconds:60});
- expect((await g.call('tempo.set',{...g.trigger,instructions:null,file:'routines/check.md'},'file')).status).toBe(200);
- expect(instructions).toHaveBeenCalledWith('routines/check.md');
- g.clock.advance(5000);expect(admit).toHaveBeenCalledWith({kind:'agent',id:'art'},expect.arrayContaining([expect.objectContaining({words:'From repository'})]));
- expect((await g.call('tempo.set',{...g.trigger,times:g.now(),id:'operation',targetKind:'operation',target:'custom.operation'},'operation')).status).toBe(200);
- expect(operation).toHaveBeenCalledWith('custom.operation',expect.objectContaining({id:'operation'}),expect.any(String));
-});
 it('publishes settled person notifications and rejects unknown operation targets while allowing the built-in sweep',async()=>{
  const f=fixture(),publish=vi.fn();
  // Exercise the actual default notification admission, including the post-settle publication.

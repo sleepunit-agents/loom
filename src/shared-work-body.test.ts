@@ -67,16 +67,6 @@ it.each(['stopped','revoked','box'] as const)('denies fresh and cached Work requ
  expect([401,403]).toContain((await f.call('request',request,'request')).status);expect([401,403]).toContain((await f.call('request',request,'new')).status);expect(f.snapshot()).toEqual(before);
 });
 
-it('keeps operation-backed proposals with typed producers and never executes a supplied handler',async()=>{
- const f=await fixture(),before=f.snapshot();
- for(const kind of ['setting','dangerous'] as const)expect((await f.call('request',{...request,kind,target:'tempo:person:alice',operation:'tempo.settings',changeSummary:'forged',details:'{}'})).status).toBe(400);
- expect((await f.call('request',{...request,operation:'tempo.settings'})).status).toBe(400);expect(f.snapshot()).toEqual(before);
- const response=await f.root.http.request('/api/tempo/proposeSettings',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.body},body:JSON.stringify({input:{who:{kind:'person',id:'alice'},patch:{settleSeconds:60}},id:'prepared'})});
- expect(response.status).toBe(200);const id=(await response.json()).value.id;
- expect(f.root.services.approvals.get(id)).toMatchObject({kind:'setting',operation:'tempo.settings',state:'pending',actingFor:'alice',conversation:f.thread.conversation});expect(f.db.select().from(s.tempoSettings).all()).toEqual([]);
- expect((await (await f.call('use',{id,kind:'setting',target:'tempo:person:alice'})).json()).value.used).toBe(false);
- expect((await f.call('answer',{id,answer:'allow'},randomUUID(),f.owner)).status).toBe(200);expect(f.root.services.approvals.get(id).state).toBe('used');expect(f.db.select().from(s.tempoSettings).get()).toMatchObject({who:'alice',settleSeconds:60});
-});
 it('reads all four rule kinds without creating requests or running any effect',async()=>{
  const f=await fixture();for(const kind of ['merge','command','setting','dangerous'] as const){f.root.services.approvalRules.set({kind,scope:'*',person:'alice',tier:'do'},'pat');const input={kind,target:kind==='merge'?target.target:'fixture:target'};expect((await (await f.call('rule',input)).json()).value).toEqual({tier:'do',scope:'*',person:'alice'});}
  expect(f.db.select().from(s.approvals).all()).toEqual([]);expect(f.db.select().from(s.approvalRecord).all()).toEqual([]);expect(f.db.select().from(s.tempoSettings).all()).toEqual([]);expect(f.db.select().from(s.changes).get()?.state).toBe('open');
@@ -146,8 +136,8 @@ it('returns Ask after an exact owner No even when a standing rule says Do',async
 it('validates the exact conversation approval selection through the shared query door for its private member',async()=>{
  const {conversationApprovalsQuery}=await import('../web/src/pieces/comms/work-query.js');
  const f=await fixture(),id=await f.ask();
- const {tempoSettingsProposals}=await import('./core/tempo/proposal.js');
- const setting=tempoSettingsProposals(f.db,f.clock).request(f.root.services.approvals,{kind:'person',id:'alice'},{settleSeconds:60},{agent:'art',askedFrom:f.thread.conversation,actingFor:'alice',project:'pond',member:'alice',conversation:f.thread.conversation,why:'Requested here'});
+ // A settings card filed in this conversation, as a proposal would file it.
+ const setting=f.root.services.approvals.request({kind:'setting',operation:'household.change',target:'household:tempoTimings:person alice',details:'{}',changeSummary:'Tempo timings for person alice: before → after',what:'Change Tempo timings',ask:'Change Tempo timings for person alice?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.',agent:'art',askedFrom:f.thread.conversation,actingFor:'alice',project:'pond',member:'alice',conversation:f.thread.conversation,why:'Requested here'});
  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:conversationApprovalsQuery,variables:{conversation:f.thread.conversation,offset:0}})});
  const result=await response.json();expect(result.errors).toBeUndefined();expect(result.data.approvals).toHaveLength(2);expect(result.data.approvals).toEqual(expect.arrayContaining([{id},{id:setting.id}]));expect(result.data.inboxItems).toEqual([]);
 });

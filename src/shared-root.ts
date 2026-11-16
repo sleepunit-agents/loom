@@ -8,18 +8,15 @@ import { sharedProjects, sharedProjectQueries, registerSharedProjects } from './
 import { sharedHouseholdAccess, householdAccessQueries, registerSharedHouseholdAccess } from './shared-household-access.js';
 import { sharedNotifications, type SharedNotificationOptions } from './core/signin/shared-notifications.js';
 import { sharedAccount, sharedAccountFields, registerSharedAccount } from './core/signin/shared-account.js';
-import {sharedBoxProposals} from './shared-box-proposals.js';
 import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { saveAgentBodyPolicy } from './shared-agent-body-policy.js';
 
 import { applyAgentRunSettings } from './shared-agent-run-settings.js';
-import { sharedRunProposals } from './shared-run-proposals.js';
 
 import { applyBoxSettings } from './shared-box-settings.js';
 import {registerMachineRegistry} from './shared-machine-registry.js';
 import { applyAgentModels } from './shared-agent-models.js';
-import { sharedModelProposals } from './shared-model-proposals.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
@@ -36,16 +33,13 @@ import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { BridgeSettings } from './pieces/bridges/settings.js';
-import {sharedBridgeProposals} from './shared-bridge-proposals.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
-import {sharedSecretProposals} from './shared-secret-proposals.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
 
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
-import { tempoSettingsProposals } from './core/tempo/proposal.js';
 import { sharedTempoSettings } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
@@ -96,7 +90,7 @@ import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { registerSharedRuntime } from './shared-runtime.js';
 import { installMeasuring } from './core/measuring/install.js';
-import { measuringSettingsProposals } from './core/measuring/proposal.js';
+import { measuringSettingsService } from './core/measuring/settings.js';
 import { registerSharedAccountReports } from './shared-account-reports.js';
 
 class BodyTooLarge extends Error {}
@@ -139,27 +133,21 @@ export function sharedRoot(options: {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   householdService(db,now).synchronizeFullOwners();
-  const settings = tempoSettingsProposals(db, clock);
-  const modelProposals = sharedModelProposals(db, roles);
-  const runProposals = sharedRunProposals(db);
-  const secretProposals=sharedSecretProposals(db,now);
-  const bridgeProposals=sharedBridgeProposals(db,now);
-  const boxProposals=sharedBoxProposals(db);
   let closing: Promise<void> | undefined;
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
   let measuringReady: ReturnType<typeof installMeasuring> | undefined;
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
-  const measuringProposal = measuringSettingsProposals(db);
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
+  // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
+  const late: { requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume'] } = {};
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
-    { roles, setAccounts: input => householdAccess.setAccounts(input) });
-  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation, householdProposals.operation]);
-  approvedOperations.set(measuringProposal.operation[0], card => {
-    measuringProposal.operation[1](card);
-    // Synchronous outer writes have committed or rolled back before this runs.
-    queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
-  });
+    { roles, setAccounts: input => householdAccess.setAccounts(input) },
+    { secrets: { setRule: input => late.requests!.setRule(input) },
+      bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
+      tempo: () => late.tempo!(),
+      measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) } });
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action),programStore?(id=>programStore.read(id)):options.programGrants);
@@ -221,6 +209,7 @@ export function sharedRoot(options: {
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);
+  late.requests = requests; late.bridges = () => services.bridges.settings; late.tempo = () => tempo.volume;
   const secretCommit = <T>(write: () => T): T => {
     const result = data.writes.run(write);
     for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
@@ -306,23 +295,11 @@ export function sharedRoot(options: {
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
   startupCleanups.push(()=>commsLifetime?.close());
-  if (options.commsKey) modelProposals.register(operations, bodyScope, services.approvals, value => options.commsKey!.hash(value));
-  const stopModelProposals = data.writes.observe(() => modelProposals.committed(() => tempo?.capacityChanged()));
-  startupCleanups.push(stopModelProposals);
-  if (options.commsKey) runProposals.register(operations, bodyScope, services.approvals, value => options.commsKey!.hash(value));
-  const stopRunProposals = data.writes.observe(() => runProposals.committed(() => tempo?.capacityChanged()));
-  startupCleanups.push(stopRunProposals);
 
-  if(options.commsKey)bridgeProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
-  if(options.commsKey)secretProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
-  if(options.commsKey)boxProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
-  const stopBoxProposals=data.writes.observe(()=>boxProposals.committed(()=>tempo?.capacityChanged()));
-  startupCleanups.push(stopBoxProposals);
-  const settingsBinding = sharedTempoSettings(db, clock, bodyScope, services.approvals);
+  const settingsBinding = sharedTempoSettings(bodyScope);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
-    settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }
   catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); void privateInputs.close(); operations.close(); void data.close(); throw error; }
@@ -331,7 +308,7 @@ export function sharedRoot(options: {
   startupCleanups.push(stopDeskTime);
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
-  }, db, services.approvals).then(value => { meter = value; return value; });
+  }, db).then(value => { meter = value; return value; });
   const changePolling=options.changes ? pollChanges(services.changes,'read' in options.changes ? options.changes.read : sharedChangesReader(options.changes.github),clock) : undefined;
   startupCleanups.push(()=>{void changePolling?.stop();});
   const workLife=workLifetime(db,clock,data.writes,options.reportError);
@@ -423,7 +400,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      stopMemoryWrites();stopModelProposals();stopHouseholdProposals();stopRunProposals();stopBoxProposals();memorySignals?.close();
+      stopMemoryWrites();stopHouseholdProposals();memorySignals?.close();
       accountReports.close();
       commsLifetime?.close();workLife.close();
       runtime.close();

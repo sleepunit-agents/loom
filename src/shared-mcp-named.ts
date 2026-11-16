@@ -300,8 +300,8 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   async input=>{await run('tasks.command',{action:'comment',id:input.id,text:input.text});return 'Commented on '+input.id;});
 
  // Asking a person: proposals, the approvals that result, and what waits in your inbox.
- tool('propose','Ask a household owner to allow a change you cannot make yourself. change is one of: project, member, agent, settings, rule, bodyPolicy, tokenRevoke, boxRevoke, browserSignOut. input is that change\'s own fields; loom_commands({name:"household.propose"}) lists them. Nothing changes until an owner allows it.',
-  z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','tokenRevoke','boxRevoke','browserSignOut']),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
+ tool('propose','Ask a household owner to allow a change you cannot make yourself. Nothing changes until an owner allows it. change names what: project, member, agent, settings (the household\'s own), rule (a standing approval), bodyPolicy, secretRule, secretDefault, houseSecrets, bridge, tempoTimings, measuring, boxSettings, runSettings, models, agentAccounts; or a dangerous action an owner must also confirm: tokenRevoke, boxRevoke, browserSignOut. input is that change\'s own fields: loom_commands({name:"household.propose"}) lists them.',
+  z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','tokenRevoke','boxRevoke','browserSignOut']),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
   async input=>{const value=await run('household.propose',input) as {id:string};return 'Filed approval '+value.id+'. It waits for a household owner.';});
  tool('approvals','List approvals you may see, newest first. state narrows it: pending, allowed, denied, used, withdrawn or expired.',
   z.object({state:z.enum(['pending','allowed','denied','used','withdrawn','expired']).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),

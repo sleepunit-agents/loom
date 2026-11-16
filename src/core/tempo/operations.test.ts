@@ -11,7 +11,6 @@ import { Operations } from '../operations/index.js';
 import { approvalService } from '../../apps/approvals.js';
 import { createTempo } from './tempo.js';
 import { registerTempoOperations, type TempoAccess } from './operations.js';
-import { tempoSettingsProposals } from './proposal.js';
 
 const closes: Array<() => void> = [];
 afterEach(() => closes.splice(0).reverse().forEach(close => close()));
@@ -30,20 +29,15 @@ function fixture() {
     } });
   const writes = new DataWrites(db, { refreshAccess() {}, changed: () => tempo.committed() });
   const operations = new Operations(client, clock, () => {}, { receipts: new OperationResults(db), writes, reportError(error) { throw error; } });
-  const proposals = tempoSettingsProposals(db, clock), approval = approvalService(db, new Map([proposals.operation]), now);
   let allowed = true;
   registerTempoOperations(operations, db, tempo, {
     authorize(viewer, access) { accesses.push(access); return allowed && viewer.kind === 'agent' && viewer.id === 'art'; },
-    settings(viewer, who, patch) {
-      expect(viewer).toEqual({ kind: 'agent', id: 'art' });
-      return proposals.request(approval, who, patch, { agent: 'art', askedFrom: conversation.id, conversation: conversation.id, actingFor: 'jonathan', why: 'Requested in chat' });
-    },
   });
   tempo.start();
   closes.push(() => { tempo.close(); operations.close(); client.close(); });
   const call = (name: string, input: unknown, id: string) => operations.call('mcp', { kind: 'agent', id: 'art' }, name, input, id);
   const trigger = { id: 'tr', ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: now(), lifespan: 'once', targetKind: 'inbox', toKind: 'agent', to: 'art', note: 'Work', instructions: 'Check delivery' };
-  return { client, db, clock, now, tempo, writes, operations, approval, call, trigger, conversation, accesses, admissions, mail, allow(value: boolean) { allowed = value; } };
+  return { client, db, clock, now, tempo, writes, operations, call, trigger, conversation, accesses, admissions, mail, allow(value: boolean) { allowed = value; } };
 }
 
 it('dispatches a due trigger atomically with its receipt, admits after commit and rechecks authority on replay', () => {
@@ -87,25 +81,6 @@ it('uses the stored recipient for volume and denies unauthorized writes before a
   expect(f.call('inbox.volume', { item: item.id, volume: 'mute', who: { kind: 'person', id: 'other' } }, 'spoof')).toMatchObject({ ok: false, code: 'invalid' });
 });
 
-it('files exact settings before/after without applying until the shared approval is allowed', () => {
-  const f = fixture(), who = { kind: 'person' as const, id: 'jonathan' };
-  const input = { who, patch: { settleSeconds: 60 } };
-  const result = f.call('tempo.proposeSettings', input, 'settings');
-  expect(result).toMatchObject({ ok: true, value: { id: expect.any(String) } });
-  expect(f.tempo.volume.timings(who).settleSeconds).toBe(5);
-  const card = f.db.select().from(approvals).get()!;
-  expect(card.conversation).toBe(f.conversation.id);
-  const inline = f.db.select().from(approvals).where(eq(approvals.conversation, f.conversation.id)).all();
-  expect(inline).toMatchObject([{ id: card.id, changeSummary: card.changeSummary, details: card.details }]);
-  expect(f.db.select().from(inbox).where(eq(inbox.sourceId, card.id)).get()).toMatchObject({ conversation: f.conversation.id, to: 'jonathan', words: card.ask });
-  expect(JSON.parse(card.details)).toMatchObject({ who, before: { settleSeconds: 5 }, after: { settleSeconds: 60 } });
-  expect(f.call('tempo.proposeSettings', input, 'settings')).toEqual(result);
-  expect(f.db.select().from(approvals).all()).toHaveLength(1);
-  f.writes.run(() => f.approval.allow(card.id, 'jonathan'));
-  expect(f.tempo.volume.timings(who).settleSeconds).toBe(60);
-  expect(f.db.select().from(approvals).where(eq(approvals.id, card.id)).get()?.state).toBe('used');
-});
-
 it('runs an enabled future trigger now and cancellation prevents a future delivery', () => {
   const f = fixture(), future = new Date(f.clock.now() + 60_000).toISOString();
   expect(f.call('tempo.set', { ...f.trigger, times: future }, 'future').ok).toBe(true);
@@ -117,13 +92,6 @@ it('runs an enabled future trigger now and cancellation prevents a future delive
   expect(f.call('tempo.stop', { id: 'cancel' }, 'cancel').ok).toBe(true);
   f.clock.advance(60_000);
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
-});
-
-it('refuses forged settings provenance before filing any card', () => {
-  const f = fixture(), input = { who: { kind: 'person', id: 'jonathan' }, patch: { settleSeconds: 60 } };
-  for (const key of ['agent', 'actingFor', 'askedFrom', 'conversation', 'member', 'operation', 'details'])
-    expect(f.call('tempo.proposeSettings', { ...input, [key]: 'forged' }, `forged-${key}`)).toMatchObject({ ok: false, code: 'invalid' });
-  expect(f.db.select().from(approvals).all()).toEqual([]);
 });
 
 it('never accepts an internal-looking caller name as installed authority', () => {

@@ -47,12 +47,6 @@ it('notifies runtime status and stops without allowing a model to acknowledge St
 it('closes current and future model calls without reflecting credentials',async()=>{
  const f=await fixture();f.tools.close();const before=f.fetcher.mock.calls.length;const answer=await f.call('loom_commands',{});expect(answer).toMatchObject({isError:true});expect(JSON.stringify(answer)).not.toContain(raw.body);expect(f.fetcher).toHaveBeenCalledTimes(before);
 });
-it('proposes private Tempo consent through actual MCP and Root without changing settings',async()=>{
- const f=await fixture();f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();const who={kind:'person' as const,id:'alice'},before=f.root.services.tempo.volume.timings(who);
- expect(decoded(await f.call('loom_command',{operation:'tempo.proposeSettings',input:{who,patch:{settleSeconds:60}},id:'proposal'}))).toMatchObject({ok:true,value:{id:expect.any(String)}});
- expect(f.root.services.tempo.volume.timings(who)).toEqual(before);const card=f.db.select().from(s.approvals).get()!;expect(card.conversation).toBe(f.thread.conversation);expect(JSON.parse(card.details!)).toMatchObject({who,after:{settleSeconds:60}});
- expect(await f.call('loom_command',{operation:'tempo.proposeSettings',input:{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},id:'foreign'})).toMatchObject({isError:true});expect(f.db.select().from(s.approvals).all()).toHaveLength(1);
-});
 it('cancels one tool request without closing the shared body lifetime',async()=>{
  let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),fetcher=vi.fn<typeof fetch>(()=>{entered();return new Promise(()=>{});}),abort=new AbortController(),tools=bodyProgramTools({url:'https://loom.example',token:raw.body,signal:new AbortController().signal,fetch:fetcher,onStop:vi.fn(),onStatus:vi.fn()});clean.push(tools.close);
  const pending=tools.call('loom_query',{query:'{agents{id}}'},abort.signal);await started;abort.abort();expect(await pending).toMatchObject({isError:true});expect(fetcher).toHaveBeenCalledOnce();fetcher.mockResolvedValueOnce(Response.json({data:{agents:[]}}));expect(decoded(await tools.call('loom_query',{query:'{agents{id}}'}))).toEqual({data:{agents:[]}});

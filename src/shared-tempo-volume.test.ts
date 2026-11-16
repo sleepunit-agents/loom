@@ -66,15 +66,6 @@ it('refuses another recipient, an unbound agent, and stale source authority even
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(401);
  expect(f.root.services.conversations.item(f.other.id).volume).toBe('full');
 });
-it('proposes timing changes for the actual chat member through the same approval boundary',async()=>{
- const f=fixture();
- expect((await f.call('tempo.proposeSettings',{who:{kind:'person',id:'sam'},patch:{dimDays:2}},'settings')).status).toBe(200);
- expect(f.db.select().from(approvals).get()).toMatchObject({actingFor:'sam',member:'sam',project:'pond',state:'pending'});
- expect(f.root.services.tempo.volume.timings({kind:'person',id:'sam'}).dimDays).toBe(1);
- expect((await f.call('tempo.proposeSettings',{who:{kind:'person',id:'other'},patch:{dimDays:2}},'other')).status).toBe(403);
- expect((await f.call('tempo.proposeSettings',{who:{kind:'person',id:'owner'},patch:{dimDays:2}},'owner')).status).toBe(403);
-});
-
 it('does not turn a background conversation fallback owner into mailbox delegation',async()=>{
  const f=fixture();
  f.db.update(conversations).set({member:null,venue:'wake'}).where(eq(conversations.id,f.source.id)).run();
@@ -82,15 +73,8 @@ it('does not turn a background conversation fallback owner into mailbox delegati
  const owner=f.root.services.conversations.send({toKind:'person',to:'owner',source:'notice',fromKind:'agent',words:'Owner work'});
  expect((await f.call('inbox.volume',{item:owner.id,volume:'mute'},'owner')).status).toBe(403);
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'sam')).status).toBe(403);
- expect((await f.call('tempo.proposeSettings',{who:{kind:'person',id:'owner'},patch:{dimDays:2}},'owner-timing')).status).toBe(403);
 });
 
-it('preserves a trusted configured settings callback and its existing linked-agent authority',async()=>{
- const settings=vi.fn(()=>({id:'trusted-proposal'})),f=fixture({settings});
- const response=await f.call('tempo.proposeSettings',{who:{kind:'person',id:'owner'},patch:{dimDays:2}},'custom',unbound);
- expect(response.status).toBe(200);expect(await response.json()).toEqual({ok:true,value:{id:'trusted-proposal'}});
- expect(settings).toHaveBeenCalledWith({kind:'agent',id:'art'},{kind:'person',id:'owner'},{dimDays:2});
-});
 it('preserves direct member, owner and agent recipient authority without chat delegation',async()=>{
  const f=fixture(),sam='direct-sam-volume-'.repeat(3),owner='direct-owner-volume-'.repeat(3),at=new Date(f.clock.now()).toISOString();
  f.db.insert(tokens).values([{fingerprint:hash(sam),label:'Sam',kind:'owner',member:'sam',createdAt:at},{fingerprint:hash(owner),label:'Owner',kind:'owner',member:'owner',createdAt:at}]).run();

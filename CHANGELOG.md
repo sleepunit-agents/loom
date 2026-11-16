@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **One way to propose a change.** `household.propose` gains `secretRule`, `secretDefault`, `houseSecrets`, `bridge`, `tempoTimings` and `measuring`. Removed the seven older proposal commands, which only a body running a job could call: `runtime.proposeBoxSettings`, `runtime.proposeAgentRunSettings`, `runtime.proposeAgentModels`, `secrets.proposeSettings`, `bridges.proposeSettings`, `tempo.proposeSettings` and `measuring.propose`.
+
 - **Machine and agent settings are proposed, not commanded.** Removed `runtime.boxSettingsSet`, `runtime.agentRunSettingsSet`, `runtime.agentModelsSet`, `runtime.agentBodyPolicySet` and `runtime.boxRevoke`. `household.propose` gains `boxSettings`, `runSettings`, `models` and `agentAccounts`, so each of these is a card a household owner allows. Installed code uses `services.setup`.
 
 - Operations can declare `refuses`, so a service's own refusal reaches the caller as `invalid` with its words instead of `unavailable`.

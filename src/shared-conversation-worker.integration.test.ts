@@ -64,12 +64,12 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   const readCard=async(id:string)=>{const response=await fetch(url+'/graphql',{method:'POST',redirect:'error',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:cardSelection,variables:{id}})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data.approvals;};
   expect(timing()).toEqual({settleSeconds:5,dimDays:3,muteDays:9});
   for(const [seconds,allow]of [[60,true],[120,false]]as const){
-   const before=timing(),after={...before,settleSeconds:seconds},result=await command('tempo.proposeSettings',{who,patch:{settleSeconds:seconds}},randomUUID());
+   const before=timing(),after={...before,settleSeconds:seconds},result=await command('household.propose',{change:'tempoTimings',input:{who,settleSeconds:seconds},why:'Requested in this conversation'},randomUUID());
    expect(result).toEqual({ok:true,value:{id:expect.any(String)}});
    const id=(result as {value:{id:string}}).value.id,card=f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()!;
-   expect(card).toMatchObject({kind:'setting',operation:'tempo.settings',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
-   expect(JSON.parse(card.details!)).toEqual({who,before,after});
-   expect(card.changeSummary).toBe(`Tempo for person alice: settle ${before.settleSeconds} → ${seconds} seconds; dim 3 → 3 days; mute 9 → 9 days`);
+   expect(card).toMatchObject({kind:'setting',operation:'household.change',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
+   expect(JSON.parse(card.details!)).toEqual({change:'tempoTimings',before:{settleSeconds:before.settleSeconds,who},after:{settleSeconds:after.settleSeconds,who}});
+   expect(card.changeSummary).toContain('Tempo timings for person alice');
    expect(timing()).toEqual(before);
    expect(await readCard(id)).toEqual([{id,state:'pending',details:card.details,changeSummary:card.changeSummary}]);
    // Filing a private card gives the body no generic read of a person's records.
@@ -81,7 +81,6 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    const returned=f.db.select().from(s.inbox).all().filter(item=>item.source==='answer'&&item.sourceId===question.id);
    expect(returned).toEqual([expect.objectContaining({toKind:'agent',to:'art',conversation:f.thread.conversation,fromKind:'person',fromId:'alice',words:expect.stringContaining(allow?'Allow':'Deny')})]);
   }
-  expect(await command('tempo.proposeSettings',{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},randomUUID())).toMatchObject({ok:false,code:'denied'});
   expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
   const id='native-'+randomUUID();
   expect(await command('tempo.set',{id,ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3600000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Ordinary native Tempo work',note:'Native read variant'},randomUUID())).toMatchObject({ok:true,value:{id}});
@@ -115,7 +114,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
     const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom_secrets__'+name);actions.push({name,input});const result=decoded(await protocol.callTool({name,arguments:input}));if(name==='loom_query')expect(result.errors).toBeUndefined();return result;};
     const catalogue=await call('loom_commands',{});
     expect(catalogue.ok).toBe(true);
-    expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','tempo.proposeSettings','inbox.volume']));
+    expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','household.propose','inbox.volume']));
     await exerciseTempo((operation,input,id)=>call('loom_command',{operation,input,id}),input=>call('loom_query',input));
    }finally{await protocol.close();}
   })().then(()=>{nativeActions=actions.length;nativeReply(child,args,actions);

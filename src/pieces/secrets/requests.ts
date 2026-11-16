@@ -14,7 +14,7 @@ const requestInput = z.object({ id: z.string().min(1).max(200), secret: secretNa
   job: z.string().min(1).optional(), conversation: z.string().min(1).optional(), why: requestReason, minutes: duration }).strict();
 export type SecretRequestInput = z.input<typeof requestInput>;
 type Request = typeof secretRequests.$inferSelect;
-const ruleInput = z.object({ secret: secretName, answer: z.enum(['ask', 'auto', 'never']), minutes: duration,
+export const secretRuleInput = z.object({ secret: secretName, answer: z.enum(['ask', 'auto', 'never']), minutes: duration,
   agents: z.array(z.object({ agent: secretAgent, when: z.enum(['on_request', 'at_start']) }).strict()) }).strict();
 
 export class SecretRequests {
@@ -68,8 +68,8 @@ export class SecretRequests {
     });
   }
 
-  setRule(raw: z.input<typeof ruleInput>): void {
-    const input = ruleInput.parse(raw);
+  setRule(raw: z.input<typeof secretRuleInput>): void {
+    const input = secretRuleInput.parse(raw);
     this.db.transaction(() => {
       this.db.insert(secretRules).values({ secret: input.secret, answer: input.answer, minutes: input.minutes }).onConflictDoUpdate({ target: secretRules.secret, set: { answer: input.answer, minutes: input.minutes } }).run();
       this.db.delete(secretRuleAgents).where(eq(secretRuleAgents.secret, input.secret)).run();

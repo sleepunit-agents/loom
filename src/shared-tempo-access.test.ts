@@ -24,7 +24,6 @@ it('requires current ownership for new work, pauses and settings; rejects forged
  expect(f.can('member','sam',{action:'set',trigger:{...f.set.trigger,to:'mark'}})).toBe(false);
  expect(f.can('agent','art',{action:'set',trigger:{...f.set.trigger,ownerKind:'agent',owner:'art'}})).toBe(true);
  expect(f.can('member','sam',{action:'pause',agent:'art'})).toBe(true);
- expect(f.can('member','sam',{action:'settings',who:{kind:'person',id:'other'}})).toBe(false);
  f.client.exec('DELETE FROM member_agents');expect(f.can('member','sam',f.set)).toBe(false);
  expect(f.can('member','sam',{action:'pause',agent:'art'})).toBe(false);
 });

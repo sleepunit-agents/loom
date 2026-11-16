@@ -11,25 +11,17 @@ import { inbox, triggers } from '../data/schema.js';
 import { Operations, operation } from '../operations/index.js';
 import type { createTempo } from './tempo.js';
 import { triggerInput, type NewTrigger, type Trigger } from './triggers.js';
-import type { Recipient, Timings } from './volume.js';
 
 export type TempoAccess =
   | { action: 'set'; trigger: NewTrigger }
   | { action: 'stop' | 'runNow'; trigger: Trigger }
   | { action: 'pause' | 'resume'; agent: string }
-  | { action: 'volume'; item: typeof inbox.$inferSelect }
-  | { action: 'settings'; who: Recipient };
+  | { action: 'volume'; item: typeof inbox.$inferSelect };
 export interface TempoOperationOptions {
   authorize(viewer: Viewer, access: TempoAccess): boolean;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
-  /** File a proposal using the authenticated caller's conversation/provenance
-   * and the shared Approvals service with tempoSettingsProposals.operation
-   * installed. Never apply timings in this callback.
-   */
-  settings(viewer: Viewer, who: Recipient, patch: Partial<Timings>): { id: string };
 }
-const recipient = z.object({ kind: z.enum(['person', 'agent']), id: z.string().min(1) }).strict();
 const id = z.object({ id: z.string().min(1) }).strict();
 const saved = z.object({ saved: z.literal(true) }).strict();
 
@@ -74,17 +66,6 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
       const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get()!;
       tempo.volume.set({ kind: item.toKind, id: item.to }, item.id, input.volume, input.until);
       ctx.changed('inbox', item.id); return { saved: true };
-    },
-  }));
-  operations.register(operation({ ...mailbox, name: 'tempo.proposeSettings',
-    input: z.object({ who: recipient, patch: z.object({
-      settleSeconds: z.number().int().nonnegative().optional(), dimDays: z.number().int().positive().optional(),
-      muteDays: z.number().int().positive().optional(),
-    }).strict() }).strict(), output: z.object({ id: z.string() }),
-    may: (viewer, input) => options.authorize(viewer, { action: 'settings', who: input.who }),
-    run(ctx, input) {
-      const proposal = options.settings(ctx.viewer, input.who, input.patch);
-      ctx.changed('approvals', proposal.id); ctx.changed('inbox', proposal.id); return { id: proposal.id };
     },
   }));
 }

@@ -11,6 +11,9 @@ import type { SecretValues } from './pieces/secrets/shared-values.js';
 const id = z.string().min(1).max(200);
 const minutes = z.number().int().min(1).max(525600);
 const answer = z.enum(['ask','auto','never']);
+export const houseSecretsInput=z.object({agent:secretAgent,repository:secretName.nullable(),
+  secrets:z.array(z.object({alias:z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,199}$/),secret:secretName}).strict()).max(128)
+    .refine(values=>new Set(values.map(value=>value.alias)).size===values.length,'An alias names one secret')}).strict();
 const command = z.discriminatedUnion('action', [
   z.object({action:z.literal('answer'),id,allow:z.boolean(),always:z.boolean()}).strict(),
   z.object({action:z.literal('cancel'),id}).strict(),
@@ -18,11 +21,7 @@ const command = z.discriminatedUnion('action', [
   z.object({action:z.literal('rule'),secret:secretName,answer,minutes,
     agents:z.array(z.object({agent:secretAgent,when:z.enum(['on_request','at_start'])}).strict()).max(1000)}).strict(),
   z.object({action:z.literal('default'),answer}).strict(),
-  // What an agent's house is handed when it starts: the secret that fetches its
-  // repository, and named secrets under the alias the house knows each by.
-  z.object({action:z.literal('house'),agent:secretAgent,repository:secretName.nullable(),
-    secrets:z.array(z.object({alias:z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,199}$/),secret:secretName}).strict()).max(128)
-      .refine(values=>new Set(values.map(value=>value.alias)).size===values.length,'An alias names one secret')}).strict(),
+  houseSecretsInput.extend({action:z.literal('house')}).strict(),
 ]);
 const setInput=z.object({id:z.uuid(),name:secretName,mode:z.enum(['add','replace']),description:z.string().max(4000).optional(),value:z.string().refine(value=>Buffer.byteLength(value)>0&&Buffer.byteLength(value)<=65536)}).strict();
 const removeInput=z.object({id:z.uuid(),name:secretName}).strict();
@@ -32,6 +31,22 @@ const refusal=(error:unknown,fallback:string)=>error instanceof Error&&!('code' 
 const writeRefusals:Record<string,'conflict'|'not-found'|'denied'>={'Secret value already exists':'conflict','Unknown secret value':'not-found','Unknown secret writer':'denied'};
 /** A value write refused before it reached the key holder is an answer, not an outage. */
 const writeFailure=(error:unknown)=>{const message=error instanceof Error?error.message:'';const code=writeRefusals[message];return code?new OperationError(code,message):new OperationError('unavailable','Secret write awaits recovery');};
+/** What an agent's house is handed when it starts: the secret that fetches its
+ * repository, and named secrets under the alias the house knows each by. */
+export function setHouseSecrets(db:DataDatabase,input:z.infer<typeof houseSecretsInput>){
+  if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw Error('Unknown agent');
+  for(const name of [input.repository,...input.secrets.map(value=>value.secret)])if(name!==null&&!db.select().from(secrets).where(eq(secrets.name,name)).get())throw Error('Unknown secret');
+  const settings=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,input.agent)).get();
+  // The repository secret is a column of the run settings; those must exist first.
+  if(!settings&&input.repository!==null)throw Error('Agent has no run settings');
+  if(settings)db.update(agentRunSettings).set({repositorySecret:input.repository}).where(eq(agentRunSettings.agent,input.agent)).run();
+  db.delete(agentHouseSecrets).where(eq(agentHouseSecrets.agent,input.agent)).run();
+  if(input.secrets.length)db.insert(agentHouseSecrets).values(input.secrets.map(value=>({agent:input.agent,...value}))).run();
+}
+export function readHouseSecrets(db:DataDatabase,agent:string){
+  return {agent,repository:db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,agent)).get()?.repositorySecret??null,
+    secrets:db.select({alias:agentHouseSecrets.alias,secret:agentHouseSecrets.secret}).from(agentHouseSecrets).where(eq(agentHouseSecrets.agent,agent)).all().sort((a,b)=>a.alias<b.alias?-1:1)};
+}
 export function registerSharedSecretCommands(operations:Operations, db:DataDatabase, requests:SecretRequests,
   writes?:{values:SecretValues;fingerprintKey:Uint8Array}) {
   const owner=(viewer:Parameters<Operations['call']>[1])=>viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?.role==='owner';
@@ -50,18 +65,7 @@ export function registerSharedSecretCommands(operations:Operations, db:DataDatab
             break;
           }
           case 'rule':requests.setRule({secret:input.secret,answer:input.answer,minutes:input.minutes,agents:input.agents});break;
-          case 'house':{
-            if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw Error('Unknown agent');
-            for(const name of [input.repository,...input.secrets.map(value=>value.secret)])if(name!==null&&!db.select().from(secrets).where(eq(secrets.name,name)).get())throw Error('Unknown secret');
-            const settings=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,input.agent)).get();
-            // The repository secret is a column of the run settings; those must exist first.
-            if(!settings&&input.repository!==null)throw Error('Agent has no run settings');
-            if(settings)db.update(agentRunSettings).set({repositorySecret:input.repository}).where(eq(agentRunSettings.agent,input.agent)).run();
-            db.delete(agentHouseSecrets).where(eq(agentHouseSecrets.agent,input.agent)).run();
-            if(input.secrets.length)db.insert(agentHouseSecrets).values(input.secrets.map(value=>({agent:input.agent,...value}))).run();
-            ctx.changed('agentRunSettings',input.agent);
-            break;
-          }
+          case 'house':setHouseSecrets(db,input);ctx.changed('agentRunSettings',input.agent);break;
           case 'default':db.insert(household).values({secretsDefault:input.answer}).onConflictDoUpdate({target:household.singleton,set:{secretsDefault:input.answer}}).run();break;
         }
       }catch(error){throw new OperationError('invalid',refusal(error,'Secret change could not complete'));}
