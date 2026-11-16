@@ -136,3 +136,36 @@ export async function dataActions({page,app,example,apps,subscriptions,out,shari
  });
  return evidence;
 }
+
+/** Replay the observed Home summary read with two and ten owned agents. */
+export async function homeReadGrowth({page,app,subscriptions,out,sharing}){
+ const screenshot='action-dataHomeGrowth.png';let home;
+ try{
+  const query=subscriptions.find(row=>/query\s+DeskHomeComms\b/.test(row.query))?.query;check(query,'The actual Home summary selection was not observed');
+  const samples=[];
+  for(const size of [2,10]){
+   const own=app.services.household.members().find(row=>row.id==='alex');check(own?.agents.length<=size,'The example owner already exceeds the Home sample');
+   for(let n=own.agents.length;n<size;n++)app.writes.run(()=>{
+    const agent='walkthrough-growth-agent-'+n;
+    app.services.household.setAgent({id:agent,about:'Fictional read-growth agent.',markBg:'#267a52',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'});
+    app.services.comms.threads.open({member:'alex',agent,title:'Fictional read-growth thread '+n});
+   });
+   const result=await sqlRead({page,app,query,caller:/at readCommsHome \(/,match:/\b(?:from|join)\s+/i});
+   check(result.status===200&&!result.body.errors,'The actual Home summary read failed');
+   const selected=result.body.data?.homeComms;check(selected?.agents.length===size&&selected.summaries.length===size,'Home did not return the expected agents and summaries');
+   check(result.statements.length>0,'No actual Home SQL executions were attributed');
+   samples.push({agents:selected.agents.length,summaries:selected.summaries.length,sqlExecutions:result.statements.length,statements:[...new Set(result.statements)]});
+  }
+  home={ok:samples[1].sqlExecutions<=samples[0].sqlExecutions,samples,screenshot};
+  home.reason='Home summary SQL executions: '+samples.map(row=>row.agents+' agents → '+row.sqlExecutions).join('; ')+'.';
+  if(!home.ok)home.error=home.reason;
+ }catch{home={inconclusive:true,reason:'The actual Home growth measurement could not complete.',screenshot};}
+ await page.screenshot({path:join(out,screenshot),fullPage:true});
+ return{dataHomeGrowth:home,dataReadBounds:readBoundEvidence(sharing,home)};
+}
+/** A known counterexample survives another selection being unmeasured. */
+export function readBoundEvidence(sharing,home){
+ const failed=[sharing,home].find(row=>row?.ok===false);
+ const reason=[sharing?.reason??sharing?.error,home?.reason??home?.error].filter(Boolean).join(' ');
+ return failed?{ok:false,error:reason,screenshot:failed.screenshot}:{inconclusive:true,reason:reason+' Growth checks alone do not establish all filtering, visibility and page-wide read clauses.'};
+}
