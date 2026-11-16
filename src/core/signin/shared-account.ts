@@ -1,3 +1,4 @@
+import {personalMemberExists,readPersonalAccount} from '../data/personal-account-read.js';
 import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
@@ -10,15 +11,15 @@ import type { Clock } from '../clock.js';
 import { members, tokens, sessions, passkeys } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
 const ref = (kind: string, id: string) => createHash('sha256').update(kind+':'+id).digest('hex');
-const live = (token: typeof tokens.$inferSelect, now: number) => !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt)>now);
+const live = (token: Pick<typeof tokens.$inferSelect,'revokedAt'|'expiresAt'>, now: number) => !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt)>now);
 export function sharedAccount(db: DataDatabase, clock: Clock) {
   const ownTokens = (member: string) => db.select().from(tokens).where(and(eq(tokens.kind,'owner'),eq(tokens.member,member))).all();
   return {
     read(member: string) {
-      const own = ownTokens(member), ids = new Set(own.map(t=>t.fingerprint));
-      return { member,
-        passkeys: db.select().from(passkeys).all().filter(k=>ids.has(k.token)).map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(own.find(t=>t.fingerprint===k.token)!,clock.now())})),
-        sessions: db.select().from(sessions).all().filter(s=>ids.has(s.token)).map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(own.find(t=>t.fingerprint===s.token)!,clock.now())||Date.parse(s.issuedAt)+(s.isAgent?6*3600000:30*86400000)<=clock.now()})),
+      const rows = readPersonalAccount(db,member);
+      return {member,
+        passkeys:rows.passkeys.map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(rows.tokens.get(k.token)!,clock.now())})),
+        sessions:rows.sessions.map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(rows.tokens.get(s.token)!,clock.now())||Date.parse(s.issuedAt)+(s.isAgent?6*3600000:30*86400000)<=clock.now()})),
       };
     },
     removePasskey(member: string, reference: string) {
@@ -50,5 +51,5 @@ export function sharedAccountFields(db: DataDatabase, clock: Clock, notification
   const push=new GraphQLObjectType({name:'PersonalNotifications',fields:{publicKey:{type:GraphQLString},devices:{type:new GraphQLList(device)}}});
   const account=new GraphQLObjectType({name:'PersonalAccount',fields:{member:{type:GraphQLString},notifications:{type:push},passkeys:{type:new GraphQLList(passkey)},sessions:{type:new GraphQLList(session)}}});
   const service=sharedAccount(db,clock);
-  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
+  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&personalMemberExists(db,viewer.id)?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
 }
