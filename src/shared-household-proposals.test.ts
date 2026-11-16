@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
+import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -254,4 +254,53 @@ it('lets a standing rule answer a settings or dangerous card for a known person,
   f.db.insert(tokens).values({ fingerprint: hash('z'.repeat(64)), label: 'Spare', kind: 'owner', member: 'lee', createdAt: at }).run();
   expect(ask('tokenRevoke', { label: 'Spare' })).toMatchObject({ state: 'used', kind: 'dangerous' });
   expect(f.db.select().from(tokens).all().find(row => row.label === 'Spare')!.revokedAt).not.toBeNull();
+});
+it('removes and restores a person, an agent and a project without deleting anything', async () => {
+  const f = fixture(), at = new Date().toISOString();
+  f.db.insert(household).values({ defaultAgent: 'art' }).run();
+  f.db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
+  const ask = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Tidying' }, 'art');
+  const allow = async (change: string, input: unknown) => { const filed = await ask(change, input); expect(filed.status).toBe(200); expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200); };
+  // Refused when filed: a stranger, the last owner, the default agent, restoring what is not removed.
+  expect((await ask('remove', { of: 'member', id: 'nobody' })).status).toBe(404);
+  expect((await ask('remove', { of: 'member', id: 'sam' })).status).toBe(409);
+  expect((await ask('remove', { of: 'agent', id: 'art' })).status).toBe(409);
+  expect((await ask('restore', { of: 'member', id: 'lee' })).status).toBe(400);
+  // Lee can act now, and cannot once removed; the row and the token stay.
+  const probe = () => f.call('household/setPreferences', {}, 'lee');
+  const known = (await probe()).status; expect(known).not.toBe(401);
+  await allow('remove', { of: 'member', id: 'lee' });
+  expect(f.db.select().from(approvals).all().at(-1)).toMatchObject({ target: 'household:remove:member lee', kind: 'setting', ask: 'Remove member lee?' });
+  expect(f.db.select().from(members).all().find(row => row.id === 'lee')!.removedAt).not.toBeNull();
+  expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeNull();
+  expect((await probe()).status).toBe(401);
+  expect((await ask('remove', { of: 'member', id: 'lee' })).status).toBe(400);
+  await allow('restore', { of: 'member', id: 'lee' });
+  expect(f.db.select().from(members).all().find(row => row.id === 'lee')!.removedAt).toBeNull();
+  expect((await probe()).status).toBe(known);
+  // An agent and a project.
+  await allow('remove', { of: 'agent', id: 'mark' });
+  expect(f.db.select().from(agents).all().find(row => row.id === 'mark')!.removedAt).not.toBeNull();
+  await allow('remove', { of: 'project', id: 'pond' });
+  expect(f.db.select().from(projects).get()).toMatchObject({ id: 'pond', name: 'Pond' });
+  expect(f.db.select().from(projects).get()!.removedAt).not.toBeNull();
+  await allow('restore', { of: 'project', id: 'pond' });
+  expect(f.db.select().from(projects).get()!.removedAt).toBeNull();
+  // The agent that asks is removed last: its own token then stops being recognised.
+  f.db.update(household).set({ defaultAgent: 'mark' }).run();
+  expect((await ask('remove', { of: 'agent', id: 'art' })).status).toBe(200);
+  expect((await f.call('approvals/answer', { id: f.db.select().from(approvals).all().at(-1)!.id, answer: 'allow' }, 'sam')).status).toBe(200);
+  expect((await ask('settings', { commsDays: 3 })).status).toBe(401);
+  void at;
+});
+it('removing a bridge connection switches it off and keeps it; restoring leaves it off', async () => {
+  const f = fixture(), at = new Date().toISOString();
+  f.db.insert(secrets).values({ name: 'BOT', description: '', changedAt: at, changedBy: 'sam' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'daily', platform: 'discord', agent: 'art', workspace: 'W', botUser: 'B', tokenSecret: 'BOT', enabled: true, state: 'connected', stateAt: at }).run();
+  const allow = async (change: string) => { const filed = await f.call('household/propose', { change, input: { of: 'bridge', id: 'daily' }, why: 'Tidying' }, 'art'); expect(filed.status).toBe(200); expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200); };
+  await allow('remove');
+  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({ id: 'daily', enabled: false, state: 'disconnected' });
+  expect(f.db.select().from(bridgeConnections).get()!.removedAt).not.toBeNull();
+  await allow('restore');
+  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({ id: 'daily', enabled: false, removedAt: null });
 });

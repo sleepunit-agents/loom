@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
 import type { DataDatabase } from './database.js';
 import { tokens, sessions, members, agents, boxes } from './schema.js';
@@ -31,9 +31,9 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
         if (sessionEnd <= time) return;
         expiresAt = Math.min(expiresAt ?? Infinity, sessionEnd);
       }
-      const viewer = token.kind === 'owner' && token.member && db.select({ id: members.id }).from(members).where(eq(members.id, token.member)).get()
+      const viewer = token.kind === 'owner' && token.member && db.select({ id: members.id }).from(members).where(and(eq(members.id, token.member), isNull(members.removedAt))).get()
         ? { kind: 'member' as const, id: token.member }
-        : token.kind === 'agent' && token.agent && db.select({ id: agents.id }).from(agents).where(eq(agents.id, token.agent)).get()
+        : token.kind === 'agent' && token.agent && db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, token.agent), isNull(agents.removedAt))).get()
           ? { kind: 'agent' as const, id: token.agent }
           : token.kind === 'runner' && token.box && db.select({ id: boxes.id }).from(boxes).where(eq(boxes.id, token.box)).get()
             ? { kind: 'runner' as const, id: token.box } : undefined;

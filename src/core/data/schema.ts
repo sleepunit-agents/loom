@@ -17,8 +17,10 @@ export const members = sqliteTable('members', {
   fullOwner: integer('full_owner', { mode: 'boolean' }).notNull().default(false),
   position: integer('position').notNull().default(0),
   joinedAt: text('joined_at').notNull(),
+  removedAt: text('removed_at'),
 }, t => [
   check('members_joined_at_utc', utc(t.joinedAt)),
+  check('members_removed_at_utc', utc(t.removedAt)),
   check('members_role_choice', sql`${t.role} in ('owner', 'member')`),
   check('members_full_owner_boolean', sql`${t.fullOwner} in (0, 1)`),
   check('members_full_owner_role', sql`not ${t.fullOwner} or ${t.role} = 'owner'`),
@@ -35,8 +37,10 @@ export const agents = sqliteTable('agents', {
   faceShape: text('face_shape', { enum: ["pebble", "trefoil", "clover", "drop"] }).notNull(),
   faceEyes: text('face_eyes', { enum: ["dot", "oval"] }).notNull(),
   spriteVersion: text('sprite_version'),
+  removedAt: text('removed_at'),
 }, t => [
   check('agents_about_asked_at_utc', utc(t.aboutAskedAt)),
+  check('agents_removed_at_utc', utc(t.removedAt)),
   check('agents_about_length', sql`length(${t.about}) <= 600`),
   check('agents_face_shape_choice', sql`${t.faceShape} in ('pebble', 'trefoil', 'clover', 'drop')`),
   check('agents_face_eyes_choice', sql`${t.faceEyes} in ('dot', 'oval')`),
@@ -54,7 +58,10 @@ export const memberAgents = sqliteTable('member_agents', {
 export const projects = sqliteTable('projects', {
   id: text('id').primaryKey().notNull(),
   name: text('name').notNull(),
-});
+  removedAt: text('removed_at'),
+}, t => [
+  check('projects_removed_at_utc', utc(t.removedAt)),
+]);
 
 /** Who is on a project. */
 export const projectMembers = sqliteTable('project_members', {
@@ -1058,8 +1065,10 @@ export const bridgeConnections = sqliteTable('bridge_connections', {
   enabled: integer('enabled', { mode: 'boolean' }).notNull(),
   state: text('state', { enum: ["connecting", "connected", "backoff", "disconnected"] }).notNull(),
   stateAt: text('state_at').notNull(),
+  removedAt: text('removed_at'),
 }, t => [
   check('bridge_connections_state_at_utc', utc(t.stateAt)),
+  check('bridge_connections_removed_at_utc', utc(t.removedAt)),
   check('bridge_connections_platform_choice', sql`${t.platform} in ('discord', 'slack')`),
   check('bridge_connections_enabled_boolean', sql`${t.enabled} in (0, 1)`),
   check('bridge_connections_state_choice', sql`${t.state} in ('connecting', 'connected', 'backoff', 'disconnected')`),

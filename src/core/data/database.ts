@@ -21,7 +21,27 @@ export function createDataSchema(client: Database.Database, now: () => string = 
     const existing = client.prepare("SELECT name FROM sqlite_schema LIMIT 1").get();
     if (existing) throw new Error('Data schema requires an empty database; existing data must go through the separate move');
     client.exec(readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8'));
-    client.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(1, now());
+    const mark = client.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)');
+    for (let number = 1; number <= upgrades.length + 1; number++) mark.run(number, now());
   })();
   return dataDatabase(client, now);
+}
+/** Changes to an existing household's database since its first shape, in order. Number 1 is the
+ * first shape itself. A fresh database is created whole and marked as having them all. */
+const upgrades: readonly (readonly string[])[] = [
+  // 2: removing a member, agent, project or bridge connection keeps the row and its history.
+  ['members', 'agents', 'projects', 'bridge_connections'].map(table => `ALTER TABLE ${table} ADD COLUMN removed_at text CHECK (removed_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', removed_at) = removed_at or strftime('%Y-%m-%dT%H:%M:%fZ', removed_at) = removed_at, 0))`),
+];
+/** Bring an existing household database up to this program's shape. Safe to run at every start. */
+export function upgradeDataSchema(client: Database.Database, now: () => string = () => new Date().toISOString()) {
+  if (client.inTransaction) throw new Error('Upgrade the data schema outside a transaction');
+  client.transaction(() => {
+    const at = (client.prepare('SELECT max(number) AS number FROM migrations').get() as { number: number | null }).number ?? 0;
+    if (at < 1) throw new Error('This is not a household database');
+    if (at > upgrades.length + 1) throw new Error('This household database is from a newer program');
+    for (let number = at + 1; number <= upgrades.length + 1; number++) {
+      for (const statement of upgrades[number - 2]) client.exec(statement);
+      client.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(number, now());
+    }
+  }).immediate();
 }

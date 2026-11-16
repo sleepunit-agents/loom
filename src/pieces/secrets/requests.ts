@@ -40,7 +40,7 @@ export class SecretRequests {
       const applies = rule && this.db.select().from(secretRuleAgents).where(and(eq(secretRuleAgents.secret, input.secret), eq(secretRuleAgents.agent, input.agent), eq(secretRuleAgents.when, when))).get();
       const decision = rule ? applies ? rule.answer : 'ask' : this.db.select().from(household).get()?.secretsDefault ?? 'ask';
       if (decision !== 'ask') return this.settle(row, 'rule', decision === 'auto', false, Math.min(input.minutes, rule?.minutes ?? input.minutes));
-      const owners = this.db.select().from(members).where(eq(members.role, 'owner')).all();
+      const owners = this.db.select().from(members).where(and(eq(members.role, 'owner'), isNull(members.removedAt))).all();
       if (!owners.length) throw new Error('A secret request needs a household owner');
       for (const owner of owners) this.mail.send({ toKind: 'person', to: owner.id, source: 'secret-request', sourceId: row.id, conversation: input.conversation,
         fromKind: 'agent', fromId: input.agent, agent: input.agent, words: `Allow ${input.agent} to use ${input.secret} for ${input.minutes} minutes?`, why: input.why, answers: 'yes-no', waitsOnKind: 'secret-request', waitsOnId: row.id, refs: [row.id] });

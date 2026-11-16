@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { approvals, approvalRecord, approvalNotices, members } from '../core/data/schema.js';
@@ -62,7 +62,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
       if (value.operation && !operations.has(value.operation)) throw new Error('Unknown approved operation');
       return db.transaction(() => {
         const row = db.insert(approvals).values({ ...value, id: `a-${randomUUID()}`, state: 'pending', askedAt: now() }).returning().get();
-        const owners = db.select().from(members).where(eq(members.role, 'owner')).orderBy(asc(members.id)).all();
+        const owners = db.select().from(members).where(and(eq(members.role, 'owner'), isNull(members.removedAt))).orderBy(asc(members.id)).all();
         if (!owners.length) throw new Error('No household owner can answer this approval');
         for (const owner of owners) mail.send({ toKind: 'person', to: owner.id, source: 'approval', sourceId: row.id,
           fromKind: 'agent', fromId: row.agent, conversation: row.conversation, project: row.project, agent: row.agent, member: row.member,

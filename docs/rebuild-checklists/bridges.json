@@ -2,7 +2,7 @@
   "page": "bridges",
   "title": "Discord and Slack",
   "ownerTask": "t-2242",
-  "sourceSha256": "a883cf7c80a5dfb8ac671a2722ea4a80c4405d255c46b672d734830b016ccdf3",
+  "sourceSha256": "16b12100348c301e92978e15e0f4bc972ec24e4cb6b472014d6035c725357d4c",
   "promises": [
     {
       "id": "bridges-001",

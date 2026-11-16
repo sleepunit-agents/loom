@@ -1,6 +1,6 @@
 /** Standing answers over the approved table. The caller supplies trusted actingFor
  * member ID context; query text or a merely readable record cannot supply that identity. */
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { OperationError } from '../core/operations/index.js';
@@ -22,7 +22,7 @@ function matches(pattern:string,text:string){
   return previous[letters.length];
 }
 export function approvalRulesService(db:DataDatabase,now:()=>string){
-  const owner=(id:string)=>db.select().from(members).where(and(eq(members.id,id),eq(members.role,'owner'))).get();
+  const owner=(id:string)=>db.select().from(members).where(and(eq(members.id,id),eq(members.role,'owner'),isNull(members.removedAt))).get();
   const canonical=(input:RuleInput)=>{
     const value=approvalRuleInput.parse(input);
     if(value.scope.startsWith('project:')){

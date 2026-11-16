@@ -5,7 +5,9 @@ CREATE TABLE `members` (
 	`full_owner` integer DEFAULT false NOT NULL,
 	`position` integer DEFAULT 0 NOT NULL,
 	`joined_at` text NOT NULL,
+	`removed_at` text,
 	CONSTRAINT "members_joined_at_utc" CHECK("members"."joined_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "members"."joined_at") = "members"."joined_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "members"."joined_at") = "members"."joined_at", 0)),
+	CONSTRAINT "members_removed_at_utc" CHECK("members"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "members"."removed_at") = "members"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "members"."removed_at") = "members"."removed_at", 0)),
 	CONSTRAINT "members_role_choice" CHECK("members"."role" in ('owner', 'member')),
 	CONSTRAINT "members_full_owner_boolean" CHECK("members"."full_owner" in (0, 1)),
 	CONSTRAINT "members_full_owner_role" CHECK(not "members"."full_owner" or "members"."role" = 'owner')
@@ -21,7 +23,9 @@ CREATE TABLE `agents` (
 	`face_shape` text NOT NULL,
 	`face_eyes` text NOT NULL,
 	`sprite_version` text,
+	`removed_at` text,
 	CONSTRAINT "agents_about_asked_at_utc" CHECK("agents"."about_asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agents"."about_asked_at") = "agents"."about_asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agents"."about_asked_at") = "agents"."about_asked_at", 0)),
+	CONSTRAINT "agents_removed_at_utc" CHECK("agents"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agents"."removed_at") = "agents"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agents"."removed_at") = "agents"."removed_at", 0)),
 	CONSTRAINT "agents_about_length" CHECK(length("agents"."about") <= 600),
 	CONSTRAINT "agents_face_shape_choice" CHECK("agents"."face_shape" in ('pebble', 'trefoil', 'clover', 'drop')),
 	CONSTRAINT "agents_face_eyes_choice" CHECK("agents"."face_eyes" in ('dot', 'oval'))
@@ -37,7 +41,9 @@ CREATE TABLE `member_agents` (
 
 CREATE TABLE `projects` (
 	`id` text PRIMARY KEY NOT NULL,
-	`name` text NOT NULL
+	`name` text NOT NULL,
+	`removed_at` text,
+	CONSTRAINT "projects_removed_at_utc" CHECK("projects"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "projects"."removed_at") = "projects"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "projects"."removed_at") = "projects"."removed_at", 0))
 );
 
 CREATE TABLE `project_members` (
@@ -1000,10 +1006,12 @@ CREATE TABLE `bridge_connections` (
 	`enabled` integer NOT NULL,
 	`state` text NOT NULL,
 	`state_at` text NOT NULL,
+	`removed_at` text,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`token_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`app_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_connections_state_at_utc" CHECK("bridge_connections"."state_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_connections"."state_at") = "bridge_connections"."state_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_connections"."state_at") = "bridge_connections"."state_at", 0)),
+	CONSTRAINT "bridge_connections_removed_at_utc" CHECK("bridge_connections"."removed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_connections"."removed_at") = "bridge_connections"."removed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_connections"."removed_at") = "bridge_connections"."removed_at", 0)),
 	CONSTRAINT "bridge_connections_platform_choice" CHECK("bridge_connections"."platform" in ('discord', 'slack')),
 	CONSTRAINT "bridge_connections_enabled_boolean" CHECK("bridge_connections"."enabled" in (0, 1)),
 	CONSTRAINT "bridge_connections_state_choice" CHECK("bridge_connections"."state" in ('connecting', 'connected', 'backoff', 'disconnected'))

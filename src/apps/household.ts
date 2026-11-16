@@ -2,7 +2,7 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { agents, members, memberAgents, household, backupRecipients } from '../core/data/schema.js';
+import { agents, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
 const id = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
 export const memberInput = z.object({
   id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
@@ -23,7 +23,7 @@ export const settingsInput = z.object({
   backupRecipients: z.array(z.string().trim().regex(/^(?:age1[0-9a-z]{20,100}|ssh-(?:ed25519|rsa) [A-Za-z0-9+/=]{40,1000}(?: [^\r\n]{0,100})?)$/)).max(50).transform(values => [...new Set(values)].sort()),
 }).partial().strict().refine(value => Object.keys(value).length > 0, 'Name at least one setting');
 export class HouseholdError extends Error {
-  constructor(readonly code: 'invalid' | 'conflict', message: string) { super(message); }
+  constructor(readonly code: 'invalid' | 'conflict' | 'not-found', message: string) { super(message); }
 }
 export function householdService(db: DataDatabase, now: () => string) {
   return {
@@ -38,7 +38,7 @@ export function householdService(db: DataDatabase, now: () => string) {
       return db.transaction(() => {
         const old = db.select().from(members).where(eq(members.id, value.id)).get();
         if (old?.role === 'owner' && value.role !== 'owner' && !db.select({ id: members.id }).from(members)
-          .where(sql`${members.role} = 'owner' and ${members.id} <> ${value.id}`).get())
+          .where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${value.id}`).get())
           throw new HouseholdError('conflict', 'At least one household owner must remain');
         const owned=value.fullOwner?db.select({id:agents.id}).from(agents).all().map(row=>row.id):value.agents;
         for (const agent of owned) if (!db.select({ id: agents.id }).from(agents).where(eq(agents.id, agent)).get())
@@ -61,6 +61,23 @@ export function householdService(db: DataDatabase, now: () => string) {
       } }).run();
       for(const owner of db.select({id:members.id}).from(members).where(eq(members.fullOwner,true)).all())db.insert(memberAgents).values({member:owner.id,agent:value.id}).onConflictDoNothing().run();
       return { id: value.id };
+      });
+    },
+    /** Remove keeps the row and everything that refers to it. A removed person cannot sign in, a removed
+     * agent does not run, a removed project or connection is out of use. Restore puts it back. */
+    setRemoved(of: 'member' | 'agent' | 'project' | 'bridge', id: string, removed: boolean) {
+      return db.transaction(() => {
+        const table = of === 'member' ? members : of === 'agent' ? agents : of === 'project' ? projects : bridgeConnections;
+        const row = db.select({ id: table.id, removedAt: table.removedAt }).from(table).where(eq(table.id, id)).get();
+        if (!row) throw new HouseholdError('not-found', 'No ' + of + ' has that id');
+        if (!!row.removedAt === removed) throw new HouseholdError('invalid', removed ? 'That is already removed' : 'That is not removed');
+        if (removed && of === 'member' && !db.select({ id: members.id }).from(members).where(sql`${members.role} = 'owner' and ${members.removedAt} is null and ${members.id} <> ${id}`).get())
+          throw new HouseholdError('conflict', 'At least one household owner must remain');
+        if (removed && of === 'agent' && db.select().from(household).get()?.defaultAgent === id) throw new HouseholdError('conflict', 'Choose another default agent first');
+        db.update(table).set({ removedAt: removed ? now() : null }).where(eq(table.id, id)).run();
+        // A removed connection is switched off. Restoring it leaves it off until someone turns it on.
+        if (of === 'bridge' && removed) db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', stateAt: now() }).where(eq(bridgeConnections.id, id)).run();
+        return { id };
       });
     },
     settings() {

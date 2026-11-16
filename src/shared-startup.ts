@@ -12,7 +12,7 @@ import {constants,openSync,closeSync,fsyncSync,realpathSync} from 'node:fs';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
-import {createDataSchema,dataDatabase,type DataDatabase} from './core/data/database.js';
+import {createDataSchema,dataDatabase, upgradeDataSchema,type DataDatabase} from './core/data/database.js';
 import {members,tokens,signinLinks} from './core/data/schema.js';
 import {ownHome} from './core/daemon-home.js';
 import {prepareOperatorHome,listenOperatorLinks} from './core/signin/operator.js';
@@ -72,6 +72,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   const parent=openSync(dirname(realpathSync(home)),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
   try{fsyncSync(parent);}finally{closeSync(parent);}
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
+  upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}

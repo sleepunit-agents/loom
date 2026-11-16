@@ -13,7 +13,7 @@ import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,members,secrets,tokens,boxes,sessions} from './core/data/schema.js';
+import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
 import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
 import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
@@ -48,6 +48,10 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
  // The order people or agents are listed in: every one of them, once.
  order:z.object({of:z.enum(['members','agents']),ids:z.array(z.string().min(1).max(100)).min(1).max(1000)}).strict(),
+ // Removing keeps the row and its history: a removed person cannot sign in, a removed agent does not run,
+ // a removed project or bridge connection is out of use. Restoring puts it back.
+ remove:z.object({of:z.enum(['member','agent','project','bridge']),id:z.string().min(1).max(200)}).strict(),
+ restore:z.object({of:z.enum(['member','agent','project','bridge']),id:z.string().min(1).max(200)}).strict(),
  // What a secret is for. Its value is never on a card.
  secretDescription:z.object({secret:z.string().min(1).max(200),description:z.string().max(4000)}).strict(),
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
@@ -65,27 +69,29 @@ const dangerousRule={verb:'Set',done:'answered without asking',yes:'Dangerous ac
 const dangerOf=(value:{change:string;input?:unknown})=>value.change in danger?danger[value.change as keyof typeof danger]
  :value.change==='rule'&&(value.input as {kind?:string;tier?:string|null}|undefined)?.kind==='dangerous'&&['tell','do'].includes((value.input as {tier?:string|null}).tier??'')?dangerousRule:undefined;
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
-const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('order',more),one('secretDescription',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
+const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('order',more),one('secretDescription',more),one('remove',more),one('restore',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
 type Proposal=z.infer<typeof proposal>;
-const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
+const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','remove','restore','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
 // Rule scopes are matched lower-case for merges; name the card the same way the rule is stored.
 const ruleScope=(input:{kind:string;scope:string})=>input.kind==='merge'&&!input.scope.startsWith('project:')?input.scope.toLowerCase():input.scope;
 const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?[value.input.kind,ruleScope(value.input),value.input.person].join(' ').trim()
- :value.change==='bodyPolicy'?value.input.agent:value.change==='order'?value.input.of:value.change==='secretRule'||value.change==='secretDescription'?value.input.secret:value.change==='secretDefault'||value.change==='measuring'?'':value.change==='houseSecrets'?value.input.agent
+ :value.change==='bodyPolicy'?value.input.agent:value.change==='remove'||value.change==='restore'?value.input.of+' '+value.input.id:value.change==='order'?value.input.of:value.change==='secretRule'||value.change==='secretDescription'?value.input.secret:value.change==='secretDefault'||value.change==='measuring'?'':value.change==='houseSecrets'?value.input.agent
  :value.change==='bridge'?[value.input.action,...('id' in value.input?[value.input.id]:'channel' in value.input?[value.input.platform,value.input.workspace,value.input.channel]:[value.input.platform,value.input.workspace,value.input.user])].join(' ')
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
  :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member:value.input.id;
-const label=(value:Proposal)=>value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
+const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
-const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:value.change+':'+name(value));
-const summary=(value:Proposal,before:unknown)=>dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
+const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:(value.change==='restore'?'remove':value.change)+':'+name(value));
+const summary=(value:Proposal,before:unknown)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
 const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+ :value.change==='remove'?{ask:'Remove '+label(value)+'?',ifYes:'It is taken out of use. Its history stays, and it can be restored.',ifNo:'It stays as it is.'}
+ :value.change==='restore'?{ask:'Restore '+label(value)+'?',ifYes:'It is put back in use.',ifNo:'It stays removed.'}
  :{ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'};
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
@@ -104,6 +110,11 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='member'){const row=household.members().find(row=>row.id===value.input.id);return row?sorted({id:row.id,role:row.role,fullOwner:row.fullOwner,agents:row.agents}):null;}
   if(value.change==='agent'){const row=db.select().from(agents).where(eq(agents.id,value.input.id)).get();return row?sorted({id:row.id,about:row.about,markBg:row.markBg,markFg:row.markFg,faceShape:row.faceShape,faceEyes:row.faceEyes}):null;}
   if(value.change==='rule'){const scope=ruleScope(value.input),row=rules.list().find(row=>row.kind===value.input.kind&&row.scope===scope&&row.person===value.input.person);return row?sorted({kind:row.kind,scope:row.scope,person:row.person,tier:row.tier}):null;}
+  if(value.change==='remove'||value.change==='restore'){
+   const table=value.input.of==='member'?members:value.input.of==='agent'?agents:value.input.of==='project'?projectRows:bridgeConnections;
+   const row=db.select({id:table.id,removedAt:table.removedAt}).from(table).where(eq(table.id,value.input.id)).get();
+   return row?sorted({of:value.input.of,id:row.id,removed:!!row.removedAt}):null;
+  }
   if(value.change==='order')return sorted({of:value.input.of,ids:listed(value.input.of)});
   if(value.change==='secretDescription'){const row=db.select().from(secrets).where(eq(secrets.name,value.input.secret)).get();return row?sorted({secret:row.name,description:row.description}):null;}
   if(value.change==='bodyPolicy')return db.select({id:agents.id}).from(agents).where(eq(agents.id,value.input.agent)).get()?sorted(readAgentBodyPolicy(db,value.input.agent)):null;
@@ -157,6 +168,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='runSettings')applyAgentRunSettings(db,{kind:'member',id:by},value.input);
    else if(value.change==='models')applyAgentModels(db,value.input,runtime.roles());
    else if(value.change==='agentAccounts')runtime.setAccounts(value.input);
+   else if(value.change==='remove'||value.change==='restore')household.setRemoved(value.input.of,value.input.id,value.change==='remove');
    else if(value.change==='order'){
     const table=value.input.of==='members'?members:agents,have=listed(value.input.of);
     if(new Set(value.input.ids).size!==value.input.ids.length||have.length!==value.input.ids.length||have.some(id=>!value.input.ids.includes(id)))throw new OperationError('invalid','Name every one of the '+value.input.of+' exactly once');
@@ -176,7 +188,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Try the change and undo it, so a card that could never be allowed is refused when it is filed.
  const undone=Symbol('rehearsal');
  const rehearse=(value:Proposal)=>{
-  const owner=db.select({id:members.id}).from(members).where(eq(members.role,'owner')).get()?.id;
+  const owner=db.select({id:members.id}).from(members).where(and(eq(members.role,'owner'),isNull(members.removedAt))).get()?.id;
   if(!owner)throw new OperationError('conflict','No household owner can allow this');
   try{db.transaction(()=>{change(value,owner);throw undone;});}catch(error){if(error!==undone)throw error instanceof OperationError?error:new OperationError('invalid','That change cannot be made');}
  };
