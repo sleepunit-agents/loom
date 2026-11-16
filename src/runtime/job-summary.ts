@@ -1,20 +1,14 @@
 /** Home's current-job projection. The outside composition supplies its current
  * jobs SQL policy; this module never invents sharing rules or reads credentials. */
-import { and, asc, eq, getTableColumns, inArray, is, SQL } from 'drizzle-orm';
+import { readCurrentJobs } from '../core/data/current-jobs-read.js';
 import { GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
-import { jobs } from '../core/data/schema.js';
 
 export class JobSummaries {
   constructor(readonly db: DataDatabase, readonly visibility: () => QueryVisibility) {}
   current(agent: string) {
-    const allowed = this.visibility().jobs?.(getTableColumns(jobs));
-    if (!is(allowed, SQL)) throw new Error('SQL visibility required for jobs');
-    return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title,
-      state: jobs.state, box: jobs.box, queuedAt: jobs.queuedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, ['queued', 'starting', 'running', 'waiting'])))
-      .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
+    return readCurrentJobs(this.db,this.visibility(),agent);
   }
 }
 const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {

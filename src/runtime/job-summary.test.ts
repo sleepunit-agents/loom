@@ -73,10 +73,21 @@ it('constrains the single SQL read before fetching rows and never reads machine 
     const statements = prepared.mock.calls.map(([query]) => query);
     // One jobs read: no later JS filtering, per-row lookups or box metadata.
     expect(statements).toHaveLength(1);
-    expect(statements[0]).toMatch(/from "jobs" where \(.*"jobs"\."member" is null/);
+    expect(statements[0]).toMatch(/from "jobs"(?: "jobs")? where \(.*"jobs"\."member" is null/);
     expect(statements[0]).toContain('"jobs"."agent" = ?');
     expect(statements[0]).toContain('"jobs"."state" in (?, ?, ?, ?)');
     expect(statements[0]).not.toMatch(/\b(?:join|boxes)\b/i);
     expect(statements[0]).not.toMatch(/"(?:brief|log_tail|account|house_repository|build)"/);
   } finally { prepared.mockRestore(); }
+});
+
+it('keeps one current-job statement as visible rows grow from two to ten',()=>{
+ const f=fixture();
+ for(let n=0;n<2;n++)f.add('job-'+n,'queued');
+ const prepared=vi.spyOn(f.client,'prepare');
+ try{
+  expect(f.summaries.current('art')).toHaveLength(2);expect(prepared).toHaveBeenCalledTimes(1);prepared.mockClear();
+  for(let n=2;n<10;n++)f.add('job-'+n,'queued');prepared.mockClear();
+  expect(f.summaries.current('art')).toHaveLength(10);expect(prepared).toHaveBeenCalledTimes(1);
+ }finally{prepared.mockRestore();}
 });
