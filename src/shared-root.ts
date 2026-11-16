@@ -61,6 +61,7 @@ import { OperationError, Operations, failure, type Change } from './core/operati
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
+import { registerSharedJobControl } from './shared-job-control.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
@@ -219,6 +220,7 @@ export function sharedRoot(options: {
   const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
+  registerSharedJobControl(operations, db, (job, member, reason) => runtime.stop(job, member, reason));
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);

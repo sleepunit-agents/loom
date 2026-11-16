@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add the `jobHistory` read (an agent's jobs, ended ones included) and `runtime.jobStop` (a household owner or the agent's owner ends a job by hand, as a reset or a write-off).
+
 - The MCP door gains four named tools: `person`, `person_write`, `project` and `project_write`, for an agent's own person and project cards.
 
 - `tasks.command` gains `move` (place a task before another in the hand-kept order, or last) and `create` accepts the spec line a task implements.

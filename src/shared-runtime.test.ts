@@ -466,3 +466,22 @@ it.each(['wake','discord','slack'] as const)('keeps member-private %s stdout and
  expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.logTail).toBeNull();
  expect(f.db.select().from(operationResults).where(eq(operationResults.operation,'runtime.finish')).get()?.inputHash).not.toBe(hash(JSON.stringify({exitCode:0,job:queued.id,logTail:input.logTail})));
 });
+
+it('lets an owner end a job by hand and reads the job afterwards with who ended it and why', async () => {
+  const f = fixture(), queued = f.send();
+  const stop = { job: queued.id, reason: 'reset' };
+  for (const bearer of [agentCredential, credential]) expect((await f.call('jobStop', stop, 'stop-denied-' + bearer[0], bearer)).status).toBe(403);
+  expect((await f.call('jobStop', { job: 'missing', reason: 'reset' }, 'stop-missing', ownerCredential)).status).toBe(403);
+  expect((await f.call('jobStop', { ...stop, reason: 'because' }, 'stop-bad', ownerCredential)).status).toBe(400);
+  expect((await f.call('jobStop', stop, 'stop', ownerCredential)).status).toBe(200);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'reset' });
+  expect(f.ended).toHaveBeenCalledWith(queued.id);
+  expect(await (await f.call('jobStop', stop, 'stop-again', ownerCredential)).json()).toMatchObject({ ok: false, code: 'conflict' });
+  const read = async (bearer: string) => (await (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + bearer },
+    body: JSON.stringify({ query: '{ currentJobs(agent:"art") { id } jobHistory(agent:"art", first: 5) { id state endedBy endedReason retryOf queuedAt endedAt conversation } }' }) })).json() as { data: { currentJobs: unknown[]; jobHistory: Record<string, unknown>[] } }).data;
+  for (const bearer of [ownerCredential, agentCredential]) {
+    const seen = await read(bearer);
+    expect(seen.currentJobs).toEqual([]);
+    expect(seen.jobHistory).toEqual([expect.objectContaining({ id: queued.id, state: 'stopped', endedBy: 'owner', endedReason: 'reset', conversation: queued.conversation })]);
+  }
+});
