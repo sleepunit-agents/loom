@@ -150,7 +150,7 @@ it('does not publish an empty drain during ordinary reconciliation',async()=>{
 it('keeps the authenticated connection state when only channel filters change',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const before=f.db.select().from(bridgeConnections).get()!;
  expect(before.state).toBe('connected');f.clock.advance(1000);
- const {state:_state,stateAt:_at,...connection}=before;
+ const {state:_state,stateAt:_at,removedAt:_removed,...connection}=before;
  new BridgeSettings(f.db,()=>new Date(f.clock.now()).toISOString(),write=>f.writes.run(write).value).change({action:'connection',...connection,only:['CROOM'],ignore:['COTHER']});
  f.daemon.changed();await f.daemon.idle();
  expect(f.db.select().from(bridgeConnections).get()).toMatchObject({state:'connected',stateAt:before.stateAt});expect(f.transports).toHaveLength(1);expect(f.closed).not.toHaveBeenCalled();
