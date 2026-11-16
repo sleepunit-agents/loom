@@ -210,6 +210,14 @@ it('reads, edits, checks and restores a knowledge page',async()=>{
   expect((await art.call('knowledge_restore',{slug:'fictional-hose',revision:version})).error).toBe(false);
   expect((await art.call('knowledge_read',{slug:'fictional-hose'})).text).toContain('FICTIONAL_FIRST_FACT');
   expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'due-a-check'})).error).toBe(false);
+  // A source alone: the words stay, no version is kept, and the page becomes sourced.
+  expect((await art.call('knowledge_read',{slug:'fictional-hose'})).text).toContain('provisional');
+  expect((await art.call('knowledge_edit',{slug:'fictional-hose',source:'https://example.invalid/hose'})).error).toBe(false);
+  const sourced=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
+  expect(sourced).toContain('FICTIONAL_FIRST_FACT');expect(sourced).toContain('· sourced ·');expect(sourced).toContain('- https://example.invalid/hose');
+  expect((await art.call('knowledge_edit',{slug:'fictional-hose',source:'https://example.invalid/hose'})).error).toBe(true);
+  expect((await art.call('knowledge_edit',{slug:'fictional-hose',source:'Pond pump thread'})).error).toBe(true);
+  expect((await art.call('knowledge_edit',{slug:'fictional-hose'})).error).toBe(true);
   expect((await art.call('knowledge_read',{slug:'no-such-page'})).text).toBe('No knowledge page no-such-page');
  }finally{await art.client.close();await p.close();}
 },30_000);

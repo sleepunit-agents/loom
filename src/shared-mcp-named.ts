@@ -246,8 +246,8 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    if(page.history?.length)lines.push('','## Earlier versions',...page.history.map(row=>'- '+row.id+' ('+row.op+', replaced '+row.replacedAt+(row.actor?' by '+row.actor:'')+')'));
    return lines.join('\n');
   });
- tool('knowledge_edit','Replace the body of a shared knowledge page. The old body is kept as a version.',
-  z.object({slug:z.string().min(1).max(200),body:z.string().min(1).max(65536)}).strict(),
+ tool('knowledge_edit','Change a shared knowledge page: replace its body (the old body is kept as a version), add a source (an http or https link), or both.',
+  z.object({slug:z.string().min(1).max(200),body:z.string().min(1).max(65536).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
  tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check.',
   z.object({slug:z.string().min(1).max(200),outcome:z.enum(['still-true','due-a-check'])}).strict(),

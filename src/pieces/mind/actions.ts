@@ -92,7 +92,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   }));
   // Edit and restore both replace a page's body. Either saves the displaced
   // body as a version first, in the same transaction, and keeps the newest ten.
-  const replace = (name: string, op: string, input: z.ZodType<{ slug: string }>, next: (page: { id: number; body: string }, value: never) => string) =>
+  const replace = (name: string, op: string, input: z.ZodType<{ slug: string }>, next: (page: { id: number; body: string }, value: never) => string, source: (value: never) => string = () => '') =>
     operations.register(operation({ name, write: true, input, output: z.unknown(), recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
       run(ctx, value) {
@@ -106,11 +106,19 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
           const page = db.prepare('SELECT id, body, status FROM pages WHERE slug = ?').get(value.slug) as { id: number; body: string; status: string } | undefined;
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
           if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before changing it');
-          const body = next(page, value as never);
-          if (body === page.body) throw new OperationError('conflict', 'The page already says that');
+          const body = next(page, value as never), from = source(value as never);
+          if (from && !/^https?:\/\//.test(from)) throw new OperationError('invalid', 'The source must be an http or https link, or empty');
+          if (from && db.prepare('SELECT 1 FROM citations WHERE page_id = ? AND source_locator = ?').get(page.id, from)) throw new OperationError('conflict', 'The page already names that source');
+          // A source alone is a change too: the words stay and no version is kept.
+          if (body === page.body && !from) throw new OperationError('conflict', 'The page already says that');
           const at = new Date(ctx.now).toISOString();
-          const revision = snapshotKnowledgeRevision(db, page.id, value.slug, page.body, op, at, ctx.viewer.id);
+          const revision = body === page.body ? null : snapshotKnowledgeRevision(db, page.id, value.slug, page.body, op, at, ctx.viewer.id);
           db.prepare('UPDATE pages SET body = ?, updated = ? WHERE id = ?').run(body, at, page.id);
+          if (from) {
+            const title = (db.prepare('SELECT title FROM pages WHERE id = ?').get(page.id) as { title: string }).title;
+            db.prepare('INSERT INTO citations(page_id,claim,source_kind,source_locator,excerpt,retrieved_at,created) VALUES(?,?,?,?,?,?,?)').run(page.id, title, 'web', from, title, at, at);
+            db.prepare("UPDATE pages SET sourcing = 'sourced' WHERE id = ?").run(page.id);
+          }
           const result = { slug: value.slug, slugs: [value.slug], revision };
           db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer, receipt.id, receipt.name, receipt.inputHash, JSON.stringify(result), receipt.expires);
           return result;
@@ -120,8 +128,10 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       },
     }));
   const slug = z.string().min(1).max(200);
-  replace('mind.knowledgeEdit', 'edit', z.object({ slug, body: z.string().trim().min(1).max(64 * 1024) }).strict(),
-    (_page, value: { body: string }) => value.body);
+  // Edit: new words, a source to add, or both.
+  replace('mind.knowledgeEdit', 'edit', z.object({ slug, body: z.string().trim().min(1).max(64 * 1024).optional(), source: z.string().trim().max(4000).default('') }).strict()
+    .refine(value => value.body !== undefined || value.source !== '', 'Give new words, a source, or both'),
+    (page, value: { body?: string }) => value.body ?? page.body, (value: { source: string }) => value.source);
   replace('mind.knowledgeRestore', 'restore', z.object({ slug, revision: z.number().int().positive() }).strict(),
     (page, value: { revision: number }) => {
       const kept = db!.prepare('SELECT body FROM page_revisions WHERE id = ? AND page_id = ?').get(value.revision, page.id) as { body: string } | undefined;
