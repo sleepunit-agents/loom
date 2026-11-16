@@ -150,8 +150,8 @@ export function sharedRoot(options: {
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now);
-  const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings);
+  const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
+  const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now);
   const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, modelProposals.operation, runProposals.operation, boxProposals.operation, secretProposals.operation, bridgeProposals.operation, householdProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
@@ -270,7 +270,7 @@ export function sharedRoot(options: {
     }),
     household: householdSettings,
     projects: projectSettings,
-    signin: sharedTokens(db, clock),
+    signin: tokenSettings,
     programSetup,
     account: sharedAccount(db, clock),
     householdAccess,

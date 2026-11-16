@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add `household.propose`: an agent, with or without a job, files an approval card for a project, member, agent description, household settings, standing approval rule, or outside-people and denied-tools change. A household owner allows it through Approvals and loom then makes the change.
+- Add `household.propose`: an agent, with or without a job, files an approval card for a project, member, agent description, household settings, standing approval rule, or outside-people and denied-tools change. It also files one dangerous action the same way: revoking a token, named by its label. A household owner allows it through Approvals and loom then makes the change.
 
 - Add `household.setSettings` and a `settings` field on `householdSetup`: an owner can change and read the default agent, time zone, keep time, GitHub owner and backup settings.
 

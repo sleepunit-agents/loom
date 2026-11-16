@@ -98,3 +98,15 @@ it('proposes how an agent treats outside people and which tools its body is not 
   expect(f.db.select().from(agentPeople).all()).toEqual([{ agent: 'art', person: '["discord","pond","u1"]', tier: 2 }]);
   expect(f.db.select().from(agentDeniedTools).all()).toEqual([{ agent: 'art', pattern: 'Bash(rm *)', guestsOnly: true }]);
 });
+it('proposes one dangerous action, revoking a token by its label, and it takes effect only on Allow', async () => {
+  const f = fixture();
+  expect((await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'nobody' }, why: 'x' }, 'art')).body).toMatchObject({ code: 'not-found' });
+  const filed = await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'lee' }, why: 'Lee lost the laptop' }, 'art');
+  expect(f.db.select().from(approvals).get()).toMatchObject({ kind: 'dangerous', state: 'pending', target: 'household:tokenRevoke:lee', ask: 'Revoke token lee?',
+    changeSummary: 'Revoke token lee: {"for":"lee","kind":"owner","label":"lee"} → revoked', ifYes: 'The token stops working at once. This cannot be undone.' });
+  expect((await f.call('household/setSettings', { commsDays: 9 }, 'lee')).status).toBe(403);
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(tokens).all().find(row => row.label === 'lee')!.revokedAt).toBeTruthy();
+  expect((await f.call('household/setSettings', { commsDays: 9 }, 'lee')).status).toBe(401);
+  expect((await f.call('household/propose', { change: 'tokenRevoke', input: { label: 'lee' }, why: 'again' }, 'art')).body).toMatchObject({ code: 'not-found' });
+});

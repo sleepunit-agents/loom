@@ -1,16 +1,17 @@
 /** Household changes an agent asks for: a project, a member, an agent's
  * description, the household's own settings, a standing approval rule, or how
- * an agent treats outside people and which tools its body is not given. The agent files a card with
+ * an agent treats outside people and which tools its body is not given. One
+ * dangerous action is proposed the same way: revoking a token, named by its label. The agent files a card with
  * the exact before and after. A household owner allows it through Approvals,
  * and only then does loom make the change. The agent never becomes an owner.
  *
  * Unlike the runtime proposals this needs no job: a terminal session with the
  * agent's own token may propose. The owner who allows is the authority. */
-import {eq} from 'drizzle-orm';
+import {and,eq,isNull} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
-import {agents,approvals} from './core/data/schema.js';
+import {agents,approvals,tokens} from './core/data/schema.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
@@ -19,22 +20,28 @@ import {projectInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
 const operation='household.change';
-const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput};
+const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
+ // Dangerous, not a setting: it cannot be put back. Named by label because an agent cannot read fingerprints.
+ tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict()};
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
-const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more)]);
+const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('tokenRevoke',more)]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
 type Proposal=z.infer<typeof proposal>;
-const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy']),before:z.json(),after:z.json()}).strict();
+const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','tokenRevoke']),before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
 // Rule scopes are matched lower-case for merges; name the card the same way the rule is stored.
 const ruleScope=(input:{kind:string;scope:string})=>input.kind==='merge'&&!input.scope.startsWith('project:')?input.scope.toLowerCase():input.scope;
 const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?[value.input.kind,ruleScope(value.input),value.input.person].join(' ').trim()
- :value.change==='bodyPolicy'?value.input.agent:value.input.id;
-const label=(value:Proposal)=>value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
+ :value.change==='bodyPolicy'?value.input.agent:value.change==='tokenRevoke'?value.input.label:value.input.id;
+const label=(value:Proposal)=>value.change==='tokenRevoke'?'token '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
 const target=(value:Proposal)=>'household:'+(value.change==='settings'?'settings':value.change+':'+name(value));
-const summary=(value:Proposal,before:unknown)=>label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
-const cardWords=(value:Proposal)=>({ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'});
-export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>){
+const summary=(value:Proposal,before:unknown)=>value.change==='tokenRevoke'?'Revoke '+label(value)+': '+JSON.stringify(before)+' → revoked'
+ :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
+const cardWords=(value:Proposal)=>value.change==='tokenRevoke'?{ask:'Revoke '+label(value)+'?',ifYes:'The token stops working at once. This cannot be undone.',ifNo:'The token keeps working.'}
+ :{ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'};
+const kindOf=(value:Proposal)=>value.change==='tokenRevoke'?'dangerous' as const:'setting' as const;
+export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string){
+ const liveToken=(label:string)=>db.select().from(tokens).where(and(eq(tokens.label,label),isNull(tokens.revokedAt))).all().find(row=>!row.expiresAt||row.expiresAt>now());
  const appliedCards=new Set<string>();
  // What the change would replace, in the same shape as the input, or null when it would be new.
  const before=(value:Proposal):unknown=>{
@@ -43,12 +50,14 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='agent'){const row=db.select().from(agents).where(eq(agents.id,value.input.id)).get();return row?sorted({id:row.id,about:row.about,markBg:row.markBg,markFg:row.markFg,faceShape:row.faceShape,faceEyes:row.faceEyes}):null;}
   if(value.change==='rule'){const scope=ruleScope(value.input),row=rules.list().find(row=>row.kind===value.input.kind&&row.scope===scope&&row.person===value.input.person);return row?sorted({kind:row.kind,scope:row.scope,person:row.person,tier:row.tier}):null;}
   if(value.change==='bodyPolicy')return db.select({id:agents.id}).from(agents).where(eq(agents.id,value.input.agent)).get()?sorted(readAgentBodyPolicy(db,value.input.agent)):null;
+  if(value.change==='tokenRevoke'){const row=liveToken(value.input.label);return row?sorted({label:row.label,kind:row.kind,for:row.member??row.agent??row.box}):null;}
   const current=household.settings() as Record<string,unknown>;
   return sorted(Object.fromEntries(Object.keys(value.input).map(key=>[key,current[key]])));
  };
  const apply=(card:Approval)=>{
-  if(card.kind!=='setting'||card.operation!==operation)throw new OperationError('conflict','Wrong household card');
+  if(card.operation!==operation)throw new OperationError('conflict','Wrong household card');
   const kept=details.parse(JSON.parse(card.details)),value=proposal.parse({change:kept.change,input:kept.after});
+  if(card.kind!==kindOf(value))throw new OperationError('conflict','Wrong household card');
   const words=cardWords(value);
   if(card.target!==target(value)||card.changeSummary!==summary(value,kept.before)||card.ask!==words.ask||card.ifYes!==words.ifYes||card.ifNo!==words.ifNo)throw new OperationError('denied','Household card changed');
   if(JSON.stringify(before(value))!==JSON.stringify(kept.before))throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
@@ -59,7 +68,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='settings')household.setSettings(value.input);
    // A rule records who set it: the owner who allowed this card.
    else if(value.change==='rule'){if(!card.decidedBy)throw new OperationError('denied','A household owner is required');rules.set(value.input,card.decidedBy);}
-   else saveAgentBodyPolicy(db,value.input);
+   else if(value.change==='bodyPolicy')saveAgentBodyPolicy(db,value.input);
+   else revokeToken(liveToken(value.input.label)!.fingerprint);
   }catch(error){if(error instanceof HouseholdError)throw new OperationError(error.code,error.message);throw error;}
   appliedCards.add(card.id);
  };
@@ -74,11 +84,12 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     run(ctx,raw){
      const value=proposal.parse({change:raw.change,input:raw.input}),was=before(value);
      if(value.change==='bodyPolicy'&&was===null)throw new OperationError('invalid','Unknown agent');
+     if(value.change==='tokenRevoke'&&was===null)throw new OperationError('not-found','No live token has that label');
      if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
      if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');
      const found=current?.(ctx.viewer);
      // Provenance is set here from the authenticated caller, never taken from input.
-     const card=service.request({kind:'setting',operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
+     const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
       agent:ctx.viewer.id,member:found?.cv.member??null,project:found?.cv.project??null,conversation:found?.cv.id??null,
       askedFrom:found?.cv.id??'terminal',actingFor:found?.cv.member??'unknown',what:summary(value,was),why:raw.why,...cardWords(value)});
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id};
