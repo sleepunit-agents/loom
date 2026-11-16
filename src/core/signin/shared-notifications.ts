@@ -1,3 +1,4 @@
+import {readPersonalNotificationDevices} from '../data/personal-account-read.js';
 /** Browser devices and post-settlement pushes on the shared program. No source
  * words enter a push. Attempts are claimed before IO and never blindly retried.
  */
@@ -43,7 +44,7 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
  }
  const kick=()=>{if(running){again=true;return;}if(!closed){again=false;running=Promise.resolve().then(drain).catch(()=>{try{options.reportError(Error('Push delivery unavailable'));}catch{}}).finally(()=>{running=undefined;if(again&&!closed)kick();});}};
  return {
-  read(member:string){return{publicKey:options.config?.vapid.publicKey??null,devices:db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all().map(row=>({ref:ref(row.endpoint),device:row.device,createdAt:row.createdAt,seenAt:row.seenAt}))};},
+  read(member:string){return{publicKey:options.config?.vapid.publicKey??null,devices:readPersonalNotificationDevices(db,member).map(row=>({ref:ref(row.endpoint),device:row.device,createdAt:row.createdAt,seenAt:row.seenAt}))};},
   install(operations:Operations){
    operations.register({name:'notifications.subscribe',write:true,recheckPolicy:true,windowOnly:true,doors:['http'],input:z.object({sub:subscription,device:z.string().trim().min(1).max(120)}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:viewer=>!!options.config&&member(viewer)&&!!options.browser(viewer),run(ctx,input){
     const proof=options.browser(ctx.viewer),session=proof&&db.select().from(sessions).where(eq(sessions.id,proof.session)).get();if(!session||session.isAgent)throw new OperationError('denied','A signed-in person browser is required');
