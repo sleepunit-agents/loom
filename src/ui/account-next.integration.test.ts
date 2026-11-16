@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import {writeAccountProof} from '../../scripts/rebuild-account-proof.mjs';
 /** One Account browser proof through the actual shared program; CI owns Chrome. */
 vi.mock('../core/signin/push-transport.js',()=>({pushTransport:()=>{throw Error('External push delivery is forbidden in this proof');}}));
 import {accountEvidenceError} from '../../scripts/rebuild-account-evidence-errors.mjs';
@@ -8,7 +9,7 @@ import Database from 'better-sqlite3';
 import {createServer} from 'node:http';
 import {sharedSigninLinks} from '../core/signin/shared-links.js';
 import {createHash} from 'node:crypto';
-import {existsSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {existsSync,mkdirSync,rmSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {chromium} from 'playwright-core';
 import {FakeClock} from '../core/clock.js';
@@ -58,7 +59,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   expect(legacy).toBe(0);expect(errors).toEqual([]);
  }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
  finally{await browser.close();await app.close();client.close();}
- writeFileSync(resolve('artifacts/household-account/account-session.json'),JSON.stringify({completed:true,anotherBrowserRevoked:true,notificationEnabled:true,notificationDispatched:true,servedWorkerDisplayed:true,privateWordsExcluded:true,notificationRemoved:true,noDispatchAfterRemoval:true,currentBrowserRevoked:true,signInScreenRestored:true,identityConfirmedSignedOut:true,oneTimeLinkMadeAndHidden:true},null,2));
+ writeAccountProof(resolve('artifacts/household-account/account-session.json'),{completed:true,anotherBrowserRevoked:true,notificationEnabled:true,notificationDispatched:true,servedWorkerDisplayed:true,privateWordsExcluded:true,notificationRemoved:true,noDispatchAfterRemoval:true,currentBrowserRevoked:true,signInScreenRestored:true,identityConfirmedSignedOut:true,oneTimeLinkMadeAndHidden:true});
 });
 
 it.runIf(enabled)('registers and uses a real browser passkey against the shared sign-in door',async()=>{
@@ -120,5 +121,5 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   expect(errors).toEqual([]);
  }catch(error){failed=true;throw accountEvidenceError(error,privateCredentialKey);}
  finally{let cleanupError:unknown;for(const close of [()=>browser?.close(),()=>app.close(),()=>trap?new Promise<void>(resolve=>trap!.close(()=>resolve())):undefined,()=>client.close()]){try{await close();}catch(error){cleanupError??=error;}}if(cleanupError&&!failed)throw accountEvidenceError(cleanupError,privateCredentialKey);}
- writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,copiedCounterRejected:true,noSessionAfterCopiedCounter:true,restoredCounterSignin:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
+ writeAccountProof(resolve('artifacts/household-account/passkey.json'),{completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,copiedCounterRejected:true,noSessionAfterCopiedCounter:true,restoredCounterSignin:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true});
 });
