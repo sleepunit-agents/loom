@@ -36,7 +36,9 @@ jobs:
           test ! -e "$LOOM_TEST_SHOTS/report.json"
           nice -n 19 npx vitest run src/ui/rebuild-walkthrough.integration.test.ts --maxWorkers=1
           test -s "$LOOM_TEST_SHOTS/report.json"
+          rm -f artifacts/household-account/account-session.json artifacts/household-account/passkey.json
           LOOM_DESK_EVIDENCE=1 nice -n 19 npx vitest run src/ui/account-next.integration.test.ts --maxWorkers=1
+          node scripts/rebuild-signin-evidence.mjs "$LOOM_TEST_SHOTS" artifacts/household-account
           LOOM_PROGRAM_EVIDENCE=1 nice -n 19 npx vitest run src/ui/programme-home.integration.test.ts --maxWorkers=1
       - uses: actions/upload-artifact@v7
         if: always()

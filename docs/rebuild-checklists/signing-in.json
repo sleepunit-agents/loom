@@ -12,7 +12,19 @@
     {
       "id": "signing-in-002",
       "promise": "Signs a person in with a passkey or a one-time link.",
-      "source": "docs/how-it-works/site/signing-in.html"
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "signin"
+          },
+          {
+            "kind": "action",
+            "action": "signinPasskey"
+          }
+        ]
+      }
     },
     {
       "id": "signing-in-003",
@@ -22,7 +34,20 @@
     {
       "id": "signing-in-004",
       "promise": "Lists your signed-in browsers and passkeys, and lets you end them.",
-      "source": "docs/how-it-works/site/signing-in.html"
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "signinPasskeyControls"
+          },
+          {
+            "kind": "action",
+            "action": "signinBrowsers"
+          }
+        ]
+      }
     },
     {
       "id": "signing-in-005",
@@ -32,7 +57,11 @@
     {
       "id": "signing-in-006",
       "promise": "A person's token names the member.",
-      "source": "docs/how-it-works/site/signing-in.html#con-h"
+      "source": "docs/how-it-works/site/signing-in.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "signinMember"
+      }
     },
     {
       "id": "signing-in-007",
@@ -57,7 +86,11 @@
     {
       "id": "signing-in-011",
       "promise": "A person gets a session with a passkey or by opening a one-time sign-in link. A passkey's counter goes up with each use, so a lower number than last time means a copied key.",
-      "source": "docs/how-it-works/site/signing-in.html#how-h"
+      "source": "docs/how-it-works/site/signing-in.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "signinCounterRules"
+      }
     },
     {
       "id": "signing-in-012",
@@ -67,7 +100,11 @@
     {
       "id": "signing-in-013",
       "promise": "a Your own. A person sees their own passkeys, signed-in browsers and notification devices, and can end each one.",
-      "source": "docs/how-it-works/site/signing-in.html#see-h"
+      "source": "docs/how-it-works/site/signing-in.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "signinOwnSettings"
+      }
     },
     {
       "id": "signing-in-014",

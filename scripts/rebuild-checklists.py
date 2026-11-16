@@ -137,6 +137,13 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith('5 One query endpoint'):row['probe']={'kind':'legacy-data-socket'}
 
+ if f.stem=='signing-in':
+  for row in rows:
+   if row['promise'].startswith('Signs a person in with a passkey or a one-time link.'):row['probe']={'kind':'all','probes':[{'kind':'signin'},{'kind':'action','action':'signinPasskey'}]}
+   if row['promise'].startswith('Lists your signed-in browsers and passkeys, and lets you end them.'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'signinPasskeyControls'},{'kind':'action','action':'signinBrowsers'}]}
+   if row['promise'].startswith("A person's token names the member."):row['probe']={'kind':'action','action':'signinMember'}
+   if row['promise'].startswith('A person gets a session with a passkey or by opening a one-time sign-in link.'):row['probe']={'kind':'action','action':'signinCounterRules'}
+   if row['promise'].startswith('a Your own.'):row['probe']={'kind':'action','action':'signinOwnSettings'}
  if f.stem=='tasks':
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
