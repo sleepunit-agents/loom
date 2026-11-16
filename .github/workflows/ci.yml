@@ -140,6 +140,7 @@ jobs:
       - name: Test
         env:
           LOOM_CI_SHARD: ${{ matrix.shard }}/4
+          LOOM_BROWSER_TESTS: ${{ vars.LOOM_BROWSER_TESTS }}
           AFFECTED_ONLY: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' }}
         run: |
           reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
@@ -223,7 +224,9 @@ jobs:
   walkthrough:
     name: built program walkthrough
     # The result gate independently rejects a skipped required job; both scopes are guarded.
-    if: github.base_ref == 'next' || github.ref == 'refs/heads/next'
+    # Browser tests are off while the web app waits its turn (Jonathan, 2026-11-16). Set the repository
+    # variable LOOM_BROWSER_TESTS to 'on' to bring them back.
+    if: vars.LOOM_BROWSER_TESTS == 'on' && (github.base_ref == 'next' || github.ref == 'refs/heads/next')
     uses: ./.github/workflows/rebuild-walkthrough.yml
 
   results:
@@ -281,5 +284,5 @@ jobs:
           TEST_RESULT: ${{ needs.test.result }}
           PACKAGE_RESULT: ${{ needs.package.result }}
           WALKTHROUGH_RESULT: ${{ needs.walkthrough.result }}
-          REBUILD_REQUIRED: ${{ github.base_ref == 'next' || github.ref == 'refs/heads/next' }}
+          REBUILD_REQUIRED: ${{ vars.LOOM_BROWSER_TESTS == 'on' && (github.base_ref == 'next' || github.ref == 'refs/heads/next') }}
         run: node scripts/ci-results.ts

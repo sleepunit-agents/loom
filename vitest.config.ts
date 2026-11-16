@@ -17,7 +17,9 @@ export default defineConfig({
     // timeouts even when the command/data path is sound.
     projects: [
       { extends: true, test: { name: 'unit', sequence: { groupOrder: 0 }, exclude: [...configDefaults.exclude, '.claude/**', 'src/ui/**/*.integration.test.ts'] } },
-      { extends: true, test: { name: 'browser', sequence: { groupOrder: 1 }, fileParallelism: false, maxWorkers: 1, include: ['src/ui/**/*.integration.test.ts'], retry: process.env.CI ? 1 : 0 } },
+      // The browser suites are off while the web app waits its turn (Jonathan, 2026-11-16).
+      // LOOM_BROWSER_TESTS=on brings them back, here and in CI.
+      ...(process.env.LOOM_BROWSER_TESTS === 'on' ? [{ extends: true as const, test: { name: 'browser', sequence: { groupOrder: 1 }, fileParallelism: false, maxWorkers: 1, include: ['src/ui/**/*.integration.test.ts'], retry: process.env.CI ? 1 : 0 } }] : []),
     ],
     setupFiles: ['./src/test-isolation.ts', './src/test-setup.ts'],
     // expect.poll waits for something to become true; how long it may wait is not what any test checks. Vitest's own

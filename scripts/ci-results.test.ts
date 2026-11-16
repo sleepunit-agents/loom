@@ -30,7 +30,8 @@ function block(text:string,header:string):string{
  return blockAt(lines,start).join('\n');
 }
 it('wires the hosted browser into the required result with the exact next scope and no path filters',()=>{
- const scope="github.base_ref == 'next' || github.ref == 'refs/heads/next'";
+ // The browser suites are behind one switch while the web app waits its turn; with it on, the scope is next, exactly.
+ const scope="vars.LOOM_BROWSER_TESTS == 'on' && (github.base_ref == 'next' || github.ref == 'refs/heads/next')";
  const call=block(ci,'  walkthrough:');
  const results=block(ci,'  results:');
  const gate=block(ci,'      - name: Require every shard, deploy build and next walkthrough to pass');
