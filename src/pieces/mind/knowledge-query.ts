@@ -33,6 +33,8 @@ const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
  pages:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(summary)))},
 } });
 
+const match = new GraphQLObjectType({ name:'MemoryKnowledgeMatch', fields:{ slug:requiredText,title:requiredText,domain:requiredText,updated:requiredText,verified_at:text,body:requiredText } });
+
 export function knowledgeQueryFields(options: { path?:string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
  nextDeadline():number|undefined;
@@ -66,6 +68,20 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
    memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?read():null},
+   // One statement, no access stamp: every word must appear in the title, body or domain.
+   memoryKnowledgeSearch:{type:new GraphQLList(new GraphQLNonNull(match)),args:{query:{type:new GraphQLNonNull(GraphQLString)},domain:{type:GraphQLString},first:{type:GraphQLInt}},
+    resolve:(_source,args:{query:string;domain?:string|null;first?:number|null},context)=>{
+     if(!allowed(context))return null;
+     if(failed)throw new GraphQLError('Knowledge is unavailable');
+     const first=args.first??10,words=args.query.trim().split(/\s+/).filter(Boolean);
+     if(!Number.isInteger(first)||first<1||first>50||!words.length||words.length>20||args.query.length>400)throw new GraphQLError('Search needs 1 to 20 words and first from 1 to 50');
+     if(!db)return [];
+     const like=(word:string)=>'%'+word.replace(/[\\%_]/g,'\\$&')+'%',clauses=["status='active'"],values:unknown[]=[];
+     for(const word of words){clauses.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR domain LIKE ? ESCAPE '\\')");values.push(like(word),like(word),like(word));}
+     if(args.domain){clauses.push("(domain=? OR domain LIKE ? ESCAPE '\\')");values.push(args.domain,args.domain.replace(/[\\%_]/g,'\\$&')+'/%');}
+     try{return db.prepare('SELECT slug,title,domain,updated,verified_at,body FROM pages WHERE '+clauses.join(' AND ')+' ORDER BY hit_count DESC,updated DESC,slug LIMIT ?').all(...values,first);}
+     catch{throw new GraphQLError('Knowledge is unavailable');}
+    }},
    memoryKnowledgePage:{type:page,args:{slug:{type:new GraphQLNonNull(GraphQLString)}},
     resolve:(_source,args,context)=>allowed(context)?read(args.slug).open??null:null},
   },

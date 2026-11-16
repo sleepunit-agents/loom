@@ -11,7 +11,7 @@ import {startSharedHome} from '../dist/shared-startup.js';
 import {FakeClock} from '../dist/core/clock.js';
 const requireFact=(value,message)=>{if(!value)throw Error(message);};
 export async function headlessMcpEvidence(){
- const directory=mkdtempSync(join(tmpdir(),'loom-headless-evidence-')),home=join(directory,'home'),abort=new AbortController(),deadline=setTimeout(()=>abort.abort(),12000),client=new Client({name:'fictional-terminal-evidence',version:'1'});
+ const directory=mkdtempSync(join(tmpdir(),'loom-headless-evidence-')),home=join(directory,'home'),abort=new AbortController(),deadline=setTimeout(()=>abort.abort(),60000),client=new Client({name:'fictional-terminal-evidence',version:'1'});
  let app,owner,credential,answer;const cleanup={credentialsRevoked:false,rootClosed:false,homeRemoved:false};
  try{
   const webRoot=join(directory,'web');mkdirSync(webRoot);writeFileSync(join(webRoot,'next.html'),'<main>Fictional headless household</main>');

@@ -31,7 +31,28 @@ The tools are:
   admitted. Calling an otherwise granted operation does not require catalogue
   access.
 
-For private Memory, use `memory.remember` and `memory.recall`; their opaque IDs
+A terminal session also gets the names it already calls. Each is a thin mapping
+onto one registered command or one query on this same door, so a named tool
+that works proves its data layer works:
+
+| Tool | Maps to |
+|---|---|
+| `remember` | `memory.remember` |
+| `recall` | `memory.recall`, then one query for the matches' titles and content |
+| `update`, `forget` | `memory.update`, `memory.forget` |
+| `episodes` | `memoryActivity(to:)` |
+| `knowledge_recall` | `memoryKnowledgeSearch(query:, domain:, first:)` |
+| `knowledge_write` | `mind.knowledgeAdd` |
+| `note_read` | `memoryNote(agent:, path:)` |
+| `note_write` | `memory.noteWrite` |
+| `note_list` | `memoryNotes(agent:, prefix:, first:)` |
+
+`memoryNotes` lists paths, lifetimes and sizes without text.
+`memoryKnowledgeSearch` returns active pages in which every query word appears
+in the title, body or domain; it is one statement and records no access. The
+named tools need an agent credential and always act on that agent's own source.
+
+Through the generic tools: for private Memory, use `memory.remember` and `memory.recall`; their opaque IDs
 can be read with `memoryProjectMemory(id:){title content}`. For Notes, use
 `memory.noteWrite` with `{path,body,lifespan}` and read
 `memoryNote(agent:"fern",path:"project/work"){body by}`. A new note requires

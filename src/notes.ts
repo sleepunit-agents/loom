@@ -136,10 +136,12 @@ export class Notes {
   list(opts: { prefix?: string; limit?: number } = {}): NoteRow[] {
     const prefix = (opts.prefix ?? '').replace(/\/+$/, '');
     if (prefix && !NOTE_PATH.test(prefix)) throw new NoteError('a prefix is a note path or a folder of them');
-    const paths = (prefix
-      ? this.db.prepare("SELECT path FROM notes WHERE path = ? OR path LIKE ? ESCAPE '\\' ORDER BY updated DESC LIMIT ?").all(prefix, `${prefix.replace(/[\\%_]/g, '\\$&')}/%`, opts.limit ?? 500)
-      : this.db.prepare('SELECT path FROM notes ORDER BY updated DESC LIMIT ?').all(opts.limit ?? 500)) as Array<{ path: string }>;
-    return paths.map((p) => this.row(p.path)!);
+    const columns = `SELECT path, lifespan, pinned, created, updated, by, length(CAST(body AS BLOB)) AS bytes,
+      (SELECT COUNT(*) FROM note_files f WHERE f.path = notes.path) AS files FROM notes`;
+    const rows = (prefix
+      ? this.db.prepare(`${columns} WHERE path = ? OR path LIKE ? ESCAPE '\\' ORDER BY updated DESC LIMIT ?`).all(prefix, `${prefix.replace(/[\\%_]/g, '\\$&')}/%`, opts.limit ?? 500)
+      : this.db.prepare(`${columns} ORDER BY updated DESC LIMIT ?`).all(opts.limit ?? 500)) as Array<Omit<NoteRow, 'pinned' | 'expires'> & { pinned: number }>;
+    return rows.map((r) => ({ ...r, pinned: !!r.pinned, expires: r.pinned ? null : expiresAt(r.lifespan, r.updated) }));
   }
 
   /** Attach a file to a note (the note must exist). The bytes are stored once, by their sha256; a name is replaced. */

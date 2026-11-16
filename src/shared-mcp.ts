@@ -8,6 +8,7 @@ import {bodyCommandClient} from './runtime/body-command-client.js';
 import {randomUUID} from 'node:crypto';
 import {sameRequestOrigin} from './core/data/origin.js';
 import type {Clock} from './core/clock.js';
+import {registerNamedTools} from './shared-mcp-named.js';
 export async function sharedMcpRequest(options:{request:Request;clock:Clock;fetch:typeof fetch;valid():boolean;agent?:string;command(name:string,input:unknown,id?:string):Promise<unknown>;publicOrigin?:string}){
  const {request}=options;
  if(!sameRequestOrigin(request,options.publicOrigin))return Response.json({error:'Cross-origin request refused'},{status:403});
@@ -40,6 +41,7 @@ export async function sharedMcpRequest(options:{request:Request;clock:Clock;fetc
   try{if(!options.valid()||!options.agent||args.agent&&args.agent!==options.agent)throw Error('Identity unavailable');const identity=await bodyMemoryIdentity(client,options.agent);return {content:[{type:'text' as const,text:'Agent: '+options.agent+'\n\n'+(identity??'No Identity has been written.')}]};}
   catch{return {isError:true,content:[{type:'text' as const,text:'Identity unavailable'}]};}
  });
+ registerNamedTools(server,{agent:options.agent,valid:options.valid,query:input=>client.query(input),command:options.command});
  try{await server.connect(transport);const response=await transport.handleRequest(request),body=await response.text();return guardedResponse(body,{status:response.status,headers:response.headers},()=>options.valid()&&guards.every(guard=>guard()));}
  finally{client.close();await transport.close();await server.close();}
 }
