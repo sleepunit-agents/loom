@@ -1,3 +1,4 @@
+import { readHouseholdSetup } from './core/data/household-read.js';
 import { reattributeChanges, AttributionConflict, type MergeRuleReader } from './apps/changes.js';
 /** Household-wide credential and roster projection, for outside owners only. */
 import {eq} from 'drizzle-orm';
@@ -5,18 +6,13 @@ import {z} from 'zod';
 import {GraphQLObjectType,GraphQLString,GraphQLBoolean,GraphQLList,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
-import {members,agents,agentAccounts,tokens,sessions,household} from './core/data/schema.js';
+import {agents,agentAccounts,sessions} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import {sharedTokenOwner} from './core/signin/shared-tokens.js';
 import {endBrowser,browserRef} from './core/signin/shared-browser.js';
-import {householdService} from './apps/household.js';
 export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:MergeRuleReader){
  return{
-  read(){
-   const credentials=db.select().from(tokens).all(),at=Date.parse(now());
-   return{members:householdService(db,now).members(),agents:db.select().from(agents).all().map(row=>({...row,github:db.select({login:agentAccounts.login}).from(agentAccounts).where(eq(agentAccounts.agent,row.id)).all().map(row=>row.login)})),defaultAgent:db.select().from(household).get()?.defaultAgent??null,
-    tokens:credentials.map(row=>({...row,identity:row.member??row.agent??row.box,expired:!!row.expiresAt&&Date.parse(row.expiresAt)<=at})),sessions:db.select().from(sessions).all().map(row=>({ref:browserRef(row.id),device:row.device,issuedAt:row.issuedAt,seenAt:row.seenAt,isAgent:row.isAgent,ended:Date.parse(row.issuedAt)+(row.isAgent?6*3600000:30*86400000)<=at||!credentials.some(token=>token.fingerprint===row.token&&!token.revokedAt&&(!token.expiresAt||Date.parse(token.expiresAt)>at)),member:credentials.find(token=>token.fingerprint===row.token)?.member??null,tokenLabel:credentials.find(token=>token.fingerprint===row.token)?.label??null}))};
-  },
+  read(){ return readHouseholdSetup(db, now()); },
   revokeSession(reference:string){const row=db.select().from(sessions).all().find(row=>browserRef(row.id)===reference);if(!row)throw new OperationError('not-found','Browser not found');endBrowser(db,row.id);return{revoked:true as const};},
   setAccounts(input:{agent:string;github:string[]}){
    if(!db.select().from(agents).where(eq(agents.id,input.agent)).get())throw new OperationError('invalid','Choose an existing agent');
