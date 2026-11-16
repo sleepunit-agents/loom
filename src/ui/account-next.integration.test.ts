@@ -34,7 +34,8 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Fixture notification browser'});
   await context.addInitScript(()=>{Object.defineProperty(Notification,'requestPermission',{value:async()=> 'granted'});Object.defineProperty(navigator.serviceWorker,'ready',{value:Promise.resolve({pushManager:{getSubscription:async()=>null,subscribe:async()=>({endpoint:'https://fcm.googleapis.com/browser-proof',toJSON:()=>({keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}})})}})});});
   await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);
-  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[];let legacy=0;
+  const tabletContext=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Fixture notification browser'});await tabletContext.addCookies([{name:'loom_ui',value:'d'.repeat(64),url:app.url}]);
+  const a=await context.newPage(),b=await tabletContext.newPage(),errors:string[]=[];let legacy=0;
   for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/live')legacy++;});}
   await a.goto(app.url+'/p/account-preview');await b.goto(app.url+'/p/account-preview');
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Fixture laptop',exact:true}).count()).toBe(1);
@@ -43,6 +44,9 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   const tablet=a.getByRole('heading',{name:'Kitchen tablet',exact:true}).locator('..');
   await tablet.getByRole('button',{name:'Sign out browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Kitchen tablet',exact:true}).count()).toBe(0);expect(db.select().from(sessions).all()).toHaveLength(1);
+  await b.evaluate(()=>window.dispatchEvent(new Event('focus')));await b.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
+  const tabletLink=app.writes.run(()=>sharedSigninLinks(db,clock).makeLink(hash('a'.repeat(64)))).value;
+  await b.goto(app.url+tabletLink.path);await b.getByRole('button',{name:'Sign in',exact:true}).click();await b.locator('.next-shell').waitFor();await b.goto(app.url+'/p/account-preview');
   await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await expect.poll(()=>a.getByRole('status').last().textContent()).toContain('/login/');
   await a.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await a.locator('[data-signin-link]').waitFor({state:'hidden'});
   await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
@@ -54,6 +58,7 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE AFTER DISABLE'}));clock.advance(5000);await app.services.notifications!.publish('sam',[]);expect(settled.length).toBe(2);expect(pushErrors).toEqual([]);expect(pushes).toHaveLength(1);expect(delivered).toHaveLength(1);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
+  await b.getByRole('button',{name:'Sign out this device',exact:true}).click();await b.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
   const self=a.getByRole('heading',{name:'Current browser',exact:true}).locator('..');await self.getByRole('button',{name:'Sign out browser',exact:true}).click();
   await a.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();expect(await a.locator('body').innerText()).not.toContain('Could not');expect(db.select().from(sessions).all()).toEqual([]);expect((await context.request.get(app.url+'/auth/session')).ok()).toBe(true);expect(await (await context.request.get(app.url+'/auth/session')).json()).toMatchObject({viewer:null});
   expect(legacy).toBe(0);expect(errors).toEqual([]);
