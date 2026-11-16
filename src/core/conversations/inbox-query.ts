@@ -1,3 +1,4 @@
+import { readAll } from '../data/execution.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
@@ -76,7 +77,7 @@ export class InboxQueries {
     const permissions=fields.has('canSetVolume')?this.volumeBatch?.(viewer,items):undefined;
     const deadlines:number[]=[];
     const retain=(at:number)=>deadlines.push(at);
-    const rows=await Promise.all(items.map(async row=>{
+    const rows=await readAll(items.map(async row=>{
       const values:Record<string,unknown>={};
       const readers:Record<string,()=>unknown>={
         refs:()=>service.refs(viewer,row.id),read:()=>service.read(viewer,row.id),
@@ -85,7 +86,7 @@ export class InboxQueries {
         bodyKeepUntil:()=>service.bodyKeepUntil(viewer,row.id),answerKeepUntil:()=>service.answerKeepUntil(viewer,row.id),
         body:()=>service.body(viewer,row.id,retain),answerText:()=>service.answerText(viewer,row.id,retain),
       };
-      await Promise.all(Object.entries(readers).filter(([name])=>fields.has(name)).map(async([name,read])=>{values[name]=await read();}));
+      await readAll(Object.entries(readers).filter(([name])=>fields.has(name)).map(async([name,read])=>{values[name]=await read();}));
       return Object.assign({...row},{[projected]:values});
     }));
     // Even unchanged ciphertext may no longer be visible after open() yields.

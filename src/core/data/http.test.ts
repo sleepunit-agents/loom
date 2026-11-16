@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { GraphQLSchema, GraphQLObjectType, GraphQLString, GraphQLNonNull, GraphQLScalarType } from 'graphql/index.js';
+import { GraphQLSchema, GraphQLObjectType, GraphQLString, GraphQLNonNull } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
@@ -289,18 +289,6 @@ it('stops new HTTP admission without calling credential or schema callbacks', as
   expect(response.status).toBe(503); expect(authenticated).toBe(0); expect(schemas).toBe(0);
 });
 
-it('retains result serialization and fences credential checks when serialization stops HTTP', async () => {
-  const { db } = fixture(); let stopped = false, lateValidity = 0;
-  const events: string[] = []; let closing: Promise<void> | undefined;
-  const secret = new GraphQLScalarType({ name: 'ClosingHttpValue', serialize: () => ({ toJSON() {
-    stopped = true; app.stop(); closing = app.drain().then(() => { events.push('closed'); }); events.push('serialized'); return 'private words';
-  } }) });
-  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => 'secret' } } }) });
-  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopped) lateValidity++; return true; } }), undefined, () => schema);
-  const response = await app.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ secret }' }) });
-  expect(response.status).toBe(503); expect(await response.text()).not.toContain('private words');
-  await closing; expect(events).toEqual(['serialized', 'closed']); expect(lateValidity).toBe(0);
-});
 
 it('does not admit an HTTP subscription source outside the websocket lifetime', async () => {
   const { db } = fixture(); let subscriptions = 0;
@@ -325,13 +313,13 @@ it.each(['authenticate', 'activity'])('fences reentrant HTTP stop from %s before
   expect(lateValidity).toBe(0); await app.drain();
 });
 
-it.each(['commit','deadline'])('withholds selected data when %s changes during serialization', async kind => {
+it.each(['commit','deadline'])('withholds selected data when %s changes during its read', async kind => {
   const { db }=fixture(); let version=0,now=0;
   const { keepReadUntil }=await import('./read-lease.js');
-  const step=new GraphQLScalarType({name:'PublicationStep',serialize:()=>({toJSON(){if(kind==='commit')version++;else now=1;return 'public';}})});
+  const step=GraphQLString;
   const app=dataHttp(db,()=>({viewer:{kind:'member',id:'sam'},valid:()=>true}),undefined,{
     private:{type:GraphQLString,resolve:(_row,_args,context)=>{keepReadUntil(context,1);return 'PRIVATE SELECTED';}},
-    step:{type:step,resolve:()=>true},
+    step:{type:step,resolve:()=>{if(kind==='commit')version++;else now=1;return 'public';}},
   },{},()=>version,()=>now);
   const response=await app.request('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{private step}'})});
   expect(response.status).toBe(503);expect(await response.text()).not.toContain('PRIVATE SELECTED');

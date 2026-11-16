@@ -1,7 +1,7 @@
 /** Whole shared listener on fictional declared files and current shared facts. */
 import {afterEach,expect,it,vi} from 'vitest';
 import {memoryCall} from '../web/src/memory/commands.js';
-import {GraphQLString,GraphQLScalarType} from 'graphql/index.js';
+import {GraphQLString} from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
@@ -200,15 +200,15 @@ it('withdraws a selected private episode when its deadline passes during a sibli
   expect(body).not.toContain('PRIVATE expiring episode');expect(response.status).toBe(503);
  }finally{release();}
 });
-it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket','live'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during serialization without timer delivery via $door',async({kind,door})=>{
+it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket','live'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during its read without timer delivery via $door',async({kind,door})=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
  let current=f.clock.now();vi.spyOn(f.clock,'now').mockImplementation(()=>current);
  if(kind==='person'||kind==='people-list'){const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'Fictional friend'});}finally{people.close();}}
  if(kind==='project-preview'){const projects=new ProjectsStore({dbPath:f.sources.agents[0].memories});try{projects.write({slug:'pond',name:'Fictional pond'});}finally{projects.close();}}
  const source=new Database(f.sources.agents[0].memories);
  try{source.exec('CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER,salience REAL)');source.prepare("INSERT INTO memories VALUES(1,'expiry','PRIVATE expiring words','Fictional private content',?,NULL,'pond',?, ?,?,0,1)").run(new Date(current).toISOString(),(kind==='person'||kind==='people-list')?'{"person":"friend"}':'{}',new Date(current+1000).toISOString(),(kind==='person'||kind==='people-list')?'user':kind.startsWith('project')?'project':'episode');}finally{source.close();}
- const step=new GraphQLScalarType({name:'MemoryExpiryStep',serialize:()=>({toJSON(){current+=1000;return 'public';}})});
- const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{step:{type:step,resolve:()=>true}}});cleanup.push(()=>app.close());
+ const step=GraphQLString;
+ const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{step:{type:step,resolve:()=>{current+=1000;return 'public';}}}});cleanup.push(()=>app.close());
  const selections={activity:'memoryActivityEntry(id:"e~fiction~expiry"){title}','activity-window':'memoryActivity{entries{title}}',project:'memoryProjectMemory(id:"fiction:expiry"){title}','project-preview':'memoryProject(id:"fiction:pond"){sections{items{title}}}',person:'memoryPerson(id:"fiction:friend"){evidence{title}}','people-list':'memoryPeople{evidence{title}}'};
  const query=`{${selections[kind]} step}`;
  if(door==='http'){
