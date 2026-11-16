@@ -42,6 +42,7 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
     }
     case 'edit': return labels({ ...task, project: command.input.project === undefined ? task.project : command.input.project });
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
+    case 'move': return command.before === null || !!visibleTask(command.before);
     case 'ask': return !!db.select().from(members).where(eq(members.id, command.input.to.id)).get()
       && !!visibleTask(command.id, { kind: 'member', id: command.input.to.id });
     default: return true;

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `tasks.command` gains `move` (place a task before another in the hand-kept order, or last) and `create` accepts the spec line a task implements.
+
 - Add the `bridges.file` read: list the Slack attachments a message carried, or return one, for the connection's agent and household owners.
 
 - `secrets.command` gains the `house` action: an owner sets the secret that fetches an agent's house repository and the aliased secrets the house is handed at start.

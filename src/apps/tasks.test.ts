@@ -133,3 +133,28 @@ it('rolls back an answer and its comment if delivering the answer fails', () => 
   tasks.answer(task.id, 'words', 'Middle model', other);
   expect(db.select().from(inbox).all()[1]).toMatchObject({ to: actor.id, toKind: 'person', conversation: null, words: 'Middle model' });
 });
+
+it('moves a task in the hand-kept order, which breaks ties within a priority, and keeps everyone else in order', () => {
+  const a = file('A'), b = file('B'), c = file('C'), urgent = file('Urgent', 0);
+  expect(tasks.ready().map(t => t.title)).toEqual(['Urgent', 'A', 'B', 'C']);
+  tasks.move(c.id, a.id);
+  expect(tasks.ready().map(t => t.title)).toEqual(['Urgent', 'C', 'A', 'B']);
+  tasks.move(c.id, null);
+  expect(tasks.ready().map(t => t.title)).toEqual(['Urgent', 'A', 'B', 'C']);
+  tasks.move(a.id, c.id);
+  expect(tasks.ready().map(t => t.title)).toEqual(['Urgent', 'B', 'A', 'C']);
+  // Priority still comes first: the hand-kept order only breaks ties.
+  tasks.move(urgent.id, null);
+  expect(tasks.ready().map(t => t.title)).toEqual(['Urgent', 'B', 'A', 'C']);
+  expect(() => tasks.move(a.id, a.id)).toThrow('before itself');
+  expect(() => tasks.move(a.id, 't-999')).toThrow();
+  expect(new Set(tasks.list().map(t => t.position)).size).toBe(4);
+});
+it('records the line of a spec a task implements, one task per line', () => {
+  const spec = { item: 'tasks.html#ready', criterion: 'A blocked task waits' };
+  const made = tasks.create({ title: 'Hold back blocked work', goal: 'g', why: 'w', owner: { kind: 'household' }, spec }, actor);
+  expect(tasks.get(made.id)).toMatchObject({ specItem: spec.item, criterion: spec.criterion });
+  expect(() => tasks.create({ title: 'Again', goal: 'g', why: 'w', owner: { kind: 'household' }, spec }, actor)).toThrow('already implements');
+  expect(tasks.create({ title: 'Next line', goal: 'g', why: 'w', owner: { kind: 'household' }, spec: { ...spec, criterion: 'An epic is never ready' } }, actor).specItem).toBe(spec.item);
+  expect(file('No spec').specItem).toBeNull();
+});

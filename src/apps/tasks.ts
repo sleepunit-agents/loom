@@ -19,6 +19,8 @@ export const taskCreateSchema = z.object({
   owner: z.discriminatedUnion('kind', [person.extend({ kind: z.literal('member') }), person.extend({ kind: z.literal('agent') }), z.object({ kind: z.literal('household') })]),
   source: z.object({ kind: z.string().min(1), id: z.string().min(1) }).optional(),
   parent: z.string().min(1).optional(),
+  // The line of a spec this task implements. One task per line.
+  spec: z.object({ item: z.string().trim().min(1).max(500), criterion: z.string().trim().min(1).max(2000) }).strict().optional(),
 });
 export const taskEditSchema = z.object(summary).partial().strict();
 export const taskAskSchema = z.object({ to: person.extend({ kind: z.literal('member') }), ask: z.string().trim().min(1), ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), answers: z.enum(['yes-no', 'words']).default('yes-no') });
@@ -35,6 +37,8 @@ export interface TaskService {
   unclaim(id: string): TaskRow;
   close(id: string, reason: string): TaskRow;
   reopen(id: string): TaskRow;
+  /** Place a task just before another in the household's hand-kept order, or last. */
+  move(id: string, before: string | null): TaskRow;
   comment(id: string, text: string, actor: TaskActor): void;
   link(id: string, dependsOn: string, type: 'blocks' | 'parent-child'): void;
   unlink(id: string, dependsOn: string, type: 'blocks' | 'parent-child'): void;
@@ -89,11 +93,12 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
         const n = db.select({ n: sql<number>`coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0) + 1` }).from(tasks).get()!.n;
         const at = now(), id = `t-${n}`;
+        if (value.spec && db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.specItem, value.spec.item), eq(tasks.criterion, value.spec.criterion))).get()) throw new Error('A task already implements that line of the spec');
         db.insert(tasks).values({ id, title: value.title, goal: value.goal, why: value.why, doneWhen: value.doneWhen,
           description: value.description, priority: value.priority, type: value.type, project: value.project,
           ownerKind: value.owner.kind, owner: value.owner.kind === 'household' ? null : value.owner.id,
           createdByKind: actor.kind, createdBy: actor.id, createdAt: at, changedAt: at, position: n,
-          sourceKind: value.source?.kind, sourceId: value.source?.id }).run();
+          sourceKind: value.source?.kind, sourceId: value.source?.id, specItem: value.spec?.item, criterion: value.spec?.criterion }).run();
         if (value.parent) link(id, value.parent, 'parent-child');
         return row(id);
       });
@@ -110,6 +115,17 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
     unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
     close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
+    move(id, before) {
+      return db.transaction(() => {
+        row(id);
+        if (before === id) throw new Error('A task cannot go before itself');
+        // Positions are whole numbers. Open a gap at the target and step into it;
+        // every other task keeps its place relative to the rest.
+        const target = before === null ? db.select({ n: sql<number>`coalesce(max(${tasks.position}), 0) + 1` }).from(tasks).get()!.n : row(before).position;
+        if (before !== null) db.update(tasks).set({ position: sql`${tasks.position} + 1` }).where(sql`${tasks.position} >= ${target} and ${tasks.id} <> ${id}`).run();
+        return touch(id, { position: target });
+      });
+    },
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
     link(id, dependsOn, type) { db.transaction(() => link(id, dependsOn, type)); },
