@@ -42,6 +42,9 @@ it('provides only live scoped conversation commands to the scripted native provi
  const result=await nativeProtocolSmoke({...context,native:async({job,call})=>{
   retired.push(call);await expect(call('token.revoke',{})).rejects.toThrow('unavailable');
   await call('digest',{summary:'Authored fictional protocol digest',items:[{kind:'decision',text:'Keep the fictional inspection plan'}]});
+  await call('status',{state:'waiting',work:'Fictional provider waiting'});expect(context.db.prepare('SELECT state FROM agent_status WHERE agent=?').get('moss').state).toBe('waiting');
+  const note=await call('turn',{kind:'note',model:'fixture-provider-note',outcome:'progressed'});expect(context.db.prepare('SELECT kind,from_kind,from_id FROM turns WHERE conversation=? AND seq=?').get(job.conversation,note.seq)).toEqual({kind:'note',from_kind:'agent',from_id:'moss'});
+  await call('status',{state:'working',work:'Fictional provider working'});expect(context.db.prepare('SELECT state FROM agent_status WHERE agent=?').get('moss').state).toBe('working');
   return{text:'Fictional native response',model:'fixture-actually-used-model',actions:[]};
  }});
  for(const row of result.runs){
@@ -150,6 +153,7 @@ it('pins Tasks commands to the normal body-authenticated door and preserves acto
    await expect(call('tasks.command/../signin/revoke',{})).rejects.toThrow('unavailable');
    await expect(call('tasks.command',{action:'close',id:hidden,reason:'Forbidden'})).rejects.toThrow('refused');
    await call('tasks.command',{action:'claim',id:task});
+   expect(context.app.services.tasks.get(task)).toMatchObject({status:'in_progress',assigneeKind:'agent',assignee:'moss'});
    await call('tasks.command',{action:'comment',id:task,text:'Fictional enrolled body comment'});
    await expect(call('tasks.command',{action:'comment',id:task,text:'FORGED',actor:{kind:'member',id:'alex'}})).rejects.toThrow('refused');
    await call('tasks.command',{action:'close',id:task,reason:'Completed by the enrolled body'});worked=true;
