@@ -56,10 +56,6 @@ it('denies visible ordinary members and agents despite permissive callbacks/gran
  expect((await f.post(f.input(card.id))).status).toBe(200);f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'pat')).run();const committed=f.snapshot();
  expect((await f.post(f.input(card.id))).status).toBe(403);expect((await f.post(f.input(card.id),'fresh')).status).toBe(403);expect(f.snapshot()).toEqual(committed);
 });
-it('retains both authority callback restrictions before fresh writes and cached replay',async()=>{
- for(const gate of ['approval','change'] as const){const f=fixture(),card=f.ask();f.restrictions[gate]=false;const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(before);
-  f.restrictions[gate]=true;expect((await f.post(f.input(card.id))).status).toBe(200);f.restrictions[gate]=false;const committed=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(403);expect((await f.post(f.input(card.id),'fresh')).status).toBe(403);expect(f.snapshot()).toEqual(committed);}
-});
 it('rejects moved heads on replay and preserves a newer rule when a fresh ID repeats an already answered request',async()=>{
  const f=fixture(),card=f.ask();expect((await f.post(f.input(card.id))).status).toBe(200);
  f.root.services.approvalRules.set({kind:'merge',scope:'project:pond',tier:'ask'},'pat');const newer=f.snapshot();expect((await f.post(f.input(card.id),'fresh')).status).toBe(409);expect(f.snapshot()).toEqual(newer);
@@ -115,11 +111,3 @@ it('refuses a fresh Always grant for closed and merged copies, rolling back the 
  for(const state of ['closed','merged'] as const){const f=fixture(),card=f.ask();f.db.update(s.changes).set({state}).where(eq(s.changes.id,change)).run();const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(409);expect(f.snapshot()).toEqual(before);}
 });
 
-it('requires explicit true from each configured Always gate, including receipt replay',async()=>{
- for(const gate of ['approval','change'] as const)for(const value of [undefined,null,1,'yes'] as const){
-  const f=fixture(),card=f.ask(),before=f.snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;
-  expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(before);
-  f.restrictions[gate]=true;expect((await f.post(f.input(card.id))).status).toBe(200);
-  const committed=f.snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(committed);
- }
-});

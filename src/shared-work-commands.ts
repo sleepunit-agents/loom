@@ -13,14 +13,9 @@ import { changeAnswers } from './apps/changes-answers.js';
 import type { ChangeRow } from './apps/changes.js';
 
 type Member = Extract<Viewer, { kind: 'member' }>;
-export interface WorkAnswerAuthority {
-  approval(viewer: Member, approval: Readonly<Approval>): boolean;
-  /** Additional gate on the current PR, used by both merge-answer doors. */
-  change(viewer: Member, change: Readonly<ChangeRow>, approval: Readonly<Approval>): boolean;
-}
 const id = z.string().trim().min(1);
 export function registerSharedWorkCommands(operations: Operations, db: DataDatabase,
-  service: ReturnType<typeof approvalService>, authority?: WorkAnswerAuthority) {
+  service: ReturnType<typeof approvalService>) {
   const approval = (id: string) => db.select().from(approvals).where(eq(approvals.id, id)).get();
   const change = (id: string) => db.select().from(changes).where(eq(changes.id, id)).get();
   const answers = changeAnswers(db, service);
@@ -35,7 +30,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   };
   const mayMerge = (viewer: Member, request: Approval, id: string) => {
     const row = change(id);
-    return !!row && (!authority || authority.change(viewer, row, request) === true);
+    return !!row;
   };
   const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
     if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
@@ -62,7 +57,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
-      if (!workAnswersAllowed(db, viewer) || !row || (authority && authority.approval(viewer, row) !== true)) return false;
+      if (!workAnswersAllowed(db, viewer) || !row) return false;
       const merge = mergeTarget(row);
       return !merge || input.answer === 'deny' || mayMerge(viewer, row, merge.id);
     },
@@ -96,7 +91,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const request = approval(input.approval);
-      return workAnswersAllowed(db, viewer) && !!request && (!authority || authority.approval(viewer, request) === true) && mayMerge(viewer, request, input.id);
+      return workAnswersAllowed(db, viewer) && !!request && mayMerge(viewer, request, input.id);
     },
     validateReplay(_viewer, input) { currentHead(input); },
     run(ctx, input) {

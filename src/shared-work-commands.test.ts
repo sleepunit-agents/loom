@@ -28,10 +28,6 @@ function fixture(install = true, permissive = false, rawGates = false) {
   // Optional fixture restrictions cannot broaden the built-in current-owner rule.
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {},
     approvedOperations: new Map([['fixture.change', () => {}]]),
-    workAnswerAuthority: install ? {
-      approval: (viewer, row) => rawGates ? restrictions.approval : restrictions.approval && (permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household')),
-      change: (viewer, row, approval) => rawGates ? restrictions.change : restrictions.change && (permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household')),
-    } : undefined,
   });
   cleanup.push(() => root.close());
   const request = () => root.writes.run(() => root.services.approvals.request({ kind: 'merge', target: `${changeId}@${head}`, agent: 'art', project: 'pond', what: 'Merge pump', why: 'Ready', askedFrom: 'loom', actingFor: 'owner', ask: 'Merge?', ifYes: 'Agent merges this head', ifNo: 'Wait' })).value;
@@ -206,46 +202,14 @@ it('keeps non-merge approvals independent of the Changes cache', async () => {
   expect(f.root.services.approvals.get(request.id)).toMatchObject({ state: 'allowed', decidedBy: 'sam' });
 });
 
-it('honors restrictive approval and change callbacks for fresh answers and cached replay through both merge doors', async () => {
-  for (const piece of ['approvals','changes']) for (const gate of ['approval','change'] as const) {
-    const f = fixture(true,true), request = f.request();
-    const input = piece === 'approvals' ? {id:request.id,answer:'allow'} : {id:changeId,head,approval:request.id,answer:'yes'};
-    f.restrictions[gate] = false;
-    expect((await f.send(piece,input,'restricted-fresh')).status).toBe(403);
-    expect(f.db.select().from(operationResults).all()).toEqual([]);
-    f.restrictions[gate] = true;
-    expect((await f.send(piece,input,'confirmed')).status).toBe(200);
-    const receipts = f.db.select().from(operationResults).all();
-    f.restrictions[gate] = false;
-    expect((await f.send(piece,input,'confirmed')).status).toBe(403);
-    expect((await f.send(piece,input,'restricted-after-confirmation')).status).toBe(403);
-    expect(f.db.select().from(operationResults).all()).toEqual(receipts);
-  }
-});
-
 it('projects only the current caller owner status through the real query door and observes role changes', async () => {
   const f = fixture(true,true);
   f.root.writes.run(() => f.db.insert(members).values({id:'lee',role:'owner',joinedAt:'2026-11-14T00:00:00.000Z'}).run());
   const read = async () => (await (await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({query:'{ workAnswerOwner }'})})).json());
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
-  f.restrictions.approval=false; f.restrictions.change=false;
-  expect(await read()).toEqual({data:{workAnswerOwner:true}});
-  const request=f.request();
-  expect((await f.send('approvals',{id:request.id,answer:'allow'})).status).toBe(403);
-  expect((await f.send('changes',{id:changeId,head,approval:request.id,answer:'yes'})).status).toBe(403);
   f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
   expect(await read()).toEqual({data:{workAnswerOwner:false}});
   f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
 });
 
-it.each(['approvals','changes'])('requires explicit true from configured %s answer gates, including receipt replay',async piece=>{
- for(const gate of ['approval','change'] as const)for(const value of [undefined,null,1,'yes'] as const){
-  const f=fixture(true,true,true),card=f.request(),input=piece==='approvals'?{id:card.id,answer:'allow'}:{id:changeId,head,approval:card.id,answer:'yes'};
-  const snapshot=()=>({cards:f.db.select().from(approvals).all(),changes:f.db.select().from(changes).all(),audit:f.db.select().from(approvalRecord).all(),rules:f.db.select().from(approvalRules).all(),receipts:f.db.select().from(operationResults).all(),inbox:f.db.select().from(inbox).all()});
-  (f.restrictions as Record<string,unknown>)[gate]=value;const before=snapshot();
-  expect((await f.send(piece,input)).status).toBe(403);expect(snapshot()).toEqual(before);
-  f.restrictions[gate]=true;expect((await f.send(piece,input)).status).toBe(200);
-  const committed=snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;expect((await f.send(piece,input)).status).toBe(403);expect(snapshot()).toEqual(committed);
- }
-});

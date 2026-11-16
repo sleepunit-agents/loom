@@ -64,7 +64,7 @@ import { workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
-import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
+import { registerSharedWorkCommands } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
 import { approvalRulesService } from './apps/approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
@@ -111,7 +111,6 @@ export function sharedRoot(options: {
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
   changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
-  workAnswerAuthority?: WorkAnswerAuthority;
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
@@ -391,9 +390,9 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
-  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),options.workAnswerAuthority);
-  registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
-  registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules,options.workAnswerAuthority);
+  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words));
+  registerSharedWorkCommands(operations,db,services.approvals);
+  registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});

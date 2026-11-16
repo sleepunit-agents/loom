@@ -9,11 +9,10 @@ import type {approvalService} from './apps/approvals.js';
 import type {approvalRulesService} from './apps/approval-rules.js';
 import {changeAnswers} from './apps/changes-answers.js';
 import {workAnswersAllowed} from './shared-work-access.js';
-import type {WorkAnswerAuthority} from './shared-work-commands.js';
 const id=z.string().trim().min(1);
 const inputSchema=z.object({approval:id,change:id,head:z.string().regex(/^[a-f0-9]{40}$/),project:id,person:z.string().max(100)}).strict();
 type Input=z.infer<typeof inputSchema>;
-export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,authority?:WorkAnswerAuthority){
+export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>){
  const request=(id:string)=>db.select().from(approvals).where(eq(approvals.id,id)).get();
  const change=(id:string)=>db.select().from(changes).where(eq(changes.id,id)).get();
  const answers=changeAnswers(db,service);
@@ -30,7 +29,7 @@ export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,s
   may(viewer,input){
    if(!workAnswersAllowed(db,viewer))return false;
    const card=request(input.approval),row=change(input.change);
-   return !!card&&!!row&&(!authority||authority.approval(viewer,card)===true)&&(!authority||authority.change(viewer,row,card)===true);
+   return !!card&&!!row;
   },
   validateReplay(_viewer,input){binding(input);},
   run(ctx,input){

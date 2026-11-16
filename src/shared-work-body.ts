@@ -9,11 +9,10 @@ import {bodyOperationDefaults,requireBodyScope,type conversationBodyScope} from 
 import {operation,OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService} from './apps/approvals.js';
 import {approvalRuleKind,type approvalRulesService} from './apps/approval-rules.js';
-import type {WorkAnswerAuthority} from './shared-work-commands.js';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import type {Viewer} from './policy.js';
 
-export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string,authority?:WorkAnswerAuthority){
+export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string){
  const requireCurrent=requireBodyScope(current),common={...bodyOperationDefaults(current,hash,'body-work'),inputHash:(input:string,identity:Readonly<{actor:Viewer}>)=>{const bound=current(identity.actor);return hash(JSON.stringify(['body-work',bound?.job.id,bound?.cv.id,bound?.cv.agent,bound?.cv.project,bound?.cv.member,input]));}};
  const boundedText=z.string().trim().min(1).max(2000),target=z.object({kind:approvalRuleKind,target:boundedText}).strict();
  const source=(viewer:Viewer)=>{const {cv}=requireCurrent(viewer);return {agent:cv.agent,conversation:cv.id,askedFrom:cv.id,actingFor:cv.member??'unknown',project:cv.project,member:cv.member};};
@@ -36,7 +35,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   may(viewer,input){try{if(!current(viewer))return false;merge(viewer,input.kind,input.target,true);return true;}catch{return false;}},
   run(ctx,input){
    const binding=merge(ctx.viewer,input.kind,input.target,true),context=source(ctx.viewer);
-   const row=requestApprovalWithRules(db,service,rules,{...input,...context},authority);
+   const row=requestApprovalWithRules(db,service,rules,{...input,...context});
    if(binding&&row.state==='allowed')ctx.changed('changes',binding.change.id);
    ctx.changed('approvals',row.id);return {id:row.id,state:service.get(row.id).state};
   },
