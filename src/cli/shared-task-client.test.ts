@@ -23,7 +23,7 @@ async function fixture(){
  const create=(title:string,owner='alice')=>app.writes.run(()=>app.services.tasks.create({title,goal:'Fictitious goal',why:'Verify the canonical command-line door',owner:{kind:'member',id:owner}},{kind:'member',id:owner})).value;
  let out='',err='';const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:app.url,LOOM_TOKEN_FILE:file},stdout:(text:string)=>{out+=text;},stderr:(text:string)=>{err+=text;}};
  const invoke=async(args:string[],request:typeof fetch=fetch)=>{out='';err='';const code=await runSharedTaskClient(args,io,{request,retry:async()=>{}});return{code,out,err};};
- return{app,db,create,invoke,token,io,folder};
+ return{app,db,clock,create,invoke,token,io,folder};
 }
 it('reads the actual shared ready queue without guessing around invisible blockers',async()=>{
  const f=await fixture(),ready=f.create('Ready'),blocked=f.create('Blocked'),hidden=f.create('Private blocker','bob');f.app.writes.run(()=>f.app.services.tasks.link(blocked.id,hidden.id,'blocks'));
@@ -57,7 +57,8 @@ it('runs the walkthrough helper with an actual narrow programme and the built cl
   const response=await fetch(url,{method:'POST',headers:{...options.headers,authorization:'Bearer '+f.token,'content-type':'application/json'},body:JSON.stringify(options.data)});
   return{status:()=>response.status,json:()=>response.json()};
  }}};
- expect(await taskstoreClientAction({page,app:f.app,home:f.folder,member:'alice'})).toEqual({ok:true,builtClient:true,canonicalRead:true,canonicalWrite:true,claimRecorded:true,commentRecorded:true,closedLeavesQueue:true,revokedRefused:true});
+ expect(await taskstoreClientAction({page,app:f.app,home:f.folder,clock:f.clock,member:'alice'})).toEqual({ok:true,builtClient:true,canonicalRead:true,canonicalWrite:true,claimRecorded:true,commentRecorded:true,closedLeavesQueue:true,revokedRefused:true});
+ expect(f.app.services.programSetup?.list().filter(row=>row.label.startsWith('Fictitious Tasks CLI'))).toEqual([expect.objectContaining({records:['tasks'],operations:['tasks.command'],ended:true})]);
 });
 
 it('orders ready tasks by priority and hand order and searches task words rather than JSON syntax',async()=>{
@@ -66,6 +67,7 @@ it('orders ready tasks by priority and hand order and searches task words rather
  expect(JSON.parse((await f.invoke(['ready'])).out).entries.map((row:{id:string})=>row.id)).toEqual([first.id,urgent.id,low.id]);
  for(const words of ['title','true','null','open'])expect(JSON.parse((await f.invoke(['search',words])).out).tasks).toEqual([]);
  expect(JSON.parse((await f.invoke(['search','urgent'])).out).tasks.map((row:{id:string})=>row.id)).toEqual([first.id,urgent.id]);
+ expect(JSON.parse((await f.invoke(['search','First','urgent'])).out).tasks.map((row:{id:string})=>row.id)).toEqual([first.id]);
 });
 it('redacts credentials inside otherwise valid task replies and hides exhausted transport errors',async()=>{
  const f=await fixture();
@@ -96,4 +98,30 @@ it('refuses non-origin connection settings before a credential reaches transport
   expect(result.code).toBe(1);expect(result.out+result.err).not.toContain(f.token);
  }
  expect(calls).toBe(0);
+});
+it('uses one write receipt after a retryable 503 hides a committed answer',async()=>{
+ const f=await fixture();const requests:string[]=[];let first=true;
+ const result=await f.invoke(['command',JSON.stringify({action:'create',input:{title:'Retryable write',goal:'Goal',why:'Reason',owner:{kind:'member',id:'alice'}}})],async(url,init)=>{
+  requests.push(String(init?.body));const response=await fetch(url,init);
+  if(first){first=false;await response.body?.cancel();return new Response(f.token,{status:503});}
+  return response;
+ });
+ expect(result.code).toBe(0);expect(requests).toHaveLength(2);expect(requests[0]).toBe(requests[1]);
+ expect(f.app.services.tasks.list()).toHaveLength(1);expect(result.out+result.err).not.toContain(f.token);
+});
+it('reports failed revocation, removes its token file and bounds the surviving credential by the fake clock',async()=>{
+ const f=await fixture();f.app.writes.run(()=>f.db.update(members).set({role:'owner'}).where(eq(members.id,'alice')).run());
+ let raw='';
+ const page={request:{post:async(url:string,options:{headers?:Record<string,string>;data:unknown})=>{
+  if(url.endsWith('/api/token/revoke'))return{status:()=>503,json:async()=>({ok:false})};
+  const response=await fetch(url,{method:'POST',headers:{...options.headers,authorization:'Bearer '+f.token,'content-type':'application/json'},body:JSON.stringify(options.data)});
+  const answer=await response.json();raw=answer.value?.token??'';return{status:()=>response.status,json:async()=>answer};
+ }}};
+ await expect(taskstoreClientAction({page,app:f.app,home:f.folder,clock:f.clock,member:'alice'})).rejects.toThrow('Fictitious CLI credential revocation failed');
+ expect(readdirSync(f.folder)).toEqual(['token']);
+ const issued=f.app.services.programSetup?.list().find(row=>row.label.startsWith('Fictitious Tasks CLI'));
+ expect(issued?.expiresAt).toBe(new Date(f.clock.now()+60_000).toISOString());
+ const read=()=>fetch(f.app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } }'})});
+ expect((await read()).status).toBe(200);f.clock.advance(60_000);
+ expect((await read()).status).toBe(403);
 });

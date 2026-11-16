@@ -5,7 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {runSharedTaskClient} from '../dist/cli/shared-task-client.js';
 
-export async function taskstoreClientAction({page,app,home,member='alex'}){
+export async function taskstoreClientAction({page,app,home,clock,member='alex'}){
  const directory=mkdtempSync(join(home,'taskstore-client-proof-')),file=join(directory,'token');let fingerprint,raw;
  const fail=message=>{throw Error(message);};
  const revoke=async()=>{
@@ -14,7 +14,7 @@ export async function taskstoreClientAction({page,app,home,member='alex'}){
  };
  try{
   // One-time issuance has no retry: an ambiguous answer must not issue again.
-  const issued=await page.request.post(app.url+'/api/signin/program',{headers:{origin:app.url},data:{member,label:'Fictitious Tasks CLI '+randomUUID(),records:['tasks'],operations:['tasks.command']}});
+  const issued=await page.request.post(app.url+'/api/signin/program',{headers:{origin:app.url},data:{member,label:'Fictitious Tasks CLI '+randomUUID(),expiresAt:new Date((clock?.now()??Date.now())+60_000).toISOString(),records:['tasks'],operations:['tasks.command']}});
   const envelope=await issued.json(),credential=envelope.value;if(issued.status()!==200||envelope.ok!==true||typeof credential?.token!=='string'||typeof credential?.fingerprint!=='string')fail('Fictitious CLI credential issuance failed');
   raw=credential.token;fingerprint=credential.fingerprint;writeFileSync(file,raw,{mode:0o600,flag:'wx'});
   const run=async args=>{

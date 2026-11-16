@@ -20,3 +20,11 @@ sign-in operation.
 
 Use HTTPS for remote origins. An explicitly configured HTTP origin is also accepted,
 including the disposable loopback household used by the checks.
+
+Show returns the task record; comments and dependency links remain available
+through the generated data API and the Tasks app. A failed or timed-out write may
+already have committed: the client retries with its original operation ID only
+within that invocation. It does not automatically repeat the command in a new
+invocation. Refusals use generic diagnostics to avoid exposing daemon error text.
+
+The built-client boundary check needs npm run build before npm test.

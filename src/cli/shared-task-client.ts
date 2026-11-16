@@ -7,7 +7,7 @@ import {readStdin,type IOStreams} from './io.js';
 import type {ClientRuntime} from './api-client.js';
 
 const query=`query Taskstore {
- tasks(orderBy:{priority:{direction:asc,priority:0},position:{direction:asc,priority:1},id:{direction:asc,priority:2}}){
+ tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){
   id title type status priority position ownerKind owner project assigneeKind assignee
   goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady
  }
@@ -24,7 +24,8 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
  const invalid=()=>{io.stderr(help);return 2;};
  if(!['ready','list','show','search','command'].includes(verb)
   || ['ready','list'].includes(verb)&&args.length!==0
-  || ['show','search'].includes(verb)&&(args.length!==1||!args[0].trim())
+  || verb==='show'&&(args.length!==1||!args[0].trim())
+  || verb==='search'&&(!args.length||!args.join(' ').trim())
   || verb==='command'&&!(args.length===1||args.length===2&&args[0]==='--file'))return invalid();
  const fail=(message:string)=>{io.stderr('loom-taskstore: '+message+'\n');io.stdout(JSON.stringify({ok:false,errors:[message]})+'\n');return 1;};
  let input:unknown;
@@ -41,7 +42,9 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.pathname!=='/'||base.search||base.hash)throw Error();
   bytes=await readFile(io.env.LOOM_TOKEN_FILE);if(bytes.length>8192)throw Error();token=bytes.toString('utf8').trim();if(!/^[\x21-\x7e]{1,4096}$/.test(token))throw Error();
  }catch{return fail('Cannot configure loom connection');}finally{bytes?.fill(0);}
- const write=verb==='command',body=JSON.stringify(write?{id:randomUUID(),input}:{query});
+ const write=verb==='command';
+ const selection=verb==='ready'?query.replace('tasks(orderBy:','tasks:readyTasks(orderBy:'):verb==='show'?query.replace('query Taskstore {','query Taskstore($id:String!){').replace('tasks(orderBy:','tasks(where:{id:{eq:$id}},orderBy:'):query;
+ const body=JSON.stringify(write?{id:randomUUID(),input}:{query:selection,...(verb==='show'?{variables:{id:args[0]}}:{})});
  for(let attempt=0;attempt<4;attempt++){
   try{
    const response=await runtime.request(new URL(write?'/api/tasks/command':'/graphql',base),{method:'POST',redirect:'error',headers:{'content-type':'application/json',authorization:'Bearer '+token},body,signal:AbortSignal.timeout(1500)});
@@ -51,7 +54,7 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
    if(write){const parsed=commandReply.safeParse(answer);if(!parsed.success)return fail('Invalid daemon response');io.stdout(JSON.stringify({ok:true,...parsed.data.value},null,2)+'\n');return 0;}
    const parsed=taskReply.safeParse(answer);if(!parsed.success||answer&&typeof answer==='object'&&'errors'in answer)return fail('Invalid daemon response');
    const tasks=parsed.data.data.tasks;
-   const value=verb==='show'?tasks.find(row=>row.id===args[0]):verb==='ready'?tasks.filter(row=>row.isReady):verb==='search'?tasks.filter(row=>searchFields.some(field=>typeof row[field]==='string'&&(row[field] as string).toLowerCase().includes(args[0].toLowerCase()))):tasks;
+   const value=verb==='show'?tasks.find(row=>row.id===args[0]):verb==='ready'?tasks.filter(row=>row.isReady):verb==='search'?tasks.filter(row=>searchFields.some(field=>typeof row[field]==='string'&&(row[field] as string).toLowerCase().includes(args.join(' ').toLowerCase()))):tasks;
    if(value===undefined)return fail('Task not found');
    io.stdout(JSON.stringify({ok:true,[verb==='show'?'task':verb==='ready'?'entries':'tasks']:value},null,2)+'\n');return 0;
   }catch{if(attempt===3)return fail('Loom is unavailable');}
