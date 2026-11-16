@@ -2,7 +2,7 @@
   "page": "tools",
   "title": "Tools for agents",
   "ownerTask": "t-2190",
-  "sourceSha256": "ab5958a3891ec417bc4f8aabc05b2a90416526504d6332391aaeec59f24dc3d2",
+  "sourceSha256": "0951b01b033e6a8144307b1283e897d19e3bf5f0f6c28125fb321b0005a22b9a",
   "promises": [
     {
       "id": "tools-001",
@@ -11,7 +11,7 @@
     },
     {
       "id": "tools-002",
-      "promise": "What an agent does every session has a tool with a plain name. Each named tool maps to one operation or one read, so a tool that works means the operation under it works.",
+      "promise": "What an agent does often has a tool with a plain name. Each named tool maps to one operation or one read, so a tool that works means the operation under it works.",
       "source": "docs/how-it-works/site/tools.html#how-h"
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "id": "tools-010",
-      "promise": "Search knowledge pages and add one.",
+      "promise": "Search knowledge pages, read one, and add one.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
@@ -61,7 +61,7 @@
     },
     {
       "id": "tools-012",
-      "promise": "Propose a draft memory and ratify it. Archive a memory, restore it, or bring back an earlier version.",
+      "promise": "Draft a memory and ratify it. Archive a memory, restore it, or bring back an earlier version.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
@@ -91,56 +91,71 @@
     },
     {
       "id": "tools-018",
-      "promise": "Read the items addressed to it and confirm each one it has dealt with.",
+      "promise": "Read the items addressed to it.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-019",
-      "promise": "Tasks: create, edit, claim, unclaim, comment, close, reopen, move one in the hand-kept order, put one under a parent or behind a blocker, and put a question to a person.",
+      "promise": "Confirm each item it has dealt with.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-020",
-      "promise": "Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.",
+      "promise": "Tasks: see what is ready, read one, create, edit, claim or hand back, comment, close or reopen.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-021",
-      "promise": "Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser. Loom carries it out.",
+      "promise": "Tasks: move one in the hand-kept order, put one under a parent or behind a blocker, and put a question to a person.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-022",
-      "promise": "Changes: read pull requests and who each is waiting on. Merge under an approval.",
+      "promise": "Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-023",
-      "promise": "Tempo: set a trigger, stop it, or run it now.",
+      "promise": "Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser. Loom carries it out.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-024",
-      "promise": "Discord and Slack: reply to an incoming message.",
+      "promise": "See the approvals it may see, and which are still waiting.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-025",
-      "promise": "Discord and Slack: read the attachments a message carried.",
+      "promise": "Changes: read pull requests and who each is waiting on. Merge under an approval.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-026",
-      "promise": "Secrets: request one with a reason and a length of time, and check on the request.",
+      "promise": "Tempo: set a trigger, stop it, or run it now.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-027",
-      "promise": "Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, a standing approval rule, how an agent treats outside people, the household's own settings. A person allows it.",
+      "promise": "Discord and Slack: reply to an incoming message.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-028",
+      "promise": "Discord and Slack: read the attachments a message carried.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-029",
+      "promise": "Secrets: request one with a reason and a length of time, and check on the request.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-030",
+      "promise": "Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, a standing approval rule, how an agent treats outside people, the household's own settings. A person allows it.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-031",
       "promise": "Read anything it may see, naming the fields it wants: tasks, conversations, the inbox, approvals, changes, triggers, machines, models, the measuring store.",
       "source": "docs/how-it-works/site/tools.html"
     }

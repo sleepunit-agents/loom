@@ -202,6 +202,119 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   z.object({slug,name:z.string().max(200).optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().max(4000).optional(),goal:z.string().max(4000).optional(),where:facts.optional(),
    links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict(),
   async input=>{await run('memory.projectWrite',input);return 'Saved project card '+input.slug;});
+
+ // Memory: drafts, the archive and earlier versions.
+ tool('memory_propose','Draft a memory. Recall cannot see a draft until it is ratified.',
+  z.object({category,title:z.string().max(200),content:z.string().max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),source:z.string().max(500).optional()}).strict(),
+  async input=>{const value=await run('memory.propose',input) as {id?:string;ids?:string[]};return 'Drafted "'+input.title+'" ('+(value.id??(value.ids??[]).join(', '))+')';});
+ tool('memory_drafts','List your drafted memories that await ratification.',
+  z.object({limit:z.number().int().min(1).max(50).optional()}).strict(),
+  async(input,agent)=>{
+   const data=await read<{memoryProposals:{entries:{id:string;title:string;category:string;created:string;content:string}[]}|null}>('query($agent:String!,$first:Int){memoryProposals(agent:$agent,first:$first){entries{id title category created content}}}',{agent,first:input.limit??20});
+   const rows=data.memoryProposals?.entries??[];
+   return rows.length?rows.map(row=>'## '+row.title+'\n_'+row.category+' · '+row.id+' · drafted '+row.created+'_\n\n'+row.content).join('\n\n---\n\n'):'No drafts.';
+  });
+ tool('memory_ratify','Make one of your drafts a real memory.',
+  z.object({id:z.string().min(1).max(200)}).strict(),
+  async input=>{await run('memory.ratify',input);return 'Ratified '+input.id;});
+ tool('memory_archive','Set one of your memories aside. It leaves recall and can be restored.',
+  z.object({id:memoryId,note:z.string().max(500).optional()}).strict(),
+  async input=>{await run('memory.archive',input);return 'Archived '+input.id;});
+ tool('memory_restore','Bring back an archived memory, or with revision, an earlier version of a memory.',
+  z.object({id:memoryId,revision:z.number().int().positive().optional()}).strict(),
+  async input=>{if(input.revision===undefined){await run('memory.restore',{id:input.id});return 'Restored '+input.id;}await run('memory.restoreRevision',{id:input.id,revision_id:input.revision});return 'Restored version '+input.revision+' of '+input.id;});
+ tool('memory_history','List the earlier versions kept for one of your memories.',
+  z.object({id:memoryId}).strict(),
+  async input=>{
+   const data=await read<{memoryHistory:{id:number;op:string;replacedAt:string;content:string}[]|null}>('query($id:String!){memoryHistory(id:$id){id op replacedAt content}}',{id:input.id});
+   const rows=data.memoryHistory??[];
+   return rows.length?rows.map(row=>'## Version '+row.id+'\n_'+row.op+' · replaced '+row.replacedAt+'_\n\n'+row.content).join('\n\n---\n\n'):'No earlier versions are kept.';
+  });
+
+ // Knowledge: one page, its checks and its versions.
+ tool('knowledge_read','Read one shared knowledge page by slug, with its sources and kept versions.',
+  z.object({slug:z.string().min(1).max(200)}).strict(),
+  async input=>{
+   const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;sources:{claim:string;locator:string}[]|null;history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
+    'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body sources{claim locator} history{id op replacedAt actor}}}',{slug:input.slug});
+   const page=data.memoryKnowledgePage;if(!page)return 'No knowledge page '+input.slug;
+   const lines=['# '+page.title,'_'+page.domain+' · '+page.slug+' · '+(page.sourcing??'unsourced')+' · updated '+page.updated+(page.verified_at?' · verified '+page.verified_at:' · never verified')+'_','',page.body];
+   if(page.sources?.length)lines.push('','## Sources',...page.sources.map(row=>'- '+row.locator));
+   if(page.history?.length)lines.push('','## Earlier versions',...page.history.map(row=>'- '+row.id+' ('+row.op+', replaced '+row.replacedAt+(row.actor?' by '+row.actor:'')+')'));
+   return lines.join('\n');
+  });
+ tool('knowledge_edit','Replace the body of a shared knowledge page. The old body is kept as a version.',
+  z.object({slug:z.string().min(1).max(200),body:z.string().min(1).max(65536)}).strict(),
+  async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
+ tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check.',
+  z.object({slug:z.string().min(1).max(200),outcome:z.enum(['still-true','due-a-check'])}).strict(),
+  async input=>{await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',{slug:input.slug});return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
+ tool('knowledge_restore','Put back an earlier version of a shared knowledge page.',
+  z.object({slug:z.string().min(1).max(200),revision:z.number().int().positive()}).strict(),
+  async input=>{await run('mind.knowledgeRestore',input);return 'Restored version '+input.revision+' of '+input.slug;});
+
+ // Tasks: the household's work queue, as far as you may see it.
+ const taskId=z.string().regex(/^t-[1-9][0-9]*$/);
+ type TaskRow={id:string;title:string;type:string;status:string;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
+  taskCommentsByTask?:{seq:number;actor:string;at:string;text:string}[];taskLinksByTask?:{dependsOn:string;type:string}[]};
+ const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
+ tool('task_ready','List the tasks ready to pick up, most urgent first. Pass project to narrow it.',
+  z.object({project:z.string().min(1).max(100).optional(),limit:z.number().int().min(1).max(100).optional()}).strict(),
+  async input=>{
+   const data=await read<{readyTasks:TaskRow[]}>('query($limit:Int){readyTasks(limit:$limit){id title type status priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason}}',{limit:input.project?500:input.limit??20});
+   const rows=data.readyTasks.filter(task=>!input.project||task.project===input.project).slice(0,input.limit??20);
+   return rows.length?rows.map(taskLine).join('\n'):'Nothing is ready.';
+  });
+ tool('task','Read one task with its comments and what it depends on.',
+  z.object({id:taskId}).strict(),
+  async input=>{
+   const data=await read<{tasks:TaskRow[]}>('query($id:String!){tasks(where:{id:{eq:$id}}){id title type status priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason taskCommentsByTask{seq actor at text} taskLinksByTask{dependsOn type}}}',{id:input.id});
+   const task=data.tasks[0];if(!task)return 'No task '+input.id+' that you may see.';
+   const lines=['# '+task.title,'_'+task.id+' · '+task.type+' · '+task.status+' · P'+task.priority+(task.project?' · '+task.project:'')+' · owner '+(task.owner??task.ownerKind)+(task.assignee?' · held by '+task.assignee:'')+'_','','**Goal:** '+task.goal,'**Why:** '+task.why];
+   if(task.doneWhen)lines.push('**Done when:** '+task.doneWhen);
+   if(task.description)lines.push('',task.description);
+   if(task.ask)lines.push('','**Question waiting:** '+task.ask);
+   if(task.closeReason)lines.push('','**Closed:** '+task.closeReason);
+   if(task.taskLinksByTask?.length)lines.push('','## Depends on',...task.taskLinksByTask.map(link=>'- '+link.dependsOn+' ('+(link.type==='blocks'?'blocked by':'parent')+')'));
+   if(task.taskCommentsByTask?.length)lines.push('','## Comments',...[...task.taskCommentsByTask].sort((a,b)=>a.seq-b.seq).map(row=>'- **'+row.actor+'** '+row.at+': '+row.text));
+   return lines.join('\n');
+  });
+ tool('task_create','File a task. It needs a plain title, a goal and a reason. You own it unless you name the household or a project owner.',
+  z.object({title:z.string().min(1).max(300),goal:z.string().min(1).max(2000),why:z.string().min(1).max(2000),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),
+   project:z.string().min(1).max(100).optional(),type:z.enum(['task','bug','feature','epic']).optional(),parent:taskId.optional(),owner:z.enum(['me','household']).optional()}).strict(),
+  async(input,agent)=>{const {owner,...fields}=input;const value=await run('tasks.command',{action:'create',input:{...fields,owner:owner==='household'?{kind:'household'}:{kind:'agent',id:agent}}}) as {id?:string};return 'Filed '+value.id+': '+input.title;});
+ tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
+  z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
+  async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
+ tool('task_claim','Claim an open task: it moves to in progress and you hold it. Pass release: true to hand it back.',
+  z.object({id:taskId,release:z.boolean().optional()}).strict(),
+  async input=>{await run('tasks.command',{action:input.release?'unclaim':'claim',id:input.id});return (input.release?'Released ':'Claimed ')+input.id;});
+ tool('task_close','Close a task with a reason. The reason "cancelled" marks it cancelled. Pass reopen: true to open a closed task again.',
+  z.object({id:taskId,reason:z.string().min(1).max(2000).optional(),reopen:z.boolean().optional()}).strict().refine(value=>value.reopen||!!value.reason,'A reason is needed to close a task'),
+  async input=>{if(input.reopen){await run('tasks.command',{action:'reopen',id:input.id});return 'Reopened '+input.id;}await run('tasks.command',{action:'close',id:input.id,reason:input.reason});return 'Closed '+input.id;});
+ tool('task_comment','Leave a comment on a task.',
+  z.object({id:taskId,text:z.string().min(1).max(20000)}).strict(),
+  async input=>{await run('tasks.command',{action:'comment',id:input.id,text:input.text});return 'Commented on '+input.id;});
+
+ // Asking a person: proposals, the approvals that result, and what waits in your inbox.
+ tool('propose','Ask a household owner to allow a change you cannot make yourself. change is one of: project, member, agent, settings, rule, bodyPolicy, tokenRevoke, boxRevoke, browserSignOut. input is that change\'s own fields; loom_commands({name:"household.propose"}) lists them. Nothing changes until an owner allows it.',
+  z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','tokenRevoke','boxRevoke','browserSignOut']),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
+  async input=>{const value=await run('household.propose',input) as {id:string};return 'Filed approval '+value.id+'. It waits for a household owner.';});
+ tool('approvals','List approvals you may see, newest first. state narrows it: pending, allowed, denied, used, withdrawn or expired.',
+  z.object({state:z.enum(['pending','allowed','denied','used','withdrawn','expired']).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
+  async input=>{
+   // The state is one of six fixed words, so it is safe to write into the query as an enum value.
+   const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;target:string;askedAt:string;decidedBy:string|null}[]}>(
+    'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary target askedAt decidedBy}}',{limit:input.limit??20});
+   return data.approvals.length?data.approvals.map(row=>'## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(row.decidedBy?' · answered by '+row.decidedBy:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why).join('\n\n---\n\n'):'No approvals'+(input.state?' are '+input.state:'')+'.';
+  });
+ tool('inbox','List what is in your inbox, newest first. state narrows it: waiting, taken, done, answered or resolved.',
+  z.object({state:z.enum(['waiting','taken','done','answered','resolved']).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
+  async input=>{
+   const data=await read<{inboxItems:{id:string;source:string;state:string;fromKind:string;fromId:string|null;at:string;body:{words:string|null;why:string|null}|null}[]}>(
+    'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});
+   return data.inboxItems.length?data.inboxItems.map(row=>'## '+row.source+' from '+(row.fromId??row.fromKind)+'\n_'+row.id+' · '+row.state+' · '+row.at+'_\n\n'+(row.body?.words??'(no words kept)')+(row.body?.why?'\n\nWhy: '+row.body.why:'')).join('\n\n---\n\n'):'Your inbox is empty'+(input.state?' of '+input.state+' items':'')+'.';
+  });
 }
 interface CardValue{text?:string|null;number?:number|null;boolean?:boolean|null;strings?:string[]|null}
 interface PersonCard{slug:string;name:string;updated:string;card:{summary:string|null;where:{key:string;label:string|null;source:string|null;verified_at:string|null;value:CardValue|null}[]|null;how:{key:string;value:CardValue|null}[]|null;may:{text:string;source:string}[]|null}|null}

@@ -34,7 +34,8 @@ it('lists the names a terminal session already calls',async()=>{
  const {p,connect}=await program(),art=await connect('art');
  try{
   expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
-   ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','loom_query','loom_command','loom_commands']));
+   ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
+    'task_ready','task','task_create','task_edit','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
 },30_000);
 
@@ -149,4 +150,80 @@ it('writes, reads and lists person and project cards, and keeps them from anothe
   expect((await mark.call('person',{})).text).not.toContain('fictional-pat');
   expect((await mark.call('project',{slug:'fictional-pond'})).text).toBe('No project card for fictional-pond');
  }finally{await art.client.close();await mark.client.close();await p.close();}
+},30_000);
+
+it('files, reads, claims, comments on and closes a task through the named tools',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ try{
+  const filed=(await art.call('task_create',{title:'Fictional pump order',goal:'FICTIONAL_GOAL',why:'FICTIONAL_WHY',priority:1})).text;
+  const id=/^Filed (t-\d+):/.exec(filed)?.[1];expect(id).toBeTruthy();
+  expect((await art.call('task_ready',{})).text).toContain('- '+id+' P1 Fictional pump order');
+  expect((await art.call('task_edit',{id,doneWhen:'FICTIONAL_DONE'})).error).toBe(false);
+  expect((await art.call('task_comment',{id,text:'FICTIONAL_COMMENT'})).error).toBe(false);
+  expect((await art.call('task_claim',{id})).text).toBe('Claimed '+id);
+  const read=(await art.call('task',{id})).text;
+  for(const words of ['# Fictional pump order','in_progress','FICTIONAL_GOAL','FICTIONAL_WHY','FICTIONAL_DONE','FICTIONAL_COMMENT','held by art'])expect(read).toContain(words);
+  expect((await art.call('task_ready',{})).text).toBe('Nothing is ready.');
+  expect((await art.call('task_claim',{id,release:true})).text).toBe('Released '+id);
+  expect((await art.call('task_close',{id})).error).toBe(true);
+  expect((await art.call('task_close',{id,reason:'FICTIONAL_REASON'})).text).toBe('Closed '+id);
+  expect((await art.call('task',{id})).text).toContain('**Closed:** FICTIONAL_REASON');
+  expect((await art.call('task_close',{id,reopen:true})).text).toBe('Reopened '+id);
+  expect((await art.call('task',{id:'t-999'})).text).toBe('No task t-999 that you may see.');
+ }finally{await art.client.close();await p.close();}
+},30_000);
+
+it('drafts, ratifies, archives and restores a memory, and reads its earlier versions',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ try{
+  const drafted=(await art.call('memory_propose',{category:'project',title:'Fictional draft',content:'FICTIONAL_DRAFT_BODY'})).text;
+  const draft=/\(([^)]+)\)$/.exec(drafted)?.[1];expect(draft).toBeTruthy();
+  expect((await art.call('memory_drafts',{})).text).toContain('FICTIONAL_DRAFT_BODY');
+  expect((await art.call('recall',{query:'Fictional draft'})).text).not.toContain('FICTIONAL_DRAFT_BODY');
+  expect((await art.call('memory_ratify',{id:draft})).error).toBe(false);
+  expect((await art.call('memory_drafts',{})).text).toBe('No drafts.');
+  const recalled=(await art.call('recall',{query:'Fictional draft'})).text;
+  expect(recalled).toContain('FICTIONAL_DRAFT_BODY');
+  const id=/ · (art:[0-9a-f-]+) · /.exec(recalled)?.[1];expect(id).toBeTruthy();
+  expect((await art.call('update',{id,content:'FICTIONAL_SECOND_BODY'})).error).toBe(false);
+  const history=(await art.call('memory_history',{id})).text;
+  expect(history).toContain('FICTIONAL_DRAFT_BODY');
+  const version=Number(/## Version (\d+)/.exec(history)?.[1]);
+  expect((await art.call('memory_restore',{id,revision:version})).error).toBe(false);
+  expect((await art.call('recall',{query:'Fictional draft'})).text).toContain('FICTIONAL_DRAFT_BODY');
+  expect((await art.call('memory_archive',{id,note:'set aside'})).text).toBe('Archived '+id);
+  expect((await art.call('recall',{query:'Fictional draft'})).text).toBe('No memories matched.');
+  expect((await art.call('memory_restore',{id})).text).toBe('Restored '+id);
+  expect((await art.call('recall',{query:'Fictional draft'})).text).toContain('FICTIONAL_DRAFT_BODY');
+ }finally{await art.client.close();await p.close();}
+},30_000);
+
+it('reads, edits, checks and restores a knowledge page',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ try{
+  expect((await art.call('knowledge_write',{title:'Fictional hose',domain:'pond',body:'FICTIONAL_FIRST_FACT'})).text).toBe('Wrote knowledge page fictional-hose');
+  expect((await art.call('knowledge_edit',{slug:'fictional-hose',body:'FICTIONAL_SECOND_FACT'})).error).toBe(false);
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'still-true'})).text).toBe('Marked fictional-hose still true');
+  const page=(await art.call('knowledge_read',{slug:'fictional-hose'})).text;
+  expect(page).toContain('# Fictional hose');expect(page).toContain('FICTIONAL_SECOND_FACT');expect(page).toContain('## Earlier versions');
+  const version=Number(/^- (\d+) \(edit/m.exec(page)?.[1]);expect(version).toBeGreaterThan(0);
+  expect((await art.call('knowledge_restore',{slug:'fictional-hose',revision:version})).error).toBe(false);
+  expect((await art.call('knowledge_read',{slug:'fictional-hose'})).text).toContain('FICTIONAL_FIRST_FACT');
+  expect((await art.call('knowledge_check',{slug:'fictional-hose',outcome:'due-a-check'})).error).toBe(false);
+  expect((await art.call('knowledge_read',{slug:'no-such-page'})).text).toBe('No knowledge page no-such-page');
+ }finally{await art.client.close();await p.close();}
+},30_000);
+
+it('proposes a change, sees the approval waiting, and reads its own inbox',async()=>{
+ const {p,connect}=await program(),art=await connect('art');
+ try{
+  const filed=(await art.call('propose',{change:'settings',input:{commsDays:7},why:'FICTIONAL_REASON'})).text;
+  expect(filed).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
+  const pending=(await art.call('approvals',{state:'pending'})).text;
+  expect(pending).toContain('## Change Household settings?');expect(pending).toContain('"commsDays":7');expect(pending).toContain('Why: FICTIONAL_REASON');
+  expect((await art.call('approvals',{state:'denied'})).text).toBe('No approvals are denied.');
+  expect((await art.call('propose',{change:'settings',input:{commsDays:99},why:'x'})).error).toBe(true);
+  expect(p.composition.services.household.settings().commsDays).toBe(14);
+  expect((await art.call('inbox',{})).error).toBe(false);
+ }finally{await art.client.close();await p.close();}
 },30_000);
