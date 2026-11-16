@@ -65,7 +65,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   expect(timing()).toEqual({settleSeconds:5,dimDays:3,muteDays:9});
   for(const [seconds,allow]of [[60,true],[120,false]]as const){
    const before=timing(),after={...before,settleSeconds:seconds},result=await command('household.propose',{change:'tempoTimings',input:{who,settleSeconds:seconds},why:'Requested in this conversation'},randomUUID());
-   expect(result).toEqual({ok:true,value:{id:expect.any(String)}});
+   expect(result).toEqual({ok:true,value:{id:expect.any(String),state:'pending'}});
    const id=(result as {value:{id:string}}).value.id,card=f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()!;
    expect(card).toMatchObject({kind:'setting',operation:'household.change',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
    expect(JSON.parse(card.details!)).toEqual({change:'tempoTimings',before:{settleSeconds:before.settleSeconds,who},after:{settleSeconds:after.settleSeconds,who}});

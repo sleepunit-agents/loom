@@ -9,6 +9,7 @@
  * Unlike the runtime proposals this needs no job: a terminal session with the
  * agent's own token may propose. The owner who allows is the authority. */
 import {and,asc,eq,isNull} from 'drizzle-orm';
+import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
@@ -59,7 +60,10 @@ const danger={
  boxRevoke:{verb:'Revoke',done:'revoked',yes:'The machine can no longer run agents or report. This cannot be undone.',no:'The machine stays.'},
  browserSignOut:{verb:'Sign out',done:'signed out',yes:'That browser is signed out at once and its notifications stop. This cannot be undone.',no:'The browser stays signed in.'},
 } as const;
-const dangerOf=(value:{change:string})=>value.change in danger?danger[value.change as keyof typeof danger]:undefined;
+// A standing rule that answers dangerous cards without asking is itself dangerous to set.
+const dangerousRule={verb:'Set',done:'answered without asking',yes:'Dangerous actions this rule covers will happen without a card being answered. Removing the rule later does not undo them.',no:'Each dangerous action keeps asking.'} as const;
+const dangerOf=(value:{change:string;input?:unknown})=>value.change in danger?danger[value.change as keyof typeof danger]
+ :value.change==='rule'&&(value.input as {kind?:string;tier?:string|null}|undefined)?.kind==='dangerous'&&['tell','do'].includes((value.input as {tier?:string|null}).tier??'')?dangerousRule:undefined;
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
 const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('order',more),one('secretDescription',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
@@ -186,18 +190,25 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  };
 
  /** File the card. Installed code may call this directly; from outside it is household.propose. */
- const file=(service:Pick<ReturnType<typeof approvalService>,'request'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null})=>{
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null})=>{
   const value=proposal.parse({change:raw.change,input:raw.input}),was=before(value);
   if(value.change==='bodyPolicy'&&was===null)throw new OperationError('invalid','Unknown agent');
   if(value.change==='boxSettings'&&was===null)throw new OperationError('not-found','No live machine has that id');
-  if(dangerOf(value)&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
+  if(value.change in danger&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
   if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
   if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');
   if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
   rehearse(value);
-  return service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
+  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
    askedFrom:where?.conversation??'terminal',actingFor:where?.member??'unknown',what:summary(value,was),why:raw.why,...cardWords(value)});
+  // Standing rules answer these cards as they answer merges and commands: for the person the agent is
+  // acting for, on a matching target, unless the last answer to this same thing was a deny. A card with no
+  // known person behind it always asks. A card that changes a rule always asks: a rule cannot widen the rules.
+  if(value.change==='rule')return card;
+  const rule=lastApprovalAnswer(db,card.agent,card.kind,card.target)?.event==='deny'?undefined:rules.resolve({kind:card.kind,target:card.target,project:card.project,actingFor:card.actingFor});
+  if(!rule||rule.tier==='ask')return card;
+  return service.allow(card.id,rule.setBy,`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`);
  };
  return{
   operation:[operation,apply] as const,
@@ -207,12 +218,12 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>){
    const agent=(viewer:Viewer)=>viewer.kind==='agent'&&!!db.select({id:agents.id}).from(agents).where(eq(agents.id,viewer.id)).get();
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
-    input:asked,output:z.object({id:z.string()}).strict(),may:agent,
+    input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),may:agent,
     run(ctx,raw){
      const found=current?.(ctx.viewer);
      // Provenance is set here from the authenticated caller, never taken from input.
      const card=file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
-     ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id};
+     ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id,state:card.state};
     },
    });
   },

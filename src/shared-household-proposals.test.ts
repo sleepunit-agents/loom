@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
+import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -223,4 +223,35 @@ it('proposes the order of people or agents, naming every one once, and what a se
   expect(f.db.select().from(secrets).get()).toMatchObject({ description: '' });
   expect((await f.call('approvals/answer', { id: described.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200);
   expect(f.db.select().from(secrets).get()).toMatchObject({ name: 'FORGE', description: 'The example forge token', changedBy: 'sam' });
+});
+it('lets a standing rule answer a settings or dangerous card for a known person, and never a card that changes a rule', async () => {
+  const f = fixture(), at = new Date().toISOString();
+  f.db.insert(conversations).values({ id: 'cv-sam', agent: 'art', member: 'sam', venue: 'loom', place: 'th', label: 'Sam', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const where = { conversation: 'cv-sam', member: 'sam', project: null };
+  const ask = (change: string, input: unknown, known = true) => f.root.writes.run(() => f.root.services.setup.propose('art', { change, input, why: 'Asked in conversation' }, known ? where : undefined)).value;
+  // No rule: it waits.
+  expect(ask('settings', { commsDays: 9 })).toMatchObject({ state: 'pending', kind: 'setting' });
+  f.root.writes.run(() => f.root.services.approvals.deny(f.db.select().from(approvals).get()!.id, 'sam'));
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: 'household:settings', person: '', tier: 'do' }, 'sam'));
+  // The last answer to this same thing was a deny, so it still asks; a different target with no rule asks too.
+  expect(ask('settings', { commsDays: 9 })).toMatchObject({ state: 'pending' });
+  expect((await f.call('approvals/answer', { id: f.db.select().from(approvals).all().at(-1)!.id, answer: 'allow' }, 'sam')).status).toBe(200);
+  expect(ask('agent', { id: 'mark', ...visual, about: 'Changed' })).toMatchObject({ state: 'pending' });
+  // Now the rule answers: the change is made as the card is filed, on the word of whoever set the rule.
+  const done = ask('settings', { commsDays: 8 });
+  expect(done).toMatchObject({ state: 'used', decidedBy: 'sam' });
+  expect(f.db.select().from(household).get()).toMatchObject({ commsDays: 8 });
+  // Nobody known behind the card: it asks.
+  expect(ask('settings', { commsDays: 7 }, false)).toMatchObject({ state: 'pending', actingFor: 'unknown' });
+  // A rule cannot be widened by a rule, and one that answers dangerous cards is itself dangerous to set.
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: '*', person: '', tier: 'do' }, 'sam'));
+  const wider = ask('rule', { kind: 'dangerous', scope: '*', person: '', tier: 'do' });
+  expect(wider).toMatchObject({ state: 'pending', kind: 'dangerous' });
+  expect((await f.call('approvals/answer', { id: wider.id, answer: 'allow' }, 'sam')).status).toBe(400);
+  expect((await f.call('approvals/answer', { id: wider.id, answer: 'allow', confirm: true }, 'sam')).status).toBe(200);
+  expect(ask('rule', { kind: 'setting', scope: 'household:order:*', person: '', tier: 'ask' })).toMatchObject({ state: 'pending', kind: 'setting' });
+  // With the dangerous rule set, a dangerous card for a known person is answered at once.
+  f.db.insert(tokens).values({ fingerprint: hash('z'.repeat(64)), label: 'Spare', kind: 'owner', member: 'lee', createdAt: at }).run();
+  expect(ask('tokenRevoke', { label: 'Spare' })).toMatchObject({ state: 'used', kind: 'dangerous' });
+  expect(f.db.select().from(tokens).all().find(row => row.label === 'Spare')!.revokedAt).not.toBeNull();
 });

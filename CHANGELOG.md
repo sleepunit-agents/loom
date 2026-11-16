@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Standing rules answer every kind of card.** Rules of kind `setting` and `dangerous` were stored but never consulted. A `household.propose` card is now answered by a matching rule when a known person is behind it and the last answer to the same thing was not a deny. A card that changes a rule always asks, and a rule that answers dangerous cards is itself a dangerous card to set. `household.propose` returns the card's `state`.
+
 - **A member's token can talk and answer.** `comms.open`, `comms.send`, `comms.change`, `inbox.answer`, `inbox.read` and `inbox.dismissResult` no longer need a signed-in browser window; a member's own token is enough. A current member can also read the command list.
 
 - **Recall is a read.** `memory.recall` needs no operation id, reserves nothing and stores no receipt. It still warms what it finds. Asking twice recalls twice.
