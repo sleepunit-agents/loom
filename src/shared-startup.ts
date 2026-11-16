@@ -38,13 +38,29 @@ type RootOptions=Parameters<typeof sharedRoot>[0];
 export type SharedStartupAdapters=Pick<RootOptions,'changes'|'tempo'|'secretWrites'|'secretInputs'|'bridges'|'modelRoles'|'runtimeJobEnded'|'approvedOperations'|'memoryEmbedding'>&{close?():void|Promise<void>};
 export type SharedStartupFactory=(context:{db:DataDatabase;clock:Clock;home:string})=>SharedStartupAdapters|Promise<SharedStartupAdapters>;
 const fingerprint=(value:string)=>createHash('sha256').update(value).digest('hex');
-function schema(client:Database.Database){return client.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();}
-/** Read-only validation happens before opening the writable connection. A
- * different or interim schema belongs to the separate real-data move. */
-function checkDatabase(file:string){
- const current=new Database(file,{readonly:true,fileMustExist:true}),expected=new Database(':memory:');
+/** The shape that matters: every table with its columns, and every index, trigger and view as written.
+ * A table's own SQL text is not compared, because a column added to an existing household by an upgrade
+ * is written differently from the same column in a fresh database. */
+function schema(client:Database.Database){
+ const objects=client.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as {type:string;name:string;tbl_name:string;sql:string|null}[];
+ return objects.map(object=>object.type==='table'
+  ?{type:object.type,name:object.name,columns:(client.prepare('SELECT name,type,"notnull" AS required,dflt_value AS fallback,pk FROM pragma_table_info(?) ORDER BY name').all(object.name))}
+  :object);
+}
+/** Read-only, before anything is opened for writing: this must be a household database this program
+ * knows. Anything else is refused with its bytes untouched. */
+function recogniseDatabase(file:string){
+ const current=new Database(file,{readonly:true,fileMustExist:true});
+ try{
+  const known=current.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='migrations'").get()&&(current.prepare('SELECT max(number) AS number FROM migrations').get() as {number:number|null}).number;
+  if(!known)throw Error('Shared startup requires the prepared shared schema; existing data needs its separate move');
+ }finally{current.close();}
+}
+/** After any upgrade. A different or interim schema belongs to the separate real-data move. */
+function checkDatabase(current:Database.Database){
+ const expected=new Database(':memory:');
  try{createDataSchema(expected);if(JSON.stringify(schema(current))!==JSON.stringify(schema(expected)))throw Error('Shared startup requires the prepared shared schema; existing data needs its separate move');}
- finally{current.close();expected.close();}
+ finally{expected.close();}
 }
 export async function startSharedHome(options:{home:string;program?:string;host?:string;port?:number;webRoot?:string;clock?:Clock;stdout?(text:string):void;reportError?(error:unknown):void}){
  const home=resolve(options.home),clock=options.clock??systemClock;
@@ -58,7 +74,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  const directories=[...(program.secretHolder?[join(home,'secret-holder')]:[]),program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
  const files=[config,program.database,program.commsKey,program.adapters,...[program.memory.sources.commons.knowledge,program.memory.sources.commons.people,...program.memory.sources.agents.map(source=>source.memories)]];
  if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
- checkDatabase(program.database);
+ recogniseDatabase(program.database);
  readKey(program.commsKey);
  const commsKey:WordsKey={seal:value=>wordsKey(readKey(program.commsKey)).seal(value),open:value=>wordsKey(readKey(program.commsKey)).open(value),hash:value=>wordsKey(readKey(program.commsKey)).hash(value)};
  prepareOperatorHome(home);
@@ -73,6 +89,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   try{fsyncSync(parent);}finally{closeSync(parent);}
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
   upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
+  checkDatabase(client);
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
