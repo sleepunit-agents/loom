@@ -1,36 +1,44 @@
+import { selectedQueryFields } from '../data/queries.js';
+import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import { wordsDeadline } from './retention.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
-import { and, asc, count, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
-import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { actionResults, household, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 
+const projected=Symbol('Inbox display projection');
 type Item = typeof inbox.$inferSelect;
+type Projected=Item&{[projected]?:Record<string,unknown>};
+const display=(row:Projected,name:string,read:()=>unknown)=>row[projected]&&Object.hasOwn(row[projected],name)?row[projected][name]:read();
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
 export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; conversation?: string; limit?: number; offset?: number; search?: string };
 
 export class InboxQueries {
+  private readSet?: InboxReadSet;
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
     readonly now: () => string = () => new Date().toISOString(),
-    private readonly volumeAllowed: (viewer: Viewer, item: Item) => boolean = () => false) {}
+    private readonly volumeAllowed: (viewer: Viewer, item: Item) => boolean = () => false,
+    private readonly volumeBatch?: (viewer: Viewer, items: Item[]) => Set<string>) {}
 
   private allowed(viewer: Viewer) {
     const allowed = this.policy(viewer, getTableColumns(inbox));
     if (!is(allowed, SQL)) throw new Error('SQL Inbox visibility required');
     return allowed;
   }
-  private keepDays() { return this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14; }
+  private keepDays() { if(this.readSet)return this.readSet.days; return this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14; }
   private retainedMessage(message: typeof messages.$inferSelect | undefined, days: number): boolean {
     return !!message?.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
       && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
   }
   private current(viewer: Viewer, id: string) {
+    if(this.readSet)return this.readSet.item(id);
     return this.db.select().from(inbox).where(and(eq(inbox.id, id), this.allowed(viewer))).get();
   }
   item(viewer: Viewer, id: string): Item | null { return this.current(viewer, id) ?? null; }
@@ -51,7 +59,44 @@ export class InboxQueries {
     // The personal app always shows its recipient's mailbox. Other apps may
     // use the generated table projection for visible records addressed elsewhere.
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
-    return this.mailbox(viewer, filter).limit(limit).offset(offset).all();
+    const where=this.mailboxWhere(viewer,filter);
+    return this.db.query.inbox.findMany({where:()=>sql`${{getSQL:()=>where!}}`,orderBy:f=>[desc(sql`julianday(${f.at})`),desc(f.id)],limit,offset}).sync();
+  }
+  /** Compute selected fields against one generated read set, then recheck the
+   * complete set after any private decryption. No cache survives this call. */
+  async project(viewer:Viewer,items:Item[],info:GraphQLResolveInfo,retainedUntil:(at:number)=>void):Promise<Projected[]> {
+    if(!items.length)return [];
+    const fields=selectedQueryFields(info),ids=items.map(row=>row.id);
+    const words=fields.has('body')||fields.has('answerText');
+    const before=readInboxSet(this.db,ids,this.allowed(viewer),words);
+    if(items.some(row=>JSON.stringify(row)!==JSON.stringify(before.item(row.id))))throw Error('Inbox changed; retry the query');
+    const key=Object.assign(Object.create(this.key) as WordsKey,{open:(bytes:Uint8Array)=>this.key.open(bytes)});
+    const service=new InboxQueries(this.db,key,this.policy,this.now,this.volumeAllowed);
+    service.readSet=before;
+    const permissions=fields.has('canSetVolume')?this.volumeBatch?.(viewer,items):undefined;
+    const deadlines:number[]=[];
+    const retain=(at:number)=>deadlines.push(at);
+    const rows=await Promise.all(items.map(async row=>{
+      const values:Record<string,unknown>={};
+      const readers:Record<string,()=>unknown>={
+        refs:()=>service.refs(viewer,row.id),read:()=>service.read(viewer,row.id),
+        canAnswer:()=>service.canAnswer(viewer,row.id),
+        canSetVolume:()=>permissions?permissions.has(row.id):service.canSetVolume(viewer,row.id),
+        bodyKeepUntil:()=>service.bodyKeepUntil(viewer,row.id),answerKeepUntil:()=>service.answerKeepUntil(viewer,row.id),
+        body:()=>service.body(viewer,row.id,retain),answerText:()=>service.answerText(viewer,row.id,retain),
+      };
+      await Promise.all(Object.entries(readers).filter(([name])=>fields.has(name)).map(async([name,read])=>{values[name]=await read();}));
+      return Object.assign({...row},{[projected]:values});
+    }));
+    // Even unchanged ciphertext may no longer be visible after open() yields.
+    // A retry is preferable to returning an internally inconsistent page.
+    {
+      const after=readInboxSet(this.db,ids,this.allowed(viewer),words);
+      if(after.fingerprint!==before.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))throw Error('Inbox changed; retry the query');
+      if(permissions&&this.volumeBatch&&JSON.stringify([...this.volumeBatch(viewer,items)].sort())!==JSON.stringify([...permissions].sort()))throw Error('Inbox permissions changed; retry the query');
+    }
+    for(const at of deadlines)retainedUntil(at);
+    return rows;
   }
   private folderWhere(folder?: InboxFilter['folder']) {
     if (folder === 'needs') return and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers))!;
@@ -71,42 +116,44 @@ export class InboxQueries {
       filter.conversation ? eq(inbox.conversation, filter.conversation) : undefined);
   }
   private mailbox(viewer: Viewer, filter: InboxFilter) {
-    return this.db.select().from(inbox).where(this.mailboxWhere(viewer, filter))
-      .orderBy(desc(sql`julianday(${inbox.at})`), desc(inbox.id));
+    const where=this.mailboxWhere(viewer,filter);
+    return this.db.query.inbox.findMany({where:()=>sql`${{getSQL:()=>where!}}`,orderBy:f=>[desc(sql`julianday(${f.at})`),desc(f.id)]});
   }
   folders(viewer: Viewer) {
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return { needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] };
-    const where = this.mailboxWhere(viewer);
-    const totals = this.db.select({
-      needs: sql<number>`coalesce(sum(case when ${this.folderWhere('needs')} then 1 else 0 end),0)`,
-      alerts: sql<number>`coalesce(sum(case when ${this.folderWhere('alerts')} then 1 else 0 end),0)`,
-      fyi: sql<number>`coalesce(sum(case when ${this.folderWhere('fyi')} then 1 else 0 end),0)`,
-      answered: sql<number>`coalesce(sum(case when ${this.folderWhere('answered')} then 1 else 0 end),0)`,
-      all: count(),
-    }).from(inbox).where(where).get()!;
-    const agents = this.db.select({ id: inbox.agent, count: count(),
-      needs: sql<number>`coalesce(sum(case when ${this.folderWhere('needs')} then 1 else 0 end),0)`,
-    }).from(inbox)
-      .where(and(where, isNotNull(inbox.agent))).groupBy(inbox.agent).orderBy(asc(inbox.agent)).all()
-      .map(row => ({ id: row.id!, count: row.count, needs: row.needs }));
-    return { ...totals, agents };
+    return readInboxFolders(this.db, this.mailboxWhere(viewer)!);
   }
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
    * only through body(), and is never indexed or written back to the database. */
-  async search(viewer: Viewer, filter: InboxFilter = {}, retainedUntil?: (at: number) => void): Promise<Item[]> {
+  async search(viewer:Viewer,filter:InboxFilter={},retainedUntil?:(at:number)=>void):Promise<Item[]> {
+    if(!filter.search?.trim())return this.list(viewer,filter);
+    this.list(viewer,filter);
+    if(viewer.kind!=='member'&&viewer.kind!=='agent')return [];
+    const candidates=this.mailbox(viewer,filter).sync(),ids=candidates.map(row=>row.id);
+    if(!ids.length)return [];
+    const before=readInboxSet(this.db,ids,this.allowed(viewer));
+    const service=new InboxQueries(this.db,this.key,this.policy,this.now,this.volumeAllowed);
+    service.readSet=before;
+    const deadlines:number[]=[];
+    const result=await service.searchInSet(viewer,filter,at=>deadlines.push(at),candidates);
+    const after=readInboxSet(this.db,ids,this.allowed(viewer));
+    if(before.fingerprint!==after.fingerprint||deadlines.some(at=>at<=Date.parse(this.now())))return [];
+    for(const at of deadlines)retainedUntil?.(at);
+    return result;
+  }
+  private async searchInSet(viewer: Viewer, filter: InboxFilter, retainedUntil: (at: number) => void, candidates:Item[]): Promise<Item[]> {
     const query = filter.search?.trim().toLocaleLowerCase() ?? '';
     // Validate the same page bounds even for an empty or unauthorized mailbox.
-    this.list(viewer, filter);
     if (!query) return this.list(viewer, filter);
+    this.list(viewer, filter);
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
-    const candidates = this.mailbox(viewer, filter).all();
     const privateState = (item: Item, fromAnswer = false) => {
       const answer = fromAnswer ? this.answerState(viewer, item) : undefined;
-      const message = fromAnswer ? answer?.message : item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
+      const message = fromAnswer ? answer?.message : this.readSet?this.readSet.message(item):item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;
-      const keep = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
-      const thread = item.thread ? this.db.select().from(threads).where(eq(threads.id, item.thread)).get() : undefined;
+      const keep = this.keepDays();
+      const thread = item.thread ? this.readSet?this.readSet.thread(item.thread):this.db.select().from(threads).where(eq(threads.id,item.thread)).get():undefined;
       return { message, keep, thread, answerMail: answer?.mail };
     };
     const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
@@ -158,10 +205,12 @@ export class InboxQueries {
       .orderBy(desc(sql`julianday(${actionResults.at})`), desc(actionResults.id)).limit(limit).all();
   }
   refs(viewer: Viewer, id: string): string[] {
+    if(this.readSet)return this.readSet.refs(id);
     return this.db.select({ ref: inboxRefs.ref }).from(inboxRefs).innerJoin(inbox, eq(inbox.id, inboxRefs.item))
       .where(and(eq(inbox.id, id), this.allowed(viewer))).orderBy(asc(inboxRefs.ref)).all().map(row => row.ref);
   }
   read(viewer: Viewer, id: string): boolean {
+    if(this.readSet)return viewer.kind==='member'&&this.readSet.read(id,viewer.id);
     return viewer.kind === 'member' && !!this.db.select({ item: inboxReads.item }).from(inboxReads).innerJoin(inbox, eq(inbox.id, inboxReads.item))
       .where(and(eq(inbox.id, id), eq(inboxReads.member, viewer.id), this.allowed(viewer))).get();
   }
@@ -172,6 +221,7 @@ export class InboxQueries {
     return Number.isFinite(at) ? new Date(at).toISOString() : null;
   }
   private answerState(viewer: Viewer, item: Item) {
+    if(this.readSet)return this.readSet.answer(item);
     if (!item.thread || !item.conversation || item.state !== 'answered' || !['words', 'replied'].includes(item.answer ?? '') || !item.answeredBy || !item.answeredAt) return undefined;
     return this.db.select({ mail: inbox, message: messages }).from(inbox)
       .innerJoin(messages, and(eq(messages.thread, inbox.thread), eq(messages.seq, inbox.messageSeq), eq(messages.inboxItem, inbox.id)))
@@ -184,7 +234,7 @@ export class InboxQueries {
     const item = this.current(viewer, id);
     if(item?.source==='handoff'){const until=viewer.kind==='member'?handoffDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
     if (!item?.thread || !item.conversation) return null;
-    const message = this.db.select({ at: messages.at, keepUntil: messages.keepUntil }).from(messages)
+    const message = this.readSet?this.readSet.thread(item.thread)?.conversation===item.conversation?this.readSet.message(item):undefined:this.db.select({ at: messages.at, keepUntil: messages.keepUntil }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread)).where(and(eq(messages.thread, item.thread),
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id), eq(threads.conversation, item.conversation))).get();
     return this.deadline(message);
@@ -223,7 +273,7 @@ export class InboxQueries {
       retainedUntil?.(until);return {words};
     }
     if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
-    const row = () => this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
+    const row = () => this.readSet?(()=>{const message=this.readSet!.message(item),thread=this.readSet!.thread(item.thread!);return message&&thread?{message,conversation:thread.conversation}:undefined;})():this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread))
       .where(and(eq(messages.thread, item.thread!), eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, id))).get();
     const days = () => this.keepDays();
@@ -264,14 +314,14 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     ...Object.fromEntries(['id', 'toKind', 'to', 'source', 'fromKind', 'at', 'state', 'volume', 'changedAt'].map(name => [name, { type: new GraphQLNonNull(GraphQLString) }])),
     ...Object.fromEntries(['quietUntil', 'conversation', 'sourceId', 'fromId', 'agent', 'project', 'member', 'answers', 'waitsOnKind', 'waitsOnId', 'thread', 'answer', 'answeredBy', 'answeredAt', 'resolution'].map(name => [name, { type: GraphQLString }])),
     seq: { type: GraphQLInt },
-    bodyKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.bodyKeepUntil(context.viewer, row.id) },
-    answerKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => service.answerKeepUntil(context.viewer, row.id) },
-    answerText: { type: GraphQLString, resolve: (row, _args, context) => service.answerText(context.viewer, row.id, until => keepReadUntil(context, until)) },
-    body: { type: body, resolve: (row, _args, context) => service.body(context.viewer, row.id, until => keepReadUntil(context, until)) },
-    refs: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))), resolve: (row, _args, context) => service.refs(context.viewer, row.id) },
-    canSetVolume: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.canSetVolume(context.viewer, row.id) },
-    canAnswer: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.canAnswer(context.viewer, row.id) },
-    read: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => service.read(context.viewer, row.id) },
+    bodyKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => display(row,'bodyKeepUntil',()=>service.bodyKeepUntil(context.viewer,row.id)) },
+    answerKeepUntil: { type: GraphQLString, resolve: (row, _args, context) => display(row,'answerKeepUntil',()=>service.answerKeepUntil(context.viewer,row.id)) },
+    answerText: { type: GraphQLString, resolve: (row, _args, context) => display(row,'answerText',()=>service.answerText(context.viewer,row.id,until=>keepReadUntil(context,until))) },
+    body: { type: body, resolve: (row, _args, context) => display(row,'body',()=>service.body(context.viewer,row.id,until=>keepReadUntil(context,until))) },
+    refs: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString))), resolve: (row, _args, context) => display(row,'refs',()=>service.refs(context.viewer,row.id)) },
+    canSetVolume: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => display(row,'canSetVolume',()=>service.canSetVolume(context.viewer,row.id)) },
+    canAnswer: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => display(row,'canAnswer',()=>service.canAnswer(context.viewer,row.id)) },
+    read: { type: new GraphQLNonNull(GraphQLBoolean), resolve: (row, _args, context) => display(row,'read',()=>service.read(context.viewer,row.id)) },
   } });
   const result = new GraphQLObjectType({ name: 'InboxActionResult', fields: {
     id: { type: new GraphQLNonNull(GraphQLString) }, at: { type: new GraphQLNonNull(GraphQLString) },
@@ -288,7 +338,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   } });
   return { inboxFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) }, inboxItem: {
     type: item, args: { id: { type: new GraphQLNonNull(GraphQLString) } },
-    resolve: (_row, args, context) => service.item(context.viewer, args.id),
+    resolve: async(_row,args,context,info)=>{const row=service.item(context.viewer,args.id);return row?(await service.project(context.viewer,[row],info,until=>keepReadUntil(context,until)))[0]:null;},
   }, inboxActionResults: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(result))),
     args: { limit: { type: GraphQLInt, defaultValue: 20 } },
@@ -296,6 +346,6 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
     args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
-    resolve: (_row, args, context) => args.search === undefined ? service.list(context.viewer, args) : service.search(context.viewer, args, until => keepReadUntil(context, until)),
+    resolve: async(_row,args,context,info)=>service.project(context.viewer,args.search===undefined?service.list(context.viewer,args):await service.search(context.viewer,args,until=>keepReadUntil(context,until)),info,until=>keepReadUntil(context,until)),
   } };
 }

@@ -39,7 +39,7 @@ it('filters/paginates real thread rows and separately authorizes direct owner re
   expect(f.service.list(owner, { member: 'bob' }).map(row => row.id)).toEqual([other.id]);
   const own = f.comms.threads.open({ member: 'owner', agent: 'art', title: 'Owner private' });
   expect(f.service.list(owner).map(row => row.id)).toEqual([own.id]);
-  expect(f.service.thread(alice, other.id)).toBeNull(); expect(f.service.thread(owner, other.id)?.id).toBe(other.id);
+  expect(f.service.thread(alice, '')).toBeNull(); expect(f.service.thread(alice, other.id)).toBeNull(); expect(f.service.thread(owner, other.id)?.id).toBe(other.id);
 });
 it('loads latest message metadata without ciphertext, pages older sequences and decrypts only selected words', async () => {
   const f = await fixture();
@@ -59,7 +59,7 @@ it('loads latest message metadata without ciphertext, pages older sequences and 
   f.revoke(); expect(f.service.messages(alice, f.thread.id)).toEqual([]); expect(f.service.refs(alice, f.thread.id)).toEqual([]); expect(f.service.thread(alice, f.thread.id)).toBeNull();
 });
 it('withholds words across decryption-time changes to policy, scope, ciphertext, identity, retention or existence', async () => {
-  for (const change of ['policy', 'role', 'scope', 'conversation', 'ciphertext', 'sender', 'kind', 'timestamp', 'deadline', 'household', 'expiry', 'delete'] as const) {
+  for (const path of ['internal', 'graphql'] as const) for (const change of ['policy', 'role', 'scope', 'conversation', 'ciphertext', 'sender', 'kind', 'timestamp', 'deadline', 'household', 'expiry', 'delete'] as const) {
     const f = await fixture(), row = f.service.messages(owner, f.thread.id, undefined, 1)[0];
     f.onOpen(() => {
       if (change === 'role') f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'owner')).run();
@@ -78,7 +78,14 @@ it('withholds words across decryption-time changes to policy, scope, ciphertext,
       if (change === 'expiry') f.time('2026-11-29T18:00:00.000Z');
       if (change === 'delete') f.comms.delete(f.thread.id);
     });
-    expect(await f.service.words(owner, row), change).toBeNull();
+    if (path === 'internal') expect(await f.service.words(owner, row), change).toBeNull();
+    else {
+      const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
+      const result = await graphql({ schema, source: '{ commsMessages(thread:"th:alice",limit:1) { words wordsKeepUntil } }', contextValue: { viewer: owner } });
+      expect(JSON.stringify(result.data), change).not.toContain('Search done');
+      if (change === 'expiry') expect(result.data).toMatchObject({ commsMessages: [{ words: null }] });
+      else expect(result.errors, change).toBeDefined();
+    }
   }
 });
 it('enforces stored and household deadlines independently, before and after decryption', async () => {

@@ -113,10 +113,14 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
 /** The browser observes the reply produced through the same actual body path. */
 export async function nativeProtocolAction(context){
  const {page,open,out}=context,actions={};
- try{actions.nativeProtocol={ok:true,...await nativeProtocolSmoke(context)};}
- catch{actions.nativeProtocol={ok:false,error:'The fictional native protocol could not complete or restore its temporary authority.'};return actions;}
+ // Measure background work without every retained desk subscription competing
+ // with the actual worker HTTP requests. The browser rejoins for reply proof.
+ try{await page.goto('about:blank');actions.nativeProtocol={ok:true,...await nativeProtocolSmoke(context)};}
+ catch{actions.nativeProtocol={ok:false,error:'The fictional native protocol could not complete or restore its temporary authority.'};}
  const screenshot='action-nativeReply.png';
  try{
+  await page.goto(context.app.url);await page.locator('.next-shell').waitFor();
+  if(!actions.nativeProtocol.ok)return actions;
   const tile=await open('Comms');const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.first().click();
   await tile.getByText('Inspect the example shed',{exact:true}).first().click();
   await tile.getByText('Fictional native protocol response.',{exact:true}).waitFor();

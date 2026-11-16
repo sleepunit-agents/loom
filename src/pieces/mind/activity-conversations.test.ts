@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, projects, conversations, digestItems } from '../../core/data/schema.js';
+import { agents, members, projects, projectMembers, conversations, digestItems } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
 import type { Sharing, Viewer } from '../../policy.js';
 import { sharedActivityConversations } from './activity-conversations.js';
@@ -11,17 +11,19 @@ const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
 const owner: Viewer = { kind: 'member', id: 'owner' }, teammate: Viewer = { kind: 'member', id: 'teammate' };
 function fixture() {
- const client = new Database(':memory:'); clients.push(client);
+ const statements: string[] = [];
+ const client = new Database(':memory:', { verbose: statement => statements.push(statement) }); clients.push(client);
  let now = '2026-11-14T18:00:00.000Z';
  const db = createDataSchema(client, () => now);
  db.insert(members).values([{ id:'owner',role:'owner',joinedAt:now },{ id:'teammate',role:'member',joinedAt:now }]).run();
  db.insert(agents).values({ id:'fiction',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot' }).run();
  db.insert(projects).values({ id:'pond',name:'Pond' }).run();
+ db.insert(projectMembers).values({ project:'pond',member:'teammate' }).run();
  const sharing: Sharing = { members:{ owner:{owner:true,agents:[]},teammate:{owner:false,agents:[]} },projects:{ pond:{members:['teammate'],agents:['fiction']} },services:{} };
  const service = new Conversations(db, () => now);
- const reader = sharedActivityConversations(db, { sharing:()=>sharing, conversationHref:id=>`/conversation/${id}` });
+ const reader = sharedActivityConversations(db, { conversationHref:id=>`/conversation/${id}` });
  const query = { agent:'fiction',from:Date.parse('2026-11-14T00:00:00Z'),until:Date.parse('2026-11-15T00:00:00Z'),limit:601 };
- return {db,service,reader,sharing,query,at:(value:string)=>{now=value;}};
+ return {db,service,reader,sharing,query,statements,at:(value:string)=>{now=value;}};
 }
 it('reads committed shared digests, lists and turn metadata, replacing moved conversations in the same window', () => {
  const f=fixture(),cv=f.service.open({agent:'fiction',venue:'discord',place:'channel',label:'Fit the hose',project:'pond'});
@@ -48,7 +50,7 @@ it('uses the central current scope for all three reads and filters private rows 
  expect(f.reader.conversation(teammate,'fiction',hidden.id)).toBeUndefined();
  expect(f.reader.list(owner,f.query).rows.map(r=>r.key)).toEqual([privateDigest.id,dg.id]);
  expect(f.reader.agents?.(teammate)).toEqual(['fiction']);
- f.sharing.projects.pond.members=[];
+ f.sharing.projects.pond.members=[]; f.db.delete(projectMembers).run();
  expect(f.reader.list(teammate,f.query).rows).toEqual([]);
  expect(f.reader.read(teammate,'fiction','digest',dg.id)).toBeUndefined();
  expect(f.reader.conversation(teammate,'fiction',shared.id)).toBeUndefined();
@@ -81,4 +83,16 @@ it('schedules the earliest future digest or conversation timestamp at both skew 
  expect(f.reader.nextDeadline?.(now+1001)).toBe(now+2000);
  expect(f.reader.nextDeadline?.(now+2000)).toBe(now+2001);
  expect(f.reader.nextDeadline?.(now+2001)).toBeUndefined();
+});
+
+it('keeps Activity SQL fixed for two and ten conversations with real digest children', () => {
+ const f=fixture();let small=0;
+ for(let n=0;n<10;n++){
+  const cv=f.service.open({agent:'fiction',venue:'loom',place:'growth-'+n,label:'Growth '+n,project:'pond'});
+  f.service.turn({conversation:cv.id,kind:'reply',fromKind:'agent',fromId:'fiction'});
+  f.service.digest({conversation:cv.id,run:'growth-'+n,summary:'Summary '+n,items:[{kind:'decision',text:'Decision '+n}]});
+  if(n===1){f.statements.length=0;const rows=f.reader.list(teammate,f.query).rows;expect(rows).toHaveLength(2);expect(rows.every(row=>row.replies===1&&row.decided.length===1&&row.conversation.people.includes('fiction'))).toBe(true);small=f.statements.length;}
+ }
+ f.statements.length=0;const rows=f.reader.list(teammate,f.query).rows;expect(rows).toHaveLength(10);expect(rows.every(row=>row.replies===1&&row.decided.length===1)).toBe(true);
+ expect(f.statements.length).toBe(small);expect(small).toBe(5);
 });
