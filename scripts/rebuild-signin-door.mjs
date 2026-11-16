@@ -20,7 +20,7 @@ export async function signinDoorEvidence(){
   const query=(source,headers={})=>request('/graphql',{query:source},headers);
   const bearer=value=>({authorization:'Bearer '+value});
   const bootstrap=root.writes.run(()=>root.services.signin.issue({kind:'owner',member:'owner',label:'Bootstrap owner'})).value;secrets.push(bootstrap.token);
-  check(root.services.account.read('owner').member==='owner','trusted service needs no caller token');
+  check(bootstrap.fingerprint===await hash(bootstrap.token)&&db.select().from(tokens).all().some(row=>row.fingerprint===bootstrap.fingerprint),'bootstrap token fingerprint row');
   check((await query('{ tasks { id } }')).status===401,'unauthenticated request refused');
   const link=async token=>{
    const response=await request('/api/signin/link',{},bearer(token));check(response.status===200,'member link issued at HTTP door');
@@ -40,7 +40,7 @@ export async function signinDoorEvidence(){
   const issue=async input=>{
    const response=await request('/api/signin/token',input,ownerHeaders);check(response.status===200,'owner creates caller at HTTP door');
    const value=(await response.json()).value;check(typeof value?.token==='string'&&typeof value?.fingerprint==='string','issued caller shape');
-   secrets.push(value.token);check(value.fingerprint===await hash(value.token),'issued token fingerprint only');return value;
+   secrets.push(value.token);check(value.fingerprint===await hash(value.token)&&db.select().from(tokens).all().some(row=>row.fingerprint===value.fingerprint&&row.kind===input.kind),'issued token fingerprint row');return value;
   };
   const sam=await issue({kind:'owner',member:'sam',label:'Sam credential'}),agent=await issue({kind:'agent',agent:'art',label:'Agent credential'}),runner=await issue({kind:'runner',box:'worker',label:'Machine credential'});
   for(const [issued,kind,id,selection] of [[sam,'member','sam','{ tasks { id } }'],[agent,'agent','art','{ tasks { id } }'],[runner,'runner','worker','{ boxes { id } }']]){
@@ -55,6 +55,8 @@ export async function signinDoorEvidence(){
   check(!ownerData.errors&&!samData.errors,'account projection available');
   check(ownerData.data.account.member==='owner'&&samData.data.account.member==='sam','person token names member');
   check(samData.data.householdSetup===null&&samData.data.account.sessions.length===2,'member sees personal account only');
+  check(ownerData.data.account.sessions.length===1,'owner personal browser present');
+  const trusted=root.services.account.read('owner');check(trusted.sessions.length===1&&trusted.sessions[0].ref===ownerData.data.account.sessions[0].ref,'trusted credential service reads browser metadata without caller token');
   const ownerRefs=new Set(ownerData.data.account.sessions.map(row=>row.ref));
   check(samData.data.account.sessions.every(row=>!ownerRefs.has(row.ref)),'other member browsers withheld');
   check(ownerData.data.householdSetup.tokens.length===4&&ownerData.data.householdSetup.sessions.length===3,'owner sees household credentials');
@@ -66,12 +68,17 @@ export async function signinDoorEvidence(){
   check((await query('{ tasks { id } }',automatedHeaders)).status===401,'automated session ends at six hours');
   const stillPerson=await(await root.http.request(origin+'/auth/session',{headers:personHeaders})).json();
   check(stillPerson.viewer?.id==='sam','person session outlasts automated one');
+  const survivor=await redeem(await link(sam.token),'Mozilla/5.0 Safari/537.36');
+  check((await query('{ tasks { id } }',personHeaders)).status===200,'selected person browser valid before revocation');
   const target=ownerData.data.householdSetup.sessions.find(row=>row.tokenLabel==='Sam credential'&&!row.isAgent);
   check(!!target,'selected other browser found');
   check((await request('/api/sessions/revoke',{id:crypto.randomUUID(),input:{ref:target.ref}},ownerHeaders)).status===200,'owner ends selected household browser');
   check((await query('{ tasks { id } }',personHeaders)).status===401,'ended browser denied immediately');
+  check((await query('{ tasks { id } }',{cookie:survivor})).status===200,'other person browser retained');
+  check((await request('/api/runtime/health',{id:crypto.randomUUID(),input:{}},bearer(runner.token))).status===200,'machine valid before revocation');
   check((await request('/api/token/revoke',{id:crypto.randomUUID(),input:{fingerprint:runner.fingerprint}},ownerHeaders)).status===200,'owner revokes machine credential');
   check((await request('/api/runtime/health',{id:crypto.randomUUID(),input:{}},bearer(runner.token))).status===401,'revoked token denied immediately');
+  check((await query('{ tasks { id } }',bearer(sam.token))).status===200&&(await query('{ tasks { id } }',bearer(agent.token))).status===200,'other member and agent tokens retained');
   const image=client.serialize();check(secrets.every(secret=>!image.includes(Buffer.from(secret))),'raw credentials absent from SQLite image');
   check(errors.length===0,'no internal errors');
   result={ok:true,checks:{trustedServiceWithoutToken:true,unauthenticatedDenied:true,memberAgentMachineAuthenticated:true,memberIdentityBound:true,nonownerIssuanceDenied:true,oneUseLink:true,expiredLinkDenied:true,sixHourAutomatedSession:true,personSessionRetained:true,personalMetadataOnly:true,ownerHouseholdList:true,ownerSessionRevocation:true,ownerTokenRevocation:true,tokenCookieLinkFingerprints:true,rawSecretsNeverPersisted:true}};
