@@ -28,8 +28,8 @@ it('discovers newly registered HTTP commands with their structural input hints, 
  const transformed=await(await f.post({name:'fixture.transformed'})).json();expect(transformed.value.commands[0].inputSchema.properties.value.type).toBe('string');expect(called).not.toHaveBeenCalled();expect(may).not.toHaveBeenCalled();
  const denied=await f.root.http.request('/api/fixture/transformed',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{value:'2'}})});expect(denied.status).toBe(403);expect(called).not.toHaveBeenCalled();expect(may).toHaveBeenCalled();
 });
-it.each(['member','runner']as const)('refuses %s credentials that are not the current receiving body',async who=>{
- const f=await fixture();expect((await f.post({},raw[who])).status).toBe(403);
+it('lists commands for a current member, and refuses a runner',async()=>{
+ const f=await fixture();expect((await f.post({},raw.member)).status).toBe(200);expect((await f.post({},raw.runner)).status).toBe(403);
 });
 it('does not turn a plain agent label or installed service into a body proof',async()=>{
  const f=await fixture(),service=registerBuiltinService(f.root.operations,'body-catalogue',['runtime.commandCatalog'],'runtime');

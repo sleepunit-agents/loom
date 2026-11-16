@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **A member's token can talk and answer.** `comms.open`, `comms.send`, `comms.change`, `inbox.answer`, `inbox.read` and `inbox.dismissResult` no longer need a signed-in browser window; a member's own token is enough. A current member can also read the command list.
+
 - **Recall is a read.** `memory.recall` needs no operation id, reserves nothing and stores no receipt. It still warms what it finds. Asking twice recalls twice.
 
 - **Two more things to propose.** `household.propose` takes `order` (the order people or agents are listed in) and `secretDescription` (what a secret is for, without touching its value). `mind.knowledgeEdit` can add a source.

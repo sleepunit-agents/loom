@@ -185,9 +185,9 @@ it('uses authenticated read marks and the metadata services for rename, pin, arc
 
 it('requires signed-in window dispatch, rejects claimed senders and binds opens to the authenticated member', async () => {
   const f = fixture(), input = { thread: 'th:two', agent: 'art', title: 'Second' };
-  expect(await f.operations.callAsync('socket', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'no-window', false)).toMatchObject({ code: 'denied' });
+  // Without a window, a member is still the member; an agent is never one.
+  expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'comms.open', input, 'no-window', false)).toMatchObject({ code: 'denied' });
   expect(await f.operations.callAsync('http', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'open-http', true)).toMatchObject({ ok: true });
-  expect(await f.operations.callAsync('http', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'open-no-window', false)).toMatchObject({ code: 'denied' });
   expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'comms.open', input, 'open', true)).toMatchObject({ code: 'denied' });
   expect(await f.call('comms.open', { ...input, member: 'other' }, 'spoof')).toMatchObject({ code: 'invalid' });
   expect(await f.call('comms.open', input, 'open')).toMatchObject({ ok: true, value: { thread: 'th:two' } });
@@ -223,7 +223,7 @@ it('dismisses only the signed-in member own action result through an authenticat
   ]).run();
   for (const id of ['other', 'missing']) expect(await f.call('inbox.dismissResult', { id }, `deny-${id}`)).toMatchObject({ ok: false, code: 'denied' });
   for (const kind of ['agent', 'runner', 'service'] as const) expect(await f.operations.callAsync('socket', { kind, id: 'jonathan' }, 'inbox.dismissResult', { id: 'mine' }, `deny-${kind}`, true)).toMatchObject({ ok: false, code: 'denied' });
-  expect(await f.operations.callAsync('socket', { kind: 'member', id: 'jonathan' }, 'inbox.dismissResult', { id: 'mine' }, 'no-window', false)).toMatchObject({ ok: false, code: 'denied' });
+  expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'inbox.dismissResult', { id: 'mine' }, 'no-window', false)).toMatchObject({ ok: false, code: 'denied' });
   expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'expired', () => false)).toMatchObject({ ok: false, code: 'denied' });
   expect(f.db.select().from(actionResults).all().every(r => r.readAt === null)).toBe(true);
   const result = await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss');

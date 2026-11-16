@@ -59,14 +59,15 @@ it('mounts actual shared private reads and cookie writes with metadata-only rece
   expect((await f.post('comms.change',{thread:'th:pump',change:'rename',title:'Owner changed it'},'owner-change','owner')).status).toBe(403);
   expect(f.db.select().from(threads).all()).toMatchObject([{id:'th:pump',title:'Pump'}]);
   for (const id of ['bob-open','owner-change']) expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
-  expect((await f.post('comms.send', { ...input, clientId:'bearer' }, 'bearer','alice',true)).status).toBe(403);
+  // A member's own token may send, as a signed-in window may.
+  expect((await f.post('comms.send', { ...input, clientId:'bearer' }, 'bearer','alice',true)).status).toBe(200);
   f.root.writes.run(() => f.db.insert(memberAgents).values({member:'bob',agent:'art'}).run());
   const hidden = await f.query(`{commsThread(id:"th:pump"){id title} commsMessages(thread:"th:pump"){seq words} inboxItem(id:"${sent.value.item}"){body{words}}}`,'bob');
   expect(hidden.body.errors).toBeUndefined(); expect(hidden.body.data).toEqual({commsThread:null,commsMessages:[],inboxItem:null});
 
   expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('PRIVATE PERSON MESSAGE');
   expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain('PRIVATE PERSON MESSAGE');
-  expect(f.db.select().from(messages).all()).toHaveLength(1);
+  expect(f.db.select().from(messages).all()).toHaveLength(2);
   f.root.writes.run(() => f.db.delete(memberAgents).run());
   expect((await f.post('comms.send', input, 'send')).status).toBe(403);
   expect((await f.query(query)).body.data?.homeComms).toEqual({ member: 'alice', agents: [] });
