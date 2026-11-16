@@ -28,7 +28,8 @@ import { resolveContextDir } from './config.js';
 import { SUBCOMMANDS } from './cli/subcommands.js';
 import { firstNonGlobalIndex } from './cli/args.js';
 import { findPiece } from './cli/pieces.js';
-import { isNextStdioInvocation, nextStdioConfig } from './continuity/stdio.js';
+import { isNextStdioInvocation } from './continuity/stdio.js';
+import {createSharedStdioServer} from './shared-mcp-stdio.js';
 
 const CLI_KEYWORDS: ReadonlySet<string> = new Set(SUBCOMMANDS);
 
@@ -48,8 +49,8 @@ export { isCliInvocation };
 
 /** Shared by the executable and in-process transport acceptance tests. */
 export function createStdioServer(args: string[]) {
-  const config = isNextStdioInvocation(args) ? nextStdioConfig(args) : { contextDir: resolveContextDir() };
-  return createLoomServer(config);
+  if(isNextStdioInvocation(args))return createSharedStdioServer(args);
+  return createLoomServer({contextDir:resolveContextDir()});
 }
 
 async function main() {

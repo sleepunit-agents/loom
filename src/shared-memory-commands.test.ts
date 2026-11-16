@@ -94,7 +94,7 @@ it('reports an actual private person redirect when read through the original opa
 it('restricts card writes to the current body source and keeps card claims separate from grants',async()=>{
  const f=await fixture();
  for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){
-  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'card-weak-'+verb+'-'+index,token)).status).toBe(403);
+  for(const [index,token] of [raw.member,raw.runner].entries())expect((await f.call(verb,value,'card-weak-'+verb+'-'+index,token)).status).toBe(403);
   for(const extra of [{agent:'mark'},{path:f.other}])expect((await f.call(verb,{...value,...extra},'card-path-'+verb+'-'+Object.keys(extra)[0])).status).toBe(400);
   expect((await f.call(verb,{...value,slug:'../mark'},'card-escape-'+verb)).status).toBe(400);
  }
@@ -164,7 +164,7 @@ it('keeps edit and revision-restore authority own-body scoped, and rejects a rev
  expect((await f.call('restoreRevision',{id,revision_id:revisions[0].id},'wrong-version')).status).toBe(404);
  for(const [verb,value] of [['update',{id,content:'new words'}],['restoreRevision',{id,revision_id:revisions[0].id}]] as const){
   expect((await f.call(verb,{...value,id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
-  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'weaker-'+verb+'-'+index,token)).status).toBe(403);
+  for(const [index,token] of [raw.member,raw.runner].entries())expect((await f.call(verb,value,'weaker-'+verb+'-'+index,token)).status).toBe(403);
   expect((await f.call(verb,{...value,path:f.other},'path-'+verb)).status).toBe(400);
  }
  expect((await f.call('update',{id},'empty-edit')).status).toBe(400);expect((await f.call('update',{id,content:'  '},'blank-edit')).status).toBe(400);
@@ -208,7 +208,7 @@ it('binds commands to the actual body, publishes committed content, and reads op
  const recall=await f.call('recall',{query:'alpha',limit:1},'recall');expect(recall.status).toBe(200);expect(recall.result.value).toMatchObject({ids:[id],matches:[{id}]});expect(JSON.stringify(recall)).not.toContain(words);
  const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all();
  const priorHeat=heat(),before=embed.calls;expect(await f.call('recall',{query:'alpha',limit:1},'recall')).toEqual(recall);expect(embed.calls).toBe(before);expect(heat()).toEqual(priorHeat);
- for(const token of [raw.agent,raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
+ for(const token of [raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
  expect((await f.call('remember',{...input,agent:'mark'},'choose-agent')).status).toBe(400);expect((await f.call('remember',{...input,path:f.other},'choose-path')).status).toBe(400);
  const canonical=JSON.stringify({category:input.category,content:input.content,project:input.project,title:input.title}),fingerprint=f.key.hash(canonical);
  expect(fingerprint).not.toBe(createHash('sha256').update(canonical).digest('hex'));
@@ -296,7 +296,7 @@ it('ratifies atomically with draft removal and private receipt, then recovers a 
 });
 it('refuses foreign draft IDs and rolls back ratification when the current body ends during embedding',async()=>{
  const f=await fixture(),id=(await f.call('propose',input,'revoked-proposal')).result.value.ids[0];
- for(const token of [raw.member,raw.agent,raw.runner])expect((await f.call('propose',input,'weaker-proposal-'+token[0],token)).status).toBe(403);
+ for(const token of [raw.member,raw.runner])expect((await f.call('propose',input,'weaker-proposal-'+token[0],token)).status).toBe(403);
  expect((await f.call('ratify',{id:id.replace('art:','mark:')},'foreign-proposal')).status).toBe(403);expect((await f.call('ratify',{id},'member-proposal',raw.member)).status).toBe(403);
  expect((await f.call('propose',{...input,agent:'mark'},'select-proposal')).status).toBe(400);
  const gate=hold(),pending=f.call('ratify',{id},'ratify-ended');await gate.began;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect([401,403]).toContain((await pending).status);expect(f.count()).toBe(0);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:1});
@@ -305,7 +305,7 @@ it('archives, restores and forgets one own opaque ID with private notes, replay 
  const f=await fixture(),made=await f.call('remember',input,'make-lifecycle'),id=made.result.value.ids[0],uuid=id.slice(4),note='PRIVATE_ARCHIVE_NOTE';
  for(const verb of ['archive','restore','forget']){
   expect((await f.call(verb,{id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
-  expect((await f.call(verb,{id},'non-body-'+verb,raw.agent)).status).toBe(403);
+  expect((await f.call(verb,{id},'non-agent-'+verb,raw.member)).status).toBe(403);
   expect((await f.call(verb,{id,agent:'mark'},'select-'+verb)).status).toBe(400);
  }
  const archived=await f.call('archive',{id,note},'archive-one');expect(archived.status).toBe(200);expect(archived.result.value.ids).toEqual([id]);

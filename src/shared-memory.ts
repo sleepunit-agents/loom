@@ -1,3 +1,6 @@
+import type {EmbeddingProvider} from './backends/types.js';
+import {Notes,notesDbPath} from './notes.js';
+import {sharedNotes} from './shared-notes.js';
 /** Memory stays in declared source files. Existing store/action modules own
  * their schema and retry receipts; this creates no legacy loom tables. */
 import {mkdirSync,openSync,closeSync} from 'node:fs';
@@ -51,16 +54,16 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
   try{await knowledge.getPage('bootstrap-probe');}finally{knowledge.close();}
  });
  await fresh(commons.people,()=>{new PeopleStore({dbPath:commons.people}).close();});
- for(const agent of agents)await fresh(agent.memories,()=>{
+ for(const agent of agents){await fresh(notesDbPath(agent.directory),()=>{new Notes(agent.directory).close();});await fresh(agent.memories,()=>{
   new PeopleStore({dbPath:agent.memories,actor:agent.agent}).close();
   new ProjectsStore({dbPath:agent.memories}).close();
   const db=new Database(agent.memories,{fileMustExist:true});try{prepareSemanticMemory(db);}finally{db.close();}
- });
+ });}
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
  if(options&&(typeof options.checkingAgent!=='string'||!options.checkingAgent.trim()||!db.select().from(agentRows).where(eq(agentRows.id,options.checkingAgent)).get()))throw new Error('Memory needs an explicit configured checking agent');
 }
-export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,tasks:Pick<TaskService,'ready'>){
+export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOptions|undefined,tasks:Pick<TaskService,'ready'>,embedding?:()=>EmbeddingProvider){
  validateSharedMemoryOptions(db,options);
  const closers:Array<()=>void>=[];let closed=false;
  const close=()=>{if(closed)return;closed=true;const errors:unknown[]=[];for(const stop of closers.splice(0).reverse())try{stop();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory teardown failed');};
@@ -74,14 +77,16 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
   const activity=createActivityReader(clock,{agents,sharing,timezone,github:settings?.githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),timezone,projects,activity,conversationHref,projectHref});closers.push(queries.close);
+  const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
   const touches=mindTouchSources(sources);
-  return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
+  return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){
     installTouched(operations,mindTouchResolver(touches));
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,classify:domain=>deriveSlaClass(null,domain)});closers.push(knowledge.close);
     const agent=settings?.defaultAgent??undefined;
     const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:agents.find(a=>a.agent===agent)?.memories,agent,sharing,create:createPersonHalf});closers.push(actions.close);
-    if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),...commands}).close);
+    if(commands)notes.register(operations,commands);
+    if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),embedding,...commands}).close);
    },
   };
  }catch(error){close();throw error;}

@@ -109,6 +109,12 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
         && !found.token.member && !found.token.agent && !found.token.job
         ? Object.freeze({ box: viewer.id, fingerprint: found.token.fingerprint }) : undefined;
     },
+    /** A terminal credential names its own agent without claiming a worker job. */
+    agentSession(viewer: Viewer): Readonly<{agent:string}> | undefined {
+      const found=proof(viewer);
+      return found?.bearer && viewer.kind==='agent' && found.token.kind==='agent' && !found.token.job && !found.token.box
+        ? Object.freeze({agent:viewer.id}) : undefined;
+    },
     body(viewer: Viewer): Readonly<{ job: string; agent: string; box: string }> | undefined {
       const found = proof(viewer);
       return found?.bearer && viewer.kind === 'agent' && found.token.kind === 'agent' && found.token.job && found.box

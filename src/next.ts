@@ -38,7 +38,6 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { Hono } from 'hono';
 import { getRequestListener } from '@hono/node-server';
-import { McpServer, WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import type { Socket } from 'node:net';
 import type { Foundation } from './core/app.js';
@@ -335,22 +334,6 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     routes.all('/graphql', c => data!.http.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
     routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
-    routes.all('/mcp', async c => {
-      // A stateless transport per request binds every call to this caller.
-      const authentication = auth(c.env.incoming as IncomingMessage);
-      if (!authentication?.valid()) return c.json({ error: 'Authentication required' }, 401);
-      const server = new McpServer({ name: 'loom-next', version: '1' });
-      for (const op of app.operations.offered('mcp')) server.registerTool(op.name, {
-        inputSchema: z.object({ input: op.input, id: z.string().optional() }),
-      }, async args => {
-        const result = authentication.valid() ? app.operations.call('mcp', authentication.viewer, op.name, args.input, args.id) : { ok: false, code: 'denied', message: 'Authentication ended' };
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], isError: !result.ok };
-      });
-      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-      await server.connect(transport);
-      try { return await transport.handleRequest(c.req.raw); }
-      finally { await transport.close(); await server.close(); }
-    });
     routes.get('/faces/:agent/:file', c => {
       const authentication = auth(c.env.incoming as IncomingMessage);
       if (!authentication?.valid()) return c.notFound();

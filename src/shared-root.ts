@@ -1,3 +1,5 @@
+import type {EmbeddingProvider} from './backends/types.js';
+import {sharedMcpRequest} from './shared-mcp.js';
 import {programGrantStore} from './core/data/program-grants.js';
 import {sharedProgramSetup,programIssueInput} from './shared-program-setup.js';
 import {programSetupQueries,registerProgramSetup} from './shared-program-queries.js';
@@ -109,6 +111,8 @@ export function sharedRoot(options: {
    * takes precedence over the read-only programGrants adapter. */
   programStore?: ProgramGrantStore;
   memory?: SharedMemoryOptions;
+  /** Trusted startup may supply an embedding implementation; never request-selected. */
+  memoryEmbedding?:()=>EmbeddingProvider;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
   changes?: {rule?:MergeRuleReader} & ({read:PullRequestReader} | {github:Parameters<typeof sharedChangesReader>[0]});
@@ -164,7 +168,7 @@ export function sharedRoot(options: {
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
-  const memory=sharedMemory(db,clock,options.memory,tasks);
+  const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
   const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
@@ -183,10 +187,10 @@ export function sharedRoot(options: {
   programOperations=()=>operations.offered('http').map(operation=>operation.name);
   if(programSetup)registerProgramSetup(operations,db,programSetup);
   pushes=sharedNotifications({db,clock,writes:data.writes,config:options.notifications,browser:credentials.browser,visible:conversationQuestionPolicy(db).visibility,reportError:options.reportError});pushes.install(operations);startupCleanups.push(()=>{void pushes?.close();});
-  memory.register(operations,options.commsKey?{body:credentials.body,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
+  memory.register(operations,options.commsKey?{body:viewer=>credentials.body(viewer)??credentials.agentSession(viewer),hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
-  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer));
+  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer)||!!credentials.agentSession(viewer));
   registerAgentBodyPolicy(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
@@ -349,13 +353,14 @@ export function sharedRoot(options: {
         const command=/^\/api\/([^/]+)\/([^/]+)$/.exec(path);
         // No credential ceremonies, private channels or alternate transport can
         // turn a restricted program into an unrestricted member/browser.
-        if(path!=='/graphql'&&(!command||!credentials.allows(auth.viewer,`${command[1]}.${command[2]}`)))return c.json(failure('denied','Permission denied'),403);
+        if(path!=='/graphql'&&path!=='/mcp'&&(!command||!credentials.allows(auth.viewer,`${command[1]}.${command[2]}`)))return c.json(failure('denied','Permission denied'),403);
       }
       await next();
     } finally { active.delete(entry); finished(); }
   });
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, issueProgram:programSetup?input=>{const parsed=programIssueInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid program token request');return programSetup.issue(parsed.data);}:undefined, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
+  http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,version:data.readVersion,valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));

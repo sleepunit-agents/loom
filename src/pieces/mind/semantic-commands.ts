@@ -6,6 +6,7 @@ import {z} from 'zod';
 import {OperationError,RecoveredWrite,type Operations,type Context,type WriteReceipt} from '../../core/operations/index.js';
 import type {Viewer} from '../../policy.js';
 import {SqliteVecBackend} from '../../backends/sqlite-vec.js';
+import type {EmbeddingProvider} from '../../backends/types.js';
 import {createEmbeddingProvider} from '../../backends/index.js';
 import {semanticMemoryReady,semanticCardsReady} from './semantic-schema.js';
 import {opaqueCardReference} from './card-references.js';
@@ -21,7 +22,7 @@ const category=z.enum(['user','project','self','feedback','reference','pursuit',
 const authored=z.string().refine(value=>value.trim().length>0,'Authored text cannot be blank');
 const remember=z.object({category,title:authored.max(200),content:authored.max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional()}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
-export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void}){
+export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;embedding?():EmbeddingProvider;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void}){
  const sources=new Map<string,{path:string;db:Database.Database}>();let closed=false;
  try{for(const source of options.sources?.agents??[]){if(sources.has(source.agent))throw Error('Duplicate Memory source agent');if(existsSync(source.memories))sources.set(source.agent,{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})});}}
  catch(error){for(const source of sources.values())source.db.close();throw error;}
@@ -62,7 +63,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   const source=current(viewer);if(!source||!receipt)throw new OperationError('denied','Current body required');
   // Never use the process-cached helper connection: no other caller can join
   // this command's transaction while its embedding computation awaits.
-  const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,busyTimeout:0,deferSchema:true},createEmbeddingProvider());
+  const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,busyTimeout:0,deferSchema:true},(options.embedding??createEmbeddingProvider)());
   try{await backend.atomicWrite(async db=>{
    const done=db.prepare('SELECT name,input_hash,result,expires FROM memory_command_receipts WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as Stored|undefined;
    if(done){check(done,receipt);return;}

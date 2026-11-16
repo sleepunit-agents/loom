@@ -62,10 +62,11 @@ export function expiresAt(lifespan: Lifespan, updated: string): string | null {
 export class Notes {
   private readonly db: Database;
 
-  constructor(readonly dir: string, private readonly now: () => number = Date.now) {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  constructor(readonly dir: string, private readonly now: () => number = Date.now, options: {prepared?:boolean} = {}) {
+    if(!options.prepared)mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = notesDbPath(dir);
-    this.db = new BetterSqlite3(path);
+    this.db = new BetterSqlite3(path, {fileMustExist:!!options.prepared,timeout:options.prepared?0:5000});
+    if(options.prepared)return;
     chmodSync(path, 0o600);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(`
@@ -80,6 +81,9 @@ export class Notes {
   }
 
   close(): void { this.db.close(); }
+
+  /** A native command owns this connection and commits its receipt with its note. */
+  atomicWrite<T>(run:(db:Database)=>T):T { return this.db.transaction(()=>run(this.db)).immediate(); }
 
   private iso(): string { return new Date(this.now()).toISOString(); }
 
