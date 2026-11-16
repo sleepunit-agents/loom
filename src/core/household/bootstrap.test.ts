@@ -2,8 +2,6 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, fsyncSync, openSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createStdioServer } from '../../index.js';
 import { closeAllBackends } from '../../backends/index.js';
 import { startLoom } from '../../foundation.js';
@@ -55,16 +53,8 @@ it('creates a portable context, publishes Live after commit and mints its first 
   expect(readContinuityHousehold(home, 'gabe').agent).toBe('gabe');
   expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain('garden');
   const bytes = readFileSync(join(home, 'loom.db'));
-  const { server } = createStdioServer(['mcp', '--next', '--home', home, '--agent', 'gabe']);
-  const client = new Client({ name: 'bootstrap-acceptance', version: '1' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  closes.push(async () => { await client.close(); await server.close(); });
-  await server.connect(a); await client.connect(b);
-  const identity = await client.callTool({ name: 'identity', arguments: {} });
-  expect(identity.isError).not.toBe(true);
-  const words = JSON.stringify(identity.content);
-  expect(words).toContain('Gabe'); expect(words).toContain('garden'); expect(words).toContain('Keep private things private.'); expect(words).toContain('Ask before spending money.');
-  expect(words).toContain('jonathan');
+  // A stdio session now proxies the running program and never opens a home's stores itself.
+  expect(() => createStdioServer(['mcp', '--next', '--home', home, '--agent', 'gabe'])).toThrow('--home cannot select a shared MCP server');
   expect(readFileSync(join(home, 'loom.db'))).toEqual(bytes);
 });
 function signinHash(value: string) { return createHash('sha256').update(value).digest('hex'); }
@@ -192,7 +182,7 @@ it('finishes an interrupted exclusive file publication only for its original req
   expect(readdirSync(target).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md', 'preferences.md', 'self-model.md']);
   expect(readFileSync(join(target, 'preferences.md'), 'utf8')).toContain('Gabe');
 });
-it('a fresh household default loads identity over generated next stdio after the daemon stops', async () => {
+it('a fresh household default is created on first start, and stdio refuses to open the stopped home itself', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-first-start-')); homes.push(home);
   const app = await startLoom({ home, next: true, stdout: () => {} }); closes.push(app.close);
   const household = new HouseholdDatabase(app.db).household(home)!;
@@ -201,14 +191,7 @@ it('a fresh household default loads identity over generated next stdio after the
   expect(mint.ok).toBe(true);
   await app.close();
   const bytes = readFileSync(join(home, 'loom.db'));
-  const { server } = createStdioServer(['mcp', '--next', '--home', home]);
-  const client = new Client({ name: 'fresh-start-acceptance', version: '1' });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  closes.push(async () => { await client.close(); await server.close(); });
-  await server.connect(a); await client.connect(b);
-  const identity = await client.callTool({ name: 'identity', arguments: {} });
-  expect(identity.isError).not.toBe(true);
-  expect(JSON.stringify(identity.content)).toContain('# Assistant');
-  expect(JSON.stringify(identity.content)).toContain(household.owner);
+  // A stdio session now proxies the running program and never opens a home's stores itself.
+  expect(() => createStdioServer(['mcp', '--next', '--home', home])).toThrow('--home cannot select a shared MCP server');
   expect(readFileSync(join(home, 'loom.db'))).toEqual(bytes);
 });

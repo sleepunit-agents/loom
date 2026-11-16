@@ -14,7 +14,8 @@ interface ChangePresentation { renderChange?: RenderApprovalChange }
 export interface ApprovalActions {
   setRule?: SaveRule;
   supports?(approval: Approval): boolean;
-  allow(id: string): Promise<void>;
+  /** confirm is the second, explicit yes a dangerous action needs. */
+  allow(id: string, confirm?: boolean): Promise<void>;
   deny(id: string): Promise<void>;
   always?: { label: string; approval: string; run(id: string): Promise<void> };
 }
@@ -23,7 +24,8 @@ function Unavailable({ status }: { status: ApprovalSnapshot['status'] }) {
     : <Error text={status === 'denied' ? 'Sign in with access to see Approvals.' : 'Waiting for connection.'} />;
 }
 function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalActions }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [confirming, setConfirming] = useState(false);
+  const dangerous = approval.kind === 'dangerous';
   const active = useRef(false);
   async function send(action: () => Promise<void>) {
     if (active.current) return;
@@ -33,7 +35,11 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
   }
   return <>
     {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
-      <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id))}>Allow</Button>
+      {dangerous && confirming
+        ? <><p className="basis-full">This cannot be undone.</p>
+          <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id, true))}>Yes, allow it</Button>
+          <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button></>
+        : <Button disabled={busy} onClick={() => dangerous ? setConfirming(true) : void send(() => actions.allow(approval.id))}>Allow</Button>}
       {actions.always?.approval === approval.id && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
     </div>}

@@ -40,7 +40,7 @@ it('imports an old home and serves its existing browser cookie and agent bearer 
   expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${f.agent}`})).status).toBe(200);
   const a=await f.open({cookie:`loom_ui=${f.cookie}`,origin:f.loom.url}),b=await f.open({authorization:`Bearer ${f.agent}`});
   a.send(JSON.stringify({kind:'subscribe',type:'task'}));expect(JSON.parse((await once(a,'message'))[0].toString()).kind).toBe('set');
-  const mc=await f.post('/mcp',{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'test',version:'1'}}},{authorization:`Bearer ${f.agent}`,accept:'application/json, text/event-stream'});expect(mc.status).toBe(200);
+  const mc=await f.post('/mcp',{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'test',version:'1'}}},{authorization:`Bearer ${f.agent}`,accept:'application/json, text/event-stream'});expect(mc.status).toBe(404); // the older listener no longer serves MCP; the rebuilt program's door does
   const closed=once(b,'close');expect(f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.revokeToken',{label:'agent'},'revoke')).toMatchObject({ok:true});expect((await closed)[0]).toBe(1008);
   expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${f.agent}`})).status).toBe(401);
   const ended=once(a,'close');expect((await f.post('/logout',{_csrf:session.csrf},{cookie:`loom_ui=${f.cookie}`})).status).toBe(200);expect((await ended)[0]).toBe(1008);
@@ -325,9 +325,7 @@ it('keeps a same-name service token outside installed authority across HTTP, MCP
  const http=await f.post('/api/changes/internalProbe',{input:{},id:'same-id'},headers);
  expect(http.status).toBe(403);expect(await http.json()).toMatchObject({ok:false,code:'denied'});
  const mcp=await f.post('/mcp',{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'changes.internalProbe',arguments:{input:{},id:'same-id'}}},{...headers,accept:'application/json, text/event-stream'});
- expect(mcp.status).toBe(200);
- const result=await mcp.json();expect(result.result.isError).toBe(true);
- expect(JSON.parse(result.result.content[0].text)).toMatchObject({ok:false,code:'denied'});
+ expect(mcp.status).toBe(404); // the older listener no longer serves MCP
  const ws=await f.open(headers),answer=new Promise<unknown>(resolve=>{
   const receive=(raw:unknown)=>{const message=JSON.parse(String(raw));if(message.kind==='result'&&message.request==='probe'){ws.off('message',receive);resolve(message);}};
   ws.on('message',receive);

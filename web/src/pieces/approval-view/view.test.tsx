@@ -89,3 +89,20 @@ it('threads change presentation through the selected tile reader without parsing
   expect(renderChange).not.toHaveBeenCalled();
   expect(tree.root.findAllByType('p').some((p: { props: { children: string } }) => p.props.children === 'Custom before and after')).toBe(false);
 });
+
+it('asks for a second, explicit yes before allowing a dangerous action; cancel sends nothing', async () => {
+  const allow = vi.fn(async () => {}), deny = vi.fn(async () => {});
+  const dangerous = { ...snapshot, approvals: [{ ...approval, kind: 'dangerous' as const }] };
+  const press = (label: string) => act(async () => { buttons().find((b: { props: { children: string } }) => b.props.children === label).props.onClick(); });
+  await draw(dangerous, { allow, deny });
+  await press('Allow');
+  expect(allow).not.toHaveBeenCalled();
+  expect(JSON.stringify(tree.toJSON())).toContain('This cannot be undone.');
+  await press('Cancel');
+  expect(allow).not.toHaveBeenCalled();
+  expect(JSON.stringify(tree.toJSON())).not.toContain('This cannot be undone.');
+  await press('Allow'); await press('Yes, allow it');
+  expect(allow).toHaveBeenCalledExactlyOnceWith(approval.id, true);
+  await press('Deny');
+  expect(deny).toHaveBeenCalledExactlyOnceWith(approval.id);
+});

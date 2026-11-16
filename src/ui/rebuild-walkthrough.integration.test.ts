@@ -141,11 +141,11 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
    expect(report.fatal).toBeUndefined();
    expect(report.live.dataFrames).toBeGreaterThan(0);
    const measured=JSON.parse(readFileSync(join(out,'report.json'),'utf8'));
-   expect(measured.pages).toHaveLength(19);
+   expect(measured.pages).toHaveLength(20);
    const tempo=measured.pages.find((page:{page:string})=>page.page==='tempo');
    const observed=tempo.promises.filter((entry:{probe?:{kind:string;action?:string}})=>entry.probe?.kind==='action'&&entry.probe.action?.startsWith('tempo'));expect(observed).toHaveLength(5);expect(observed.map((entry:{status:string})=>entry.status)).toEqual(['met','met','met','met','met']);
    for(const name of ['tempoHeld','tempoResumed','tempoSettled','tempoCancelled'])expect(report.actions[name]).toMatchObject({ok:true,screenshot:expect.any(String)});
-   for(const [name,count] of [['tasks',20],['approvals',20],['changes',17]] as const){
+   for(const [name,count] of [['tasks',20],['approvals',21],['changes',17]] as const){
     const measuredPage=measured.pages.find((page:{page:string})=>page.page===name);
     expect(measuredPage,`Missing ${name} report`).toBeDefined();
     expect(measuredPage.promises).toHaveLength(count);

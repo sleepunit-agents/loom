@@ -1,10 +1,10 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 /** An immutable card/head answer is one intent across reloads, without storing
  * words or records. Core scopes its receipt to the actual authenticated caller. */
-export type WorkAnswer = {piece:'approvals';id:string;answer:'allow'|'deny'}
+export type WorkAnswer = {piece:'approvals';id:string;answer:'allow'|'deny';confirm?:true}
   | {piece:'changes';id:string;head:string;approval:string;answer:'yes'|'no'};
 export async function sendWorkAnswer(command: WorkAnswer, request: typeof fetch = fetch): Promise<void> {
-  const input = command.piece === 'approvals' ? {id:command.id,answer:command.answer}
+  const input = command.piece === 'approvals' ? {id:command.id,answer:command.answer,...(command.confirm?{confirm:true as const}:{})}
     : {id:command.id,head:command.head,approval:command.approval,answer:command.answer};
   const digest = sha256(new TextEncoder().encode(JSON.stringify([command.piece,input])));
   const id = 'work-' + Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');

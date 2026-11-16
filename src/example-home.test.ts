@@ -130,7 +130,7 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
   const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
   const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
   expect(app.services.tasks.get(draft.id).status).toBe('open');
-  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow'}})});
+  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow',confirm:true}})});
   expect((await answer()).status).toBe(200);expect((await answer()).status).toBe(200);
   expect(app.services.tasks.get(draft.id)).toMatchObject({status:'closed',closeReason:'cancelled'});
   expect(app.services.approvals.record(card.id).map(row=>row.event)).toEqual(['request','allow','use']);
@@ -139,7 +139,7 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
    const request=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${next.id}`,operation:'example.discardDraft',changeSummary:stale==='summary'?'Wrong before/after':`Draft ${next.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',what:'Discard guarded draft',why:'Exercise stale refusal.',ask:'Discard guarded draft?',ifYes:'Cancel.',ifNo:'Keep.'})).value;
    if(stale==='state')app.writes.run(()=>app!.services.tasks.close(next.id,'Already finished.'));
    const before=app.services.tasks.get(next.id),audit=app.services.approvals.record(request.id);
-   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow'}})});
+   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow',confirm:true}})});
    expect(refused.status).toBe(503);expect(app.services.tasks.get(next.id)).toEqual(before);expect(app.services.approvals.get(request.id).state).toBe('pending');expect(app.services.approvals.record(request.id)).toEqual(audit);
   }
  }finally{await app?.close();if(app)expect(()=>holderValueAbsent(home,'no-such-fictitious-secret')).toThrow('not active');rmSync(parent,{recursive:true,force:true});}

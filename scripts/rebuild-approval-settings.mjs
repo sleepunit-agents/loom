@@ -78,7 +78,10 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
    const active=tile.getByRole('article',{name:card.ask,exact:true}).filter({has:page.getByRole('button',{name:button,exact:true})}).last();
    await active.getByRole('heading',{name:card.ask,exact:true}).first().waitFor({timeout:4000});
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-   await activate(active.getByRole('button',{name:button,exact:true}));const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
+   await activate(active.getByRole('button',{name:button,exact:true}));
+   // A dangerous action takes a second, explicit yes before anything is sent.
+   if(button==='Allow'&&card.kind==='dangerous')await activate(tile.getByRole('button',{name:'Yes, allow it',exact:true}));
+   const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
   };
   const before=s.tempo.volume.timings(who).settleSeconds;
   check(before===example.preparedSettingBefore&&s.approvals.get(example.deniedSettingApproval).state==='denied','The tile setting Deny was not preserved before inline Allow');clock.advance(1);

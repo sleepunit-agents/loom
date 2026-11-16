@@ -142,7 +142,11 @@
     {
       "id": "approvals-014",
       "promise": "Revoking a token, revoking a machine and signing out a browser cannot be put back. An agent proposes one the same way as a settings change. Allowing it takes a second, explicit yes. Denying it takes one answer.",
-      "source": "docs/how-it-works/site/approvals.html#how-h"
+      "source": "docs/how-it-works/site/approvals.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalPreparedChanges"
+      }
     },
     {
       "id": "approvals-015",

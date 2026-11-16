@@ -43,7 +43,7 @@ ui={
  'secrets':[('Settings','Secrets live in Settings with requests and grants.',['Secrets','Requests','Grants'])],
 }
 # These source promises already have behavior probes; regeneration must keep them.
-action_promises={('tasks','Lets a person or an agent claim work, comment on it and close it.'):'taskLifecycle'}
+action_promises={('tasks','Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.'):'taskLifecycle'}
 out=ROOT/'docs/rebuild-checklists'
 if not args.check: out.mkdir(exist_ok=True)
 for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
@@ -153,6 +153,12 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='tasks':
   for row in rows:
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
+   # taskLifecycle claims, hands back, claims again, closes, reopens and closes again; taskStructure covers ready and blocked.
+   if row['promise'].startswith('A task is ready when it is open'):row['probe']={'kind':'all','probes':[{'kind':'action','action':'taskStructure'},{'kind':'action','action':'taskLifecycle'}]}
+ if f.stem=='approvals':
+  for row in rows:
+   # approvalPreparedChanges denies one dangerous card with one answer and allows another, which takes the second yes.
+   if row['promise'].startswith('Revoking a token, revoking a machine and signing out a browser cannot be put back.'):row['probe']={'kind':'action','action':'approvalPreparedChanges'}
  if f.stem=='data':
   for row in rows:
    if row['promise'].startswith('A tile names exactly the fields'):row['probe']={'kind':'action','action':'dataSelectionSQL'}

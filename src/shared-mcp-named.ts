@@ -33,13 +33,15 @@ interface Entry{id:string;at:string;title:string;line:string|null;where:string;w
 export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  /** A command's value, or a thrown refusal carrying the door's own words. */
  const run=async(name:string,input:unknown)=>{
-  const reply=await ports.command(name,input,randomUUID()) as {ok?:boolean;value?:unknown;error?:{code?:string;message?:string}};
-  if(reply?.ok!==true)throw new Refusal(reply?.error?.message??reply?.error?.code??'The command was refused');
+  // A failure is flat: {ok:false, code, message}. Say both, so a refusal can be acted on.
+  const reply=await ports.command(name,input,randomUUID()) as {ok?:boolean;value?:unknown;code?:string;message?:string};
+  if(reply?.ok!==true)throw new Refusal(reply?.message?reply.message+(reply.code?' ('+reply.code+')':''):reply?.code??'The command was refused');
   return reply.value;
  };
  const read=async<T>(query:string,variables:Variables={})=>{
   const reply=await ports.query({query,variables});
-  if(reply.errors?.length||!reply.data)throw new Refusal('The read was refused');
+  // GraphQL's own message names the field or argument at fault; it carries no stored words.
+  if(reply.errors?.length||!reply.data){const first=(reply.errors?.[0] as {message?:unknown}|undefined)?.message;throw new Refusal('The read was refused'+(typeof first==='string'?': '+first:''));}
   return reply.data as T;
  };
  const tool=<S extends z.ZodObject>(name:string,description:string,inputSchema:S,handle:(input:z.infer<S>,agent:string)=>Promise<string>)=>
