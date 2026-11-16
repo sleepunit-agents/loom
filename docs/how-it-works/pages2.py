@@ -768,9 +768,10 @@ def tools():
             row("See recent activity across its bodies.", "episodes"),
             row("Write a note, read one by path, list notes under a prefix.", "note_write · note_read · note_list"),
             row("Search knowledge pages and add one.", "knowledge_recall · knowledge_write"),
-            row("Mark a knowledge page still true or due a check, and restore an earlier version of one.", G),
+            row("Change a knowledge page, mark it still true or due a check, and restore an earlier version of it.", G),
             row("Propose a draft memory and ratify it. Archive a memory, restore it, or bring back an earlier version.", G),
-            row("Write a person card or a project card, and add someone to the people directory.", G),
+            row("Read and write its cards on people and on projects, by slug, or list them.", "person · person_write · project · project_write"),
+            row("Add someone to the people directory.", G),
         ]),
         ("Conversations and inbox", "pink", [
             row("Reply, show a progress card, report what it is doing, and title the conversation.", G + ", with a job"),
@@ -779,15 +780,17 @@ def tools():
             row("Read the items addressed to it and confirm each one it has dealt with.", G),
         ]),
         ("Work", "violet", [
-            row("Tasks: create, edit, claim, unclaim, comment, close, reopen, put one under a parent or behind a blocker, and put a question to a person.", G),
-            row("Approvals: ask permission for a merge, a command or another dangerous action. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G),
+            row("Tasks: create, edit, claim, unclaim, comment, close, reopen, move one in the hand-kept order, put one under a parent or behind a blocker, and put a question to a person.", G),
+            row("Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G + ", with a job"),
+            row("Propose a dangerous action, such as revoking a token, for a person to allow. Loom carries it out.", G),
             row("Changes: read pull requests and who each is waiting on. Merge under an approval.", G),
             row("Tempo: set a trigger, stop it, or run it now.", G),
             row("Discord and Slack: reply to an incoming message.", G + ", with a job"),
+            row("Discord and Slack: read the attachments a message carried.", G),
             row("Secrets: request one with a reason and a length of time, and check on the request.", G),
         ]),
         ("Settings and reads", "amber", [
-            row("Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, the household's own settings. A person allows it.", G),
+            row("Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, a standing approval rule, how an agent treats outside people, the household's own settings. A person allows it.", G),
             row("Read anything it may see, naming the fields it wants: tasks, conversations, the inbox, approvals, changes, triggers, machines, models, the measuring store.", "loom_query"),
         ]),
     ]
