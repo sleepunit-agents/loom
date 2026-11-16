@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, approvals, members, tokens, projects } from './core/data/schema.js';
+import { agents, agentPeople, agentDeniedTools, approvals, members, tokens, projects } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -72,4 +72,29 @@ it('refuses a card when what it would replace has changed, or when the change is
   expect((await f.call('approvals/answer', { id: demote.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, code: 'conflict' });
   expect(f.root.services.household.members().find(row => row.id === 'sam')).toMatchObject({ role: 'owner' });
   expect(f.db.select().from(approvals).all().every(row => row.state === 'pending')).toBe(true);
+});
+it('proposes a standing approval rule, recorded as set by the owner who allowed it, and its removal', async () => {
+  const f = fixture();
+  const rule = { kind: 'merge', scope: 'github:Owner/Repo', person: '', tier: 'tell' };
+  const filed = await f.call('household/propose', { change: 'rule', input: rule, why: 'Merges here are routine' }, 'art');
+  expect(filed.body.ok).toBe(true);
+  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:rule:merge github:owner/repo', ask: 'Change approval rule merge github:owner/repo?' });
+  expect(f.root.services.approvalRules.list()).toEqual([]);
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(f.root.services.approvalRules.list()).toEqual([expect.objectContaining({ kind: 'merge', scope: 'github:owner/repo', person: '', tier: 'tell', setBy: 'sam' })]);
+  expect((await f.call('household/propose', { change: 'rule', input: { ...rule, scope: 'github:other/none', tier: null }, why: 'Tidy' }, 'art')).body).toMatchObject({ code: 'invalid' });
+  const removal = await f.call('household/propose', { change: 'rule', input: { ...rule, tier: null }, why: 'Ask me again' }, 'art');
+  expect((await f.call('approvals/answer', { id: removal.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(f.root.services.approvalRules.list()).toEqual([]);
+});
+it('proposes how an agent treats outside people and which tools its body is not given', async () => {
+  const f = fixture();
+  const policy = { agent: 'art', people: [{ platform: 'discord', workspace: 'pond', user: 'u1', tier: 2 }], deniedTools: [{ pattern: 'Bash(rm *)', guestsOnly: true }] };
+  expect((await f.call('household/propose', { change: 'bodyPolicy', input: { ...policy, agent: 'nobody' }, why: 'x' }, 'art')).body).toMatchObject({ code: 'invalid' });
+  const filed = await f.call('household/propose', { change: 'bodyPolicy', input: policy, why: 'Lee asks on Discord' }, 'art');
+  expect(f.db.select().from(approvals).get()).toMatchObject({ target: 'household:bodyPolicy:art', ask: 'Change how art treats outside people and tools?' });
+  expect(f.db.select().from(agentPeople).all()).toEqual([]);
+  expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(agentPeople).all()).toEqual([{ agent: 'art', person: '["discord","pond","u1"]', tier: 2 }]);
+  expect(f.db.select().from(agentDeniedTools).all()).toEqual([{ agent: 'art', pattern: 'Bash(rm *)', guestsOnly: true }]);
 });
