@@ -114,3 +114,19 @@ it('executes the CLI module entry and records failing exit status without a chil
   expect(page.promises.find(row=>row.id==='signing-in-002').status).toBe('not checkable yet');
  }finally{process.argv=argv;process.exitCode=exit;vi.unstubAllEnvs();log.mockRestore();error.mockRestore();}
 }));
+
+it('rejects another producer or unsupported proof version despite otherwise matching fresh context',()=>fixture(options=>{
+ for(const change of [{producer:'other-producer'},{version:2}]){
+  const value=accountProof(passkey,options.environment);Object.assign(value._evidence,change);writeFileSync(join(options.directory,'passkey.json'),JSON.stringify(value));
+  const errors=[];expect(main([options.out,options.directory],{environment:options.environment,stdout:()=>{},stderr:text=>errors.push(text)})).toBe(1);
+  expect(errors).toEqual(['Required sign-in browser evidence is unavailable, stale or incomplete']);
+  const page=JSON.parse(readFileSync(join(options.out,'report.json'),'utf8')).pages.find(row=>row.page==='signing-in');expect(page.promises.find(row=>row.id==='signing-in-002').status).toBe('not checkable yet');
+ }
+}));
+it('keeps delivery failure separate from successful own-device controls',()=>fixture(options=>{
+ writeFileSync(join(options.directory,'account-session.json'),JSON.stringify(accountProof({...browsers,notificationDispatched:false},options.environment)));
+ const page=attachSigninEvidence(options).pages.find(row=>row.page==='signing-in');
+ expect(page.promises.find(row=>row.id==='signing-in-005').status).toBe('not met');
+ expect(page.promises.find(row=>row.id==='signing-in-004').status).toBe('met');
+ expect(page.promises.find(row=>row.id==='signing-in-013').status).toBe('not checkable yet');
+}));
