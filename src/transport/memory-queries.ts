@@ -22,7 +22,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
     const people = peopleQueryFields({directory: options.sources?.commons.people, agents: options.sources?.agents ?? [],
       sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: db.$client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get()
-        ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
+        ? sharedPeopleConversations(db, options.conversationHref) : undefined});
     try{
       const context=memoryIdentityFields({...options,timezone:options.timezone??(()=>'UTC')},deadlines);
       return {sweep:knowledge.sweep,nextDeadline(){const times=[knowledge.nextDeadline(),deadlines.nextDeadline(),people.nextDeadline(),options.activity.nextDeadline?.()].filter((at):at is number=>at!==undefined);return times.length?Math.min(...times):undefined;},observeDeadlines:(fn:()=>void)=>deadlines.observe(fn),fields: {...knowledge.fields, ...people.fields, ...projectsQueryFields(options.projects,deadlines,options.now), ...activityQueryFields(options.activity,deadlines),...context.fields},

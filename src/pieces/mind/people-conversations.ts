@@ -4,28 +4,13 @@ export interface PeopleConversations {
   list(viewer:Viewer,person:string): {available:boolean;rows:Array<{id:string;title:string;href:string}>};
 }
 
-import { and, desc, eq } from 'drizzle-orm';
-import type { DataDatabase } from '../../core/data/database.js';
-import { conversations, conversationPeople } from '../../core/data/schema.js';
-import { maySee, type Sharing } from '../../core/index.js';
+import type {DataDatabase} from '../../core/data/database.js';
+import {readPeopleConversations} from '../../core/data/people-conversations-read.js';
 
-/** Only metadata from the shared model. The card resolver checks card access
- * separately; appearing on a card never grants access to its conversations.
- * No limit is applied before visibility, so private rows cannot crowd out
- * visible conversations. Sharing is refreshed on every read.
- */
-export function sharedPeopleConversations(db:DataDatabase, sharing:()=>Sharing,
- href:(id:string)=>string):PeopleConversations {
+/** Card access never grants access to its conversations. Current scope is
+ * constrained in SQL before metadata is returned, with no pre-visibility cap. */
+export function sharedPeopleConversations(db:DataDatabase,href:(id:string)=>string):PeopleConversations {
  return {list(viewer,person) {
-  const current=sharing();
-  const rows=db.select({id:conversations.id,title:conversations.label,
-   agent:conversations.agent,project:conversations.project,member:conversations.member})
-   .from(conversations).innerJoin(conversationPeople,
-    and(eq(conversationPeople.conversation,conversations.id),
-     eq(conversationPeople.whoKind,'person'),eq(conversationPeople.who,person)))
-   .orderBy(desc(conversations.lastAt),conversations.id).all();
-  return {available:true,rows:rows.filter(row=>maySee(viewer,{type:'conversation',agent:row.agent,
-   ...(row.project!==null?{project:row.project}:{}),...(row.member!==null?{member:row.member}:{})},current))
-   .map(row=>({id:row.id,title:row.title,href:href(row.id)}))};
+  return {available:true,rows:readPeopleConversations(db,viewer,person).map(row=>({id:row.id,title:row.label,href:href(row.id)}))};
  }};
 }

@@ -1,9 +1,10 @@
+import {eq} from 'drizzle-orm';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, projects, conversationPeople } from '../../core/data/schema.js';
+import { agents, members, projects, memberAgents, projectMembers, conversationPeople } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
-import type { Sharing, Viewer } from '../../core/index.js';
+import type { Viewer } from '../../core/index.js';
 import { sharedPeopleConversations } from './people-conversations.js';
 const clients:Database.Database[]=[];
 afterEach(()=>{for(const c of clients.splice(0))c.close();});
@@ -13,15 +14,16 @@ function fixture(){
  db.insert(agents).values({id:'fiction',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(members).values(['owner','alice','bob','peer'].map(id=>({id,role:id==='owner'?'owner' as const:'member' as const,joinedAt:'2026-11-14T18:00:00Z'}))).run();
  db.insert(projects).values({id:'team',name:'Team'}).run();
- let sharing:Sharing={members:{owner:{owner:true,agents:[]},alice:{owner:false,agents:['fiction']},bob:{owner:false,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:[]}},services:{}};
+ db.insert(memberAgents).values({member:'alice',agent:'fiction'}).run();
+ db.insert(projectMembers).values({project:'team',member:'peer'}).run();
  const service=new Conversations(db,()=> '2026-11-14T18:00:00Z');
  const add=(place:string,scope:{member?:string;project?:string}={},kind:'person'|'agent'='person')=>{
   const c=service.open({agent:'fiction',venue:'discord',place,label:place,...scope});
   db.insert(conversationPeople).values({conversation:c.id,whoKind:kind,who:'friend'}).run();return c.id;
  };
- const reader=sharedPeopleConversations(db,()=>sharing,id=>`/conversation/${encodeURIComponent(id)}`);
+ const reader=sharedPeopleConversations(db,id=>`/conversation/${encodeURIComponent(id)}`);
  const titles=(viewer:Viewer)=>reader.list(viewer,'friend').rows.map(r=>r.title).sort();
- return {db,sharing,add,reader,titles,replaceSharing:(next:Sharing)=>{sharing=next;}};
+ return {db,add,reader,titles};
 }
 it('reads only conversations with this person, with metadata and the supplied route',()=>{
  const {add,reader}=fixture();const id=add('Visible');add('Agent with same slug',{},'agent');
@@ -39,13 +41,18 @@ it('keeps private member precedence and project or agent visibility independent 
  expect(titles({kind:'runner',id:'fiction'})).toEqual([]);
 });
 it('refreshes sharing after revocation and does not hide visible rows behind private ones',()=>{
- const {add,sharing,titles,replaceSharing}=fixture();add('Visible');
+ const {db,add,titles}=fixture();add('Visible');
  for(let i=0;i<45;i++)add(`Private ${i}`,{member:'bob'});
  expect(titles({kind:'member',id:'alice'})).toEqual(['Visible']);
- replaceSharing({...sharing,members:{...sharing.members,alice:{owner:false,agents:[]}}});
+ db.delete(memberAgents).where(eq(memberAgents.member,'alice')).run();
  expect(titles({kind:'member',id:'alice'})).toEqual([]);
 });
 it('reports database errors instead of claiming a successful empty result',()=>{
  const {db,reader}=fixture();db.$client.close();clients.pop();
  expect(()=>reader.list({kind:'member',id:'owner'},'friend')).toThrow();
+});
+
+it('keeps one generated metadata statement for two and ten visible conversation links',()=>{
+ const {db,add,reader}=fixture();const prepared=vi.spyOn(db.$client,'prepare');
+ try{for(let n=0;n<10;n++){add('Visible '+n);if(n===1||n===9){prepared.mockClear();expect(reader.list({kind:'member',id:'alice'},'friend').rows).toHaveLength(n+1);expect(prepared).toHaveBeenCalledTimes(1);}}}finally{prepared.mockRestore();}
 });
