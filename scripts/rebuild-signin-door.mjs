@@ -16,7 +16,7 @@ export async function signinDoorEvidence(){
   db.insert(agents).values({id:'art',about:'Fictional agent',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();
   db.insert(boxes).values({id:'worker',name:'Fictional worker',owner:'owner',sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
   const errors=[];root=sharedRoot({db,clock,publicOrigin:origin,originAllowed:()=>true,reportError:()=>errors.push(true)});await root.ready;
-  const request=(path,input,headers={})=>root.http.request(origin+path,{method:'POST',headers:{'content-type':'application/json',origin,...headers},body:JSON.stringify(input)});
+  const request=(path,input,headers={})=>{phase='outside request';return root.http.request(origin+path,{method:'POST',headers:{'content-type':'application/json',origin,...headers},body:JSON.stringify(input)});};
   const query=(source,headers={})=>request('/graphql',{query:source},headers);
   const bearer=value=>({authorization:'Bearer '+value});
   const bootstrap=root.writes.run(()=>root.services.signin.issue({kind:'owner',member:'owner',label:'Bootstrap owner'})).value;secrets.push(bootstrap.token);
@@ -60,6 +60,12 @@ export async function signinDoorEvidence(){
   const ownerRefs=new Set(ownerData.data.account.sessions.map(row=>row.ref));
   check(samData.data.account.sessions.every(row=>!ownerRefs.has(row.ref)),'other member browsers withheld');
   check(ownerData.data.householdSetup.tokens.length===4&&ownerData.data.householdSetup.sessions.length===3,'owner sees household credentials');
+  const listed=ownerData.data.householdSetup.tokens;
+  for(const [issued,label] of [[bootstrap,'Bootstrap owner'],[sam,'Sam credential'],[agent,'Agent credential'],[runner,'Machine credential']])check(listed.some(row=>row.fingerprint===issued.fingerprint&&row.label===label),'owner list exposes the exact safe credential references');
+  const listedMachine=listed.find(row=>row.label==='Machine credential');check(listedMachine?.fingerprint===runner.fingerprint,'machine chosen from owner list');
+  const agentSetup=await(await query('{ householdSetup { tokens { fingerprint } } }',bearer(agent.token))).json();
+  check(!agentSetup.errors&&agentSetup.data.householdSetup===null,'agent cannot read household credentials');
+  check((await query('{ householdSetup { tokens { fingerprint } } }',bearer(runner.token))).status===403,'machine cannot read household credentials');
   const staleLink=await link(sam.token);
   clock.advance(6*3600_000-1);
   check((await query('{ tasks { id } }',automatedHeaders)).status===200,'automated session valid before six hours');
@@ -76,7 +82,7 @@ export async function signinDoorEvidence(){
   check((await query('{ tasks { id } }',personHeaders)).status===401,'ended browser denied immediately');
   check((await query('{ tasks { id } }',{cookie:survivor})).status===200,'other person browser retained');
   check((await request('/api/runtime/health',{id:crypto.randomUUID(),input:{}},bearer(runner.token))).status===200,'machine valid before revocation');
-  check((await request('/api/token/revoke',{id:crypto.randomUUID(),input:{fingerprint:runner.fingerprint}},ownerHeaders)).status===200,'owner revokes machine credential');
+  check((await request('/api/token/revoke',{id:crypto.randomUUID(),input:{fingerprint:listedMachine.fingerprint}},ownerHeaders)).status===200,'owner revokes machine credential');
   check((await request('/api/runtime/health',{id:crypto.randomUUID(),input:{}},bearer(runner.token))).status===401,'revoked token denied immediately');
   check((await query('{ tasks { id } }',bearer(sam.token))).status===200&&(await query('{ tasks { id } }',bearer(agent.token))).status===200,'other member and agent tokens retained');
   const image=client.serialize();check(secrets.every(secret=>!image.includes(Buffer.from(secret))),'raw credentials absent from SQLite image');
