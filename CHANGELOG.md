@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Add `bridges.say`.** The body holding a Discord or Slack conversation's job can post more messages during its run (`{id, text}`), to where its reply will go, through the same send queue. It settles no mail; the final answer is still the reply. At most twenty posts are made for the mail one job took.
+
 - **Bridges: "stop" or "cancel" stops the job working in that conversation.** Said alone (any case, a trailing `.` or `!`, mentions aside) on Discord or Slack by a linked member who may end the agent's jobs, in a place where a job of the agent's has not ended, it ends that job with the reason `stop` and is not delivered or answered. Otherwise the same words are an ordinary message. `jobs.ended_reason` `stop` can now also mean this.
 
 - **Bridges: a ping of a bot's own role on Discord is a mention of the bot.** Discord's autocomplete offers a bot's managed role for its name; a written ping of that role now addresses the bot, for every bot in the guild. Any other role, `@everyone` and `@here` address nobody.

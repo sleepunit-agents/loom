@@ -607,6 +607,20 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: wanting the agent to say it stopped, or guests to stop work they started. The first is
   one post; the second needs a job to record an outside account as who ended it.
 
+### A body may say more during its run, as text, a bounded number of times
+- What: `bridges.say` lets the body that holds a bridge conversation's job post one more message, to the
+  channel and thread of the latest bridge message the job took. It goes through the send queue the reply
+  uses, so it is split, receipted, held while effects are off and reviewed like a reply. It settles no mail
+  and is no reply: the body's final answer is still posted as the reply. loom makes at most twenty posts
+  for the mail one job took, the reply among them. A post carries text only; a file cannot be attached.
+- Where: `src/shared-bridge-reply.ts` (`speaking`, `BRIDGE_POSTS_PER_JOB`); the queue is
+  `src/pieces/bridges/sends.ts`.
+- Why: an agent on a long piece of work says what it is doing, and sends a result as it has it, instead
+  of one message at the end. One queue means one rule for what a post may be and one record of what was
+  posted. The bound is there because the caller is a model.
+- Would change it: bodies needing to post files. A queued send then needs its bytes kept until the post is
+  confirmed (a table of a send's files) and a multipart post.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

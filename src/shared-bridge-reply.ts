@@ -3,7 +3,7 @@
  * supplies the actual job; trusted modules use the shared queue directly.
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
-import { and,asc,eq,getTableColumns } from 'drizzle-orm';
+import { and,asc,desc,eq,getTableColumns,inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -14,6 +14,8 @@ import type { Conversations } from './core/conversations/index.js';
 import type { BridgeSends } from './pieces/bridges/sends.js';
 import { OperationError,type Operations } from './core/operations/index.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
+/** The most posts loom makes for the mail one job took: what the body says during its run and its reply. */
+export const BRIDGE_POSTS_PER_JOB=20;
 export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,sends:BridgeSends,
  conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean){
  const source=(incoming:string)=>db.select({conversation:bridgeIncoming.conversation,agent:bridgeConnections.agent,platform:bridgeConnections.platform,state:bridgeIncoming.state}).from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeIncoming.connection,bridgeConnections.id)).where(eq(bridgeIncoming.id,incoming)).get();
@@ -45,6 +47,31 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
     conversations.confirm(item.id,bound.job);ctx.changed('inbox',item.id);
    }
    if(!existing){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
+   ctx.changed('bridge-send',input.id);return {saved:true as const};
+  },
+ });
+ // One more message from the body during its run, to the place of the latest bridge message its job took:
+ // where its reply will go. It is queued like the reply (sends.ts), so it is split, receipted, held while
+ // effects are off and reviewed the same way. It answers nothing: no mail is settled and no reply turn is
+ // written, and the body's final answer is still posted as the reply. The body's own step is recorded as
+ // an action by the body program, as every tool call is.
+ const speaking=(viewer:Viewer)=>{
+  const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||(found.cv.venue!=='discord'&&found.cv.venue!=='slack'))return;
+  const taken=db.select({incoming:bridgeIncoming.id,connection:bridgeIncoming.connection}).from(inbox).innerJoin(inboxRefs,eq(inboxRefs.item,inbox.id)).innerJoin(bridgeIncoming,eq(bridgeIncoming.id,inboxRefs.ref))
+   .where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),eq(inbox.source,found.cv.venue),
+    eq(bridgeIncoming.conversation,found.cv.id),eq(bridgeIncoming.state,'delivered'))).orderBy(desc(inbox.seq)).all();
+  const latest=taken[0],connection=latest&&db.select({agent:bridgeConnections.agent,platform:bridgeConnections.platform}).from(bridgeConnections).where(eq(bridgeConnections.id,latest.connection)).get();
+  return latest&&connection?.agent===found.cv.agent&&connection.platform===found.cv.venue?{job:found.job.id,incoming:latest.incoming,took:taken.map(row=>row.incoming)}:undefined;
+ };
+ operations.register({name:'bridges.say',input:z.object({id:z.uuid(),text:z.string().min(1).max(MESSAGE_WORDS_MAX)}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
+  may:viewer=>!!speaking(viewer),
+  inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-bridge-say-receipt-v1\0').update(JSON.stringify([speaking(actor)?.job??null,canonical])).digest('hex'),
+  run(ctx,input){
+   const bound=speaking(ctx.viewer);if(!bound)throw new OperationError('denied','Current bridge body required');
+   // Counted over everything posted for what this job took, the reply included, so a body that loops cannot flood a channel.
+   const said=db.select({id:bridgeSends.id}).from(bridgeSends).where(inArray(bridgeSends.incoming,bound.took)).all();
+   if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
+   try{sends.queue({id:input.id,incoming:bound.incoming,text:input.text,held:!effectsAllowed()});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
  });
