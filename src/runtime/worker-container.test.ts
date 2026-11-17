@@ -436,17 +436,17 @@ it('does not make a worker whose engine socket is not a socket, or that a mount 
   const f = fixture();
   for (const container of [{ socket: '/loom-test/no.sock' }, { socket: 'relative.sock' }, { socket: join(houseRoot, 'engine') },
     { mounts: [{ source: join(houseRoot, 'engine'), target: '/house/run' }] }, { mounts: [{ source: houseRoot, target: '/house/all' }] }])
-    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder })).toThrow(new WorkerStop('mounts'));
+    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   // Nor one whose mounts reach its own records or its token, or name one directory twice.
   for (const patch of [{ state: join(stamps, 'state') }, { tokenFile: join(mirror, 'token') }, { container: { ...f.config.container, mounts: [...houseMounts, { source: stamps, target: '/again' }] } }])
-    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, mounts: houseMounts }, ...patch }, { engine: f.engine, builder: f.builder })).toThrow(new WorkerStop('mounts'));
+    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, mounts: houseMounts }, ...patch }, { engine: f.engine, builder: f.builder })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   expect(f.engine.json).not.toHaveBeenCalled();
 });
 it('does not make a worker whose nested socket is not a socket, or is a way into a mounted directory', () => {
   const f = fixture();
   for (const container of [{ nestedSocket: '/loom-test/no.sock' }, { nestedSocket: join(houseRoot, 'logins') }, { nestedSocket: loginA },
     { nestedSocket: nestedSock, mounts: [{ source: join(houseRoot, 'engine'), target: '/house/engine' }] }])
-    expect(() => containerWorkerExecutor({ ...f.config, accountLogins, container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder })).toThrow(new WorkerStop('mounts'));
+    expect(() => containerWorkerExecutor({ ...f.config, accountLogins, container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   expect(f.engine.json).not.toHaveBeenCalled();
 });
 it('accepts the mounts it asked for in whatever order the engine lists them', async () => {
@@ -479,7 +479,7 @@ it('does not make a worker whose mounts cannot be used, and touches neither the 
   for (const patch of [{ accountLogins: { account: { harness: { source: join(houseRoot, 'missing'), target: '/home/agent/.claude' } } } },
     { container: { ...f.config.container, mounts: [{ source: 'relative', target: '/house/x' }] } },
     { accountLogins, container: { ...f.config.container, mounts: [{ source: mirror, target: '/home/agent/.claude' }] } }])
-    expect(() => containerWorkerExecutor({ ...f.config, ...patch }, { engine: f.engine, get builder() { builder(); return f.builder; } })).toThrow(new WorkerStop('mounts'));
+    expect(() => containerWorkerExecutor({ ...f.config, ...patch }, { engine: f.engine, get builder() { builder(); return f.builder; } })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   expect(f.engine.json).not.toHaveBeenCalled(); expect(builder).not.toHaveBeenCalled();
 });
 it('fixes the mounts when the worker is made', async () => {

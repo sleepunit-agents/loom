@@ -4,7 +4,7 @@
 //   <socket>     the engine's Unix socket
 //   <directory>  an existing directory of yours, written as its real path; it is mounted into the containers,
 //                and a file named seen-by-the-body is left in it. A symbolic link named check-link is made
-//                beside it and removed again: anything already at that name is deleted
+//                inside it and removed again
 //   <image>      a small image already on the engine that has /bin/sh, cat, ls, touch, id, stat and sleep
 // It uses the built worker (dist/runtime) only: the executor for the whole life of one body, and the engine
 // client for a few questions the executor never asks. Every container it makes is named loom-check-* and
@@ -96,7 +96,7 @@ await raw('7. a runtime name the engine does not have', 'check-bogus', spec => {
 await raw('8. a bind mount of a directory that does not exist', 'check-missing', spec => { spec.HostConfig.Mounts = [{ Type: 'bind', Source: join(directory, 'not-there'), Target: '/mnt/x', ReadOnly: true }]; });
 // An engine that makes the missing directory (podman does) leaves it behind: it is empty, and removed here.
 try { rmdirSync(join(directory, 'not-there')); } catch { /* the engine did not make it */ }
-const linked = join(directory, '..', 'check-link'); rmSync(linked, { force: true }); symlinkSync(directory, linked);
+const linked = join(directory, 'check-link'); rmSync(linked, { force: true }); symlinkSync(directory, linked);
 await raw('9. a bind mount named through a symbolic link', 'check-link', spec => { spec.HostConfig.Mounts = [{ Type: 'bind', Source: linked, Target: '/mnt/x', ReadOnly: true }]; });
 rmSync(linked, { force: true });
 await raw('10. a privileged container, asked for on purpose (the worker never does)', 'check-privileged', spec => { spec.HostConfig.Privileged = true; }, inspect => inspect.HostConfig.Privileged);

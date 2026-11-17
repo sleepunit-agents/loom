@@ -575,7 +575,8 @@ it('works out when a Knowledge page changes state from the days that decide the 
 it('names where a nested job finds the engine, the engine runtimes and a mount\'s read-only default once', () => {
   // The socket's place inside a container: what the worker mounts there and what no other mount may cover.
   expect(NESTED_SOCKET_TARGET).toBe('/var/run/docker.sock');
-  expect(sources('src').filter(file => text(file).includes('/var/run/docker.sock'))).toEqual(['src/runtime/worker-mounts.ts']);
+  expect(sources('src').filter(file => /\/(var\/)?run\/docker\.sock/.test(text(file)))).toEqual(['src/runtime/worker-mounts.ts']);
+  expect(text('src/runtime/worker-mounts.ts')).toContain("const SOCKET_PLACES = [NESTED_SOCKET_TARGET, '/run/docker.sock'] as const;");
   expect(text('src/runtime/worker-mounts.ts')).toContain('target: NESTED_SOCKET_TARGET');
   // How a mounted path and an engine socket must be written is one function. The configuration's schema
   // reads only that each is a string, and nothing else looks at how a socket's path begins.

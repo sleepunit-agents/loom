@@ -201,7 +201,7 @@ export async function workerProgram(input: {
   } catch (error) {
     // One fixed line and code for the stage; never the error's own words.
     const at = error instanceof WorkerStop ? error.stage : stage;
-    input.error(workerStopLine(at));
+    input.error(workerStopLine(at, error instanceof WorkerStop ? error.key : undefined));
     return WORKER_STOP[at][0];
   } finally { executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

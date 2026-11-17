@@ -179,7 +179,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
-| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user, an engine socket that is not an existing socket, a path not written as a plain absolute path with no symbolic link in it, or a mounted directory that overlaps another, an engine socket, the state directory or the token file (see "Mounted directories" under "Container bodies") |
+| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker
@@ -270,10 +270,11 @@ the bounded in-memory log tail. A failed capability request fails the launch;
 there is no fallback to a host runner or a container with broader settings.
 
 Nested containers additionally require a local `container.nestedSocket` path.
-It must name an existing Unix socket by its real path: not a directory, not a
-symbolic link, and not at or inside any directory the configuration mounts. So
-must `container.socket` itself, which is never mounted (exit code 52 otherwise,
-for a relative path too; see "Mounted directories"). Only assignments
+It must name an existing Unix socket, through a symbolic link or not, and neither
+the path as written nor the socket's real place may be at or inside any
+directory the configuration mounts. So must `container.socket` itself, which is
+never mounted (exit code 52 otherwise, for a relative path too; see "Mounted
+directories"). Only assignments
 with `run.nestedContainers` receive that socket at `/var/run/docker.sock`. This
 is broad authority over that configured engine; the local operator must
 deliberately opt in. A job given the engine can ask it to mount anything the
@@ -315,23 +316,37 @@ directories of `accountLogins`.
 - `target` is an absolute path inside the container, written as plainly, and not
   `/`.
 - No target is another mount's target, or inside it. None is, holds or is inside
-  a sign-in directory's target or `/var/run/docker.sock`.
-- `container.socket`, and `container.nestedSocket` when there is one, is an
-  existing Unix socket named by its real path, written as plainly. It need not
-  belong to the worker's user. The two may be the same socket.
+  a sign-in directory's target, `/var/run/docker.sock` or `/run/docker.sock`
+  (the same place in most images, where a mount at `/run` would hide the
+  socket).
+- `container.socket`, and `container.nestedSocket` when there is one, is written
+  as plainly and names an existing Unix socket. It may be reached through a
+  symbolic link, as `/var/run/docker.sock` is on most machines where `/var/run`
+  links to `/run`: the worker follows it once, at start, and the rules below
+  hold for the socket as it is written and for where it really is. It need not
+  belong to the worker's user. The two may be the same socket. A socket that is
+  not there, or not plainly written, stops the worker at start with 52 whether
+  or not anything is mounted. That changes two older answers: a missing
+  `container.socket` used to stop the worker with 46 when it first asked the
+  engine, and a relative one used to be 41.
 - No two mounted directories (the fixed mounts and every sign-in directory,
   taken together) have sources that are the same, or one inside the other.
   Otherwise a body could be handed another account's sign-in under another
   name, or a read-only directory could be written under a second one.
 - No mounted directory's source is, holds or is inside either engine socket, the
   worker's state directory (`state`, or its default place) or its token file
-  (`tokenFile`). A body that could reach the engine's socket would hold the
+  (`tokenFile`). Each of the four is compared both as it is written and where it
+  really is, so a body can reach neither the thing nor a link that leads to it. A body that could reach the engine's socket would hold the
   engine. One that could write the state directory could change what the next
   worker ends at start. The token is the machine's.
 
 A path that is written wrongly (a relative one, say) breaks these rules like any
 other and is exit code 52, not 41: the configuration file's own check reads only
-that each of these is a string.
+that each of these is a string. The line the worker stops with ends with the
+key of the entry at fault, such as `(container.mounts[1].source)`,
+`(accountLogins.subscription-a.claude.target)` or `(container.socket)`; of two
+entries that overlap it names the later. It names an account's id and a harness
+at most, never a path.
 
 The paths are fixed when the worker starts; a later change to the file changes
 nothing until the worker is started again. The directory itself is looked at

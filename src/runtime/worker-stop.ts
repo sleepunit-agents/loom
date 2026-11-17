@@ -29,13 +29,16 @@ export const WORKER_STOP = {
    * is the relay (account-signin-relay.ts). */
   signin: [51, '--account-signin was removed; sign the account in from loom (runtime.accountSignIn), which runs the provider\'s program listed under accountSignIn.programs in this worker\'s configuration'],
   /** A path under `accountLogins` or `container.mounts`, or `container.socket` or `container.nestedSocket`
-   * (worker-mounts.ts has the rules). The line names no path. */
-  mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user, an engine socket that is not an existing socket, a path not written as a plain absolute path with no symbolic link in it, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
+   * (worker-mounts.ts has the rules). The line is followed by the configuration key at fault, never by a path. */
+  mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */
 export class WorkerStop extends Error {
-  constructor(readonly stage: WorkerStopStage) { super(WORKER_STOP[stage][1]); }
+  /** @param key For a stage that can be reached from many entries of the configuration: the configuration
+   * key at fault (`container.mounts[1].source`). A key, with an account's id or a harness's name in it at
+   * most; never the value written under it, so never a path. */
+  constructor(readonly stage: WorkerStopStage, readonly key?: string) { super(WORKER_STOP[stage][1]); }
 }
 /** The line the worker program prints when it stops at this stage. */
-export const workerStopLine = (stage: WorkerStopStage): string => `Worker stopped: ${WORKER_STOP[stage][1]}\n`;
+export const workerStopLine = (stage: WorkerStopStage, key?: string): string => `Worker stopped: ${WORKER_STOP[stage][1]}${key ? ` (${key})` : ''}\n`;

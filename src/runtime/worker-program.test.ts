@@ -266,13 +266,14 @@ for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { contain
     expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 it('stops before any work is claimed when a path given to containers or an engine socket cannot be used, with its own line and code and no path in it', async () => {
-  const line = `Worker stopped: ${WORKER_STOP.mounts[1]}\n`;
-  expect(WORKER_STOP.mounts[0]).toBe(52);
-  expect(line).toBe('Worker stopped: a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user, an engine socket that is not an existing socket, a path not written as a plain absolute path with no symbolic link in it, or a mounted directory that overlaps another, an engine socket, the state directory or the token file\n');
+  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
+  // The line, then the configuration key at fault in brackets: a key, never the path written under it.
+  const line = (key: string) => `Worker stopped: ${WORKER_STOP.mounts[1]} (${key})\n`;
   const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path'), { createServer } = await import('node:http');
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-private-')), real = join(root, 'real'), other = join(root, 'other'), link = join(root, 'link');
   const engine = join(root, 'engine'), socket = join(engine, 'engine.sock'), workerState = join(root, 'state');
   mkdirSync(real); mkdirSync(other); mkdirSync(engine); symlinkSync(real, link);
+  const run = join(root, 'run'); symlinkSync(engine, run);
   // An engine with nothing left on it: the worker that starts lists its containers and finds none.
   const server = createServer((_request, response) => { response.end('[]'); });
   await new Promise<void>(done => server.listen(socket, done));
@@ -287,30 +288,39 @@ it('stops before any work is claimed when a path given to containers or an engin
     // The same configuration with nothing wrong in it starts, so each stop below is for the one thing changed.
     const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: [{ source: other, target: '/house/x' }] } });
     expect(fine.code).toBe(0); expect(fine.f.error).not.toHaveBeenCalled(); expect(fine.f.run).toHaveBeenCalledOnce();
-    for (const [what, patch] of Object.entries({
-      'a sign-in directory that is missing': login('/loom-test/private-missing-login'),
-      'a relative mount source': { container: { mounts: [{ source: 'private-relative', target: '/house/x' }] } },
-      'a relative mount target': { container: { mounts: [{ source: real, target: 'house/x' }] } },
-      'a mount that is a symbolic link to a directory that is itself fine': { container: { mounts: [{ source: link, target: '/house/x' }] } },
-      'a sign-in directory that is a symbolic link': login(link),
-      'two mounts at nested places': { container: { mounts: [{ source: real, target: '/house/x' }, { source: other, target: '/house/x/inner' }] } },
-      'a mount at a sign-in directory\'s place': { ...login(real), container: { mounts: [{ source: other, target: '/home/agent/.claude' }] } },
-      'a mount at the nested socket\'s place': { container: { mounts: [{ source: real, target: '/var/run/docker.sock' }] } },
-      'one directory mounted twice': { container: { mounts: [{ source: real, target: '/one' }, { source: real, target: '/two', readOnly: false }] } },
-      'a mount that is a sign-in directory': { ...login(real), container: { mounts: [{ source: real, target: '/house/x' }] } },
-      'a nested socket that is a directory': { container: { nestedSocket: real } },
-      'a relative nested socket': { container: { nestedSocket: 'engine/engine.sock' } },
-      'a relative engine socket': { container: { socket: 'engine/engine.sock' } },
-      'an engine socket that is not there': { container: { socket: join(engine, 'private-none.sock') } },
-      'a mount of the directory that holds the engine socket': { container: { mounts: [{ source: engine, target: '/house/run' }] } },
-      'a mount that will hold the state directory': { state: join(other, 'private-state'), container: { mounts: [{ source: other, target: '/house/x' }] } },
-      'a mount that holds the token file': { tokenFile: join(real, 'private-token-file'), container: { mounts: [{ source: real, target: '/house/x' }] } },
-    })) {
+    // So does one whose engine socket is named through a linked directory, as `/var/run/docker.sock` is on
+    // most machines, with nothing else in it: a configuration from before any of these keys.
+    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: [{ source: other, target: '/house/x' }] }]) {
+      const linked = await started({ container });
+      expect(linked.code).toBe(0); expect(linked.f.error).not.toHaveBeenCalled(); expect(linked.f.run).toHaveBeenCalledOnce();
+    }
+    const subscription = 'accountLogins.subscription.claude';
+    for (const [what, key, patch] of [
+      ['a sign-in directory that is missing', `${subscription}.source`, login('/loom-test/private-missing-login')],
+      ['a relative mount source', 'container.mounts[0].source', { container: { mounts: [{ source: 'private-relative', target: '/house/x' }] } }],
+      ['a relative mount target', 'container.mounts[0].target', { container: { mounts: [{ source: real, target: 'house/x' }] } }],
+      ['a mount that is a symbolic link to a directory that is itself fine', 'container.mounts[0].source', { container: { mounts: [{ source: link, target: '/house/x' }] } }],
+      ['a sign-in directory that is a symbolic link', `${subscription}.source`, login(link)],
+      ['two mounts at nested places', 'container.mounts[1].target', { container: { mounts: [{ source: real, target: '/house/x' }, { source: other, target: '/house/x/inner' }] } }],
+      ['a mount at a sign-in directory\'s place', `${subscription}.target`, { ...login(real), container: { mounts: [{ source: other, target: '/home/agent/.claude' }] } }],
+      ['a mount at the nested socket\'s place', 'container.mounts[0].target', { container: { mounts: [{ source: real, target: '/var/run/docker.sock' }] } }],
+      ['a mount at /run', 'container.mounts[0].target', { container: { mounts: [{ source: real, target: '/run' }] } }],
+      ['one directory mounted twice', 'container.mounts[1].source', { container: { mounts: [{ source: real, target: '/one' }, { source: real, target: '/two', readOnly: false }] } }],
+      ['a mount that is a sign-in directory', `${subscription}.source`, { ...login(real), container: { mounts: [{ source: real, target: '/house/x' }] } }],
+      ['a nested socket that is a directory', 'container.nestedSocket', { container: { nestedSocket: real } }],
+      ['a relative nested socket', 'container.nestedSocket', { container: { nestedSocket: 'engine/engine.sock' } }],
+      ['a relative engine socket', 'container.socket', { container: { socket: 'engine/engine.sock' } }],
+      ['an engine socket that is not there', 'container.socket', { container: { socket: join(engine, 'private-none.sock') } }],
+      ['a mount of the directory that holds the engine socket', 'container.mounts[0].source', { container: { mounts: [{ source: engine, target: '/house/run' }] } }],
+      ['a mount of the real directory of an engine socket named through a link', 'container.mounts[0].source', { container: { socket: join(run, 'engine.sock'), mounts: [{ source: engine, target: '/house/run' }] } }],
+      ['a mount that will hold the state directory', 'container.mounts[0].source', { state: join(other, 'private-state'), container: { mounts: [{ source: other, target: '/house/x' }] } }],
+      ['a mount that holds the token file', 'container.mounts[0].source', { tokenFile: join(real, 'private-token-file'), container: { mounts: [{ source: real, target: '/house/x' }] } }],
+    ] as const) {
       const { code, f } = await started(patch);
       expect(code, what).toBe(52);
-      expect(f.error, what).toHaveBeenCalledExactlyOnceWith(line);
+      expect(f.error, what).toHaveBeenCalledExactlyOnceWith(line(key));
+      expect(f.error.mock.calls[0][0], what).not.toMatch(/private|loom-test|loom-private/);
       expect(f.run, what).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
     }
   } finally { await new Promise(done => server.close(done)); rmSync(root, { recursive: true, force: true }); }
-  expect(line).not.toMatch(/private|loom-test/);
 });

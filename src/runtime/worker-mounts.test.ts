@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:net';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { bodyMounts, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
 import { UnservedJobError } from './worker.js';
-import { WORKER_STOP, WorkerStop } from './worker-stop.js';
+import { WORKER_STOP, WorkerStop, workerStopLine } from './worker-stop.js';
 
 // Real directories: the checks are about what is on the disk. The temporary directory is resolved first,
 // because a source that passes through a symbolic link is itself refused.
@@ -26,12 +26,16 @@ const engineLink = join(root, 'engine-link'); symlinkSync(engineDirectory, engin
 const servers: Server[] = [];
 beforeAll(async () => { for (const path of [socket, socketInLogin, socketInMount]) await new Promise<void>(done => servers.push(createServer().listen(path, done))); });
 afterAll(() => { for (const server of servers) server.close(); });
+const stateDirectory = directory('worker/state'), tokenFile = join(directory('worker/secret'), 'token'); writeFileSync(tokenFile, 'x');
+// A directory of links that lead out of it: to the socket, the state directory, the token file, nothing.
+const linkHome = directory('links');
+symlinkSync(socket, join(linkHome, 'to-socket')); symlinkSync(stateDirectory, join(linkHome, 'to-state'));
+symlinkSync(tokenFile, join(linkHome, 'to-token')); symlinkSync(join(root, 'nowhere'), join(linkHome, 'to-nothing'));
 const home = '/home/agent/.claude';
 const logins: AccountLogins = { a: { claude: { source: a, target: home }, codex: { source: codex, target: '/home/agent/.codex' } }, b: { claude: { source: b, target: home } } };
 const fixed: FixedMount[] = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
 const job = (account: string, harness: string) => ({ account, harness });
 const nestedJob = (account: string, harness: string) => ({ account, harness, run: { gpu: false, nestedContainers: true, ports: [] } });
-const stateDirectory = directory('worker/state'), tokenFile = join(directory('worker/secret'), 'token'); writeFileSync(tokenFile, 'x');
 const stopped = (config: Parameters<typeof bodyMounts>[0], files?: Parameters<typeof bodyMounts>[1]) => {
   try { bodyMounts(config, files); } catch (error) { return error; }
   return undefined;
@@ -112,14 +116,27 @@ it.each([
   // The engine's own socket is never mounted, and no mount may be a way to it.
   ['an engine socket that is missing', { socket: join(root, 'no.sock') }],
   ['an engine socket that is a directory', { socket: engineDirectory }],
-  ['an engine socket that is a symbolic link', { socket: socketLink }],
-  ['an engine socket reached through a symbolic link', { socket: join(engineLink, 'engine.sock') }],
   ['a relative engine socket', { socket: 'engine/engine.sock' }],
   ['an engine socket that is not written plainly', { socket: `${engineDirectory}//engine.sock` }],
   ['a fixed mount of the directory that holds the engine socket', { ...mount(engineDirectory), socket }],
   ['a fixed mount above the engine socket', { ...mount(root), socket }],
   ['a sign-in directory that holds the engine socket', { ...login(a), socket: socketInLogin }],
   ['an engine socket inside a fixed mount\'s source', { ...mount(mirror), socket: socketInMount }],
+  // A socket may be named through a link (`/var/run` is one on most machines); it is where it really is.
+  ['a mount of the real directory of an engine socket named through a linked directory', { ...mount(engineDirectory), socket: join(engineLink, 'engine.sock') }],
+  ['a mount of the real directory of an engine socket named by a link', { ...mount(engineDirectory), socket: socketLink }],
+  ['a mount of the real directory of a nested socket named through a linked directory', { ...mount(engineDirectory), nestedSocket: join(engineLink, 'engine.sock') }],
+  ['a mount of the directory that holds the link an engine socket is named by', { ...mount(linkHome), socket: join(linkHome, 'to-socket') }],
+  ['an engine socket named by a link that ends at a directory', { socket: link }],
+  ['an engine socket named by a link that ends nowhere', { socket: join(linkHome, 'to-nothing') }],
+  // The nested socket's place, under either of the two names most images have for it.
+  ['a mount at /run, where /var/run leads in most images', mount(mirror, '/run')],
+  ['a mount at /run/docker.sock', mount(mirror, '/run/docker.sock')],
+  ['a sign-in directory at /run', login(a, '/run')],
+  // The worker's own files, as they are written and where they really are.
+  ['a state directory written as a link inside a mount, pointing outside it', { ...mount(linkHome), state: join(linkHome, 'to-state') }],
+  ['a token file written as a link inside a mount, pointing outside it', { ...mount(linkHome), tokenFile: join(linkHome, 'to-token') }],
+  ['a state directory written through a link whose real place is inside a mount', { ...mount(stateDirectory), state: join(linkHome, 'to-state') }],
   // The worker's own files.
   ['a mount of the worker\'s state directory', { ...mount(stateDirectory), state: stateDirectory }],
   ['a mount that holds the state directory', { ...mount(join(root, 'worker')), state: stateDirectory }],
@@ -133,8 +150,6 @@ it.each([
   ['a nested socket that is missing', { nestedSocket: join(root, 'no.sock') }],
   ['a nested socket that is a directory', { nestedSocket: engineDirectory }],
   ['a nested socket that is a plain file', { nestedSocket: file }],
-  ['a nested socket that is a symbolic link', { nestedSocket: socketLink }],
-  ['a nested socket reached through a symbolic link', { nestedSocket: join(engineLink, 'engine.sock') }],
   ['a relative nested socket', { nestedSocket: 'engine/engine.sock' }],
   ['a nested socket that is not written plainly', { nestedSocket: `${engineDirectory}/../engine/engine.sock` }],
   ['a nested socket that is a directory holding the sign-in directories', { ...login(a), nestedSocket: join(root, 'logins') }],
@@ -143,18 +158,41 @@ it.each([
   ['a nested socket inside a fixed mount\'s source', { ...mount(mirror), nestedSocket: socketInMount }],
   ['a fixed mount of the directory that holds the nested socket', { ...mount(engineDirectory), nestedSocket: socket }],
 ])('stops the worker at start over %s', (_what, config) => {
-  const error = stopped(config);
-  expect(error).toEqual(new WorkerStop('mounts'));
-  // Its own words only: never the path it refused.
-  expect((error as Error).message).toBe(WORKER_STOP.mounts[1]);
-  expect((error as Error).message).not.toContain(root);
+  const error = stopped(config) as WorkerStop;
+  expect(error).toBeInstanceOf(WorkerStop); expect(error.stage).toBe('mounts');
+  // Its own words and the configuration key at fault: never the path it refused.
+  expect(error.message).toBe(WORKER_STOP.mounts[1]);
+  expect(error.key).toMatch(/^(container\.(mounts\[[01]\]\.(source|target)|socket|nestedSocket)|accountLogins\.[ab]\.claude\.(source|target))$/);
+  expect(workerStopLine('mounts', error.key)).toBe(`Worker stopped: ${WORKER_STOP.mounts[1]} (${error.key})\n`);
+  expect(workerStopLine('mounts', error.key)).not.toContain(root);
+});
+it('names the configuration key at fault, the later of two that overlap, and never what is written under it', () => {
+  const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
+  expect(key({ mounts: [{ source: mirror, target: '/ok' }, { source: join(root, 'missing'), target: '/x' }] })).toBe('container.mounts[1].source');
+  expect(key({ mounts: [{ source: mirror, target: 'relative' }] })).toBe('container.mounts[0].target');
+  expect(key({ mounts: [{ source: mirror, target: '/x' }, { source: stamps, target: '/x/y' }] })).toBe('container.mounts[1].target');
+  expect(key({ mounts: [{ source: mirror, target: '/x' }, { source: mirror, target: '/y' }] })).toBe('container.mounts[1].source');
+  expect(key({ mounts: [{ source: mirror, target: '/var/run' }] })).toBe('container.mounts[0].target');
+  expect(key({ ...login(a), mounts: [{ source: mirror, target: home }] })).toBe('accountLogins.a.claude.target');
+  expect(key({ ...login(a), mounts: [{ source: a, target: '/x' }] })).toBe('accountLogins.a.claude.source');
+  expect(key({ accountLogins: { 'sub-1@example.com': { codex: { source: a, target: 'relative' } } } })).toBe('accountLogins.sub-1@example.com.codex.target');
+  expect(key({ accountLogins: { a: { claude: { source: a, target: home } }, b: { claude: { source: a, target: home } } } })).toBe('accountLogins.b.claude.source');
+  // A name that is not an ordinary one is quoted, so it cannot break the line it is printed on.
+  expect(key({ accountLogins: { 'two\nlines': { 'a harness': { source: join(root, 'missing'), target: home } } } })).toBe('accountLogins."two\\nlines"."a harness".source');
+  expect(key({ socket: join(root, 'no.sock') })).toBe('container.socket');
+  expect(key({ socket, nestedSocket: engineDirectory })).toBe('container.nestedSocket');
+  expect(key({ ...mount(engineDirectory), socket })).toBe('container.mounts[0].source');
+  expect(key({ ...mount(stateDirectory), state: stateDirectory })).toBe('container.mounts[0].source');
+  expect(key({ ...mount(join(root, 'worker')), tokenFile })).toBe('container.mounts[0].source');
+  // No stage but this one carries a key, and a line without one is as it was.
+  expect(new WorkerStop('left').key).toBeUndefined(); expect(workerStopLine('left')).toBe(`Worker stopped: ${WORKER_STOP.left[1]}\n`);
 });
 it('stops the worker over a directory that belongs to another user, or where the user cannot be told', () => {
   const mine = process.getuid!();
   expect(stopped(login(a), { uid: () => mine })).toBeUndefined();
-  expect(stopped(login(a), { uid: () => mine + 1 })).toEqual(new WorkerStop('mounts'));
-  expect(stopped(mount(mirror), { uid: () => mine + 1 })).toEqual(new WorkerStop('mounts'));
-  expect(stopped(mount(mirror), { uid: () => undefined })).toEqual(new WorkerStop('mounts'));
+  expect(stopped(login(a), { uid: () => mine + 1 })).toMatchObject({ stage: 'mounts' });
+  expect(stopped(mount(mirror), { uid: () => mine + 1 })).toMatchObject({ stage: 'mounts' });
+  expect(stopped(mount(mirror), { uid: () => undefined })).toMatchObject({ stage: 'mounts' });
 });
 it('takes a nested socket that is a real socket apart from every mounted directory', () => {
   expect(stopped({ accountLogins: logins, mounts: fixed, nestedSocket: socket })).toBeUndefined();
@@ -171,6 +209,11 @@ it('takes a nested socket that is a real socket apart from every mounted directo
   expect(() => { try { without(nestedJob('a', 'claude')); } catch (error) { if (error instanceof UnservedJobError) throw error; } }).not.toThrow();
 });
 it('takes the engine socket and the worker\'s own files when no mount reaches them, existing or not', () => {
+  // A socket named through a linked directory, or by a link, is taken, and mounted as it was written.
+  for (const through of [join(engineLink, 'engine.sock'), socketLink]) {
+    expect(stopped({ accountLogins: logins, mounts: fixed, socket: through, nestedSocket: through, state: stateDirectory, tokenFile })).toBeUndefined();
+    expect(bodyMounts({ socket: through, nestedSocket: through })(nestedJob('a', 'claude'))).toEqual([{ source: through, target: NESTED_SOCKET_TARGET, readOnly: false }]);
+  }
   // The engine socket and the nested socket are commonly the same socket.
   expect(stopped({ accountLogins: logins, mounts: fixed, socket, nestedSocket: socket, state: stateDirectory, tokenFile })).toBeUndefined();
   expect(stopped({ accountLogins: logins, mounts: fixed, socket, state: join(root, 'not-made-yet'), tokenFile: join(root, 'no-token') })).toBeUndefined();
