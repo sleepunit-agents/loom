@@ -4,19 +4,22 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeRawEvents, bridgeResume } from '../../core/data/schema.js';
 
 export interface BridgeCheckpoint { session: string; sequence: number; resumeUrl: string }
-const HOUR = 3_600_000;
 
+/** How long a received event's raw words are kept while it cannot be processed. */
+export const RAW_EVENT_LIFETIME = 3_600_000;
 /** Trusted adapter spool. Receipt and Discord cursor commit before platform ack.
  * Drain callbacks are synchronous and use this same database connection, so
  * normalisation and receipt removal either both commit or both roll back.
  * Raw reads reject expired events. Physical cleanup waits for any unrelated
  * SQL transaction to finish; callers must not hold transactions across awaits.
+ * A receipt that is still here at its deadline was never processed: `expired`
+ * is told how many were removed, after they are gone.
  */
 export class BridgeEvents {
   private closed = false;
   private cancel?: () => void;
   private readonly cursors = new Map<string, Map<string, { at: string; row: number }>>();
-  constructor(private db: DataDatabase, private clock: Clock) { this.assertAvailable(); this.sweep(); }
+  constructor(private db: DataDatabase, private clock: Clock, private expired: (count: number) => void = () => {}) { this.assertAvailable(); this.sweep(); }
 
   retain(connection: string, id: string, event: Buffer, checkpoint?: BridgeCheckpoint): void {
     this.assertAvailable();
@@ -38,7 +41,7 @@ export class BridgeEvents {
       }
       // Retries preserve both original bytes and their original deadline.
       tx.insert(bridgeRawEvents).values({ connection, id, event,
-        receivedAt: new Date(now).toISOString(), expiresAt: new Date(now + HOUR).toISOString(),
+        receivedAt: new Date(now).toISOString(), expiresAt: new Date(now + RAW_EVENT_LIFETIME).toISOString(),
       }).onConflictDoNothing().run();
     });
     this.sweep();
@@ -110,7 +113,8 @@ export class BridgeEvents {
       return;
     }
     const now = new Date(this.clock.now()).toISOString();
-    this.db.delete(bridgeRawEvents).where(sql`julianday(${bridgeRawEvents.expiresAt}) <= julianday(${now})`).run();
+    const removed = this.db.delete(bridgeRawEvents).where(sql`julianday(${bridgeRawEvents.expiresAt}) <= julianday(${now})`).run().changes;
+    if (removed) this.expired(removed);
     const first = this.db.select({ expiresAt: bridgeRawEvents.expiresAt }).from(bridgeRawEvents)
       .orderBy(sql`julianday(${bridgeRawEvents.expiresAt})`).get();
     if (first) this.cancel = this.clock.at(Date.parse(first.expiresAt), () => this.sweep());
