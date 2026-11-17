@@ -7,6 +7,7 @@ import { Duplex, PassThrough } from 'node:stream';
 import { containerWorkerExecutor } from './worker-container.js';
 import { BuildTimeError, workOnce, type WorkerAssignment } from './worker.js';
 import { houseImage } from './house-image.js';
+import { workerTurns } from './worker-turns.js';
 import type { DockerEngine } from './docker-engine.js';
 import { WorkerStop } from './worker-stop.js';
 const deferred = <T>() => { let resolve!: (value: T) => void, reject!: (error: Error) => void;
@@ -725,4 +726,59 @@ it('never removes an image a job has been given until that job\'s body has ended
   const body = f.executor.start(other, held, f.abort.signal); await body.spawned; await body.stop();
   removed.length = 0; await next('e');
   expect(removed).toEqual([`${held.slice(0, -40)}${'2'.repeat(40)}`, held]);
+});
+
+// Several jobs side by side on one worker (worker-turns.ts, and `slots` in worker-program.ts).
+it('does not hold another house\'s job behind a first build: the other job finds its image and runs to its end meanwhile', async () => {
+  const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, turns = workerTurns(), release = deferred<void>(); let made = false;
+  const slow = { ...job, id: 'slow', agent: 'mark', account: 'other-account', house: { repository: 'https://example.com/mark/house.git', file: 'Housefile', branch: 'main' } };
+  const slowImage = houseImage(slow.house, commit);
+  f.engine.images.mockImplementation(async (method, path, body, signal) => { if (method === 'GET' && path.includes(slowImage) && !made) throw gone; return there(method, path, body, signal); });
+  f.engine.build.mockImplementation(async (_path, context) => { context.resume(); await release.promise; made = true; });
+  const building = controlFor(slow), ready = controlFor(job);
+  const first = workOnce({ box: 'box', control: building, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  await flush(); expect(f.engine.build).toHaveBeenCalledOnce(); expect(building.started).not.toHaveBeenCalled();
+  // A second slot takes a job of a house whose image is there.
+  const second = workOnce({ box: 'box', control: ready, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  await flush(); expect(ready.started).toHaveBeenCalledExactlyOnceWith('job', built);
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
+  expect(await second).toBe('finished'); expect(ready.finish).toHaveBeenCalledExactlyOnceWith('job', 0, '', 'body');
+  // The first is still building, and still its worker's.
+  expect(building.finish).not.toHaveBeenCalled(); expect(f.engine.build).toHaveBeenCalledOnce();
+  f.abort.abort(); release.resolve(); expect(await first).toBe('abandoned');
+});
+it('builds once for two jobs of one house, and a Stop on one of them ends that one alone', async () => {
+  const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, turns = workerTurns(), release = deferred<void>(); let made = false;
+  f.engine.images.mockImplementation(async (method, path, body, signal) => { if (method === 'GET' && !path.startsWith('/images/json') && !made) throw gone; return there(method, path, body, signal); });
+  f.engine.build.mockImplementation(async (_path, context) => { context.resume(); await release.promise; made = true; });
+  const stopped = controlFor({ ...job, id: 'stopped' }), kept = controlFor({ ...job, id: 'kept', account: 'other-account' });
+  let pulse = () => {};
+  const first = workOnce({ box: 'box', control: stopped, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: (_ms, callback) => { pulse = callback; return () => {}; } } });
+  const second = workOnce({ box: 'box', control: kept, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  await flush(); expect(f.engine.build).toHaveBeenCalledOnce(); expect(f.source.fetch).toHaveBeenCalledTimes(2);
+  // A Stop on the first job, while both wait on the one build: loom answers its report with "not yours".
+  stopped.heartbeat.mockResolvedValue(false); pulse();
+  expect(await first).toBe('abandoned'); expect(stopped.finish).not.toHaveBeenCalled();
+  // The build is the worker's, not that job's: it was not ended, and the other job gets its image.
+  expect(f.engine.build.mock.calls[0][2].aborted).toBe(false); expect(f.abort.signal.aborted).toBe(false);
+  release.resolve(); await flush();
+  expect(kept.started).toHaveBeenCalledExactlyOnceWith('kept', built); expect(f.engine.build).toHaveBeenCalledOnce();
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
+  expect(await second).toBe('finished'); expect(kept.finish).toHaveBeenCalledExactlyOnceWith('kept', 0, '', 'body');
+});
+it('gives one account\'s sign-in directory to one body at a time: the second job\'s container is not made until the first body has ended', async () => {
+  const f = house(), turns = workerTurns();
+  const one = controlFor({ ...job, id: 'one' }), two = controlFor({ ...job, id: 'two' });
+  const first = workOnce({ box: 'box', control: one, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  const second = workOnce({ box: 'box', control: two, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  await flush();
+  // One container, with the sign-in directory in it; nothing has been asked of the engine for the other job.
+  const created = () => f.engine.json.mock.calls.filter(call => call[1].startsWith('/containers/create'));
+  expect(created()).toHaveLength(1); expect(JSON.stringify(created()[0][2])).toContain(loginA);
+  expect(one.started).toHaveBeenCalledOnce(); expect(two.started).not.toHaveBeenCalled();
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); expect(await first).toBe('finished');
+  // The first body is removed; the second job's container is made only now.
+  await flush(); expect(created()).toHaveLength(2);
+  // (This fixture has one body's pipes; what becomes of the second body is not what is looked at here.)
+  f.abort.abort(); await second;
 });

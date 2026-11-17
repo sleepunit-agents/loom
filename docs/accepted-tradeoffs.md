@@ -363,9 +363,10 @@ Entries are grouped by the part of the program they belong to.
 ### Two bodies on one account share one sign-in directory
 
 - **What.** A container body is given its account's sign-in directory read-write (`accountLogins`). Two
-  bodies on the same account and harness, at once or one after the other, are given the same directory.
-  Each can read and change what the other's provider program wrote there, and two programs renewing the
-  sign-in at once write the same files.
+  bodies on the same account and harness are given the same directory, one after the other on one worker.
+  Each can read and change what the earlier one's provider program wrote there. Two workers on one
+  machine, or a worker and a person's own session, can still have two programs renewing one sign-in at
+  once.
 - **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
   `src/runtime/worker-container.ts`.
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
@@ -374,7 +375,8 @@ Entries are grouped by the part of the program they belong to.
   included); so does any mounted directory that is, holds or is inside either
   engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
   file. With `accountLogins` present, a job
-  with no exact entry does not run.
+  with no exact entry does not run. On one worker, one body at a time runs on an account: a second job on
+  it waits until the first body has ended (`src/runtime/worker-turns.ts`).
 - **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
   configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
   engine's user can reach on the machine, every account's sign-in directory included: it can start a

@@ -187,6 +187,8 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   if (!validDeadline(buildTimeoutMs, BUILD_DEADLINE_MAX_MS))
     throw new Error('Invalid worker build deadline');
   const runner = workerRunner(config), left = config.state === undefined ? undefined : open(config.state);
+  /** Settles when every build command started so far has ended; undefined while none is running. */
+  let building: Promise<void> | undefined;
   const noted = (attempt: ReturnType<typeof launch>, job: WorkerAssignment, scratch?: string) => {
     const pid = attempt.pid();
     return left && pid ? left.note(pid, { job: job.id, harness: job.harness, account: job.account }, scratch) : () => {};
@@ -204,6 +206,18 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
     },
     async build(job, signal, repositoryInput) {
       runner(job);
+      // One build command at a time. The command is the operator's, and nothing says it can run beside
+      // itself; a worker with several slots runs the second job's build when the first has ended. A build
+      // that is free to start does so at once, with no wait at all.
+      const before = building; let ended!: () => void;
+      const own = new Promise<void>(resolve => { ended = resolve; });
+      const mine = building = before ? Promise.all([before, own]).then(() => {}) : own;
+      try { return await (async () => {
+      if (before) {
+        const cancelled = new Promise<never>((_, reject) => { if (signal.aborted) reject(new Error('Worker build failed')); else signal.addEventListener('abort', () => reject(new Error('Worker build failed')), { once: true }); });
+        void cancelled.catch(() => {});
+        await Promise.race([before, cancelled]);
+      }
       const abort = new AbortController();
       const cancel = () => abort.abort();
       signal.addEventListener('abort', cancel, { once: true });
@@ -226,6 +240,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
         if (attempt) await attempt.stop();
         forget();
       }
+      })(); } finally { ended(); if (building === mine) building = undefined; }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
       const plan = runner(job);

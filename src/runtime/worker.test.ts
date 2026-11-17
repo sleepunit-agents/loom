@@ -2,16 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { BuildTimeError, UnmetHouseError, UnservedJobError, workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
 import { WORKER_EXIT, exitStage } from './job-exit.js';
 import { REPORT_MS, SILENCE_MS } from './silence.js';
+import { workerTurns, type WorkerTurns } from './worker-turns.js';
 const deferred = <T>() => { let resolve!: (v: T) => void; let reject!: (e?: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'm', account: 'a', harness: 'h', brief: 'hello', run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] }, house: { repository: 'r', file: 'Containerfile', branch: 'main' } };
-function fixture() {
+function fixture(turns?: WorkerTurns, assignment: WorkerAssignment = job) {
   const exited = deferred<{ exitCode: number; logTail: string; own?: boolean }>();
   const built = deferred<string>();
   const spawned = deferred<void>();
   const body: WorkerBody = { release: vi.fn(async () => {}), spawned: spawned.promise, exited: exited.promise,
     stop: vi.fn(async () => { exited.resolve({ exitCode: 1, logTail: '' }); }) };
-  const control: WorkerControl = { next: vi.fn(async () => job), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
+  const control: WorkerControl = { next: vi.fn(async () => assignment), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
   const executor = { build: vi.fn((_job: WorkerAssignment, signal: AbortSignal) => {
     signal.addEventListener('abort', () => built.reject(new Error('aborted')), { once: true }); return built.promise;
   }), start: vi.fn((_job: WorkerAssignment, _build: string, signal: AbortSignal) => {
@@ -20,7 +21,7 @@ function fixture() {
   const abort = new AbortController();
   let pulse = () => {};
   const disposed = vi.fn(), clock = { ms: 0 };
-  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms,
+  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms, turns,
     schedule: { every: (_ms, callback) => { pulse = callback; return disposed; } } });
   return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed, clock };
 }
@@ -296,3 +297,53 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
   expect(token.toString()).toBe('body_'+'a'.repeat(64)); accepted.resolve(); await flush(); expect(token.every(byte => byte === 0)).toBe(true);
   f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
 });
+  it('starts a second job\'s body on the same account only when the first body has ended, reporting it as starting while it waits', async () => {
+    const turns = workerTurns(), first = fixture(turns), second = fixture(turns, { ...job, id: 'k' }), elsewhere = fixture(turns, { ...job, id: 'm', account: 'another-account', run: { ...job.run!, ports: [] } });
+    // Another account again, but publishing the port the first job publishes: that waits too.
+    const samePort = fixture(turns, { ...job, id: 'p', account: 'a-third-account' });
+    const one = first.run(), two = second.run(), three = elsewhere.run(), four = samePort.run(); await flush();
+    for (const f of [first, second, elsewhere, samePort]) f.built.resolve('image'); await flush();
+    expect(samePort.executor.start).not.toHaveBeenCalled();
+    // The same account: one body is started, the other job has built and waits. Another account does not wait.
+    expect(first.executor.start).toHaveBeenCalledOnce(); expect(second.executor.start).not.toHaveBeenCalled(); expect(elsewhere.executor.start).toHaveBeenCalledOnce();
+    for (let report = 1; report <= 5; report++) { second.clock.ms = report * REPORT_MS; second.pulse(); await flush(); }
+    expect(second.control.heartbeat).toHaveBeenCalledTimes(5); expect(vi.mocked(second.control.heartbeat).mock.calls.every(call => call[1] === 'starting')).toBe(true);
+    first.spawned.resolve(); await flush(); expect(second.executor.start).not.toHaveBeenCalled();
+    // The first body ends and is reaped: the account is the second job's, before the first job's report is even answered.
+    const answer = deferred<void>(); vi.mocked(first.control.finish).mockReturnValue(answer.promise);
+    first.exited.resolve({ exitCode: 0, logTail: '' }); await flush();
+    expect(first.body.stop).toHaveBeenCalled(); expect(second.executor.start).toHaveBeenCalledOnce();
+    answer.resolve(); expect(await one).toBe('finished');
+    second.spawned.resolve(); await flush(); second.exited.resolve({ exitCode: 0, logTail: '' }); expect(await two).toBe('finished');
+    elsewhere.spawned.resolve(); await flush(); elsewhere.exited.resolve({ exitCode: 0, logTail: '' }); expect(await three).toBe('finished');
+    await flush(); expect(samePort.executor.start).toHaveBeenCalledOnce();
+    samePort.spawned.resolve(); await flush(); samePort.exited.resolve({ exitCode: 0, logTail: '' }); expect(await four).toBe('finished');
+  });
+  it('ends only the job that is stopped while it waits for its account, and leaves the one running alone', async () => {
+    const turns = workerTurns(), running = fixture(turns), waiting = fixture(turns, { ...job, id: 'k' }), behind = fixture(turns, { ...job, id: 'm' });
+    const one = running.run(), two = waiting.run(), three = behind.run(); await flush();
+    for (const f of [running, waiting, behind]) f.built.resolve('image'); await flush(); running.spawned.resolve(); await flush();
+    // A Stop: loom answers the waiting job's report with "no longer yours".
+    vi.mocked(waiting.control.heartbeat).mockResolvedValue(false); waiting.pulse();
+    expect(await two).toBe('abandoned');
+    expect(waiting.executor.start).not.toHaveBeenCalled(); expect(waiting.control.finish).not.toHaveBeenCalled();
+    expect(running.abort.signal.aborted).toBe(false); expect(running.body.stop).not.toHaveBeenCalled(); expect(running.executor.build.mock.calls[0][1].aborted).toBe(false);
+    // The job behind it moves up when the running body ends.
+    running.exited.resolve({ exitCode: 0, logTail: '' }); expect(await one).toBe('finished'); await flush();
+    expect(behind.executor.start).toHaveBeenCalledOnce();
+    behind.spawned.resolve(); await flush(); behind.exited.resolve({ exitCode: 0, logTail: '' }); expect(await three).toBe('finished');
+  });
+  it('gives its turn up when a start fails, and keeps it when a body could not be ended', async () => {
+    const turns = workerTurns(), failing = fixture(turns), next = fixture(turns, { ...job, id: 'k' });
+    const one = failing.run(), two = next.run(); await flush();
+    failing.built.resolve('image'); next.built.resolve('image'); await flush();
+    failing.spawned.reject(new Error('launch failed')); expect(await one).toBe('finished');
+    expect(failing.body.stop).toHaveBeenCalled(); await flush(); expect(next.executor.start).toHaveBeenCalledOnce();
+    // A body that cannot be ended may still be writing the account's files: nothing else is started on it.
+    vi.mocked(next.body.stop).mockRejectedValue(new Error('cannot end')); const after = fixture(turns, { ...job, id: 'm' }), three = after.run();
+    await flush(); after.built.resolve('image'); await flush();
+    next.spawned.resolve(); await flush(); next.exited.resolve({ exitCode: 0, logTail: '' });
+    await expect(two).rejects.toThrow('cannot end'); await flush();
+    expect(after.executor.start).not.toHaveBeenCalled();
+    after.abort.abort(); expect(await three).toBe('abandoned');
+  });

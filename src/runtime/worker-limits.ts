@@ -15,3 +15,9 @@ export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** How long building a house's image is given when the configuration does not say: a first build on a
  * machine pulls a base image and installs a house's tools. `buildTimeoutMs` overrides it, up to BUILD_DEADLINE_MAX_MS. */
 export const HOUSE_BUILD_DEFAULT_MS = 1_800_000;
+/** How many jobs a worker with container bodies runs side by side when the configuration does not say
+ * (`slots`), so that one house being built does not hold another agent's job. A worker whose bodies are
+ * processes runs one unless it is told: its build command and runners are the operator's own. */
+export const HOUSE_SLOTS_DEFAULT = 4;
+/** The most jobs any worker may be told to run side by side. */
+export const SLOTS_MAX = 16;

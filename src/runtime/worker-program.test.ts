@@ -23,7 +23,8 @@ it('loads validated config and token file then wires worker-only dependencies', 
   expect(f.read.mock.calls.map(c => c[0])).toEqual(['/config', '/token']);
   expect(f.control).toHaveBeenCalledWith({ url: config.url, token: 'private-token', signal: expect.any(AbortSignal) });
   expect(f.executor).toHaveBeenCalledWith({ ...config, state });
-  expect(f.run).toHaveBeenCalledWith({ box: 'b', control: {}, executor: {}, signal: expect.any(AbortSignal) });
+  // One slot for a worker whose bodies are processes, unless it is told otherwise.
+  expect(f.run).toHaveBeenCalledExactlyOnceWith({ box: 'b', control: {}, executor: {}, signal: expect.any(AbortSignal), turns: expect.objectContaining({ take: expect.any(Function) }) });
   expect(f.handlers.size).toBe(0);
 });
 it('ends what a killed worker left before it takes any work, and gives its state directory up when it stops', async () => {
@@ -220,7 +221,7 @@ it('stops a worker with container bodies whose own directory cannot give a conta
 it('prints what its container executor has to say, in the executor\'s own fixed words', async () => {
   const f = fixture(); let say: ((line: string) => void) | undefined;
   const containerExecutor = vi.fn((_config: unknown, given?: { say?: (line: string) => void }) => { say = given?.say; return {}; });
-  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, slots: 1, container: { socket: '/fake/docker.sock' } }) : 'private-token');
   f.run.mockImplementation(async () => { say!(UPKEEP_FAILED); });
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker could not look at its house images: old ones stay until it can\n');
@@ -320,12 +321,12 @@ it('stops before any work is claimed when a path given to containers or an engin
   try {
     // The same configuration with nothing wrong in it starts, so each stop below is for the one thing changed.
     const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: { art: [{ source: other, target: '/house/x' }] } } });
-    expect(fine.code).toBe(0); expect(fine.f.error).not.toHaveBeenCalled(); expect(fine.f.run).toHaveBeenCalledOnce();
+    expect(fine.code).toBe(0); expect(fine.f.error).not.toHaveBeenCalled(); expect(fine.f.run).toHaveBeenCalledTimes(4);
     // So does one whose engine socket is named through a linked directory, as `/var/run/docker.sock` is on
     // most machines, with nothing else in it: a configuration from before any of these keys.
     for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: { art: [{ source: other, target: '/house/x' }] } }]) {
       const linked = await started({ container });
-      expect(linked.code).toBe(0); expect(linked.f.error).not.toHaveBeenCalled(); expect(linked.f.run).toHaveBeenCalledOnce();
+      expect(linked.code).toBe(0); expect(linked.f.error).not.toHaveBeenCalled(); expect(linked.f.run).toHaveBeenCalledTimes(4);
     }
     const subscription = 'accountLogins.subscription.claude';
     for (const [what, key, patch] of [
@@ -356,4 +357,46 @@ it('stops before any work is claimed when a path given to containers or an engin
       expect(f.run, what).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
     }
   } finally { await new Promise(done => server.close(done)); rmSync(root, { recursive: true, force: true }); }
+});
+
+// Several jobs side by side.
+it('runs as many slots as the configuration says: four for container bodies and one for process bodies when it does not, all on one executor, one control and one set of turns', async () => {
+  for (const [given, container, expected] of [[undefined, true, 4], [undefined, false, 1], [1, true, 1], [3, false, 3], [16, true, 16]] as const) {
+    const f = fixture(), containerExecutor = vi.fn().mockReturnValue({ container: true });
+    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...(container ? { ...houseConfig, container: { socket: '/fake/docker.sock' } } : config), ...(given ? { slots: given } : {}) }) : 'private-token');
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+    expect(f.run).toHaveBeenCalledTimes(expected);
+    const calls = f.run.mock.calls.map(call => call[0]);
+    expect(new Set(calls.map(call => call.turns)).size).toBe(1); expect(new Set(calls.map(call => call.executor)).size).toBe(1);
+    expect(new Set(calls.map(call => call.control)).size).toBe(1); expect(new Set(calls.map(call => call.signal)).size).toBe(1);
+    expect(container ? containerExecutor : f.executor).toHaveBeenCalledOnce();
+  }
+});
+for (const slots of [0, 17, 1.5, -1, '4', null]) it(`refuses ${JSON.stringify(slots)} slots before it reads its token`, async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, slots }));
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.run).not.toHaveBeenCalled();
+});
+it('stops every slot when one cannot end its body, waits for each to end its own, and only then gives its state up and says why', async () => {
+  const f = fixture(), order: string[] = [], close = vi.fn(() => { order.push('close'); });
+  f.executor.mockReturnValue({ close });
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, slots: 3 }) : 'private-token');
+  let slot = 0;
+  f.run.mockImplementation(async ({ signal }: { signal: AbortSignal }) => {
+    const mine = ++slot;
+    if (mine === 2) { await Promise.resolve(); order.push('slot 2 fails'); throw new Error('private: a body could not be ended'); }
+    // The other slots hold bodies: they end them when the worker's stop reaches them, which takes a moment.
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => setTimeout(() => { order.push(`slot ${mine} ended its body`); resolve(); }, mine * 5), { once: true }));
+  });
+  expect(await workerProgram(f)).toBe(49);
+  expect(order).toEqual(['slot 2 fails', 'slot 1 ended its body', 'slot 3 ended its body', 'close']);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: a body it started could not be ended, so it takes no more work\n');
+});
+it('ends every slot when the worker is asked to stop, and exits 0 once each has', async () => {
+  const f = fixture(), ended: number[] = [];
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, slots: 4 }) : 'private-token');
+  let slot = 0;
+  f.run.mockImplementation(async ({ signal }: { signal: AbortSignal }) => { const mine = ++slot; await new Promise<void>(resolve => signal.addEventListener('abort', () => { ended.push(mine); resolve(); }, { once: true })); });
+  const running = workerProgram(f); await vi.waitFor(() => expect(f.run).toHaveBeenCalledTimes(4));
+  f.handlers.get('SIGTERM')!();
+  expect(await running).toBe(0); expect(ended.sort()).toEqual([1, 2, 3, 4]); expect(f.error).not.toHaveBeenCalled();
 });

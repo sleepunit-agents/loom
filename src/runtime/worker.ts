@@ -2,6 +2,7 @@ import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
 import { REPORT_MS, SILENCE_MS } from './silence.js';
 import { logTail } from './log-tail.js';
+import { turnsOf, type WorkerTurns } from './worker-turns.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
 export interface WorkerRunPolicy {
@@ -119,6 +120,9 @@ export async function workOnce(input: {
   schedule?: WorkerSchedule; heartbeatMs?: number;
   /** A clock that only goes forward, in milliseconds; a test names its own. */
   now?: () => number;
+  /** Whose turn it is for what two bodies cannot have at once (worker-turns.ts), shared by every slot of
+   * one worker. Left out, the job waits for nothing: right for a worker with one slot. */
+  turns?: WorkerTurns;
 }): Promise<WorkerResult> {
   const { control, executor } = input;
   const interval = input.heartbeatMs ?? REPORT_MS;
@@ -142,6 +146,8 @@ export async function workOnce(input: {
   if (input.signal.aborted) cancel();
   let state: 'starting' | 'running' = 'starting';
   let body: WorkerBody | undefined;
+  // What this job's body holds to itself (its account, its ports) from before it is started until it has ended.
+  let giveUp = () => {};
   let reporting = false;
   let abandoned = false;
   let heartbeat: Promise<void> | undefined;
@@ -178,6 +184,9 @@ export async function workOnce(input: {
       if (abort.signal.aborted) return 'abandoned';
       if (!build.trim()) throw new Error('Build returned no artifact');
       stage = 'launch';
+      // Built: now the job waits its turn, reported as starting all the while. A Stop or a worker stop ends the wait.
+      if (input.turns) giveUp = await input.turns.take(turnsOf(assignment), abort.signal);
+      if (abort.signal.aborted) return 'abandoned';
       body = executor.start(assignment, build, abort.signal);
       // Attach a handler immediately: a fast exit may precede spawned/started.
       void body.exited.catch(() => {});
@@ -194,6 +203,7 @@ export async function workOnce(input: {
       if (error instanceof BuildTimeError) stage = 'buildTime';
       // Reap a partly launched process before allowing the server's start retry.
       if (body) await body.stop();
+      giveUp();
       reporting = true;
       await heartbeat;
       if (abandoned || abort.signal.aborted) return 'abandoned';
@@ -237,6 +247,8 @@ export async function workOnce(input: {
     }
     // Reap the entire process group before a terminal report can admit more work.
     await body.stop();
+    // The body is gone: what it held is the next job's, without waiting for loom to answer this one's report.
+    giveUp();
     reporting = true;
     await heartbeat;
     if (abort.signal.aborted) return 'abandoned';
@@ -253,6 +265,9 @@ export async function workOnce(input: {
     // Executor cancellation must settle build/exit; stop also reaps an already
     // exited process. Do not leave work behind when the worker loses authority.
     if (body) await body.stop();
+    // Only once the body is known to have ended. One that could not be ended keeps what it held: the throw
+    // above stops the worker, and nothing is started beside it meanwhile.
+    giveUp();
     await heartbeat;
   }
 }

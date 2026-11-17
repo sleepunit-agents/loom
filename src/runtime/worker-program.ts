@@ -1,6 +1,7 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
 import { doorTokenIn } from '../cli/connection.js';
-import { BUILD_DEADLINE_MAX_MS, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
+import { BUILD_DEADLINE_MAX_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
+import { workerTurns } from './worker-turns.js';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -38,6 +39,8 @@ const configSchema = z.object({
   /** For a worker whose bodies are processes: the command that builds, and one runner for each harness.
    * A worker with container bodies takes neither (WorkerStop 'retired'): it builds each house itself. */
   build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),
+  /** How many jobs the worker runs side by side. Left out: 4 with container bodies, 1 with process bodies. */
+  slots: z.number().int().min(1).max(SLOTS_MAX).optional(),
   /** The longest a build may take. Left out: 5 minutes for a build command, 30 for a house's image. */
   buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
@@ -205,7 +208,19 @@ export async function workerProgram(input: {
       }
     })().catch(() => {}) : undefined;
     stage = 'slot';
-    try { if (!abort.signal.aborted) await (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor }); }
+    // Several jobs side by side: each slot is the one loop there always was, and they share the control,
+    // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
+    // A slot that fails (a body it could not end) stops the others; each ends its own body before the
+    // worker goes on to exit, and the first failure is the one reported.
+    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1), turns = workerTurns();
+    try {
+      if (!abort.signal.aborted) {
+        const running = Array.from({ length: slots }, () => (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor: executor!, turns })
+          .catch((error: unknown) => { abort.abort(); throw error; }));
+        const failed = (await Promise.allSettled(running)).find(slot => slot.status === 'rejected');
+        if (failed) throw failed.reason;
+      }
+    }
     finally { abort.abort(); await settled; await signIns; }
     return 0;
   } catch (error) {

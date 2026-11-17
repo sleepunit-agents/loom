@@ -68,15 +68,21 @@ claim only assigned work, and implement:
 | `runtime.heartbeat` | `{job, state}` | `{active:boolean}` |
 | `runtime.finish` | `{job, exitCode, logTail}` | `{ok:true}` |
 
-A single slot runs one job at a time. Idle or abandoned attempts wait five seconds.
+A worker runs several jobs side by side, each in a slot of its own. `slots` in
+its configuration says how many, from 1 to 16; left out, it is 4 for a worker
+with container bodies and 1 for one whose bodies are processes (see "Several
+jobs at once"). Each slot runs one job at a time and asks loom for its next when
+it is free; loom itself keeps no count of a machine's jobs. Idle or abandoned
+attempts wait five seconds.
 A heartbeat loom answers with `active: false` cancels local work at once. One loom
 does not answer at all (a timeout, a dropped connection) is sent again at the
 next interval: loom needs one report in its two-minute silence interval, so the
 worker gives a job up only when none has been answered for so long that loom
 will have taken the job for lost. Before, a single unanswered heartbeat ended
 the job, and a machine busy with a long build lost jobs that way. An exception stops the slot, including
-failed process cleanup, so it cannot claim more work after uncertain reaping.
-SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
+failed process cleanup, so it cannot claim more work after uncertain reaping; it
+stops the worker's other slots too, each of which ends its own body first.
+SIGINT and SIGTERM cancel active work and idle waiting in every slot. The server owns start
 retries and silence reconciliation.
 
 ## Attempts, retries and exit codes
@@ -198,6 +204,44 @@ is in that machine's log, by this line and code.
 Mail that cannot become a job at all (the agent was removed, or has no run
 settings or no model) leaves no job row. loom tells the agent's owners why in a
 notice, once, and closes the notice when the mail is admitted.
+
+## Several jobs at once
+
+```json
+{"slots": 4}
+```
+
+`slots` is how many jobs a worker runs side by side: an integer from 1 to 16.
+Left out, a worker with container bodies runs 4 and a worker whose bodies are
+processes runs 1. The difference is on purpose. A container worker fetches,
+builds and starts bodies itself, and was built to do several at once. A process
+worker's build command and runners are the operator's own programs, written for
+one job at a time; set `slots` for one when its programs can run beside
+themselves. Memory, disk and GPU are not counted: `slots` is the only limit.
+
+What two jobs on one worker never have at the same time:
+
+- **An account.** A body is signed in through files its provider's program
+  rewrites when it renews (a sign-in directory, or a runner's own profile), and
+  nothing makes two programs renewing one sign-in at once safe. So one body at a
+  time runs on an account. A second job placed on that account is claimed,
+  fetched and built, and then waits for the first body to end.
+- **A port** a job publishes on the machine, on whatever address.
+- **A build command**, for a process worker: one runs at a time, and the build
+  limit of the next counts from when its turn comes. A container worker builds
+  different houses side by side, and builds one image once for every job that
+  wants it.
+
+A job that waits is reported to loom as starting all the while, takes what it
+needs all at once and in the order jobs asked, and stops waiting when it is
+stopped. Only a running body holds an account or a port: a job that is still
+building holds neither.
+
+A Stop ends its own job and no other, whether that job is building, waiting or
+running; a build other jobs are waiting on goes on. When the worker is asked to
+stop, every slot ends its body and the worker exits when each has. As with one
+slot, a stopping worker reports nothing to loom for the jobs it held: loom
+records each as lost after two minutes of silence and tries its work again.
 
 ## What a killed worker leaves, and how the next one ends it
 
@@ -335,9 +379,11 @@ for a Housefile's `FROM` is the engine's own to be signed in to.
 job as starting every 15 seconds for as long as the fetch and the build take.
 `buildTimeoutMs` is how long they may take together: 30 minutes when it is left
 out, 60 at most. A job still waiting then fails with exit code 32, "the build ran
-out of time", and is tried again by loom like any failed start. A worker runs
-one job at a time, so while a house builds, other jobs for this machine wait in
-loom's queue; they are not claimed and not lost.
+out of time", and is tried again by loom like any failed start. A house being
+built takes one of the worker's slots and no more: a job of another house is
+claimed by a free slot, finds its image and starts. With every slot taken,
+further jobs for this machine wait in loom's queue; they are not claimed and not
+lost.
 
 **What is kept on the disk.** A house image holds no copy of loom, and its name
 does not depend on the worker's version, so deploying a new loom rebuilds
