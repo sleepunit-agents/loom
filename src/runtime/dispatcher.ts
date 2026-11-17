@@ -17,7 +17,7 @@ export class Dispatcher {
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;
-    return this.db.select({id:threads.id,stop:threads.stopRequested,member:conversations.member}).from(threads)
+    return this.db.select({id:threads.id}).from(threads)
       .innerJoin(conversations,eq(conversations.id,threads.conversation))
       .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id),eq(conversations.agent,job.agent),eq(conversations.venue,'loom'))).get();
   }
@@ -84,16 +84,11 @@ export class Dispatcher {
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
-      if(state==='starting'&&job.conversation){
-        const thread=this.currentThread(job);
-        if(thread){
-          if(thread.stop&&thread.member){
-            this.jobs.stop(job.id,thread.member,'write-off');
-            new Threads(this.db,this.now).takeStop(thread.id);
-            return {active:false,stopped:true as const};
-          }
-          new Threads(this.db,this.now).working(thread.id,true);
-        }
+      // A Comms Stop ends the job here whatever it is doing; the worker then kills what it started.
+      if (this.jobs.takeStop(job.id)) return { active: false, stopped: true as const };
+      if (state === 'starting') {
+        const thread = this.currentThread(job);
+        if (thread) new Threads(this.db, this.now).working(thread.id, true);
       }
       // The worker reports a live process, not whether its body resumed work.
       // Preserve a body's explicit waiting status until a body status update.

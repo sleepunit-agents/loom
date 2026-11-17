@@ -6,9 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
+import { Threads } from '../core/conversations/threads.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
+/** One piece of work gets its first attempt and at most this many more, whatever made each attempt fail. */
+export const JOB_RETRIES = 3;
 export class Jobs {
   constructor(readonly db: DataDatabase, readonly now: () => string) {}
 
@@ -39,7 +42,7 @@ export class Jobs {
   }
 
   /** Called after inbox settling. Repeated admission returns the same active job.
-   * Exhausted starts and manually stopped work need fresh mail to resume. */
+   * Work that ran out of attempts and work that was stopped need fresh mail to resume. */
   admit(conversationId: string): Job | undefined {
     return this.db.transaction(() => {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
@@ -111,35 +114,75 @@ export class Jobs {
     });
   }
 
-  /** Only a failure before started() creates a retry: initial attempt + 3 retries.
-   * Every successor points to its immediate predecessor and keeps its snapshot. */
+  /** A Comms Stop asked for on this job's thread and not yet taken. Only the job its conversation
+   * currently points at can be meant; a thread nobody opened has no one to record as having ended it. */
+  private stopAsked(job: Pick<Job, 'id' | 'conversation'>): { thread: string; member: string } | undefined {
+    if (!job.conversation) return undefined;
+    const row = this.db.select({ thread: threads.id, stop: threads.stopRequested, member: conversations.member }).from(threads)
+      .innerJoin(conversations, eq(conversations.id, threads.conversation))
+      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id), eq(conversations.venue, 'loom'))).get();
+    return row?.stop && row.member ? { thread: row.thread, member: row.member } : undefined;
+  }
+
+  /** The one place a Comms Stop ends a job. The body may learn of the Stop first and leave by itself, the
+   * worker may hear of it on a heartbeat, or the job may simply go silent: every report about the job
+   * (heartbeat, finish, the silence sweep) comes through here first, so the record is the same each time:
+   * stopped, by the thread's member, as a write-off. Its unconfirmed mail stays with it and is not run again. */
+  private endIfStopAsked(job: Job, values: Partial<Job> = {}): Job | undefined {
+    const asked = this.stopAsked(job);
+    if (!asked) return undefined;
+    new Threads(this.db, this.now).takeStop(asked.thread);
+    return this.end(job, 'stopped', { ...values, endedBy: asked.member, endedReason: 'write-off', endedAt: this.now() });
+  }
+
+  /** For the worker's heartbeat: ends the job as stopped when a Comms Stop is waiting for it. */
+  takeStop(id: string): Job | undefined {
+    return this.db.transaction(() => {
+      const job = this.get(id);
+      return active.includes(job.state as typeof active[number]) ? this.endIfStopAsked(job) : undefined;
+    });
+  }
+
+  /** A failed attempt is tried again when it never started, or when it started and left mail it had not
+   * confirmed. Every successor points to its immediate predecessor and keeps its snapshot; the chain ends
+   * after JOB_RETRIES, and the mail then stays with the last attempt until fresh mail arrives. */
   finish(id: string, box: string, exitCode: number, logTail = ''): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
       const at = this.now();
+      const stopped = this.endIfStopAsked(before, { exitCode });
+      if (stopped) return { job: stopped };
       // A runner's stdout/stderr can contain the private prompt or reply.
-      const keepText = this.keepText(before);
-      const job = this.end(before, before.state === 'starting' || exitCode !== 0 ? 'failed' : 'done',
-        { exitCode, logTail: keepText ? logTail.slice(-16_384) : null, endedAt: at });
-      if (before.state !== 'starting') return { job };
-      let depth = 0, ancestor = before;
-      const seen = new Set([id]);
-      while (ancestor.retryOf) {
-        if (seen.has(ancestor.retryOf)) throw new Error('Cyclic job retries');
-        seen.add(ancestor.retryOf); ancestor = this.get(ancestor.retryOf); depth++;
-        if (depth >= 3) return { job };
-      }
-      const { id: _id, ...snapshot } = before;
-      const retry = this.db.insert(jobs).values({ ...snapshot, brief: keepText ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
-        retryOf: id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
-        claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
-      }).returning().get();
-      for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
-      this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run();
-      this.delivery(retry.id,'held');
-      if (before.conversation) this.db.update(conversations).set({ job: retry.id }).where(eq(conversations.id, before.conversation)).run();
-      return { job, retry };
+      const failed = before.state === 'starting' || exitCode !== 0;
+      const job = this.end(before, failed ? 'failed' : 'done',
+        { exitCode, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at });
+      const retry = failed ? this.retry(before, at) : undefined;
+      return retry ? { job, retry } : { job };
     }, { behavior: 'immediate' });
+  }
+
+  /** Queue the next attempt of work whose last attempt failed or was lost, if it has any left. */
+  private retry(before: Job, at: string): Job | undefined {
+    const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
+    // Once a body has started, only mail it left unconfirmed is a reason to run again.
+    if (before.state !== 'starting' && !this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) return undefined;
+    let depth = 0, ancestor = before;
+    const seen = new Set([before.id]);
+    while (ancestor.retryOf) {
+      if (seen.has(ancestor.retryOf)) throw new Error('Cyclic job retries');
+      seen.add(ancestor.retryOf); ancestor = this.get(ancestor.retryOf); depth++;
+      if (depth >= JOB_RETRIES) return undefined;
+    }
+    const { id: _id, ...snapshot } = before;
+    const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
+      retryOf: before.id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
+      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
+    }).returning().get();
+    for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
+    this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(unconfirmed).run();
+    this.delivery(retry.id,'held');
+    if (before.conversation) this.db.update(conversations).set({ job: retry.id }).where(eq(conversations.id, before.conversation)).run();
+    return retry;
   }
 
   stop(id: string, member: string, reason: 'reset' | 'write-off'): Job {
@@ -150,14 +193,22 @@ export class Jobs {
     });
   }
 
-  /** Fake-clock sweep; silence never turns a running body into a start retry. */
+  /** Fake-clock sweep. A job nobody has reported on for the silence interval is lost; like a failed
+   * attempt it is tried again while it has attempts left (see finish). The row says in which state it
+   * went silent: these are loom's own words, so they are kept for a private conversation too. */
   sweep(silenceMs = 120_000): Job[] {
     if (!Number.isFinite(silenceMs) || silenceMs <= 0) throw new Error('Invalid silence interval');
     return this.db.transaction(() => {
       const at = this.now();
       return this.db.select().from(jobs).where(inArray(jobs.state, ['starting', 'running', 'waiting'])).all()
         .filter(job => Date.parse(at) - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
-        .map(job => this.end(job, 'lost', { endedAt: at }));
+        .map(job => {
+          const stopped = this.endIfStopAsked(job);
+          if (stopped) return stopped;
+          const lost = this.end(job, 'lost', { endedAt: at, logTail: `Lost while ${job.state}: its worker stopped reporting` });
+          this.retry(job, at);
+          return lost;
+        });
     });
   }
 
@@ -167,9 +218,9 @@ export class Jobs {
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
     this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() })
       .where(and(eq(inbox.job, job.id), eq(inbox.state, 'taken'))).run();
-    if (state === 'done' || (state !== 'stopped' && job.state !== 'starting')) {
-      this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
-    }
+    // What a finished body left unconfirmed is fresh mail for the next admission. After a stop, a failure
+    // or a loss it stays with this job: retry() hands it to a successor, or it waits for fresh mail.
+    if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
     if (job.conversation) {
       const detached=this.db.update(conversations).set({job:null})
         .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();

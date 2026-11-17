@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs } from '../core/data/schema.js';
+import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
 import { Jobs } from './jobs.js';
 
 const opened: Database.Database[] = [];
@@ -83,16 +83,62 @@ it('retries a failed start three times as new linked jobs, without retrying the 
   f.tick(1); f.send();
   expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
 });
-it('does not retry process failures after starting and returns unconfirmed mail to waiting', () => {
+it('tries a body that failed after starting again only for mail it left unconfirmed, and no more than the same three times', () => {
   const f = fixture(); f.send();
-  const job = f.runtime.admit(f.conversation.id)!;
+  let job = f.runtime.admit(f.conversation.id)!;
+  for (let n = 0; n < 4; n++) {
+    f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+    f.comms.take(f.conversation.id, job.id);
+    const result = f.runtime.finish(job.id, 'worker', 2, 'ignored-prefix:' + 'x'.repeat(20_000) + ':TAIL');
+    expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_379) + ':TAIL' });
+    if (n === 3) { expect(result.retry).toBeUndefined(); break; }
+    expect(result.retry).toMatchObject({ retryOf: job.id, state: 'queued', retryAt: new Date(Date.parse(f.now()) + 1000 * 2 ** n).toISOString() });
+    expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id, takenAt: null });
+    f.tick(1000 * 2 ** n); job = result.retry!;
+  }
+  // Out of attempts: the mail stays with the last one and no settle period admits it again.
+  expect(f.db.select().from(jobs).all()).toHaveLength(4);
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: job.id });
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+  f.send();
+  expect(f.runtime.admit(f.conversation.id)).toMatchObject({ state: 'queued', retryOf: null });
+});
+it('does not run a body again when it failed after confirming its mail', () => {
+  const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
-  f.comms.take(f.conversation.id, job.id);
-  const result = f.runtime.finish(job.id, 'worker', 2, 'ignored-prefix:' + 'x'.repeat(20_000) + ':TAIL');
-  expect(result.retry).toBeUndefined();
-  expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_379) + ':TAIL' });
-  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: null, takenAt: null });
-  expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
+  f.comms.take(f.conversation.id, job.id); f.comms.confirm(mail.id, job.id);
+  expect(f.runtime.finish(job.id, 'worker', 14).retry).toBeUndefined();
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+});
+it('tries a job lost while starting again, with its mail, and says in which state it went silent', () => {
+  const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker');
+  f.tick(120_001); expect(f.runtime.sweep().map(row => row.id)).toEqual([job.id]);
+  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', logTail: 'Lost while starting: its worker stopped reporting' });
+  const retry = f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
+  expect(retry).toMatchObject({ state: 'queued', box: null });
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
+  expect(f.db.select().from(conversations).get()?.job).toBe(retry.id);
+  expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
+});
+it('records a Comms Stop the same way whether a heartbeat, the body\'s own exit or silence brings the news', () => {
+  for (const how of ['heartbeat', 'finish', 'sweep'] as const) {
+    const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+    f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+    f.comms.take(f.conversation.id, job.id);
+    f.db.insert(threadRows).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
+    if (how === 'heartbeat') expect(f.runtime.takeStop(job.id)?.state).toBe('stopped');
+    // The body saw the Stop on its own status report and left with exit 0 before confirming its mail.
+    else if (how === 'finish') expect(f.runtime.finish(job.id, 'worker', 0)).toMatchObject({ job: { state: 'stopped' } });
+    else { f.tick(120_001); expect(f.runtime.sweep().map(row => row.state)).toEqual(['stopped']); }
+    expect(f.runtime.get(job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off', endedAt: f.now() });
+    expect(f.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
+    // The stopped work is not run again: its mail stays with the stopped job until fresh mail arrives.
+    expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: job.id });
+    expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+    expect(f.db.select().from(jobs).all()).toHaveLength(1);
+    expect(f.runtime.takeStop(job.id)).toBeUndefined();
+  }
 });
 it('admits new mail during failure and in the same clock tick after termination', () => {
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
@@ -172,7 +218,9 @@ for (const exitCode of [0, 2]) it(`does not retain private body output after exi
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
   const result = f.runtime.finish(job.id, 'worker', exitCode, 'PRIVATE_REPLY_MARKER');
   expect(result.job).toMatchObject({ state: exitCode === 0 ? 'done' : 'failed', exitCode, logTail: null, build: 'image' });
-  expect(f.runtime.get(job.id).logTail).toBeNull(); expect(result.retry).toBeUndefined();
+  expect(f.runtime.get(job.id).logTail).toBeNull();
+  // The failed body left its mail unconfirmed, so it is tried again; the successor carries no words either.
+  if (exitCode === 0) expect(result.retry).toBeUndefined(); else expect(result.retry).toMatchObject({ brief: '', logTail: null });
   expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
 });
 

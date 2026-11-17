@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations } from '../core/data/schema.js';
+import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
@@ -260,4 +260,15 @@ it('places a lane\'s work on what its trigger wants, read when the job is placed
   // The lane is edited to want the best model: the waiting job is placed on it.
   f.db.update(triggers).set({ wantsModel: 'best' }).where(eq(triggers.id, 'tr-lane')).run();
   expect(f.runtime.next('first')).toMatchObject({ id: lane.id, model: 'clever', harness: 'claude', venue: 'wake' });
+});
+
+it.each(['starting', 'running'] as const)('ends a %s job as stopped when a Comms Stop is waiting at its heartbeat', state => {
+  const f = fixture(); f.runtime.next('first');
+  if (state === 'running') f.runtime.started('first', f.job.id, 'image');
+  f.db.insert(threads).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
+  expect(f.runtime.heartbeat('first', f.job.id, state)).toEqual({ active: false, stopped: true });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
+  expect(f.db.select().from(threads).get()).toMatchObject({ stopRequested: false, working: false });
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: f.job.id });
+  expect(f.runtime.jobs.admit(f.conversation.id)).toBeUndefined();
 });

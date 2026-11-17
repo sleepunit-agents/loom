@@ -23,6 +23,9 @@ const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
 }).strict();
 /** How a body that fails says where, with no private words: its exit code. 1 is input it could not accept. */
 export const BODY_EXIT={startup:11,mail:12,identity:13,harness:14,record:15} as const;
+/** What a body reports after a Stop, before leaving with exit 0. It does not take the Stop itself: loom takes
+ * it when it next hears of this job (Jobs.endIfStopAsked) and records the job as stopped. */
+const left={state:'idle',work:''} as const;
 export async function bodyProgram(input: {
   args: readonly string[]; read: (path: string) => Promise<string>;
   stdin: () => Promise<Uint8Array>; env: NodeJS.ProcessEnv; signal: AbortSignal;
@@ -67,7 +70,7 @@ export async function bodyProgram(input: {
     const report=()=>reporting??(reporting=client!.status(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
     const observe=(value:{stopRequested:boolean})=>{if(value.stopRequested){stopped=true;erase();nativeAbort.abort();}};
     observe(await report());
-    if(stopped){await client.status({state:'idle',work:'',seenStop:true});return 0;}
+    if(stopped){await client.status(left);return 0;}
     const beat=()=>{
       if(pending||signal.aborted)return;
       pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
@@ -88,7 +91,7 @@ export async function bodyProgram(input: {
       }
       const words=bodyMailContext(item);if(words!==null)context.push(words);
     });
-    if (batch.stopRequested) { await retire(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
+    if (batch.stopRequested) { await retire(); await client.status(left); return 0; }
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
     exit=BODY_EXIT.identity;
@@ -98,7 +101,7 @@ export async function bodyProgram(input: {
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
-    if (started.stopRequested) { await retire(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    if (started.stopRequested) { await retire(); await client.status(left); return 0; }
     if(bridge&&!incoming.length)throw new Error();
     const replyTo=incoming.at(-1);
     if(!input.native){
@@ -115,7 +118,7 @@ export async function bodyProgram(input: {
     try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
     finally { await retire(); }
-    if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    if(stopped && !input.signal.aborted) { await client.status(left); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
@@ -133,7 +136,7 @@ export async function bodyProgram(input: {
   } catch {
     await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
-      try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
+      try{await client.status(left);return 0;}catch{}
     }
     input.error('Body stopped: invalid input or unavailable execution\n'); return exit;
   }
