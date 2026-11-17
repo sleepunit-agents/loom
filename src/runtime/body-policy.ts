@@ -4,15 +4,8 @@
 import { and, asc, eq, isNull, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentDeniedTools, agentPeople, bridgeIncoming, inbox, inboxRefs } from '../core/data/schema.js';
+import { incomingId, outsidePersonKey, parseInboxSourceId } from '../pieces/bridges/keys.js';
 import type { WorkerRunPolicy } from './worker.js';
-
-function bridgeSource(value: string | null): [string, string, string] | undefined {
-  try {
-    const fields: unknown = JSON.parse(value ?? 'null');
-    if (Array.isArray(fields) && fields.length === 3 && fields.every(field => typeof field === 'string' && field.length > 0))
-      return fields as [string, string, string];
-  } catch { /* An invalid stored source cannot establish an outside key. */ }
-}
 
 export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy {
   const deniedTools = db.select({ pattern: agentDeniedTools.pattern, guestsOnly: agentDeniedTools.guestsOnly })
@@ -22,26 +15,39 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
   const items = db.select({ id: inbox.id, conversation: inbox.conversation, source: inbox.source, sourceId: inbox.sourceId, fromKind: inbox.fromKind, fromId: inbox.fromId })
     .from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, job.agent),
       or(eq(inbox.job, job.id), job.conversation ? and(eq(inbox.conversation, job.conversation), isNull(inbox.job), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute')) : undefined))).all();
+  type Tier = WorkerRunPolicy['people'][number]['tier'];
+  const tierOf = (person: string) => (db.select({ tier: agentPeople.tier }).from(agentPeople)
+    .where(and(eq(agentPeople.agent, job.agent), eq(agentPeople.person, person))).get()?.tier ?? null) as Tier;
+  /** The outside key of whoever sent a bridge item, read from the stored bridge event it was delivered from,
+   * never from words or a claimed identity. `member` is the household member the event was filed under
+   * (null: nobody). More than one key, or none, names nobody. */
+  const outsideKey = (item: typeof items[number], member: string | null): string | null => {
+    if (!item.conversation || (item.source !== 'discord' && item.source !== 'slack')) return null;
+    const source = parseInboxSourceId(item.sourceId);
+    if (!source) return null;
+    // Connection settings may have been retargeted after this delivery.
+    // source/sourceId belong to the original authenticated inbox receipt.
+    const receipts = db.select({ id: bridgeIncoming.id, connection: bridgeIncoming.connection, user: bridgeIncoming.user })
+      .from(inboxRefs).innerJoin(bridgeIncoming, eq(inboxRefs.ref, bridgeIncoming.id))
+      .where(and(eq(inboxRefs.item, item.id), eq(bridgeIncoming.conversation, item.conversation),
+        eq(bridgeIncoming.state, 'delivered'), member === null ? isNull(bridgeIncoming.member) : eq(bridgeIncoming.member, member), eq(bridgeIncoming.channel, source.channel))).all()
+      .filter(row => row.id === incomingId(row.connection, source.message));
+    const keys = new Set(receipts.map(row => outsidePersonKey(item.source as 'discord' | 'slack', source.workspace, row.user)));
+    return keys.size === 1 ? [...keys][0] : null;
+  };
   for (const item of items) {
     if (item.fromKind !== 'person' && item.fromKind !== 'unknown') continue;
-    let kind: 'person' | 'outside' | 'unknown' = 'unknown', person: string | null = null;
-    if (item.fromKind === 'person' && item.fromId) { kind = 'person'; person = item.fromId; }
-    else if (item.fromKind === 'unknown' && item.conversation && (item.source === 'discord' || item.source === 'slack')) {
-      // A canonical outside key comes from the stored bridge event, never
-      // from words or a claimed household identity. Ambiguity stays unknown.
-      const source = bridgeSource(item.sourceId);
-      // Connection settings may have been retargeted after this delivery.
-      // source/sourceId belong to the original authenticated inbox receipt.
-      const receipts = source ? db.select({ id: bridgeIncoming.id, connection: bridgeIncoming.connection, user: bridgeIncoming.user })
-        .from(inboxRefs).innerJoin(bridgeIncoming, eq(inboxRefs.ref, bridgeIncoming.id))
-        .where(and(eq(inboxRefs.item, item.id), eq(bridgeIncoming.conversation, item.conversation),
-          eq(bridgeIncoming.state, 'delivered'), isNull(bridgeIncoming.member), eq(bridgeIncoming.channel, source[1]))).all()
-          .filter(row => row.id === `bi:${JSON.stringify([row.connection, source[2]])}`) : [];
-      const keys = new Set(receipts.map(row => JSON.stringify([item.source, source![0], row.user])));
-      if (keys.size === 1) { kind = 'outside'; person = [...keys][0]; }
+    let kind: 'person' | 'outside' | 'unknown' = 'unknown', person: string | null = null, tier: Tier = null;
+    if (item.fromKind === 'person' && item.fromId) {
+      kind = 'person'; person = item.fromId;
+      // A tier is saved under a person's outside key (shared-agent-body-policy.ts). Linking that person to a
+      // member changes who their messages are from, not the tier the owner gave them, so look under both.
+      const outside = outsideKey(item, item.fromId);
+      tier = tierOf(person) ?? (outside === null ? null : tierOf(outside));
+    } else if (item.fromKind === 'unknown') {
+      const outside = outsideKey(item, null);
+      if (outside !== null) { kind = 'outside'; person = outside; tier = tierOf(outside); }
     }
-    const tier = person === null ? null : db.select({ tier: agentPeople.tier }).from(agentPeople)
-      .where(and(eq(agentPeople.agent, job.agent), eq(agentPeople.person, person))).get()?.tier ?? null;
     people.set(JSON.stringify([kind, person]), { kind, person, tier });
   }
   return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value), mail: items.map(item => item.id).sort() };
