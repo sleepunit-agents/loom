@@ -1,11 +1,11 @@
 /** Outside question targets and reads. Trusted producers/settlement stay free
  * of caller policy; no body inherits a member's general registry identity. */
 import {getTableColumns,sql,eq,and,type AnyColumn,type SQL} from 'drizzle-orm';
-import {addressee,type Viewer} from './policy.js';
+import {addressee,rules,type Viewer} from './policy.js';
+import {sqlRule} from './policy-sql.js';
 import {canReadSharedConversation} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
-import {tasks,approvals,inbox,secretRequests} from './core/data/schema.js';
-import {bridgeSecretsVisibility} from './core/data/bridge-secrets-visibility.js';
+import {tasks,approvals,inbox} from './core/data/schema.js';
 import {taskVisibility} from './core/data/visibility.js';
 import {workVisibility} from './core/data/work-visibility.js';
 import {talkVisibility} from './core/data/conversation-visibility.js';
@@ -19,14 +19,10 @@ export function conversationQuestionPolicy(db:DataDatabase){
   return sql`exists(select 1 from ${table} where ${table.id}=${id} and ${allowed})`;
  };
  const canRead=(viewer:Viewer,kind:Kind,id:string)=>db.get<{allowed:number}>(sql`select ${visibleSource(viewer,kind,id)} as allowed`)?.allowed===1;
- const sourceVisibility=(viewer:Viewer,f:Fields)=>sql`(
-  (${f.waitsOnKind} is null and ${f.waitsOnId} is null)
-  or (${f.waitsOnKind}='task' and ${visibleSource(viewer,'task',f.waitsOnId)})
-  or (${f.waitsOnKind}='approval' and ${visibleSource(viewer,'approval',f.waitsOnId)})
-  or (${f.waitsOnKind}='secret-request' and exists(select 1 from ${secretRequests}
-    where ${secretRequests.id}=${f.waitsOnId} and ${bridgeSecretsVisibility(viewer).secretRequests!(getTableColumns(secretRequests))}))
- )`;
- const visibility=(viewer:Viewer,f:Fields)=>sql`(${talkVisibility(viewer).inbox(f)}) and ${sourceVisibility(viewer,f)}`;
+ // The record an item waits on must be readable too. That is part of the inbox rule (policy.ts,
+ // waitsOnReadable); it is asked alone where a door has settled who the item is for by another rule.
+ const sourceVisibility=(viewer:Viewer,f:Fields)=>sqlRule(rules.waitsOnReadable,viewer,f);
+ const visibility=(viewer:Viewer,f:Fields)=>talkVisibility(viewer).inbox(f);
  const ask:BodyQuestionAuthority=(viewer,cv,q)=>{
   // Could the person asked read this conversation, and the record the question waits on? Somebody who is
   // not in the household now reads nothing. This never acts as that member (policy.ts, addressee).

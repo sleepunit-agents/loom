@@ -54,7 +54,7 @@ export type TableWithRule = 'tasks' | 'taskComments' | 'taskLinks' | 'projects' 
   | 'secrets' | 'secretGrants' | 'secretRequests' | 'secretRules' | 'secretRuleAgents' | 'secretUses' | 'secretChanges'
   | 'triggers' | 'triggerEdits' | 'triggerLog' | 'boxes' | 'boxAgents' | 'boxFacts' | 'timingDays' | 'measuringSettings';
 /** The tables a child row can be seen with; each is keyed by `id`. */
-export type ParentTable = Extract<TableWithRule, 'tasks' | 'approvals' | 'changes' | 'conversations' | 'digests' | 'triggers' | 'boxes' | 'bridgeConnections' | 'bridgeIncoming'>;
+export type ParentTable = Extract<TableWithRule, 'tasks' | 'approvals' | 'changes' | 'conversations' | 'digests' | 'triggers' | 'boxes' | 'bridgeConnections' | 'bridgeIncoming' | 'secretRequests'>;
 /** One rule about one row. `field` names a column of the row by its schema key. */
 export type Rule =
   | { is: 'never' }
@@ -127,6 +127,15 @@ const conversation: Rule = privateTalk([equal('direct', true), agentOwners]);
  * question). In a conversation it is seen with it, so the direct label reaches it; either way a member label
  * keeps it that member's alone. */
 const inTalk: Rule = all(privateTalk(), any(equal('conversation', null), seenWith('conversations', 'conversation')));
+/** What an inbox item waits on must itself be readable. A question about a task, an approval card or a
+ * secret request is seen only by someone who may read that record, by that record's own rule; an item
+ * that waits on nothing names nothing. This is part of the inbox rule, so no reader of the Inbox can be
+ * built without it. */
+const waitsOnReadable: Rule = first([
+  [equal('waitsOnKind', 'task'), seenWith('tasks', 'waitsOnId')],
+  [equal('waitsOnKind', 'approval'), seenWith('approvals', 'waitsOnId')],
+  [equal('waitsOnKind', 'secret-request'), seenWith('secretRequests', 'waitsOnId')],
+], all(equal('waitsOnKind', null), equal('waitsOnId', null)));
 /** A bridge connection: household owners, and the members who own its agent. Never the agent itself. */
 const bridgeConnection: Rule = any(householdOwner, agentOwners);
 /** A task shares by project first. Without a project it is its owner's: a member's own, or an agent's owners'. */
@@ -184,7 +193,7 @@ const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent
  * passkeys, browsers and devices). */
 const currentMember: Rule = all(viewerIs('member'), currentViewer);
 
-export const rules = { labelled, conversation, inTalk, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, currentMember, currentViewer,
+export const rules = { labelled, conversation, inTalk, waitsOnReadable, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, currentMember, currentViewer,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */
@@ -232,7 +241,7 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   // An item is read as its labels say. One exception: an item addressed to a household owner is theirs
   // whatever labels it carries, which is how an owner is handed the approval card raised in someone else's
   // thread (only household owners answer those). The card is all they get of that thread.
-  inbox: any(all(householdOwner, equal('toKind', 'person'), self('to')), inTalk),
+  inbox: all(any(all(householdOwner, equal('toKind', 'person'), self('to')), inTalk), waitsOnReadable),
   bridgeConnections: bridgeConnection,
   // How a household's bridges are set up, and who its outside people are, is the household owners'.
   bridgeChannelFilters: householdOwner, bridgeChannels: householdOwner, bridgePeople: householdOwner,

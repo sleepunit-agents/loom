@@ -13,7 +13,7 @@ import { bridgeSecretsTables } from './core/data/bridge-secrets-visibility.js';
 
 const at = '2026-11-14T00:00:00.000Z';
 let client: Database.Database, db: DataDatabase;
-const parents = { tasks: s.tasks, approvals: s.approvals, changes: s.changes, conversations: s.conversations, digests: s.digests, triggers: s.triggers, boxes: s.boxes, bridgeConnections: s.bridgeConnections, bridgeIncoming: s.bridgeIncoming };
+const parents = { tasks: s.tasks, approvals: s.approvals, changes: s.changes, conversations: s.conversations, digests: s.digests, triggers: s.triggers, boxes: s.boxes, bridgeConnections: s.bridgeConnections, bridgeIncoming: s.bridgeIncoming, secretRequests: s.secretRequests };
 const parentIds: Record<string, string[]> = {};
 beforeAll(() => {
   client = new Database(':memory:'); db = createDataSchema(client, () => at);
@@ -41,6 +41,7 @@ beforeAll(() => {
   // Direct messages on a bridge: from a linked member (private to lee), from a stranger and in a group (no member).
   db.insert(s.conversations).values([['p-dm-lee', 'lee'], ['p-dm-stranger', null]].map(([id, member]) => ({ id: id!, agent: 'mark', member, direct: true, venue: 'discord' as const, place: id!, label: id!, startedAt: at, lastAt: at, turnCount: 0 }))).run();
   db.insert(s.secrets).values({ name: 'token', description: '', changedAt: at, changedBy: 'owner' }).run();
+  db.insert(s.secretRequests).values({ id: 'p-asked', secret: 'token', agent: 'art', why: 'test', state: 'pending', minutes: 5, always: false, askedAt: at }).run();
   db.insert(s.bridgeConnections).values({ id: 'p-mark', platform: 'discord', agent: 'mark', workspace: 'w', botUser: 'bot', tokenSecret: 'token', enabled: true, state: 'connected', stateAt: at }).run();
   // A message in a room, in each direct conversation, and held with no conversation (a room message and a direct one).
   for (const [id, conversation, isDm] of [['p-in-room', 'p-bare', false], ['p-in-dm-lee', 'p-dm-lee', true], ['p-in-dm-stranger', 'p-dm-stranger', true], ['p-held-room', null, false], ['p-held-dm', null, true]] as const)
@@ -85,17 +86,25 @@ function domains(rule: Rule, found = new Map<string, Set<string | null>>()): Map
   }
   return found;
 }
+const MOST_ROWS = 40_000;
 function rows(rule: Rule): Row[] {
   let out: Record<string, string | null>[] = [{}];
   for (const [field, values] of domains(rule)) {
     const tried = values.size > 1 ? [...values] : [null, 'x'];
     out = out.flatMap(row => tried.map(value => ({ ...row, [field]: value })));
   }
+  // A rule made of two large parts (the inbox rule) has more combinations than is worth walking, and each
+  // part is in the matrix whole under its own name. Such a rule is tried on an even spread of its rows,
+  // which must still meet every value of every field.
+  if (out.length > MOST_ROWS) {
+    const stride = Math.ceil(out.length / MOST_ROWS) | 1; out = out.filter((_, index) => index % stride === 0);
+    for (const [field, values] of domains(rule)) if (values.size > 1) expect(new Set(out.map(row => row[field])), field).toEqual(values);
+  }
   return out;
 }
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
-const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['answers', rules.answers],
+const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['waitsOnReadable', rules.waitsOnReadable], ['answers', rules.answers],
   ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
@@ -150,6 +159,26 @@ describe('whose a conversation is', () => {
     expect(sees(member('full'), { ...stranger, member: 'lee' })).toBe(false);
     // A room is still read by the household owner, the agent's owners and the agent.
     for (const other of [member('owner'), member('lee'), agent('mark')]) expect(sees(other, { ...stranger, direct: false })).toBe(true);
+  });
+});
+
+describe('an inbox item that waits on a record', () => {
+  const sees = (viewer: Viewer, item: Row) => holds(tableRules.inbox, viewer, item, sharedSharing(db), lookup);
+  it('is seen only by someone who may read that record, whoever the item is addressed to', () => {
+    // A question to lee in the open, about a task. p-pond is a task in the pond project, which lee is not in.
+    const question = { toKind: 'person', to: 'lee', member: null, project: 'side', agent: 'mark', conversation: null };
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: null, waitsOnId: null })).toBe(true);
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: 'task', waitsOnId: 'p-agent' })).toBe(true);
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: 'task', waitsOnId: 'p-pond' })).toBe(false);
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: 'task', waitsOnId: 'missing' })).toBe(false);
+    // An approval card by its labels; a secret request is the household owners'.
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: 'approval', waitsOnId: 'p-pond' })).toBe(true);
+    expect(sees({ kind: 'member', id: 'sam' }, { ...question, to: 'sam', project: 'pond', agent: 'art', waitsOnKind: 'approval', waitsOnId: 'p-bare' })).toBe(false);
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: 'secret-request', waitsOnId: 'p-asked' })).toBe(false);
+    expect(sees({ kind: 'member', id: 'owner' }, { ...question, to: 'owner', waitsOnKind: 'secret-request', waitsOnId: 'p-asked' })).toBe(true);
+    // A kind with no record named, or a record with no kind, is seen by nobody.
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: 'task', waitsOnId: null })).toBe(false);
+    expect(sees({ kind: 'member', id: 'lee' }, { ...question, waitsOnKind: null, waitsOnId: 'p-agent' })).toBe(false);
   });
 });
 
