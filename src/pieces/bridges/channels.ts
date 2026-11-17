@@ -30,7 +30,8 @@ export class BridgeChannels implements BridgeChannelCache {
     return {
       /** Expected channel is the requested API channel or authenticated event's
        * channel. Invalidate before validation so bad updates leave no stale row.
-       * Unsupported kinds return false; malformed/mismatched evidence throws.
+       * A Discord kind loom carries no conversation in is remembered as `other`
+       * and returns false; malformed/mismatched evidence throws.
        */
       put: (channel: string, evidence: unknown): boolean => {
         if (!current()) return false;
@@ -49,7 +50,11 @@ export class BridgeChannels implements BridgeChannelCache {
             else if ([10, 11, 12].includes(raw.type)) {
               if (!raw.parent_id || raw.parent_id === channel) throw Error('Discord thread needs a parent');
               value = { id: channel, guild: life.workspace, kind: 'thread', parent: raw.parent_id };
-            } else return false;
+            } else {
+              // Remembered, so its messages are set aside at once and nobody asks Discord about it again.
+              life.channels.set(channel, { id: channel, guild: life.workspace, kind: 'other' });
+              return false;
+            }
           }
           life.channels.set(channel, value);
         } else {

@@ -50,12 +50,22 @@ the program was running when the change was made. The credential epoch here is
 the newest `secret_changes` row for the connection's secrets; the permanent
 retirement described below is still open.
 
-Raw event words still expire after one hour. A message that was held (its
-connection disabled, or its bot's agent ambiguous) keeps a `bridge_incoming` row
-with what admission read, and is tried again from that row for a day after its
-raw event is gone. A message that never got a row, because its channel's
-metadata could not be read for the whole hour, is lost and counted in the
-daemon's report.
+Nothing received is given up on before a day has passed. The raw frame of an
+event that could not be read yet (its channel's metadata could not be fetched,
+the connection was paused, the program was stopped, or the frame is one this
+code cannot make sense of) is kept for a day and tried on every pass. A message
+that was read and held (its connection disabled, or its bot's agent ambiguous)
+gets a `bridge_incoming` row with what admission read; its raw frame then goes
+an hour after it arrived, and the message is tried again from the row until it
+is a day old. What is still undelivered at a day is removed or closed as
+dropped, without its words, and counted in the daemon's report. So the one-hour
+expiry above now holds for the raw words of a message that has a row; an event
+with no row is the only copy of what was received and outlives it.
+
+A Discord gateway session carries every guild the bot has been added to. A
+message from a guild other than the connection's is set aside as soon as it is
+drained, and so is one in a kind of channel loom carries no conversation in
+(the text chat of a voice or stage channel).
 
 ## Owning transition
 

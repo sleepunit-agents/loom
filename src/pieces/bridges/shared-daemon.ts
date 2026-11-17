@@ -47,6 +47,8 @@ export class SharedBridges {
  readonly sends:BridgeSends;
  private readonly credentials;
  private readonly lives=new Map<string,Life>();
+ /** Channels whose details could not be classified, so each is reported once. */
+ private readonly unclassified=new Set<string>();
  private readonly active=new Set<Promise<unknown>>();
  private syncing?:Promise<void>;
  private settingsKey='';
@@ -62,9 +64,9 @@ export class SharedBridges {
   }},()=>new Date(options.clock.now()).toISOString(),()=>{},write=>{
    const result=options.writes.run(write);for(const _error of result.notificationErrors)this.report();return result.value;
   });
-  // A receipt that expires was never delivered. Nothing can bring it back, so it is at least reported.
+  // What is given up on after a day was never delivered. Nothing can bring it back, so it is at least reported.
   this.receiver=new BridgeReceiver(options.db,options.clock,this.channels,lost=>{
-   try{options.reportError(new Error(`${lost.events} received bridge event(s) expired before they could be processed; ${lost.held} held message(s) could no longer be delivered and were dropped`));}catch{ /* reporting never retries effects */ }
+   try{options.reportError(new Error(`${lost.events} received bridge event(s) were never read and have expired; ${lost.held} held message(s) could no longer be delivered and were dropped`));}catch{ /* reporting never retries effects */ }
    if(lost.held)this.notify();
   });
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
@@ -205,7 +207,9 @@ export class SharedBridges {
    const api=bridgeChannelApi({platform:row.platform,workspace:row.workspace,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request});
    for(const id of this.receiver.missingChannels(row.id,64,true)){
     if(!current())return;const evidence=await api.channel(id);if(!current())return;
-    if(evidence)life.channels!.put(id,evidence);
+    // Details this code cannot classify leave that one channel's events waiting. They must not stop the
+    // pass: every other channel of the connection is still to be drained.
+    try{if(evidence)life.channels!.put(id,evidence);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
    }
    if(!current())return;
    const pendingFiles=new Map<string,SlackFilesPermit['files']>();

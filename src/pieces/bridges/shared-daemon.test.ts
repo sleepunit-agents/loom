@@ -158,6 +158,21 @@ it('keeps the Discord resume cursor across a restart and gives it to no lifetime
  const third=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>third.close());
  await third.ready();await third.idle();expect(gateways).toHaveLength(4);expect(gateways[3].load()).toBeUndefined();
 });
+it('goes on receiving for the connection when one channel has details it cannot classify',async()=>{
+ const f=fixture(),usual=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>String(url).endsWith('/conversations.info')&&new URLSearchParams(String(init?.body)).get('channel')==='CODD'
+  ?Response.json({ok:true,channel:{id:'CODD',is_group:true}}):usual(url,init));
+ await f.daemon.ready();await f.daemon.idle();
+ await f.transports[0].receive({},Buffer.from(f.raw('odd','ack-odd').toString().replace('CROOM','CODD').replace('000001','000002')));
+ await f.transports[0].receive({},f.raw());
+ f.clock.advance(0);await f.daemon.idle();
+ // The message in the readable room is delivered; the other waits, and the trouble is reported once.
+ expect(f.db.select().from(bridgeIncoming).all().map(row=>[row.channel,row.state])).toEqual([['CROOM','delivered']]);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
+ expect(f.errors).toHaveLength(1);
+ f.clock.advance(5000);await f.daemon.idle();f.clock.advance(5000);await f.daemon.idle();
+ expect(f.errors).toHaveLength(1);
+});
 it('publishes an earlier committed intake when a later receipt in the drain fails',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const first=JSON.parse(f.raw('first','one').toString()),bad=JSON.parse(f.raw('bad','two').toString());first.payload.event.channel_type='channel';bad.payload.event.channel_type='channel';bad.payload.event.text=123;bad.payload.event.ts='1794432000.000002';
  await f.transports[0].receive({},Buffer.from(JSON.stringify(first)));await f.transports[0].receive({},Buffer.from(JSON.stringify(bad)));f.published.length=0;f.clock.advance(0);await f.daemon.idle();
