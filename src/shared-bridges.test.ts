@@ -266,3 +266,18 @@ it('lets the body of a room schedule its agent\'s own later work, whoever is in 
  expect((await f.call('tempo','set',trigger({toKind:'person',to:'owner'}))).status).toBe(403);
  expect(f.db.select().from(triggers).all()).toHaveLength(1);
 });
+it('attaches the earlier words of a bridge conversation to one piece of mail in a batch, not to each',async()=>{
+ const f=fixture(()=>true,true);f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();});
+ const take=async()=>{const response=await f.root.http.request('http://loom/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+token.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});return (await response.json()).value.items as {words:string|null;history?:{words:string}[]}[];};
+ await take();
+ expect((await f.call('bridges','reply',{id:randomUUID(),incoming:incoming.id,text:'Hello back',model:'observed',outcome:'progressed'})).status).toBe(200);await f.root.services.bridges.daemon!.idle();
+ for(const [n,text] of [[2,'Second'],[3,'Third']] as const){
+  await f.transports.at(-1)!.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack'+n,payload:{type:'event_callback',event_id:'event'+n,team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text,ts:`179443200${n}.000001`,thread_ts:'1794432000.000001'}}})));
+  f.clock.advance(0);await f.root.services.bridges.daemon!.idle();
+ }
+ const batch=await take();
+ expect(batch.map(item=>item.words)).toEqual(['Second','Third']);
+ expect(batch[0].history?.map(line=>line.words)).toEqual(['Hello','Hello back']);
+ expect(batch[1].history).toBeUndefined();
+});
