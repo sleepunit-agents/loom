@@ -17,7 +17,7 @@ export async function* conversationMailSteps({page,app,clock,example,out,open}){
   check(result.status===200&&result.body.ok===true,'Signed-in '+name+' was refused');return result.body.value;
  };
  const body=async cv=>{
-  const working=db.select().from(jobs).where(and(eq(jobs.conversation,cv.id),inArray(jobs.state,['queued','starting','running','waiting']))).get(),queued=working;
+  const working=db.select().from(jobs).where(and(eq(jobs.conversation,cv.id),inArray(jobs.state,['queued','starting','running']))).get(),queued=working;
   check(!working||queued?.state==='queued'&&queued.agent===cv.agent&&queued.member===cv.member&&queued.project===cv.project,'The new fixture conversation already has a different active body');
   const box=db.select({id:boxes.id,revokedAt:boxes.revokedAt}).from(boxes).where(eq(boxes.id,example.runtime.box)).get();check(!!box&&!box.revokedAt,'The normal example worker box is unavailable');
   const id=queued?.id??'walkthrough-'+randomUUID(),token='body_'+randomBytes(32).toString('hex');

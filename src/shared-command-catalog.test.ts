@@ -44,9 +44,9 @@ it.each(['ended','revoked-machine','ownership','current-job','current-agent']as 
   if(change==='current-agent')f.db.update(s.conversations).set({agent:'mark'}).run();
  });expect([401,403]).toContain((await f.post()).status);
 });
-it('allows a still-bound waiting body and never grants it worker control',async()=>{
- const f=await fixture();f.root.writes.run(()=>f.db.update(s.jobs).set({state:'waiting'}).run());expect((await f.post({name:'runtime.started'})).status).toBe(200);
- const denied=await f.root.http.request('/api/runtime/started',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:'cannot-control',input:{job:'job',build:'fake'}})});expect(denied.status).toBe(403);expect(f.db.select().from(s.jobs).get()?.state).toBe('waiting');
+it('allows a still-bound running body and never grants it worker control',async()=>{
+ const f=await fixture();expect((await f.post({name:'runtime.started'})).status).toBe(200);
+ const denied=await f.root.http.request('/api/runtime/started',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:'cannot-control',input:{job:'job',build:'fake'}})});expect(denied.status).toBe(403);expect(f.db.select().from(s.jobs).get()?.state).toBe('running');
 });
 it('rejects overposted identity and unknown names without echoing caller strings',async()=>{
  const f=await fixture();expect((await f.post({agent:'art'})).status).toBe(400);const missing=await f.post({name:'PRIVATE_UNKNOWN_NAME'});expect(missing.status).toBe(404);expect(await missing.text()).not.toContain('PRIVATE_UNKNOWN_NAME');

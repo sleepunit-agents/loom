@@ -10,10 +10,9 @@ async function fixture(){
  const volume=(id:string,token=raw.body)=>f.root.http.request('/api/inbox/volume',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:{item,volume:'mute'},id})});
  return {...f,item,volume};
 }
-it('permits the same waiting body to carry out its current member mailbox preference',async()=>{
+it('permits the same body to carry out its current member mailbox preference, again and again',async()=>{
  const f=await fixture();
  expect((await f.volume('running')).status).toBe(200);
- f.root.writes.run(()=>f.db.update(s.jobs).set({state:'waiting'}).where(eq(s.jobs.id,'job')).run());
  expect((await f.volume('waiting')).status).toBe(200);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,f.item)).get()?.volume).toBe('mute');
 });

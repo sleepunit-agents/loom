@@ -7,7 +7,7 @@ import {httpWorkerControl} from './runtime/worker-http.js';
 import {workOnce} from './runtime/worker.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 /** Ids of the jobs working in the fixture's one conversation. */
-const working=(f:{db:Awaited<ReturnType<typeof bodyFixture>>['db']})=>f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.db.select().from(s.conversations).get()!.id),inArray(s.jobs.state,['queued','starting','running','waiting']))).all().map(row=>row.id);
+const working=(f:{db:Awaited<ReturnType<typeof bodyFixture>>['db']})=>f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.db.select().from(s.conversations).get()!.id),inArray(s.jobs.state,['queued','starting','running']))).all().map(row=>row.id);
 async function fixture(){
  const f=await bodyFixture(clean,{modelRoles:()=>[{model:'model',provider:'provider',harness:'claude',series:'series'}]}),now=()=>new Date(f.clock.now()).toISOString();
  f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();
