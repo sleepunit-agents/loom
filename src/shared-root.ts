@@ -187,7 +187,7 @@ export function sharedRoot(options: {
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);
-  registerSharedAccountSignIn(operations, db, now, credentials.runner);
+  registerSharedAccountSignIn(operations, db, now, credentials.runner, credentials.body);
   let tempo!: ReturnType<typeof installSharedTempo>;
 
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
