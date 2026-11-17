@@ -638,7 +638,8 @@ area("bridges", "Discord and Slack",
   T("bridge_channels", "Who answers in a channel.", [
     ("platform, workspace, channel", "text", "The channel.", ""),
     ("answers", "id", "The agent that replies to messages addressed to nobody.", "agents"),
-    ("bots_may_talk", "yes/no", "Whether bots may talk to each other here.", "")]),
+    ("bots_may_talk", "yes/no", "Whether a bot may call an agent here by writing its mention.", ""),
+    ("brief", "text", "The name of a page of the answering agent's, given to the body of every conversation in this channel. Empty when the channel has none of its own.", "")]),
   T("bridge_people", "Which member an outside user is.", [
     ("platform, workspace, user", "text", "The user in that app.", ""),
     ("member", "id", "The household member they are.", "members")]),
@@ -763,6 +764,8 @@ PLUMBING = [
  ("bridge_resume", "Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under."),
  ("bridge_send_parts", "The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own."),
  ("bridge_file_messages", "Which messages carried each kept Slack attachment. A file shared in two messages is listed under both and kept once."),
+ ("bridge_send_files", "The files a post carries, kept only until the post is sent, dismissed or left in doubt."),
+ ("conversation_sessions", "A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it, and it is erased at the household's keep time."),
  ("secret_write_journal", "A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done."),
 ]
 

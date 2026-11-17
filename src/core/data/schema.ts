@@ -1148,6 +1148,9 @@ export const bridgeChannels = sqliteTable('bridge_channels', {
   channel: text('channel').notNull(),
   answers: text('answers').notNull().references((): AnySQLiteColumn => agents.id),
   botsMayTalk: integer('bots_may_talk', { mode: 'boolean' }).notNull(),
+  /** The name of a role page of the answering agent, given to the body of every conversation in this
+   * channel beside the venue's own. Empty: the channel has no brief of its own. */
+  brief: text('brief'),
 }, t => [
   primaryKey({ columns: [t.platform, t.workspace, t.channel] }),
   check('bridge_channels_bots_may_talk_boolean', sql`${t.botsMayTalk} in (0, 1)`),
@@ -1879,6 +1882,25 @@ export const bridgeFileMessages = sqliteTable('bridge_file_messages', {
 }, t => [primaryKey({ columns: [t.connection, t.file, t.incoming] }),
   foreignKey({ columns: [t.connection, t.file], foreignColumns: [bridgeFiles.connection, bridgeFiles.file] }),
   index('bridge_file_messages_incoming_idx').on(t.incoming)]);
+/** The files a post carries, until the post is settled. Written with the post; removed when it is sent,
+ * dismissed or left in doubt (a post in doubt is never sent again), so nothing here outlives its post. */
+export const bridgeSendFiles = sqliteTable('bridge_send_files', {
+  send: text('send').notNull().references(() => bridgeSends.id),
+  position: integer('position').notNull(),
+  name: text('name').notNull(),
+  contents: blob('contents', { mode: 'buffer' }).notNull(),
+}, t => [primaryKey({ columns: [t.send, t.position] })]);
+/** A harness's own record of a conversation, kept between bodies so the next body of the same harness
+ * resumes it. One for a conversation and harness; `files` is sealed with the household's words key and
+ * read by nothing but the body it is handed to. `bytes` is the size of what was sealed. */
+export const conversationSessions = sqliteTable('conversation_sessions', {
+  conversation: text('conversation').notNull().references(() => conversations.id),
+  harness: text('harness').notNull(),
+  session: text('session').notNull(),
+  files: blob('files', { mode: 'buffer' }).notNull(),
+  bytes: integer('bytes').notNull(),
+  savedAt: text('saved_at').notNull(),
+}, t => [primaryKey({ columns: [t.conversation, t.harness] }), check('conversation_sessions_saved_at_utc', utc(t.savedAt))]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
   id: text('id').notNull(),
@@ -1916,7 +1938,7 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
 export const plumbing = {
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, secretWriteJournal };
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, bridgeSendFiles, conversationSessions, secretWriteJournal };
 
 export const tables = {
   members,

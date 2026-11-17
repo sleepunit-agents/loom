@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Schema step 11.** `bridge_channels` gains `brief`, empty on every rule there is. Two tables are added, both empty: `bridge_send_files` (the files a post carries until it is settled) and `conversation_sessions` (a harness's own record of a conversation, sealed, kept between bodies). The step adds only and touches no row. Neither table is read by the query door.
+
 - **Bridges: a body is handed what was said earlier in its Discord or Slack conversation.** The take route attaches the conversation's earlier messages and posts (up to 1 MB and a hundred lines) to the first piece of bridge mail, as it does a Comms thread's dialogue. Before this a bridge body was given only the new message. A history line's `keepUntil` may now be `null` (words kept without limit); the body's client accepts history on `discord` and `slack` mail.
 
 - **Bridges: a taken Discord message gets 👀, and the channel shows typing while the job works.** The reaction comes off when the reply is made or the job ends. Both are best effort and are never a job's failure. Slack shows neither.

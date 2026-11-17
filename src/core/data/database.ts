@@ -239,6 +239,18 @@ const upgrades: readonly (readonly string[])[] = [
   // under it stay readable, and its unfinished tasks are shelved until it is revived (shared-projects.ts).
   // One empty column; no row is touched, so no project is retired by upgrading. The check is removed_at's.
   ["ALTER TABLE projects ADD COLUMN retired_at text CHECK (retired_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', retired_at) = retired_at or strftime('%Y-%m-%dT%H:%M:%fZ', retired_at) = retired_at, 0))"],
+  // 11: three additions for the bridges, none touching a row that is there.
+  //  - bridge_channels.brief: the role page a channel's rule names for the bodies of its conversations
+  //    (pieces/bridges/settings.ts). Empty on every rule there is, so no channel gains a brief by upgrading.
+  //  - bridge_send_files: the files a post carries until the post is settled (pieces/bridges/sends.ts).
+  //  - conversation_sessions: a harness's own record of a conversation, sealed, kept between bodies so
+  //    the next one resumes it (core/conversations/sessions.ts).
+  // Both tables start empty.
+  [
+    'ALTER TABLE bridge_channels ADD COLUMN brief text',
+    "CREATE TABLE `bridge_send_files` (\n\t`send` text NOT NULL,\n\t`position` integer NOT NULL,\n\t`name` text NOT NULL,\n\t`contents` blob NOT NULL,\n\tPRIMARY KEY(`send`, `position`),\n\tFOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action\n)",
+    "CREATE TABLE `conversation_sessions` (\n\t`conversation` text NOT NULL,\n\t`harness` text NOT NULL,\n\t`session` text NOT NULL,\n\t`files` blob NOT NULL,\n\t`bytes` integer NOT NULL,\n\t`saved_at` text NOT NULL,\n\tPRIMARY KEY(`conversation`, `harness`),\n\tFOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"conversation_sessions_saved_at_utc\" CHECK(\"conversation_sessions\".\"saved_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"conversation_sessions\".\"saved_at\") = \"conversation_sessions\".\"saved_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"conversation_sessions\".\"saved_at\") = \"conversation_sessions\".\"saved_at\", 0))\n)",
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

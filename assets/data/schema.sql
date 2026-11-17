@@ -1081,6 +1081,7 @@ CREATE TABLE `bridge_channels` (
 	`channel` text NOT NULL,
 	`answers` text NOT NULL,
 	`bots_may_talk` integer NOT NULL,
+	`brief` text,
 	PRIMARY KEY(`platform`, `workspace`, `channel`),
 	FOREIGN KEY (`answers`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_channels_bots_may_talk_boolean" CHECK("bridge_channels"."bots_may_talk" in (0, 1))
@@ -1366,6 +1367,27 @@ CREATE TABLE `bridge_file_messages` (
 );
 
 CREATE INDEX `bridge_file_messages_incoming_idx` ON `bridge_file_messages` (`incoming`);
+CREATE TABLE `bridge_send_files` (
+	`send` text NOT NULL,
+	`position` integer NOT NULL,
+	`name` text NOT NULL,
+	`contents` blob NOT NULL,
+	PRIMARY KEY(`send`, `position`),
+	FOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE TABLE `conversation_sessions` (
+	`conversation` text NOT NULL,
+	`harness` text NOT NULL,
+	`session` text NOT NULL,
+	`files` blob NOT NULL,
+	`bytes` integer NOT NULL,
+	`saved_at` text NOT NULL,
+	PRIMARY KEY(`conversation`, `harness`),
+	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "conversation_sessions_saved_at_utc" CHECK("conversation_sessions"."saved_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversation_sessions"."saved_at") = "conversation_sessions"."saved_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversation_sessions"."saved_at") = "conversation_sessions"."saved_at", 0))
+);
+
 CREATE TABLE `secret_write_journal` (
 	`id` text PRIMARY KEY NOT NULL,
 	`secret` text NOT NULL,
