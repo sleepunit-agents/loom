@@ -490,6 +490,10 @@ export interface KnowledgeVerifyResult {
   noted: boolean;
 }
 
+/** The most characters one memory's content may have. The commands that write a memory and the terminal's
+ * tools over them (src/pieces/mind/semantic-commands.ts, src/shared-mcp-named.ts) both take it from here. */
+export const MEMORY_CONTENT_MAX = 65536;
+
 /** What a later look at a feedback memory found: it held, or it did not. */
 export const OBSERVATIONS = ['confirm', 'contradict'] as const;
 export type Observation = (typeof OBSERVATIONS)[number];

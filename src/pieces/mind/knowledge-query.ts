@@ -7,7 +7,7 @@ import {
  GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap,
 } from 'graphql/index.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
-import { knowledgeView, knowledgeAccess } from './knowledge.js';
+import { knowledgeView, knowledgeAccess, AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './knowledge.js';
 import {knowledgeSweep} from './knowledge-sweep.js';
 import type {SweepPart} from '../../core/tempo/sweep.js';
 import {MAX_REVISIONS} from '../../backends/cards.js';
@@ -95,8 +95,8 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
     const rows=db.prepare("SELECT updated,verified_at FROM pages WHERE status='active'").all() as Array<{updated:string;verified_at:string|null}>;
     for(const row of rows){
      const anchor=Date.parse(row.verified_at??row.updated);
-     const boundaries=[anchor+20*86400_000,anchor+30*86400_000,
-      ...(row.verified_at?[Date.parse(row.verified_at)+7*86400_000]:[])];
+     const boundaries=[anchor+AGING_DAYS*86400_000,anchor+CHECK_DAYS*86400_000,
+      ...(row.verified_at?[Date.parse(row.verified_at)+RECENT_DAYS*86400_000]:[])];
      for(const at of boundaries)if(Number.isFinite(at)&&at>now&&(next===undefined||at<next))next=at;
     }
     return next;

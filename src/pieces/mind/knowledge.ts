@@ -10,6 +10,8 @@ export function knowledgeAccess(viewer:Viewer,sharing:Sharing){return {id:'knowl
 interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null; freshness_anchor?: string | null; sla_class?: string | null }
 /** How long a check of a page stands. The page shows it as due after this, and the sweep raises it then. */
 export const CHECK_DAYS = 30;
+/** A page is shown as aging for the last third of that time. */
+export const AGING_DAYS = (CHECK_DAYS * 2) / 3;
 export type Freshness = 'fresh' | 'aging' | 'due';
 export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; freshness_anchor?: string; sla_class?: string; fresh: Freshness; by?: string;
   /** Confirmed in the last RECENT_DAYS: Knowledge's Recently verified. */
@@ -25,7 +27,7 @@ export interface KnowledgeOpen extends KnowledgeRow {
 export interface KnowledgeView { total: number; checkDays: number; recentDays: number; pages: KnowledgeRow[]; open?: KnowledgeOpen }
 
 /** How many days back "Recently verified" reaches. */
-const RECENT_DAYS = 7;
+export const RECENT_DAYS = 7;
 
 /** Every active page's line (title, domain, freshness), and the one asked for whole: Knowledge's own view. */
 export function knowledgeView(db: Database | undefined, nowMs: number, open?: string, detailOnly = false): KnowledgeView {
@@ -45,7 +47,7 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
       const at = Date.parse(r.verified_at ?? r.updated);
       const age = (nowMs - at) / day;
       if (last.get(r.id)?.outcome === 'stale' || !(age < CHECK_DAYS)) return 'due';
-      return age >= (CHECK_DAYS * 2) / 3 ? 'aging' : 'fresh';
+      return age >= AGING_DAYS ? 'aging' : 'fresh';
     };
     const recent = (r: { verified_at?: string | null }) => !!r.verified_at && nowMs - Date.parse(r.verified_at) < RECENT_DAYS * day;
     const line = (r: PageRow & { id: number }): KnowledgeRow => ({ slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,

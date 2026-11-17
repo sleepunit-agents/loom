@@ -10,7 +10,8 @@ import type {McpServer} from '@modelcontextprotocol/server';
 import {householdChanges,dangerousHouseholdChanges} from './shared-household-proposals.js';
 import {MEMORY_CATEGORIES} from './categories.js';
 import {LIFESPAN_NAMES,NOTE_PATH_MAX} from './notes.js';
-import {OBSERVATIONS} from './backends/types.js';
+import {MEMORY_CONTENT_MAX,OBSERVATIONS} from './backends/types.js';
+import {MAX_PAGE_BODY_LENGTH} from './backends/knowledge-verification.js';
 import {STATUSES} from './backends/projects.js';
 import {approvals,inbox,tasks} from './core/data/schema.js';
 
@@ -94,7 +95,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  tool('remember','Save a memory in your own store.',
-  z.object({category,title:z.string().max(200),content:z.string().max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.unknown()).optional()}).strict(),
+  z.object({category,title:z.string().max(200),content:z.string().max(MEMORY_CONTENT_MAX),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.unknown()).optional()}).strict(),
   async input=>{const value=await run('memory.remember',input) as {ids:string[]};return 'Remembered "'+input.title+'" ('+value.ids.join(', ')+')';});
 
  tool('recall','Search your memories by meaning. Returns titles and content.',
@@ -113,7 +114,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  tool('update','Edit one of your memories by its id. A changed body keeps the old one as a revision.',
-  z.object({id:memoryId,content:z.string().max(65536).optional(),metadata:z.record(z.string(),z.unknown()).optional(),observation:z.enum(OBSERVATIONS).optional()}).strict(),
+  z.object({id:memoryId,content:z.string().max(MEMORY_CONTENT_MAX).optional(),metadata:z.record(z.string(),z.unknown()).optional(),observation:z.enum(OBSERVATIONS).optional()}).strict(),
   async input=>{await run('memory.update',input);return 'Updated '+input.id;});
 
  tool('forget','Delete one of your memories by its id. This is final.',
@@ -142,7 +143,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  tool('knowledge_write','Add a shared knowledge page. source, if given, is an http or https link; without one the page stays provisional.',
-  z.object({title:z.string().min(1).max(200),domain:z.string().min(1).max(200),body:z.string().min(1).max(65536),source:z.string().max(4000).optional()}).strict(),
+  z.object({title:z.string().min(1).max(200),domain:z.string().min(1).max(200),body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH),source:z.string().max(4000).optional()}).strict(),
   async input=>{const value=await run('mind.knowledgeAdd',input) as {slug:string};return 'Wrote knowledge page '+value.slug;});
 
  tool('note_read','Read one of your notes by path.',
@@ -218,7 +219,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
 
  // Memory: drafts, the archive and earlier versions.
  tool('memory_propose','Draft a memory. Recall cannot see a draft until it is ratified.',
-  z.object({category,title:z.string().max(200),content:z.string().max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.unknown()).optional(),source:z.string().max(200).optional()}).strict(),
+  z.object({category,title:z.string().max(200),content:z.string().max(MEMORY_CONTENT_MAX),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.unknown()).optional(),source:z.string().max(200).optional()}).strict(),
   async input=>{const value=await run('memory.propose',input) as {id?:string;ids?:string[]};return 'Drafted "'+input.title+'" ('+(value.id??(value.ids??[]).join(', '))+')';});
  tool('memory_drafts','List your drafted memories that await ratification.',
   z.object({limit:z.number().int().min(1).max(50).optional()}).strict(),
@@ -257,7 +258,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    return lines.join('\n');
   });
  tool('knowledge_edit','Change a shared knowledge page: replace its body (the old body is kept as a version), add a source (an http or https link), or both.',
-  z.object({slug:pageSlug,body:z.string().min(1).max(65536).optional(),source:z.string().max(4000).optional()}).strict(),
+  z.object({slug:pageSlug,body:z.string().min(1).max(MAX_PAGE_BODY_LENGTH).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
  tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check. A note is added to the page as a dated section; without one the page is left as it is. freshnessAnchor is the version or date the page holds true as of.',
   z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),

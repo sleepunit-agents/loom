@@ -8,7 +8,7 @@ import {z} from 'zod';
 import {OperationError,RecoveredWrite,type Operations,type Context,type WriteReceipt} from '../../core/operations/index.js';
 import type {Viewer} from '../../policy.js';
 import {SqliteVecBackend} from '../../backends/sqlite-vec.js';
-import {OBSERVATIONS,type EmbeddingProvider} from '../../backends/types.js';
+import {MEMORY_CONTENT_MAX,OBSERVATIONS,type EmbeddingProvider} from '../../backends/types.js';
 import {createEmbeddingProvider} from '../../backends/index.js';
 import {semanticMemoryReady,semanticCardsReady} from './semantic-schema.js';
 import {opaqueCardReference} from './card-references.js';
@@ -22,7 +22,7 @@ type Identity={name:string;input_hash:string;expires:number};
 type Stored=Identity&{result:string};
 const category=z.enum(MEMORY_CATEGORIES);
 const authored=z.string().refine(value=>value.trim().length>0,'Authored text cannot be blank');
-const remember=z.object({category,title:authored.max(200),content:authored.max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional(),
+const remember=z.object({category,title:authored.max(200),content:authored.max(MEMORY_CONTENT_MAX),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional(),
  sourcing:z.enum(['observed','relayed','inferred','system']).optional().describe('How the memory was produced: observed first-hand, relayed by someone, inferred, or written by the system.'),provenance:z.string().max(2000).optional().describe('Where it came from: a surface, session, lane or person.')}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
 export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;embedding?():EmbeddingProvider;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void}){
@@ -139,7 +139,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   if(!row)throw new OperationError('not-found','Memory is absent');return {uuid,ref:row.ref};
  };
  operations.register({...base,doors:[...base.doors],name:'memory.update',
-  input:target.extend({content:authored.max(65536).optional(),metadata:remember.shape.metadata,observation:z.enum(OBSERVATIONS).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
+  input:target.extend({content:authored.max(MEMORY_CONTENT_MAX).optional(),metadata:remember.shape.metadata,observation:z.enum(OBSERVATIONS).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
    const row=ownTarget(db,viewer,input.id),result=await backend.update({ref:row.ref,content:input.content,metadata:input.metadata,observation:input.observation});
    if(!result.updated)throw new OperationError('not-found','Memory is absent');return {ids:[row.uuid]};

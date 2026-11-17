@@ -6,7 +6,8 @@ import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agentBoxes, agentHousePorts, agentRunSettings, boxes, boxAgents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-const text=(max:number)=>z.string().trim().min(1).max(max).refine(value=>!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value));
+import { hasControlCharacter } from './core/line-name.js';
+const text=(max:number)=>z.string().trim().min(1).max(max).refine(value=>!hasControlCharacter(value));
 const repository=text(2048).refine(value=>{
  if(/[?#]/.test(value)||/^[^/@\s]+:[^/@\s]+@/.test(value))return false;
  try{const url=new URL(value,'https://repository.invalid/');return !url.password&&!url.search&&!url.hash&&(!url.username||url.protocol==='ssh:');}catch{return false;}

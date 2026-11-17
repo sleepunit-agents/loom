@@ -9,6 +9,7 @@ import { rules, type Viewer } from '../../policy.js';
 import { sqlRule } from '../../policy-sql.js';
 import { actionResults, deletedThreads, threads, type conversations, type inbox } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
+import { MESSAGE_WORDS_MAX } from './words.js';
 
 type Conversation = typeof conversations.$inferSelect;
 type Thread = typeof threads.$inferSelect;
@@ -27,7 +28,7 @@ export interface ConversationOperationOptions {
 
 const target = z.object({ thread: z.string().min(1) }).strict();
 const acknowledgement = z.object({ saved: z.literal(true) }).strict();
-const answerInput = z.object({ item: z.string().min(1), answer: z.enum(['yes', 'no', 'words', 'replied', 'done', 'dismiss']), words: z.string().max(100_000).optional() }).strict();
+const answerInput = z.object({ item: z.string().min(1), answer: z.enum(['yes', 'no', 'words', 'replied', 'done', 'dismiss']), words: z.string().max(MESSAGE_WORDS_MAX).optional() }).strict();
 const changeInput = z.discriminatedUnion('change', [
   target.extend({ change: z.literal('rename'), title: threadTitle }),
   target.extend({ change: z.literal('pin'), pinned: z.boolean() }),
@@ -88,7 +89,7 @@ export function registerConversationOperations(operations: Operations, service: 
   }));
 
   operations.register(operation({ ...common, name: 'comms.send',
-    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().min(1).max(100_000) }),
+    input: target.extend({ clientId: z.string().min(1).max(200), words: z.string().trim().min(1).max(MESSAGE_WORDS_MAX) }),
     output: z.object({ thread: z.string(), seq: z.number().int(), item: z.string() }).strict(),
     may: (v, i) => threadAccess(v, i.thread),
     prepare: (i, ctx) => service.prepareSend({ thread: i.thread, clientId: i.clientId, words: i.words, sender: member(ctx.viewer), kind: 'message' }),

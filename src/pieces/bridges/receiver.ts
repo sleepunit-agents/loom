@@ -16,7 +16,7 @@ import { z } from 'zod';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
-import { BridgeEvents, RAW_EVENT_LIFETIME, type BridgeCheckpoint, type Consumed } from './events.js';
+import { BridgeEvents, RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME, type BridgeCheckpoint, type Consumed } from './events.js';
 import { BridgeIncoming } from './incoming.js';
 import { normalizeDiscord, normalizeSlack, type DiscordChannel, type SlackChannel } from './normalize.js';
 
@@ -30,8 +30,9 @@ const guildField = z.object({ guild_id: id.nullish() });
 const slackChannelField = z.object({ channel: id });
 
 /** How long a held message is still worth delivering. After a day an answer would come too late to be
- * wanted, so the message is closed as dropped and says why. */
-export const HELD_LIFETIME = 86_400_000;
+ * wanted, so the message is closed as dropped and says why. The same day an unread frame is kept, by
+ * construction: a retry that outlived the frame would be retrying a message whose only copy was gone. */
+export const HELD_LIFETIME = UNREAD_EVENT_LIFETIME;
 export interface BridgeChannelCache {
   discord(connection: string, channel: string): DiscordChannel | undefined;
   slack(connection: string, channel: string): SlackChannel | undefined;

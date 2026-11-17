@@ -10,7 +10,7 @@ import { closeSync, constants, fstatSync, openSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { assertPrivateDirectory, privateBytes } from './local-holder.js';
-import { secretName } from './input.js';
+import { SECRET_VALUE_BYTES, SECRET_WRITE_MODES, secretName, secretValueSize } from './input.js';
 
 const unavailable = () => new Error('Secret holder storage unavailable');
 /** The holder store's version, kept in the file header (PRAGMA user_version). A change to its tables raises
@@ -151,7 +151,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
         let bytes: Buffer | undefined;
         try {
           check();
-          if (!(value instanceof Uint8Array) || !value.byteLength || value.byteLength > 65536 || !['add', 'replace'].includes(mode)) throw unavailable();
+          if (!(value instanceof Uint8Array) || !secretValueSize(value.byteLength) || !SECRET_WRITE_MODES.includes(mode)) throw unavailable();
           // Snapshot all caller-owned mutable input before the first await.
           who = context.parse(who); bytes = Buffer.from(value);
           const hashes = keys.map(key => fingerprint(key, who, 'set', name, mode, bytes));
@@ -217,10 +217,10 @@ export async function openHolderStore(directory: string, identityFile: string, f
           const separator = row.ciphertext.indexOf('\n--- ');
           const end = separator < 0 ? -1 : row.ciphertext.indexOf(10, separator + 5);
           const payload = row.ciphertext.length - end - 1 - 16;
-          if (end < 0 || end >= 16384 || payload <= 16 || payload > 65536 + 16) throw unavailable();
+          if (end < 0 || end >= 16384 || payload <= 16 || payload > SECRET_VALUE_BYTES + 16) throw unavailable();
           bytes = await decrypt.decrypt(row.ciphertext);
           check();
-          if (!bytes.length || bytes.length > 65536) throw unavailable();
+          if (!secretValueSize(bytes.length)) throw unavailable();
           return bytes;
         } catch { bytes?.fill(0); throw unavailable(); }
       },

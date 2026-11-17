@@ -13,6 +13,7 @@ import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
 import type { BridgeSends } from './pieces/bridges/sends.js';
 import { OperationError,type Operations } from './core/operations/index.js';
+import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,sends:BridgeSends,
  conversations:Conversations,current:ReturnType<typeof conversationBodyScope>,effectsAllowed:()=>boolean){
  const source=(incoming:string)=>db.select({conversation:bridgeIncoming.conversation,agent:bridgeConnections.agent,platform:bridgeConnections.platform,state:bridgeIncoming.state}).from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeIncoming.connection,bridgeConnections.id)).where(eq(bridgeIncoming.id,incoming)).get();
@@ -29,7 +30,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    .where(and(eq(inboxRefs.ref,incoming),eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.source,found.cv.venue as 'discord'|'slack'))).get();
   return mail?.job===found.job.id&&(mail.state==='taken'||mail.state==='done')?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,mail:mail.id}:undefined;
  };
- operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400),text:z.string().min(1).max(100000),model:z.string().min(1).max(200),outcome:z.enum(turns.outcome.enumValues).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
+ operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400),text:z.string().min(1).max(MESSAGE_WORDS_MAX),model:z.string().min(1).max(200),outcome:z.enum(turns.outcome.enumValues).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
   may:(viewer,input)=>!!target(viewer,input.incoming),
   inputHash:(canonical,{actor,input})=>createHash('sha256').update('loom-shared-bridge-reply-receipt-v1\0').update(JSON.stringify([target(actor,input.incoming)??null,canonical])).digest('hex'),
   run(ctx,input){

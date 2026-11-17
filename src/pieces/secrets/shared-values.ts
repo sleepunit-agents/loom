@@ -10,12 +10,12 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { members, secrets, secretChanges, secretWriteJournal } from '../../core/data/schema.js';
 import { SecretRequests } from './requests.js';
 import type { HolderWrite } from './holder-store.js';
-import { secretName, secretDescription } from './input.js';
+import { secretName, secretDescription, secretValueText, secretWriteMode } from './input.js';
 import { secretHasValue } from './presence.js';
 
 const identity = z.object({ id: z.uuid(), member: z.string().min(1).max(256), name: secretName }).strict();
-const setInput = identity.extend({ mode: z.enum(['add', 'replace']), description: secretDescription.optional(),
-  value: z.string().refine(value => Buffer.byteLength(value) > 0 && Buffer.byteLength(value) <= 65536) }).strict();
+/** One value write. The `secrets.set` door takes the same shape without the member, whom it names itself. */
+export const secretSetInput = identity.extend({ mode: secretWriteMode, description: secretDescription.optional(), value: secretValueText }).strict();
 type Journal = typeof secretWriteJournal.$inferSelect;
 const unavailable = () => new Error('Secret write awaits reconciliation');
 const conflict = () => new Error('Secret write identity already reserved');
@@ -42,8 +42,8 @@ export class SecretValues {
     this.key = createSecretKey(fingerprintKey);
   }
 
-  async set(raw: z.input<typeof setInput>): Promise<{ saved: true }> {
-    const input = setInput.parse(raw);
+  async set(raw: z.input<typeof secretSetInput>): Promise<{ saved: true }> {
+    const input = secretSetInput.parse(raw);
     const hash = this.hash(JSON.stringify([input.member, input.id, input.name, input.mode, input.description ?? null, input.value]));
     const row = this.reserve(input, input.mode, hash, input.description);
     await this.perform(row, input.value);

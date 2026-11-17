@@ -10,7 +10,7 @@ import { boxes, modelAccounts } from './core/data/schema.js';
 import type { Operations, Door } from './core/operations/index.js';
 import { accountBoxes } from './runtime/account-boxes.js';
 import type { ModelRole } from './runtime/placement.js';
-const name=z.string().min(1).max(200).refine(value=>value===value.trim()&&!/[\0\r\n]/.test(value));
+import { lineName as name } from './core/line-name.js';
 export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,roles:()=>readonly ModelRole[]){
  const account=(id:string)=>db.select().from(modelAccounts).where(eq(modelAccounts.id,id)).get();
  const owns=(viewer:Viewer,id:string)=>{

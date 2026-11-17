@@ -6,6 +6,7 @@ import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { signInAccount } from './account-signin.js';
 import { relaySignIn } from './account-signin-relay.js';
+import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
 import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
@@ -39,7 +40,7 @@ const configSchema = z.object({
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
    * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests. */
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
-    intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(900_000).optional() }).strict().optional(),
+    intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
     setupTimeoutMs: stepDeadline.optional(),
     cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),

@@ -4,11 +4,12 @@ import { z } from 'zod';
 import { mayAct } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agentDeniedTools, agentPeople, agents } from './core/data/schema.js';
+import { agentDeniedTools, agentPeople, agents, bridgeConnections } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { outsidePersonKey } from './pieces/bridges/keys.js';
-const text=(max:number)=>z.string().min(1).max(max).refine(value=>value.trim().length>0).refine(value=>!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value));
-const outsidePerson=z.object({platform:z.enum(['discord','slack']),workspace:text(200),user:text(200),tier:z.union([z.literal(1),z.literal(2),z.literal(3)])}).strict();
+import { hasControlCharacter } from './core/line-name.js';
+const text=(max:number)=>z.string().min(1).max(max).refine(value=>value.trim().length>0).refine(value=>!hasControlCharacter(value));
+const outsidePerson=z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:text(200),user:text(200),tier:z.union([z.literal(1),z.literal(2),z.literal(3)])}).strict();
 const key=(person:z.infer<typeof outsidePerson>)=>outsidePersonKey(person.platform,person.workspace,person.user);
 export const agentBodyPolicyInput=z.object({agent:text(200),people:z.array(outsidePerson).max(128).refine(values=>new Set(values.map(key)).size===values.length),
    deniedTools:z.array(z.object({pattern:text(512).refine(value=>!value.trimStart().startsWith('-')),guestsOnly:z.boolean()}).strict()).max(128).refine(values=>new Set(values.map(value=>JSON.stringify([value.pattern,value.guestsOnly]))).size===values.length),

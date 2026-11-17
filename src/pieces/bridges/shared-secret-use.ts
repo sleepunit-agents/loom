@@ -2,6 +2,7 @@
  * proves one holder/config lifetime. Only domain-separated digests survive a
  * use; mutable credential bytes are erased before the platform callback runs. */
 import {isHolderGeneration} from '../secrets/role.js';
+import {secretValueSize} from '../secrets/input.js';
 import { createHash } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 import type { Clock } from '../../core/clock.js';
@@ -41,7 +42,7 @@ export function sharedBridgeSecretUse(options:{
      if(!(found instanceof Uint8Array))throw unavailable();
      borrowed=found;owned.add(found);
      try{
-      if(!fresh()||found.byteLength<1||found.byteLength>65536||found.includes(0))throw unavailable();
+      if(!fresh()||!secretValueSize(found.byteLength)||found.includes(0))throw unavailable();
       if(!await same()||!fresh())throw unavailable();
       const hash=createHash('sha256').update('loom-bridge-credential-bytes-v1\0').update(name).update('\0').update(found).digest('hex'),old=hashes.get(name);
       if(old!==undefined&&old!==hash)throw unavailable();hashes.set(name,hash);

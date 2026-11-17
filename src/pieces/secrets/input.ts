@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { householdId } from '../../slug.js';
+import type { secretChanges } from '../../core/data/schema.js';
 export const secretName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
 // Names no startup secret may take, whatever the harness: how the body finds and runs programs, where it
 // connects, what loom itself hands a body, and the tools protocol's own prefix.
@@ -17,6 +18,18 @@ export function isHouseSecretAlias(name: string): boolean {
 export const houseSecretAlias = z.string().refine(isHouseSecretAlias, 'An alias is a name an environment variable can have, and not one a body runs by');
 /** What a secret is for, in the owner's words. Never the value. */
 export const secretDescription = z.string().max(4000);
+/** The most bytes one secret's value may have, and it has at least one. This is the one statement of it:
+ * the door that takes a value, the service that journals the write, the channel to the key holder, the
+ * holder's store and every reader of a value ask here, so a value the door accepts is one the holder
+ * keeps and every reader takes. */
+export const SECRET_VALUE_BYTES = 65536;
+export const secretValueSize = (bytes: number): boolean => bytes >= 1 && bytes <= SECRET_VALUE_BYTES;
+/** A value as a door takes it: text of that many bytes. */
+export const secretValueText = z.string().refine(value => secretValueSize(Buffer.byteLength(value)));
+/** How a value is written: a new secret's first value, or another in place of the one it has. Both are
+ * actions the `secret_changes.action` column records. */
+export const SECRET_WRITE_MODES = ['add', 'replace'] as const satisfies readonly (typeof secretChanges.$inferSelect.action)[];
+export const secretWriteMode = z.enum(SECRET_WRITE_MODES);
 /** The agent a secret is for: a household agent's id. */
 export const secretAgent = householdId;
 

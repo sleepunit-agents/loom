@@ -3,7 +3,7 @@
 import {SECRET_USE_ID} from './use-id.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
-import {houseSecretAlias} from './input.js';
+import {houseSecretAlias,SECRET_VALUE_BYTES} from './input.js';
 import {privateOrigin} from '../../core/private-origin.js';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
 class PendingRepository extends Error {}
@@ -52,7 +52,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
  async function read(input:object,job?:string,optional=false):Promise<Buffer|undefined>{
   let value:Buffer|undefined;
   try{return await attempt(async(current,signal)=>{
-   const received=await post('read',input,current,signal,65536);value=received.bytes;owned.add(value);
+   const received=await post('read',input,current,signal,SECRET_VALUE_BYTES);value=received.bytes;owned.add(value);
    if(optional&&received.response.status===204){value.fill(0);owned.delete(value);return undefined;}
    const use=received.response.headers.get('x-loom-secret-use');
    if(received.response.headers.get('content-type')?.split(';')[0]!=='application/octet-stream'||!use||!SECRET_USE_ID.test(use)||!value.length)throw unavailable();
