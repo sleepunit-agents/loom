@@ -77,6 +77,8 @@ upgraded database and a fresh one can hold the same table with its columns in a
 different order, and no statement may place a value by position
 (`src/stored-data.contract.test.ts` fails on an insert that does not name its columns).
 
+Step 10 is the plainest kind: it adds one empty column, `projects.retired_at`, and touches no row.
+
 A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).
 

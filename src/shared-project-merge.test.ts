@@ -89,7 +89,7 @@ it('files every record of the merged project under the other, in every table tha
   expect(f.service.describe('pond')).toEqual({ id: 'pond', name: 'pond', removed: true, members: ['kit', 'lee'], agents: ['mark'], repositories: [] });
   expect(f.db.select().from(projectRepositories).where(eq(projectRepositories.project, 'pond')).all()).toEqual([]);
   // pond is kept and marked removed; garden and the project that took no part are as they were.
-  expect(f.db.select().from(projects).all()).toEqual([{ id: 'pond', name: 'pond', removedAt: later }, { id: 'garden', name: 'garden', removedAt: null }, { id: 'shed', name: 'shed', removedAt: null }]);
+  expect(f.db.select().from(projects).all()).toEqual([{ id: 'pond', name: 'pond', removedAt: later, retiredAt: null }, { id: 'garden', name: 'garden', removedAt: null, retiredAt: null }, { id: 'shed', name: 'shed', removedAt: null, retiredAt: null }]);
   // The records themselves are the same ones, with nothing about them changed but where they are filed.
   expect(f.db.select().from(tasks).where(eq(tasks.id, pond.task.id)).get()).toEqual({ ...pond.task, project: 'garden' });
   expect(f.db.select().from(conversations).where(eq(conversations.id, pond.room.id)).get()).toEqual({ ...pond.room, project: 'garden' });

@@ -235,6 +235,10 @@ const upgrades: readonly (readonly string[])[] = [
     'ALTER TABLE triggers ADD COLUMN member text REFERENCES members(id)',
     "UPDATE triggers SET member = owner WHERE owner_kind = 'member' AND to_kind = 'agent' AND owner IN (SELECT id FROM members)",
   ],
+  // 10: when a project was retired. A state between in use and removed: the project and everything filed
+  // under it stay readable, and its unfinished tasks are shelved until it is revived (shared-projects.ts).
+  // One empty column; no row is touched, so no project is retired by upgrading. The check is removed_at's.
+  ["ALTER TABLE projects ADD COLUMN retired_at text CHECK (retired_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', retired_at) = retired_at or strftime('%Y-%m-%dT%H:%M:%fZ', retired_at) = retired_at, 0))"],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
