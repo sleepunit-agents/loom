@@ -10,11 +10,11 @@ import type { Authentication } from '../live/index.js';
 import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { dataAuthentication } from './authentication.js';
+import { sameRequestOrigin } from './origin.js';
 import type { DataDatabase } from './database.js';
 import { readRetained } from './read-lease.js';
 import { ExecutionDrain } from './execution.js';
 import { DOOR_REQUEST_BYTES } from './door-limit.js';
-import { sameRequestOrigin } from './origin.js';
 
 export { DOOR_REQUEST_BYTES };
 

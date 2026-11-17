@@ -198,13 +198,20 @@ program prints could repeat a code or a token:
 | `not-installed` | The provider's program is not installed on this machine |
 
 Anything else, or nothing, is shown as "The provider's program says the account
-is not signed in". The list is `SIGNIN_REASONS` in
-`src/runtime/account-signin-relay.ts`.
+is not signed in". The worker has a few words of its own for how the relay went
+(`no-page`, `no-program`, `cannot-run`, `ended`, `timed-out`, `stopped`). The
+whole list is in `src/runtime/account-signin-reasons.ts`. Loom keeps the rule
+itself: `runtime.signInDone` stores its own sentence for a word in the list and
+"The sign-in did not finish" for any other text a worker sends.
 
-A pasted code is read by the worker of that machine while the sign-in waits and
-is blanked when the sign-in ends, however it ends. A request nobody finishes
-ends after 20 minutes; the program's periodic sweep closes it even when no
-worker is polling.
+A pasted code is handed over once. The worker of that machine takes it
+(`runtime.signInTake`), which blanks it in the database and keeps it in the
+program's memory under that take; only the same take can read it
+(`runtime.signInCode`), again if a reply was lost. No second take and no other
+reader gets it. If loom restarts between the take and the read the code is
+gone: the sign-in fails and is asked for again. The code is forgotten when the
+sign-in ends, however it ends. A request nobody finishes ends after 20 minutes;
+the program's periodic sweep closes it even when no worker is polling.
 
 The separate private program performs the actual provider sign-in/out. These
 commands record its result, without accepting credentials or invoking it inside

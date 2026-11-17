@@ -20,9 +20,10 @@ import {tokenLive} from './core/data/authentication.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
 import {ownHome} from './core/daemon-home.js';
 import {prepareOperatorHome,listenOperatorLinks,type operatorRequest} from './core/signin/operator.js';
-import {sameOrigin} from './core/signin/shared-browser.js';
+import {sameIncomingOrigin} from './core/data/origin.js';
 import {relyingParty} from './core/signin/webauthn.js';
 import {sharedSigninLinks} from './core/signin/shared-links.js';
+import {LINK_MS} from './core/signin/link-lifetime.js';
 import {privateBytes} from './pieces/secrets/local-holder.js';
 import {readKey,wordsKey,type WordsKey} from './pieces/comms/crypto.js';
 import {serveShared} from './shared-serve.js';
@@ -102,7 +103,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   }
   const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
-   originAllowed:sameOrigin,publicOrigin,
+   originAllowed:request=>sameIncomingOrigin(request,publicOrigin),publicOrigin,
    changes,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
    secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,memoryEmbedding:adapters.memoryEmbedding,
@@ -120,16 +121,16 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    return found?.fingerprint??issuer.issue({kind:'owner',member,label}).fingerprint;
   };
   /** A sign-in link for whoever can reach the operator socket: the OS user who owns this home. */
-  const issue=({member,label,ttl}:z.infer<typeof operatorRequest>)=>app!.writes.run(()=>{
+  const issue=({member,label,ttl,agent}:z.infer<typeof operatorRequest>)=>app!.writes.run(()=>{
    if(member===undefined&&!localOwner())throw Error('Local sign-in member is no longer allowed');
-   return signin.makeLink(localToken(member??program.signinMember),{label,ttlMs:ttl*1000}).path;
+   return signin.makeLink(localToken(member??program.signinMember),{label,ttlMs:ttl*1000,agent}).path;
   }).value;
   operator=await listenOperatorLinks(home,publicOrigin??app.url,issue);
   // No link is made or printed at start: under a service manager this output is the log. The operator asks
   // for one when they want it.
   (options.stdout??(text=>{process.stdout.write(text);}))(`To sign in from this machine: loom signin --home ${home}\n`);
   /** For the code that started this program in its own process: the link the operator socket would give. */
-  const signinLink=(member?:string)=>`${publicOrigin??app!.url}${issue({request:'link',label:'Local sign-in',ttl:300,...(member?{member}:{})})}`;
+  const signinLink=(member?:string)=>`${publicOrigin??app!.url}${issue({request:'link',label:'Local sign-in',ttl:LINK_MS/1000,agent:false,...(member?{member}:{})})}`;
   return {...app,close,signinLink};
  }catch(error){await close();throw error;}
 }

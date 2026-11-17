@@ -34,6 +34,13 @@ it('registers only the locally generated fingerprint and returns metadata, with 
  f.db.insert(secrets).values({name:'TOKEN',description:'',changedAt:f.now(),changedBy:'owner'}).run();f.db.insert(secretChanges).values({id:'baseline',secret:'TOKEN',action:'add',by:'owner',at:f.now()}).run();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'API_TOKEN',secret:'TOKEN'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
  const recipient=privateSecretClient({url:'https://loom.test',token:body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,options)=>f.root.http.request(String(url),options)});try{const values=await recipient.startup();expect(values.get('API_TOKEN')?.toString()).toBe('PRIVATE_STARTUP');for(const bytes of values.values())bytes.fill(0);}finally{recipient.close();}
 });
+it('ends a body with the machine token that enrolled it: revoking a leaked machine token leaves none of its bodies signed in',async()=>{
+ const f=fixture(),body=f.credential();expect((await f.call({job:'job',fingerprint:hash(body)})).status).toBe(200);
+ const asBody=()=>f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}})),held=asBody()!;expect(held.valid()).toBe(true);
+ const revoked=await f.root.http.request('http://loom/api/token/revoke',{method:'POST',headers:{authorization:'Bearer '+raw.owner,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{fingerprint:hash(raw.runner)}})});expect(revoked.status).toBe(200);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()).toMatchObject({revokedAt:null,madeFrom:hash(raw.runner)});
+ expect(held.valid()).toBe(false);expect(asBody()).toBeUndefined();
+});
 it('rotates prior job body tokens atomically and never revives a revoked fingerprint through a new id or old receipt',async()=>{
  const f=fixture(),first=f.credential(),second=f.credential(),id=randomUUID();expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(200);const proof=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))!;
  expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);expect(proof.valid()).toBe(false);expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
@@ -95,13 +102,6 @@ it('preserves the entire matching active credential across replay and fresh ids 
 it.each([{member:'owner'},{box:'foreign'}])('schema refuses a mixed-subject body row without revoking the existing body: %j',async extra=>{
  const f=fixture(),body=f.credential();await f.call({job:'job',fingerprint:hash(body)});expect(()=>f.db.update(tokens).set(extra).where(eq(tokens.fingerprint,hash(body))).run()).toThrow(/tokens_identity/);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()?.revokedAt).toBeNull();expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.valid()).toBe(true);
 });
-it('retains existing job-body authority when only its issuing runner credential is revoked',async()=>{
- const f=fixture(),body=f.credential();await f.call({job:'job',fingerprint:hash(body)});const started=await f.root.http.request('http://loom/api/runtime/started',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{job:'job',build:'artifact'}})});expect(started.status).toBe(200);
- f.root.writes.run(()=>f.db.update(tokens).set({revokedAt:f.now()}).where(eq(tokens.fingerprint,hash(raw.runner))).run());expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.valid()).toBe(true);
- f.db.insert(secrets).values({name:'TOKEN',description:'',changedAt:f.now(),changedBy:'owner'}).run();f.db.insert(secretChanges).values({id:'baseline',secret:'TOKEN',action:'add',by:'owner',at:f.now()}).run();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'API_TOKEN',secret:'TOKEN'}).run();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
- const recipient=privateSecretClient({url:'https://loom.test',token:body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,options)=>f.root.http.request(String(url),options)});try{const values=await recipient.startup();expect(values.get('API_TOKEN')?.toString()).toBe('PRIVATE_STARTUP');for(const bytes of values.values())bytes.fill(0);}finally{recipient.close();}
-});
-
 it('derives a different actual job agent instead of a caller or default agent',async()=>{
  const f=fixture(),body=f.credential();f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({agent:'mark'}).where(eq(jobs.id,'job')).run();expect((await f.call({job:'job',fingerprint:hash(body)})).status).toBe(200);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(body))).get()).toMatchObject({kind:'agent',agent:'mark',job:'job'});expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.viewer).toEqual({kind:'agent',id:'mark'});
 });

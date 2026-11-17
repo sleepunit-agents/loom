@@ -29,7 +29,8 @@ function fixture(){
 it('registers a passkey on the actual shared door and signs in with verified single-use assertions',async()=>{
  const f=fixture(),key=await f.add();expect(f.db.select().from(passkeys).get()?.label).toBe('Laptop');
  const challenge=async()=> (await(await f.post('/login/passkey/options')).json()).challenge;
- expect((await f.post('/login/passkey',key.assertion(await challenge()))).status).toBe(401);
+ // An authenticator that has never counted (0 against a stored 0) signs in; see shared-passkeys.test.ts.
+ expect((await f.post('/login/passkey',key.assertion(await challenge()))).status).toBe(200);
  key.counter=1;const c=await challenge();const response=await f.post('/login/passkey',key.assertion(c));expect(response.status).toBe(200);expect(response.headers.get('set-cookie')).toContain('HttpOnly');
  const cookie=response.headers.get('set-cookie')!.split(';')[0];
  expect(await(await f.root.http.request(origin+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'sam'}});

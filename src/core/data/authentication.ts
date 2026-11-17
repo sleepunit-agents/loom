@@ -13,8 +13,10 @@ import type { DataDatabase } from './database.js';
 import { tokens, sessions, members, agents, boxes, jobs, programTokens } from './schema.js';
 
 /** What is stored and looked up for a token, a cookie or a sign-in code: its SHA-256. The secrets are 256
- * random bits, so finding a row by this digest tells a caller nothing through timing. */
-export const credentialFingerprint = (secret: string) => createHash('sha256').update(secret).digest('hex');
+ * random bits, so finding a row by this digest tells a caller nothing through timing. This is the only
+ * statement of the rule: a worker that makes a body's token itself and sends loom the fingerprint alone
+ * computes it with this function too, from the bytes it will erase. */
+export const credentialFingerprint = (secret: string | Uint8Array) => createHash('sha256').update(secret).digest('hex');
 
 /** How long a browser stays signed in, counted from when it signed in. An agent's browser gets hours. */
 export const PERSON_SESSION_MS = 30 * 86400_000, AGENT_SESSION_MS = 6 * 3600_000;
@@ -25,7 +27,8 @@ export const freshProof = (session: Pick<typeof sessions.$inferSelect, 'isAgent'
   const proved = Date.parse(session.provedAt);
   return !session.isAgent && Number.isFinite(proved) && proved <= now && proved + FRESH_PROOF_MS > now;
 };
-/** An automated browser, by its own name for itself. */
+/** An automated browser, by its own name for itself. This catches only automation that does not hide; the
+ * limit that holds is the one a link's maker sets (startBrowser's `agent`; docs/accepted-tradeoffs.md). */
 export const isAgentBrowser = (userAgent: string) => /HeadlessChrome\//.test(userAgent);
 /** The moment a session stops being accepted, whatever its token allows. */
 export const sessionEnds = (session: Pick<typeof sessions.$inferSelect, 'issuedAt' | 'isAgent'>) =>
@@ -55,10 +58,14 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
 
 /** A token that is live and whose holder is current: a member who has not been removed, an agent that has
  * not been removed, or a machine that has not been revoked. A token bound to a job is current only while
- * that job is this agent's current work on a machine that has not been revoked. */
-export function currentToken(db: DataDatabase, id: string, now: number) {
+ * that job is this agent's current work on a machine that has not been revoked. A token enrolled from
+ * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
+ * ends the bodies it started. */
+export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: { kind: 'member' | 'agent' | 'runner'; id: string }; job?: string } | undefined {
   const token = db.select().from(tokens).where(eq(tokens.fingerprint, id)).get();
   if (!token || !tokenLive(token, now)) return;
+  // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
+  if (token.madeFrom !== null && !tokenLive(db.select().from(tokens).where(eq(tokens.fingerprint, token.madeFrom)).get() ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
   if (token.kind === 'owner' && token.member) {
     if (!db.select({ id: members.id }).from(members).where(and(eq(members.id, token.member), isNull(members.removedAt))).get()) return;
     return { token, viewer: { kind: 'member' as const, id: token.member } };
