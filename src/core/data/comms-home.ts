@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
-import type { Viewer } from '../../policy.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlHolds } from '../../policy-sql.js';
 import type { DataDatabase } from './database.js';
 import { conversations, messages, threads } from './schema.js';
 
@@ -8,7 +9,7 @@ import { conversations, messages, threads } from './schema.js';
  * The caller supplies its existing conversation predicate; no new policy.
  */
 export function readCommsHome(db: DataDatabase, viewer: Viewer, allowed: SQL) {
-  if (viewer.kind !== 'member' || !db.query.members.findFirst({columns:{id:true},where:(f,{eq})=>eq(f.id,viewer.id)}).sync()) return null;
+  if (viewer.kind !== 'member' || !sqlHolds(db, rules.currentMember, viewer)) return null;
   const owned = db.query.memberAgents.findMany({
     columns:{agent:true},where:(f,{eq})=>eq(f.member,viewer.id),
     with:{agentRow:{columns:{id:true}}},orderBy:(f,{asc})=>asc(f.agent),

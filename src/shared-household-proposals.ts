@@ -12,8 +12,8 @@ import {and,asc,eq,isNull} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import {householdId} from './slug.js';
-import type {Viewer} from './policy.js';
-import {householdOwners} from './shared-sharing.js';
+import {holds,rules as policyRules,type Viewer} from './policy.js';
+import {householdOwners,sharedSharing} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
 import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
@@ -221,6 +221,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
   // acting for, on a matching target, unless the last answer to this same thing was a deny. A card with no
   // known person behind it always asks. A card that changes a rule always asks: a rule cannot widen the rules.
+  // The change is then made on the word of the owner who set the rule, with nobody answering now. That is
+  // the rule's purpose and is accepted: docs/accepted-tradeoffs.md, "A standing approval rule answers ...".
   if(value.change==='rule')return card;
   const rule=lastApprovalAnswer(db,card.agent,card.kind,card.target)?.event==='deny'?undefined:rules.resolve({kind:card.kind,target:card.target,project:card.project,actingFor:card.actingFor});
   if(!rule||rule.tier==='ask')return card;
@@ -232,7 +234,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   // Called after the outer Allow transaction commits, so readers see the change.
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
   register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>){
-   const agent=(viewer:Viewer)=>viewer.kind==='agent'&&!!db.select({id:agents.id}).from(agents).where(eq(agents.id,viewer.id)).get();
+   // An agent in the household now may propose for itself. Proposing changes nothing: see the file header.
+   const agent=(viewer:Viewer)=>holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
     input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),may:agent,
     run(ctx,raw){

@@ -1,10 +1,10 @@
 /** Outside Tasks policy. Trusted taskService/dispatcher carry no policy.
  * Every decision here is the tasks rule from policy.ts, read for one task. */
 import { eq } from 'drizzle-orm';
-import { addressee, holds, inHousehold, rules, type Viewer } from './policy.js';
+import { addressee, holds, inHousehold, namesCurrent, rules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, members, tasks, inbox } from './core/data/schema.js';
+import { tasks, inbox } from './core/data/schema.js';
 import type { TaskCommand } from './apps/task-command.js';
 import type { TaskRow } from './apps/tasks.js';
 
@@ -21,8 +21,8 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
     (!task.project || Object.hasOwn(sharing.projects, task.project)) && holds(rules.task, viewer, task, sharing);
   if (command.action === 'create') {
     const input = command.input, person = input.owner;
-    if (person.kind === 'member' && !db.select().from(members).where(eq(members.id, person.id)).get()) return false;
-    if (person.kind === 'agent' && !db.select().from(agents).where(eq(agents.id, person.id)).get()) return false;
+    // A new task's owner must be in the household now: someone removed owns nothing new.
+    if (person.kind !== 'household' && !namesCurrent(person.kind, person.id, sharing)) return false;
     return labels({ project: input.project ?? null, ownerKind: person.kind, owner: person.kind === 'household' ? null : person.id })
       && (!input.parent || !!visibleTask(input.parent))
       && (!input.source || (input.source.kind === 'conversation' && conversationVisible(viewer, input.source.id)));

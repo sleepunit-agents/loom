@@ -467,6 +467,9 @@ it('lists live memories newest first by category and project with sourcing, forg
  expect((await f.query('{memoryList(agent:"art"){id}}',raw.member)).memoryList).toHaveLength(4);
  expect(await f.query('{memoryList(agent:"mark"){id}}')).toEqual({memoryList:null});expect(await f.query('{memoryList(agent:"nobody"){id}}')).toEqual({memoryList:null});
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query('{memoryList(agent:"art"){id title}}',raw.member)).toEqual({memoryList:null});
+ // Nor does the body working for her: it reaches what is the agent's only while she has the agent.
+ expect(await f.query('{memoryList(agent:"art"){id}}')).toEqual({memoryList:null});
+ f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run());
  const forgotten=await f.call('forget',{id:all[0].id},'list-forget');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([ids[3]]);
  expect((await f.query('{memoryList(agent:"art"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);
  for(const value of ['PRIVATE_PROVENANCE','Listed 1',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);

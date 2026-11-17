@@ -57,6 +57,11 @@ afterAll(() => client.close());
 const viewers: Viewer[] = [
   ...['owner', 'full', 'exowner', 'sam', 'lee', 'gone', 'ghost'].map(id => ({ kind: 'member' as const, id })),
   ...['art', 'mark', 'old', 'nobody'].map(id => ({ kind: 'agent' as const, id })),
+  // Bodies working for a member: one who owns the agent and shares its project (sam), one who does neither
+  // (lee), the owner role without the agent, a full owner, someone removed with every link left, nobody
+  // known, and a body of a removed agent.
+  ...[['art', 'sam'], ['art', 'lee'], ['art', 'owner'], ['art', 'full'], ['art', 'gone'], ['art', 'ghost'], ['mark', 'lee'], ['mark', 'exowner'], ['old', 'full']]
+    .map(([id, workingFor]) => ({ kind: 'agent' as const, id, workingFor })),
   // Workers and installed services read no list: both faces say no.
   { kind: 'runner', id: 'sam' }, { kind: 'service', id: 'owner' },
 ];
@@ -73,6 +78,7 @@ function domains(rule: Rule, found = new Map<string, Set<string | null>>()): Map
     case 'equal': add(rule.field, [rule.value, 'something-else']); break;
     case 'set': add(rule.field, []); break;
     case 'seenWith': add(rule.field, [...parentIds[rule.table], 'missing']); break; // The parent's own fields are real rows, not generated.
+    case 'forItsMember': domains(rule.rule, found); break;
     case 'any': case 'all': for (const part of rule.of) domains(part, found); break;
     case 'first': for (const [when, then] of rule.cases) { domains(when, found); domains(then, found); } domains(rule.otherwise, found); break;
     default: break;
@@ -89,7 +95,8 @@ function rows(rule: Rule): Row[] {
 }
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
-const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['answers', rules.answers]];
+const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['answers', rules.answers],
+  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
     const candidates = rows(rule), sharing = sharedSharing(db), seen = new Set<boolean>();
@@ -157,5 +164,86 @@ describe('who answers an inbox item', () => {
     // Mail to an agent is not a person's to answer, even one with the same id; and someone removed answers nothing.
     expect(answers({ kind: 'member', id: 'lee' }, { toKind: 'agent', to: 'lee' })).toBe(false);
     expect(answers({ kind: 'member', id: 'gone' }, { toKind: 'person', to: 'gone' })).toBe(false);
+    // A body is not its member: working for the addressee does not make it the one who answers.
+    expect(answers({ kind: 'agent', id: 'art', workingFor: 'lee' }, question)).toBe(false);
+  });
+});
+
+describe('a body working for a member', () => {
+  const both = (rule: Rule, viewer: Viewer, row: Row) => {
+    const answer = holds(rule, viewer, row, sharedSharing(db), lookup);
+    const fields = Object.fromEntries(Object.keys(row).map(field => [field, sql.raw(`json_extract(matrix.value, '$.${field}')`)])) as Record<string, SQL>;
+    expect(db.all<{ allowed: number }>(sql`select (${sqlRule(rule, viewer, fields)}) as allowed from json_each(${JSON.stringify([row])}) as matrix`)[0].allowed).toBe(answer ? 1 : 0);
+    return answer;
+  };
+  const body = (id: string, workingFor: string): Viewer => ({ kind: 'agent', id, workingFor });
+  const art: Viewer = { kind: 'agent', id: 'art' };
+  it('reaches a project only while its member is in it too, or is a household owner', () => {
+    // art is in pond; sam is, lee is not, owner has the role. mark is in side with lee.
+    const pondTask = { project: 'pond', ownerKind: 'member', owner: 'sam' }, sideTask = { project: 'side', ownerKind: 'agent', owner: 'mark' };
+    expect(both(rules.task, art, pondTask)).toBe(true);
+    expect(both(rules.task, body('art', 'sam'), pondTask)).toBe(true);
+    expect(both(rules.task, body('art', 'lee'), pondTask)).toBe(false);
+    expect(both(rules.task, body('art', 'owner'), pondTask)).toBe(true);
+    expect(both(rules.task, body('mark', 'lee'), sideTask)).toBe(true);
+    // The same for every record shared by project: a change, a room, the roster of agents in it.
+    for (const rule of [tableRules.changes, rules.conversation, tableRules.projects]) {
+      const row = { id: 'pond', project: 'pond', agent: 'mark', member: null, direct: false };
+      expect(both(rule, art, row)).toBe(true);
+      expect(both(rule, body('art', 'sam'), row)).toBe(true);
+      expect(both(rule, body('art', 'lee'), row)).toBe(false);
+    }
+    expect(both(tableRules.agents, art, { id: 'old' })).toBe(true);
+    expect(both(tableRules.agents, body('art', 'lee'), { id: 'old' })).toBe(false);
+  });
+  it('is the agent a record names only while its member has that agent on their own list', () => {
+    const own = { project: null, ownerKind: 'agent', owner: 'art' };
+    expect(both(rules.task, body('art', 'sam'), own)).toBe(true);
+    // lee does not own art; the owner role alone does not either; a full owner does.
+    expect(both(rules.task, body('art', 'lee'), own)).toBe(false);
+    expect(both(rules.task, body('art', 'owner'), own)).toBe(false);
+    expect(both(rules.task, body('art', 'full'), own)).toBe(true);
+    expect(both(rules.agentItself, body('art', 'sam'), { agent: 'art' })).toBe(true);
+    expect(both(rules.agentItself, body('art', 'lee'), { agent: 'art' })).toBe(false);
+    expect(both(rules.agentItself, body('art', 'sam'), { agent: 'mark' })).toBe(false);
+  });
+  it('reaches nothing once its member has left the household, whatever links they left behind', () => {
+    for (const gone of [body('art', 'gone'), body('art', 'ghost'), body('mark', 'exowner')]) {
+      expect(both(rules.currentViewer, gone, {})).toBe(false);
+      expect(both(rules.task, gone, { project: 'pond', ownerKind: 'agent', owner: 'art' })).toBe(false);
+      expect(both(rules.task, gone, { project: null, ownerKind: 'agent', owner: gone.id })).toBe(false);
+      expect(both(tableRules.timingDays, gone, {})).toBe(false);
+    }
+  });
+  it('never becomes its member: nothing that is the member\'s own, and nothing of the owner role', () => {
+    expect(both(rules.task, body('art', 'sam'), { project: null, ownerKind: 'member', owner: 'sam' })).toBe(false);
+    expect(both(rules.conversation, body('art', 'sam'), { member: 'sam', agent: 'art', project: 'pond', direct: false })).toBe(false);
+    expect(both(rules.householdOwner, body('art', 'full'), {})).toBe(false);
+    expect(both(tableRules.secrets, body('art', 'full'), {})).toBe(false);
+    expect(both(rules.stopJob, body('art', 'full'), { agent: 'art' })).toBe(false);
+  });
+  it('sets the volume of its member\'s own mail on that member\'s word, and of nobody else\'s', () => {
+    const to = (id: string) => ({ toKind: 'person', to: id });
+    expect(both(rules.inboxVolume, body('art', 'sam'), to('sam'))).toBe(true);
+    expect(both(rules.inboxVolume, body('art', 'sam'), to('lee'))).toBe(false);
+    // The agent alone cannot, and neither can a body whose member does not have the agent.
+    expect(both(rules.inboxVolume, art, to('sam'))).toBe(false);
+    expect(both(rules.inboxVolume, body('art', 'lee'), to('lee'))).toBe(false);
+    expect(both(rules.inboxVolume, body('art', 'gone'), to('gone'))).toBe(false);
+    // A full owner may address any person, so a body working for one may set that person's volume too.
+    expect(both(rules.inboxVolume, body('art', 'full'), to('lee'))).toBe(true);
+  });
+});
+
+describe('ending a job by hand', () => {
+  it('is for a household owner and the members who own its agent, and reads nothing of the job', () => {
+    const sharing = () => sharedSharing(db);
+    const privateJob = { agent: 'mark', member: 'lee', project: 'side', conversation: null };
+    for (const [id, stops, lists] of [['owner', true, false], ['full', true, false], ['lee', true, true], ['sam', false, false], ['exowner', false, false]] as const) {
+      const viewer: Viewer = { kind: 'member', id };
+      expect(holds(rules.stopJob, viewer, privateJob, sharing()), id).toBe(stops);
+      expect(holds(tableRules.jobs, viewer, privateJob, sharing(), lookup), id).toBe(lists);
+    }
+    expect(holds(rules.stopJob, { kind: 'agent', id: 'mark' }, privateJob, sharing())).toBe(false);
   });
 });

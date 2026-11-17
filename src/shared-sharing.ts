@@ -1,8 +1,8 @@
 /** Current shared household facts for the outside permission boundary. */
-import { eq, isNull } from 'drizzle-orm';
-import { isHouseholdOwner, maySee, type Sharing, type Viewer } from './policy.js';
+import { and, eq, isNull } from 'drizzle-orm';
+import { holds, isHouseholdOwner, maySee, rules, type Sharing, type Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, members, memberAgents, projects, projectMembers, projectAgents, conversations } from './core/data/schema.js';
+import { agents, members, memberAgents, projects, projectMembers, projectAgents, conversations, jobs } from './core/data/schema.js';
 import { builtinServices } from './core/services.js';
 
 /** Removed members are left out, so every rule treats them as nobody; removed agents are left out of `agents`. */
@@ -20,9 +20,24 @@ export function sharedSharing(db: DataDatabase): Sharing {
     agents: db.select({ id: agents.id }).from(agents).where(isNull(agents.removedAt)).all().map(agent => agent.id),
   };
 }
+/** Says on a body's viewer which member its work is for (policy.ts, Viewer.workingFor), so every rule
+ * narrows by that member. The outside door calls this once per request, straight after authentication,
+ * with its proof that the credential is bound to one current job (sharedCredentials.body). The member is
+ * read from that job's row and from nothing the caller sent. A credential stops being valid when its
+ * job's member changes, so what is written here stays true for as long as the viewer is accepted.
+ * The viewer object is changed in place, because the door's proofs are kept by that object. */
+export function bodyWorkingFor(db: DataDatabase, viewer: Viewer, body: Readonly<{ job: string; agent: string }> | undefined): void {
+  if (viewer.kind !== 'agent' || !body || body.agent !== viewer.id) return;
+  const member = db.select({ member: jobs.member }).from(jobs).where(and(eq(jobs.id, body.job), eq(jobs.agent, viewer.id))).get()?.member;
+  if (member) viewer.workingFor = member;
+}
 /** Is this viewer a household owner now? The one check for every door that needs an owner. */
 export function householdOwner(db: DataDatabase, viewer: Viewer): viewer is Extract<Viewer, { kind: 'member' }> {
   return isHouseholdOwner(viewer, sharedSharing(db));
+}
+/** Is this viewer a member who is in the household now? The one check for what any member may do for themselves. */
+export function currentMember(db: DataDatabase, viewer: Viewer): viewer is Extract<Viewer, { kind: 'member' }> {
+  return holds(rules.currentMember, viewer, {}, sharedSharing(db));
 }
 /** The current household owners, by id. Installed services that write to "the owners" read this list. */
 export function householdOwners(db: DataDatabase): string[] {

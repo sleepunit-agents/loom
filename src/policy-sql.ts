@@ -27,14 +27,24 @@ const text = (value: string): SQL => sql.raw(`'${value.replaceAll("'", "''")}'`)
 /** The SQL filter for one rule. `fields` are the columns of the row being filtered.
  * Only members and agents read lists; for any other viewer the filter is false. */
 export function sqlRule(rule: Rule, viewer: Viewer, fields: RuleFields): SQL {
+  return filter(rule, viewer, fields, 0);
+}
+function filter(rule: Rule, viewer: Viewer, fields: RuleFields, startDepth: number): SQL {
   // Copy the scalars: changing the caller's viewer object later cannot change this filter.
   const { kind, id } = viewer;
   if (kind !== 'member' && kind !== 'agent') return no;
   const member = kind === 'member';
-  const current = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${id} and ${viewerRow.removedAt} is null)`;
-  const inProject = (project: AnyColumn | SQL): SQL => member
-    ? sql`(${current} and exists (select 1 from ${as(projectMembers, 'policy_project_members')} where ${people.project} = ${project} and ${people.member} = ${id}))`
-    : sql`exists (select 1 from ${as(projectAgents, 'policy_project_agents')} where ${bodies.project} = ${project} and ${bodies.agent} = ${id})`;
+  // A body working for a member (policy.ts, Viewer): each of the agent's own terms also asks this of that member.
+  const bound = viewer.kind === 'agent' ? viewer.workingFor : undefined;
+  const current = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${member ? id : bound ?? null} and ${viewerRow.removedAt} is null)`;
+  const itsOwner = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${bound ?? null} and ${viewerRow.role} = 'owner' and ${viewerRow.removedAt} is null)`;
+  const onItsList = sql`(${current} and exists (select 1 from ${as(memberAgents, 'policy_member_agents')} where ${owned.agent} = ${id} and ${owned.member} = ${bound ?? null}))`;
+  const memberIn = (project: AnyColumn | SQL, who: string): SQL =>
+    sql`(${current} and exists (select 1 from ${as(projectMembers, 'policy_project_members')} where ${people.project} = ${project} and ${people.member} = ${who}))`;
+  const agentIn = (project: AnyColumn | SQL): SQL =>
+    sql`exists (select 1 from ${as(projectAgents, 'policy_project_agents')} where ${bodies.project} = ${project} and ${bodies.agent} = ${id})`;
+  const inProject = (project: AnyColumn | SQL): SQL => member ? memberIn(project, id)
+    : bound === undefined ? agentIn(project) : sql`(${agentIn(project)} and (${itsOwner} or ${memberIn(project, bound)}))`;
   const build = (part: Rule, row: RuleFields, depth: number): SQL => {
     const field = (name: string) => {
       const value = row[name];
@@ -48,13 +58,16 @@ export function sqlRule(rule: Rule, viewer: Viewer, fields: RuleFields): SQL {
       case 'householdOwner': return member
         ? sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${id} and ${viewerRow.role} = 'owner' and ${viewerRow.removedAt} is null)` : no;
       case 'viewerIs': return kind === part.kind ? yes : no;
-      case 'currentViewer': return member ? current
-        : sql`exists (select 1 from ${as(agents, 'policy_viewer_agent')} where ${viewerAgent.id} = ${id} and ${viewerAgent.removedAt} is null)`;
+      case 'currentViewer': {
+        if (member) return current;
+        const agent = sql`exists (select 1 from ${as(agents, 'policy_viewer_agent')} where ${viewerAgent.id} = ${id} and ${viewerAgent.removedAt} is null)`;
+        return bound === undefined ? agent : sql`(${agent} and ${current})`;
+      }
       case 'self': return member ? sql`(${current} and ${field(part.field)} is ${id})` : no;
       case 'inProject': return inProject(field(part.field));
       case 'ownsAgent': return member
         ? sql`(${current} and exists (select 1 from ${as(memberAgents, 'policy_member_agents')} where ${owned.agent} = ${field(part.field)} and ${owned.member} = ${id}))`
-        : sql`${field(part.field)} is ${id}`;
+        : bound === undefined ? sql`${field(part.field)} is ${id}` : sql`(${field(part.field)} is ${id} and ${onItsList})`;
       case 'sharesProjectWithAgent':
         return sql`exists (select 1 from ${as(projectAgents, 'policy_agent_projects')} where ${shared.agent} = ${field(part.field)} and ${inProject(shared.project)})`;
       case 'names': return part.kind === 'member'
@@ -70,13 +83,22 @@ export function sqlRule(rule: Rule, viewer: Viewer, fields: RuleFields): SQL {
         const table = schema[part.table], name = `policy_parent_${depth}`, parent = alias(table, name);
         return sql`exists (select 1 from ${as(table, name)} where ${parent.id} = ${field(part.field)} and ${build(part.as ?? tableRules[part.table], getTableColumns(parent), depth + 1)})`;
       }
+      // The same rule, read for the member the body works for, while that member has the agent on their list.
+      case 'forItsMember': return bound === undefined ? no : sql`(${onItsList} and ${filter(part.rule, { kind: 'member', id: bound }, row, depth)})`;
     }
   };
-  return build(rule, fields, 0);
+  return build(rule, fields, startDepth);
+}
+
+/** A rule that reads no row, answered in one statement. For a read that must stay at a fixed number of
+ * statements; everything else asks holds() with the sharing snapshot. Both give the same answer. */
+export function sqlHolds(db: { get<T>(query: SQL): T }, rule: Rule, viewer: Viewer): boolean {
+  return db.get<{ allowed: number }>(sql`select (${sqlRule(rule, viewer, {})}) as allowed`).allowed === 1;
 }
 
 /** The read filters for these tables, in the shape the shared query door takes. */
 export function sqlVisibility<const T extends TableWithRule>(viewer: Viewer, tables: readonly T[]): Record<T, (fields: RuleFields) => SQL> {
-  const { kind, id } = viewer, fixed = { kind, id } as Viewer;
+  // Copy what the rules read of the viewer, once: a later change to the caller's object changes no filter.
+  const fixed: Viewer = viewer.kind === 'agent' ? { kind: viewer.kind, id: viewer.id, workingFor: viewer.workingFor } : { kind: viewer.kind, id: viewer.id };
   return Object.fromEntries(tables.map(name => [name, (fields: RuleFields) => sqlRule(tableRules[name], fixed, fields)])) as Record<T, (fields: RuleFields) => SQL>;
 }

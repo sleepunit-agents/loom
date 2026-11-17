@@ -124,3 +124,18 @@ it('treats a removed member as nobody, owner role and leftover links included',(
  // Nor can anyone address work to someone who has been removed.
  expect(f.can('member','owner',{action:'set',trigger:{...f.set.trigger,ownerKind:'member',owner:'owner',toKind:'person',to:'sam'}})).toBe(false);
 });
+it('lets nobody watch a job they cannot read: a household owner cannot watch a job of another member\'s private thread',()=>{
+ const f=fixture(),at=f.now();
+ const row={agent:'art',title:'Private',state:'running' as const,brief:'',model:'model',startedByKind:'member' as const,houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:at};
+ f.db.insert(jobs).values([{...row,id:'private',member:'sam',startedBy:'sam'},{...row,id:'room',startedBy:'sam'}]).run();
+ const watch=(job:string):TempoAccess=>({action:'set',trigger:{...f.set.trigger,ownerKind:'member',owner:'owner',toKind:'person',to:'owner',sourceKind:'job',watches:`job:${job}`}});
+ const mine=(job:string):TempoAccess=>({action:'set',trigger:{...f.set.trigger,toKind:'person',to:'sam',sourceKind:'job',watches:`job:${job}`}});
+ // Its member watches it. A full owner, who has the role and the agent, and a scoped owner do not.
+ expect(f.can('member','sam',mine('private'))).toBe(true);
+ expect(f.can('member','owner',watch('private'))).toBe(false);
+ expect(f.can('member','scoped',{action:'set',trigger:{...watch('private').trigger,owner:'scoped',to:'scoped'}})).toBe(false);
+ // A job that is nobody's private work is watched by an owner as before; one that does not exist by nobody.
+ expect(f.can('member','owner',watch('room'))).toBe(true);
+ expect(f.can('member','owner',watch('missing'))).toBe(false);
+ expect(f.can('member','owner',{action:'set',trigger:{...watch('room').trigger,watches:null}})).toBe(false);
+});

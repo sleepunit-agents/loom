@@ -50,6 +50,10 @@ it('still lets a household owner end that thread\'s job, without being shown it'
   const f = await fixture();
   const stop = await f.root.http.request('/api/runtime/jobStop', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + ownerToken }, body: JSON.stringify({ input: { job: 'job', reason: 'write-off' }, id: 'stop' }) });
   expect(stop.status).toBe(200);
+  // The answer says that it stopped and nothing of the job.
+  const answer = await stop.text();
+  expect(JSON.parse(answer)).toMatchObject({ ok: true, value: { stopped: true } });
+  expect(answer).not.toContain('PRIVATE');
   expect(f.db.select().from(s.jobs).get()).toMatchObject({ state: 'stopped', endedBy: 'olive', endedReason: 'write-off' });
   expect((await f.query('{jobHistory(agent:"art"){id title}}', ownerToken)).data).toEqual({ jobHistory: [] });
 });

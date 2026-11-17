@@ -91,3 +91,15 @@ it('only asks a current member who can reach the task', () => {
   const shared = f.make({ project: 'pond' }); expect(f.allowed({ ...command, id: shared.id })).toBe(true);
   expect(f.allowed({ ...command, input: { ...command.input, to: { kind: 'member', id: 'missing' } } })).toBe(false);
 });
+it('refuses a new task whose owner has been removed from the household, member or agent', () => {
+  const f = fixture();
+  const create = (owner: NewTask['owner']) => f.allowed({ action: 'create', input: { ...f.input, owner, project: 'pond' } });
+  expect(create({ kind: 'member', id: 'lee' })).toBe(true);
+  expect(create({ kind: 'agent', id: 'mark' })).toBe(true);
+  f.db.update(members).set({ removedAt: at }).where(eq(members.id, 'lee')).run();
+  f.db.update(agents).set({ removedAt: at }).where(eq(agents.id, 'mark')).run();
+  // Still rows in their tables; no longer anyone a task can be given to.
+  expect(create({ kind: 'member', id: 'lee' })).toBe(false);
+  expect(create({ kind: 'agent', id: 'mark' })).toBe(false);
+  expect(create({ kind: 'agent', id: 'art' })).toBe(true);
+});
