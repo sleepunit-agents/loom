@@ -66,6 +66,10 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   const pasted = (row: typeof accountSignins.$inferSelect) => { const answer = answered(row); return answer && answer !== 'taken' ? answer.words : undefined; };
   /** A taken code, by request: the code and the operation id of the one write that took it. In memory only. */
   const held = new Map<string, Readonly<{ take: string; code: string }>>();
+  /** A code a take has read and not yet committed, by that call's input. It becomes `held` only once the
+   * write that blanked the answer has committed (`after`); a take that rolled back leaves nothing here to
+   * hand over, and the code is still the answer in the database for the same write to take again. */
+  const taking = new WeakMap<object, Readonly<{ request: string; take: string; code: string }>>();
   const end = (row: typeof accountSignins.$inferSelect, state: 'done' | 'failed', why: string | null, at: string) => {
     held.delete(row.id);
     db.update(accountSignins).set({ state, why, changedAt: at }).where(eq(accountSignins.id, row.id)).run();
@@ -136,12 +140,18 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   operations.register({ ...workers, doors: [...workers.doors], name: 'runtime.signInTake', input: id, output: z.object({ taken: z.boolean() }).strict(),
     may: (viewer, input) => mine(viewer, input.id),
     run(ctx, input) {
-      const row = request(input.id)!, prior = held.get(row.id), code = pasted(row);
-      // A second write under the same id is the same take (its first try did not commit); any other is refused.
-      if (row.state !== 'waiting' || lapsed(row, now()) || (prior && prior.take !== ctx.receipt!.id) || code === undefined || !signInCode.test(code)) return { taken: false };
+      const row = request(input.id)!, code = pasted(row);
+      // A code is taken once: after a take has committed there is no pasted answer left to take.
+      if (row.state !== 'waiting' || lapsed(row, now()) || held.has(row.id) || code === undefined || !signInCode.test(code)) return { taken: false };
       new Conversations(db, now).redactAnswer(row.item!, USED);
-      held.set(row.id, Object.freeze({ take: ctx.receipt!.id, code }));
+      taking.set(input, Object.freeze({ request: row.id, take: ctx.receipt!.id, code }));
       ctx.changed('inbox', row.item!); return { taken: true };
+    },
+    // Runs only for a call that succeeded. Inside someone else's open transaction the write could still
+    // be undone, so the code is dropped: the worker is then told to stop and the sign-in is asked again.
+    after(input) {
+      const taken = taking.get(input); taking.delete(input);
+      if (taken && !db.$client.inTransaction) held.set(taken.request, Object.freeze({ take: taken.take, code: taken.code }));
     } });
   // A read, so no retry receipt holds the code. `take` is the operation id of the caller's own
   // runtime.signInTake. `answered` with no code means there is something to take.
