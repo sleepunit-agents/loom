@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
+import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, tasks } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -474,4 +474,52 @@ it('takes what a card would replace off the cards an earlier version filed, and 
   await root.close();
   const second = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, startupNote: line => notes.push(line) }); clean.push(() => second.close());
   expect(notes).toHaveLength(1); expect(db.select().from(approvals).all()).toEqual(rewritten);
+});
+it('merges one project into another only when an owner allows the card, and the card is the record of it', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }, { id: 'shut', name: 'Shut', removedAt: at }]).run();
+  f.db.insert(projectMembers).values([{ project: 'pond', member: 'lee' }]).run();
+  f.db.insert(projectAgents).values([{ project: 'pond', agent: 'art' }, { project: 'garden', agent: 'mark' }]).run();
+  const task = f.root.services.tasks.create({ title: 'Clean filter', goal: 'Clean', why: 'Green water', owner: { kind: 'agent', id: 'art' }, project: 'pond' }, { kind: 'agent', id: 'art' });
+  const ask = (input: unknown) => f.call('household/propose', { change: 'projectMerge', input, why: 'The first sort put pond work in two places' }, 'art');
+  const filed = await ask({ from: 'pond', into: 'garden' });
+  expect(filed).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+  const id = filed.body.value!.id;
+  // The card says what is asked, in words that name both projects. Nothing has moved.
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'setting', state: 'pending', agent: 'art', target: 'household:projectMerge:pond into garden', ask: 'Merge project pond into garden?',
+    changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.', why: 'The first sort put pond work in two places', decidedBy: null });
+  expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details)).toMatchObject({ change: 'projectMerge', after: { from: 'pond', into: 'garden' } });
+  expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
+  // An owner is shown both projects as they stand. Nobody else is, and nobody else allows it.
+  expect(await look(f, id)).toEqual({ summary: expect.stringContaining('As they stand: {"from":{"id":"pond","name":"Pond","removed":false,"members":["lee"],"agents":["art"],"repositories":[]},"into":{"id":"garden"'), problem: null });
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('approvals/answer', { id, answer: 'allow' }, actor)).status).toBe(403);
+  expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
+  expect(await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).toMatchObject({ status: 200, body: { ok: true } });
+  // Made: the task is garden's, pond's people and agents are garden's, pond is kept and removed.
+  expect(f.db.select().from(tasks).where(eq(tasks.id, task.id)).get()).toMatchObject({ project: 'garden' });
+  expect(f.root.services.projects.describe('garden')).toMatchObject({ members: ['lee'], agents: ['art', 'mark'], removed: false });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'pond')).get()!.removedAt).not.toBeNull();
+  // The record: the card, with who asked, who allowed it and what changed. No comment is left on the task.
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ state: 'used', agent: 'art', decidedBy: 'sam', operation: 'household.change',
+    changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.' });
+  expect(f.db.select().from(approvalRecord).where(eq(approvalRecord.approval, id)).all().map(row => row.event)).toEqual(expect.arrayContaining(['request', 'allow', 'use']));
+  expect(f.root.services.tasks.get(task.id).comments).toEqual([]);
+
+  // What cannot be merged is filed like anything else, and refused to the owner in plain words when they look and when they allow.
+  for (const [input, problem] of [[{ from: 'garden', into: 'garden' }, 'A project cannot be merged into itself'], [{ from: 'pond', into: 'garden' }, 'Project pond is removed'],
+    [{ from: 'garden', into: 'shut' }, 'Project shut is removed'], [{ from: 'nowhere', into: 'garden' }, 'No project has the id nowhere']] as const) {
+    const hopeless = await ask(input);
+    expect(hopeless).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+    expect((await look(f, hopeless.body.value!.id)).problem).toBe(problem);
+    expect((await f.call('approvals/answer', { id: hopeless.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: problem });
+    expect((await f.call('approvals/answer', { id: hopeless.body.value!.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  }
+  expect(f.db.select().from(tasks).where(eq(tasks.id, task.id)).get()).toMatchObject({ project: 'garden' });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'garden')).get()!.removedAt).toBeNull();
+  // A card whose projects have changed since it was filed is refused, and has to be asked for again.
+  f.db.insert(projects).values({ id: 'shed', name: 'Shed' }).run();
+  const stale = await ask({ from: 'shed', into: 'garden' });
+  f.db.insert(projectMembers).values({ project: 'shed', member: 'lee' }).run();
+  expect((await f.call('approvals/answer', { id: stale.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed; ask for a fresh card' });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'shed')).get()!.removedAt).toBeNull();
 });

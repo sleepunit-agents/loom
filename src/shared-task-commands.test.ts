@@ -216,3 +216,31 @@ it('files a question about a project task, and its answer, so that the person ea
   f.root.writes.run(() => f.db.delete(projectMembers).where(eq(projectMembers.member, 'lee')).run());
   expect(await items('lee')).not.toContain(answer.id);
 });
+
+it('moves tasks between projects through the one command: all of them or none, with a record on each', async () => {
+  const f = fixture(), make = (patch: object = {}) => f.root.services.tasks.create({ ...f.input, ...patch }, { kind: 'member', id: 'owner' });
+  const own = make(), inPond = make({ owner: { kind: 'member', id: 'lee' }, project: 'pond' }), hidden = make({ owner: { kind: 'member', id: 'lee' } });
+  const projectsOf = () => f.db.select({ id: tasks.id, project: tasks.project }).from(tasks).all().map(row => row.project);
+  // One task sam may not act on refuses the whole move, and so does a project sam is not in. Nothing changes and nothing is kept.
+  for (const command of [{ action: 'move', ids: [own.id, hidden.id], project: 'pond' }, { action: 'move', ids: [own.id, inPond.id], project: 'other' },
+    { action: 'move', ids: [inPond.id], project: null }, { action: 'move', ids: [own.id, 't-999'], project: 'pond' }]) expect((await f.call(command, 'sam', 'refused')).status).toBe(403);
+  expect(projectsOf()).toEqual([null, 'pond', null]);
+  expect(f.db.select().from(taskComments).all()).toEqual([]);
+  expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
+  // A command is one shape of move or the other, never a mix, and names at least one task.
+  for (const command of [{ action: 'move', ids: [own.id], before: null }, { action: 'move', id: own.id, project: 'pond' }, { action: 'move', ids: [], project: 'pond' }, { action: 'move', ids: [own.id] }])
+    expect((await f.call(command, 'sam', 'shape')).status).toBe(400);
+  // sam moves his own task into his project. The task already there is left alone and is not in the answer.
+  const moved = await f.call({ action: 'move', ids: [own.id, inPond.id], project: 'pond' }, 'sam', 'move');
+  expect(await moved.json()).toEqual({ ok: true, value: { moved: [own.id] } });
+  expect(projectsOf()).toEqual(['pond', 'pond', null]);
+  expect(f.db.select().from(taskComments).all()).toMatchObject([{ task: own.id, actorKind: 'member', actor: 'sam', text: 'Moved from no project to project pond' }]);
+  // A household owner moves anything anywhere that is in use; a removed project is refused to them too.
+  expect(await (await f.call({ action: 'move', ids: [own.id, inPond.id, hidden.id], project: 'other' }, 'owner', 'owner-move')).json()).toEqual({ ok: true, value: { moved: [own.id, inPond.id, hidden.id] } });
+  f.db.update(projects).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(projects.id, 'pond')).run();
+  expect((await f.call({ action: 'move', ids: [own.id], project: 'pond' }, 'owner', 'removed')).status).toBe(403);
+  expect(projectsOf()).toEqual(['other', 'other', 'other']);
+  // The older meaning of the same action is as it was: a place in the hand-kept order.
+  expect(await (await f.call({ action: 'move', id: hidden.id, before: own.id }, 'owner', 'order')).json()).toEqual({ ok: true, value: { id: hidden.id } });
+  expect(f.root.services.tasks.list().map(task => task.id)).toEqual([hidden.id, own.id, inPond.id]);
+});

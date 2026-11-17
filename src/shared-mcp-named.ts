@@ -14,6 +14,7 @@ import {MEMORY_CONTENT_MAX,OBSERVATIONS} from './backends/types.js';
 import {MAX_PAGE_BODY_LENGTH} from './backends/knowledge-verification.js';
 import {STATUSES} from './backends/projects.js';
 import {approvals,inbox,tasks} from './core/data/schema.js';
+import {TASK_MOVE_MAX} from './apps/task-command.js';
 
 type Variables=Record<string,string|number|null>;
 type QueryReply={data?:Record<string,unknown>|null;errors?:readonly unknown[]|null};
@@ -300,6 +301,13 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
   z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
+ tool('task_move','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge.',
+  z.object({ids:z.array(taskId).min(1).max(TASK_MOVE_MAX),project:z.string().min(1).max(100).nullable()}).strict(),
+  async input=>{
+   const value=await run('tasks.command',{action:'move',ids:input.ids,project:input.project}) as {moved?:string[]};
+   const moved=value.moved??[],where=input.project===null?'out of every project':'to project '+input.project;
+   return moved.length?'Moved '+moved.join(', ')+' '+where+'.'+(moved.length<new Set(input.ids).size?' The rest were already there.':''):'Nothing moved: '+(input.project===null?'none of them is in a project.':'they are already in project '+input.project+'.');
+  });
  tool('task_claim','Claim an open task: it moves to in progress and you hold it. Pass release: true to hand it back.',
   z.object({id:taskId,release:z.boolean().optional()}).strict(),
   async input=>{await run('tasks.command',{action:input.release?'unclaim':'claim',id:input.id});return (input.release?'Released ':'Claimed ')+input.id;});

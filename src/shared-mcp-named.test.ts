@@ -16,6 +16,9 @@ async function program(){
   db.insert(s.members).values({id:'alice',role:'owner',joinedAt:now()}).run();
   db.insert(s.agents).values(['art','mark'].map(id=>({id,about:'',markBg:'',markFg:'',faceShape:'pebble' as const,faceEyes:'dot' as const}))).run();
   db.insert(s.memberAgents).values([{member:'alice',agent:'art'},{member:'alice',agent:'mark'}]).run();
+  // art is on one project; nobody is on the other.
+  db.insert(s.projects).values(['fictional-pond','fictional-shed'].map(id=>({id,name:id}))).run();
+  db.insert(s.projectAgents).values({project:'fictional-pond',agent:'art'}).run();
  }});
  const connect=async(agent:string)=>{
   const credential=p.composition.writes.run(()=>p.composition.services.signin.issue({kind:'agent',agent,label:'Fictional terminal '+agent})).value;
@@ -35,7 +38,7 @@ it('lists the names a terminal session already calls',async()=>{
  try{
   expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
    ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
-    'task_ready','task','task_create','task_edit','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
+    'task_ready','task','task_create','task_edit','task_move','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
 },30_000);
 
@@ -170,6 +173,17 @@ it('files, reads, claims, comments on and closes a task through the named tools'
   expect((await art.call('task',{id})).text).toContain('**Closed:** FICTIONAL_REASON');
   expect((await art.call('task_close',{id,reopen:true})).text).toBe('Reopened '+id);
   expect((await art.call('task',{id:'t-999'})).text).toBe('No task t-999 that you may see.');
+  // Out of a project it is not in: nothing to do. Into a project it is not on, or with a task it cannot see: refused whole.
+  expect((await art.call('task_move',{ids:[id],project:null})).text).toBe('Nothing moved: none of them is in a project.');
+  const refused=await art.call('task_move',{ids:[id],project:'fictional-nowhere'});expect(refused.error).toBe(true);expect(refused.text).toMatch(/\(denied\)$/);
+  expect((await art.call('task_move',{ids:[id,'t-999'],project:null})).error).toBe(true);
+  expect((await art.call('task_move',{ids:[],project:null})).error).toBe(true);
+  // Into the project art is on, and not into one it is not on. The move leaves its record on the task.
+  expect((await art.call('task_move',{ids:[id],project:'fictional-shed'})).error).toBe(true);
+  expect((await art.call('task_move',{ids:[id],project:'fictional-pond'})).text).toBe('Moved '+id+' to project fictional-pond.');
+  expect((await art.call('task_move',{ids:[id],project:'fictional-pond'})).text).toBe('Nothing moved: they are already in project fictional-pond.');
+  const movedTask=(await art.call('task',{id})).text;expect(movedTask).toContain('· fictional-pond ·');expect(movedTask).toContain('**art** ');expect(movedTask).toContain('Moved from no project to project fictional-pond');
+  expect((await art.call('task_move',{ids:[id],project:null})).text).toBe('Moved '+id+' out of every project.');
  }finally{await art.client.close();await p.close();}
 },30_000);
 
@@ -241,5 +255,10 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect((await art.call('propose',{change:'settings',input:{commsDays:99},why:'x'})).error).toBe(true);
   expect(p.composition.services.household.settings().commsDays).toBe(14);
   expect((await art.call('inbox',{})).error).toBe(false);
+  // A merge of two projects is proposed like any other household change, and nothing is merged by asking.
+  expect((await art.call('propose',{change:'projectMerge',input:{from:'fictional-pond',into:'fictional-shed'},why:'FICTIONAL_MERGE'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
+  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Merge project fictional-pond into fictional-shed?');
+  expect((await art.call('propose',{change:'projectMerge',input:{from:'fictional-pond'},why:'x'})).error).toBe(true);
+  expect(p.composition.services.projects.describe('fictional-pond')).toMatchObject({removed:false,agents:['art']});
  }finally{await art.client.close();await p.close();}
 },30_000);

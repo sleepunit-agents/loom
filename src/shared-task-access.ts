@@ -27,6 +27,15 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
       && (!input.parent || !!visibleTask(input.parent))
       && (!input.source || (input.source.kind === 'conversation' && conversationVisible(viewer, input.source.id)));
   }
+  if (command.action === 'move' && 'ids' in command) {
+    // The destination must be a project in use, as a new task's must. Then every task named must be one this
+    // caller may move there (policy.ts, rule `moveTask`): one that may not, or is not there, refuses them all.
+    const to = command.project;
+    return (to === null || Object.hasOwn(sharing.projects, to)) && command.ids.every(id => {
+      const row = db.select().from(tasks).where(eq(tasks.id, id)).get();
+      return !!row && holds(rules.moveTask, viewer, { ...row, to }, sharing);
+    });
+  }
   const task = visibleTask(command.id);
   if (!task) return false;
   switch (command.action) {

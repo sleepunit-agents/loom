@@ -22,7 +22,8 @@ const taskReply=z.object({data:z.object({tasks:z.array(z.object({
  goal:textField,why:textField,doneWhen:textField,description:textField,ask:textField,ifYes:textField,ifNo:textField,
  closeReason:textField,sourceKind:textField,sourceId:textField,
 }))})});
-const commandReply=z.object({ok:z.literal(true),value:z.object({id:z.string().optional()}).strict()});
+// One task's id, or for a move to a project the tasks that moved.
+const commandReply=z.object({ok:z.literal(true),value:z.object({id:z.string().optional(),moved:z.array(z.string()).optional()}).strict()});
 const defaults:ClientRuntime={request:(...args)=>fetch(...args),retry:ms=>new Promise(resolve=>setTimeout(resolve,ms))};
 const help='usage: loom-taskstore ready|list|show <id>|search <words>|command <JSON>|command --file <path|->\nWrites use the same typed action/input object as POST /api/tasks/command.\n';
 const searchFields=['id','title','description','goal','why','doneWhen','ask'] as const;

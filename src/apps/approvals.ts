@@ -164,3 +164,8 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     notices() { return db.select().from(approvalNotices).orderBy(asc(approvalNotices.at), asc(approvalNotices.id)).all(); },
   };
 }
+
+/** Every approval card filed under one project is filed under another: for a merge of the two (shared-projects.ts). */
+export function refileApprovals(db: DataDatabase, from: string, into: string): void {
+  db.update(approvals).set({ project: into }).where(eq(approvals.project, from)).run();
+}

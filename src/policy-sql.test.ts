@@ -106,7 +106,7 @@ function rows(rule: Rule): Row[] {
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
 const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['waitsOnReadable', rules.waitsOnReadable], ['answers', rules.answers],
-  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project]];
+  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project], ['moveTask', rules.moveTask]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
     const candidates = rows(rule), sharing = sharedSharing(db), seen = new Set<boolean>();
@@ -275,6 +275,58 @@ describe('a body working for a member', () => {
     expect(both(rules.inboxVolume, body('art', 'gone'), to('gone'))).toBe(false);
     // A full owner may address any person, so a body working for one may set that person's volume too.
     expect(both(rules.inboxVolume, body('art', 'full'), to('lee'))).toBe(true);
+  });
+});
+
+describe('moving a task to another project', () => {
+  const sharing = () => sharedSharing(db);
+  // A task's labels now, and `to`: the project it would go to, or null for none.
+  const moves = (viewer: Viewer, row: Row) => {
+    const answer = holds(rules.moveTask, viewer, row, sharing());
+    const fields = Object.fromEntries(Object.keys(row).map(field => [field, sql.raw(`json_extract(matrix.value, '$.${field}')`)])) as Record<string, SQL>;
+    expect(db.all<{ allowed: number }>(sql`select (${sqlRule(rules.moveTask, viewer, fields)}) as allowed from json_each(${JSON.stringify([row])}) as matrix`)[0].allowed).toBe(answer ? 1 : 0);
+    return answer;
+  };
+  const member = (id: string): Viewer => ({ kind: 'member', id }), agent = (id: string, workingFor?: string): Viewer => ({ kind: 'agent', id, ...(workingFor ? { workingFor } : {}) });
+  it('needs the mover to act on the task where it is and to be someone who could file work where it goes', () => {
+    // sam and art are in pond; lee and mark are in side; owner has the role and is in neither.
+    const inPond = { project: 'pond', ownerKind: 'member', owner: 'lee' }, samsOwn = { project: null, ownerKind: 'member', owner: 'sam' };
+    // In the task's project and not in the destination: no. In the destination and not able to act on the task: no.
+    expect(moves(member('sam'), { ...inPond, to: 'side' })).toBe(false);
+    expect(moves(member('lee'), { ...inPond, to: 'side' })).toBe(false);
+    expect(moves(member('owner'), { ...inPond, to: 'side' })).toBe(true);
+    // One's own task into a project one is in; not into one somebody else is in.
+    expect(moves(member('sam'), { ...samsOwn, to: 'pond' })).toBe(true);
+    expect(moves(member('sam'), { ...samsOwn, to: 'side' })).toBe(false);
+    expect(moves(member('lee'), { ...samsOwn, to: 'side' })).toBe(false);
+    // An agent on both sides of the move, and a body that reaches no further than its member.
+    const artsOwn = { project: null, ownerKind: 'agent', owner: 'art' };
+    expect(moves(agent('art'), { ...artsOwn, to: 'pond' })).toBe(true);
+    expect(moves(agent('art'), { ...artsOwn, to: 'side' })).toBe(false);
+    expect(moves(agent('art', 'sam'), { ...artsOwn, to: 'pond' })).toBe(true);
+    expect(moves(agent('art', 'lee'), { ...artsOwn, to: 'pond' })).toBe(false);
+    // A removed project is nobody's destination but a household owner's, and the door refuses it to them too.
+    expect(moves(member('sam'), { ...samsOwn, to: 'shut' })).toBe(false);
+    // Someone removed, a worker and a service move nothing.
+    for (const nobody of [member('gone'), member('exowner'), { kind: 'runner', id: 'sam' }, { kind: 'service', id: 'owner' }] as Viewer[]) expect(moves(nobody, { ...inPond, to: 'pond' })).toBe(false);
+  });
+  it('lets only the task\'s owner or a household owner take it out of every project', () => {
+    // Out of its project a task is its owner's alone, so being in the project is not enough.
+    const leesInPond = { project: 'pond', ownerKind: 'member', owner: 'lee', to: null }, samsInPond = { ...leesInPond, owner: 'sam' };
+    expect(moves(member('sam'), leesInPond)).toBe(false);
+    expect(moves(member('sam'), samsInPond)).toBe(true);
+    expect(moves(member('owner'), leesInPond)).toBe(true);
+    // lee owns it and cannot act on it where it is: pond is not lee's project.
+    expect(moves(member('lee'), leesInPond)).toBe(false);
+    // An agent's task: the agent, and the members who have that agent. Not another agent in the project.
+    const artsInPond = { project: 'pond', ownerKind: 'agent', owner: 'art', to: null };
+    expect(moves(agent('art'), artsInPond)).toBe(true);
+    expect(moves(member('sam'), artsInPond)).toBe(true);
+    expect(moves(agent('old'), artsInPond)).toBe(false);
+    expect(moves(member('sam'), { ...artsInPond, owner: 'mark' })).toBe(false);
+    // The household's own task has no owner to be alone with: a household owner only.
+    expect(moves(member('sam'), { project: 'pond', ownerKind: 'household', owner: null, to: null })).toBe(false);
+    expect(moves(member('owner'), { project: 'pond', ownerKind: 'household', owner: null, to: null })).toBe(true);
   });
 });
 

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Conversations } from '../core/conversations/index.js';
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { tasks, taskComments, taskLinks } from '../core/data/schema.js';
+import { tasks, taskComments, taskLinks, inbox, projects } from '../core/data/schema.js';
 import { taskId } from '../slug.js';
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
@@ -43,6 +43,9 @@ export interface TaskService {
   reopen(id: string): TaskRow;
   /** Place a task just before another in the household's hand-kept order, or last. */
   move(id: string, before: string | null): TaskRow;
+  /** Move tasks to another project, or to none. Every task named is moved or none is; the answer is the
+   * ones that were not already there. */
+  moveToProject(ids: readonly string[], project: string | null, actor: TaskActor): string[];
   comment(id: string, text: string, actor: TaskActor): void;
   link(id: string, dependsOn: string, type: TaskLinkType): void;
   unlink(id: string, dependsOn: string, type: TaskLinkType): void;
@@ -73,6 +76,23 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
   const filedFor = (task: TaskRow, conversation: { id: string; member: string | null } | null, person: string) =>
     conversation && (reads ? reads(person, conversation.id) : conversation.member === person) ? { conversation: conversation.id } : { conversation: null, ...labels(task) };
   const mail = new Conversations(db, now);
+  /** The labels a stored item about a task took from the task when it was sent, read again from the task as
+   * it is now; nothing for an item that carries its conversation's labels instead. This is the other half
+   * of `filedFor` and of how `answer` files what it sends: what they copy from the task, this gives again
+   * once the task's own labels have changed. A change to how either files mail is a change here. */
+  const takenFromTask = (task: TaskRow, item: typeof inbox.$inferSelect) =>
+    // Outside any thread: a person's mail carries all of the task's labels, an agent's its project.
+    item.conversation === null ? item.toKind === 'person' ? labels(task) : { project: task.project }
+    // In the thread of the agent that asked: the thread's labels, with the task's project, unless the thread is a member's own.
+    : item.source === 'answer' && item.toKind === 'agent' && !mail.conversation(item.conversation).member ? { project: task.project } : undefined;
+  /** Mail about a task that this service sent: its questions, and the answers sent on from them. Other mail
+   * that only names the task is not the task's. */
+  const mailAbout = (id: string) => {
+    const questions = db.select().from(inbox).where(and(eq(inbox.source, 'task'), eq(inbox.waitsOnKind, 'task'), eq(inbox.waitsOnId, id))).all();
+    const answers = db.select().from(inbox).where(and(eq(inbox.source, 'answer'),
+      or(like(inbox.sourceId, `${id}:%`), questions.length ? inArray(inbox.sourceId, questions.map(question => question.id)) : undefined))).all();
+    return [...questions, ...answers];
+  };
   const row = (id: string): TaskRow => {
     const found = db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!found) throw new Error('Task not found');
@@ -147,6 +167,29 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         return touch(id, { position: target });
       });
     },
+    moveToProject(ids, project, actor) {
+      person.parse(actor);
+      return db.transaction(() => {
+        if (project !== null) {
+          const found = db.select({ removedAt: projects.removedAt }).from(projects).where(eq(projects.id, project)).get();
+          if (!found) throw new Error('Project not found');
+          if (found.removedAt) throw new Error('That project is removed');
+        }
+        const named = (value: string | null) => value === null ? 'no project' : `project ${value}`;
+        const moved: string[] = [];
+        for (const id of new Set(ids)) {
+          const from = row(id).project;
+          // Already there: left alone, with no comment.
+          if (from === project) continue;
+          const task = touch(id, { project });
+          // Everything that took its labels from the task goes with it. Links and comments stay as they are.
+          for (const item of mailAbout(id)) { const taken = takenFromTask(task, item); if (taken) mail.relabel(item.id, taken); }
+          addComment(id, `Moved from ${named(from)} to ${named(project)}`, actor);
+          moved.push(id);
+        }
+        return moved;
+      });
+    },
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
     link(id, dependsOn, type) { db.transaction(() => link(id, dependsOn, type)); },
@@ -189,4 +232,10 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       });
     },
   };
+}
+
+/** Every task filed under one project is filed under another: for a merge of the two (shared-projects.ts).
+ * Nothing else about a task changes, and no comment is left: the household change card is the record. */
+export function refileTasks(db: DataDatabase, from: string, into: string): void {
+  db.update(tasks).set({ project: into }).where(eq(tasks.project, from)).run();
 }

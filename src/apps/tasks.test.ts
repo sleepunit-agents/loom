@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
-import { members, agents, inbox, inboxRefs } from '../core/data/schema.js';
+import { eq } from 'drizzle-orm';
+import { members, agents, inbox, inboxRefs, projects, tasks as taskRows } from '../core/data/schema.js';
 import { Conversations } from '../core/conversations/index.js';
 import { taskService, type TaskService } from './tasks.js';
 
@@ -158,4 +159,88 @@ it('records the line of a spec a task implements, one task per line', () => {
   expect(() => tasks.create({ title: 'Again', goal: 'g', why: 'w', owner: { kind: 'household' }, spec }, actor)).toThrow('already implements');
   expect(tasks.create({ title: 'Next line', goal: 'g', why: 'w', owner: { kind: 'household' }, spec: { ...spec, criterion: 'An epic is never ready' } }, actor).specItem).toBe(spec.item);
   expect(file('No spec').specItem).toBeNull();
+});
+
+const makeProjects = (...ids: string[]) => db.insert(projects).values(ids.map(id => ({ id, name: id }))).run();
+it('moves tasks to another project, and records on each who moved it and from where to where', () => {
+  makeProjects('pond', 'shed');
+  const a = tasks.create({ title: 'Buy pump', goal: 'A pump', why: 'Pond', owner: actor, project: 'pond' }, actor), b = file('Sweep shed'), c = file('Paint shed');
+  tasks.edit(c.id, { project: 'shed' });
+  tasks.link(b.id, a.id, 'parent-child');
+  tasks.comment(a.id, 'The old one failed in March', other);
+  expect(tasks.moveToProject([a.id, b.id, c.id, a.id], 'shed', other)).toEqual([a.id, b.id]);
+  expect([a, b, c].map(task => tasks.get(task.id).project)).toEqual(['shed', 'shed', 'shed']);
+  // One comment on each moved task, by the mover. What was said before stays, and so does the link.
+  expect(tasks.get(a.id).comments.map(row => [row.actorKind, row.actor, row.text])).toEqual([['member', other.id, 'The old one failed in March'], ['member', other.id, 'Moved from project pond to project shed']]);
+  expect(tasks.get(b.id).comments.map(row => [row.actor, row.text])).toEqual([[other.id, 'Moved from no project to project shed']]);
+  expect(tasks.get(b.id).links).toEqual([{ task: b.id, dependsOn: a.id, type: 'parent-child' }]);
+  // A task already there is left alone: no comment, and nothing about it changes.
+  expect(tasks.get(c.id).comments).toEqual([]);
+  expect(tasks.moveToProject([a.id, b.id, c.id], 'shed', actor)).toEqual([]);
+  expect(tasks.get(a.id).comments).toHaveLength(2);
+  // Out of every project. A parent and its child may now be in different places.
+  expect(tasks.moveToProject([b.id], null, actor)).toEqual([b.id]);
+  expect(tasks.get(b.id)).toMatchObject({ project: null, links: [{ dependsOn: a.id }] });
+  expect(tasks.get(b.id).comments.at(-1)).toMatchObject({ actor: actor.id, text: 'Moved from project shed to no project' });
+});
+
+it('moves every task named or none, and refuses a project that is removed or not there', () => {
+  makeProjects('pond', 'shed', 'shut');
+  db.update(projects).set({ removedAt: at }).where(eq(projects.id, 'shut')).run();
+  const a = file('Buy pump'), b = file('Sweep shed');
+  const untouched = () => db.select().from(taskRows).all().map(row => [row.project, row.changedAt]);
+  const before = untouched();
+  expect(() => tasks.moveToProject([a.id, 't-999', b.id], 'pond', actor)).toThrow('Task not found');
+  expect(() => tasks.moveToProject([a.id, b.id], 'shut', actor)).toThrow('That project is removed');
+  expect(() => tasks.moveToProject([a.id, b.id], 'nowhere', actor)).toThrow('Project not found');
+  expect(untouched()).toEqual(before);
+  expect([a, b].flatMap(task => tasks.get(task.id).comments)).toEqual([]);
+});
+
+it('takes the labels of mail filed under a task’s own labels with the task, and leaves mail filed in a conversation alone', () => {
+  makeProjects('pond', 'shed');
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const mail = new Conversations(db, () => at), asker = { kind: 'agent', id: 'art' } as const;
+  const labelsOf = (id: string) => { const { project, agent, member, conversation } = mail.item(id); return { project, agent, member, conversation }; };
+  // A member's own task with no project: its mail is private to that member.
+  const own = tasks.create({ title: 'Order pump', goal: 'Pump ordered', why: 'Old pump failed', owner: actor }, actor);
+  tasks.ask(own.id, { to: actor, ask: 'Spend $180?', ifYes: 'I order it', ifNo: 'I look again' }, actor);
+  const first = db.select().from(inbox).where(eq(inbox.waitsOnId, own.id)).get()!;
+  expect(labelsOf(first.id)).toEqual({ project: null, agent: null, member: actor.id, conversation: null });
+  tasks.answer(own.id, 'yes', '', actor);
+  const answered = db.select().from(inbox).where(eq(inbox.sourceId, first.id)).get()!;
+  expect(labelsOf(answered.id)).toEqual({ project: null, agent: null, member: actor.id, conversation: null });
+  tasks.ask(own.id, { to: actor, ask: 'Which shop?', ifYes: 'I go', ifNo: 'I wait' }, asker);
+  const second = db.select().from(inbox).where(eq(inbox.words, 'Which shop?')).get()!;
+  // Into a project: every one of them is the project's now, the answered one and the waiting one alike.
+  tasks.moveToProject([own.id], 'pond', actor);
+  for (const item of [first, answered, second]) expect(labelsOf(item.id)).toEqual({ project: 'pond', agent: null, member: null, conversation: null });
+  tasks.moveToProject([own.id], 'shed', actor);
+  for (const item of [first, answered, second]) expect(labelsOf(item.id).project).toBe('shed');
+  // An answer on its way to the agent that asked, outside any thread, carries the task's project and nothing else.
+  tasks.answer(own.id, 'no', '', actor);
+  const toAgent = db.select().from(inbox).where(eq(inbox.sourceId, second.id)).get()!;
+  expect(toAgent).toMatchObject({ toKind: 'agent', to: 'art', project: 'shed', member: null, agent: null, conversation: null });
+  // Out of every project again: the mail is its owner's alone, as the task is.
+  tasks.moveToProject([own.id], null, actor);
+  for (const item of [first, answered, second]) expect(labelsOf(item.id)).toEqual({ project: null, agent: null, member: actor.id, conversation: null });
+  expect(labelsOf(toAgent.id)).toEqual({ project: null, agent: null, member: null, conversation: null });
+  expect(db.select().from(inbox).all().filter(item => item.project === 'pond' || item.project === 'shed')).toEqual([]);
+
+  // A task from a conversation its people read: the question is filed there, under the conversation's labels.
+  const room = mail.open({ agent: 'art', venue: 'loom', place: 'pond', label: 'Pond', project: 'pond' });
+  tasks = taskService(db, () => at, () => true);
+  const sourced = tasks.create({ title: 'Clean filter', goal: 'Clean', why: 'Clogged', owner: asker, project: 'pond', source: { kind: 'conversation', id: room.id } }, asker);
+  tasks.ask(sourced.id, { to: actor, ask: 'Today?', ifYes: 'I do it', ifNo: 'Tomorrow' }, asker);
+  const inRoom = db.select().from(inbox).where(eq(inbox.waitsOnId, sourced.id)).get()!;
+  tasks.answer(sourced.id, 'yes', '', actor);
+  const back = db.select().from(inbox).where(eq(inbox.sourceId, inRoom.id)).get()!;
+  expect([labelsOf(inRoom.id), labelsOf(back.id)]).toEqual([{ project: 'pond', agent: 'art', member: null, conversation: room.id }, { project: 'pond', agent: 'art', member: null, conversation: room.id }]);
+  // Something else in the same room that only mentions the task is not the task's mail.
+  const mention = mail.send({ toKind: 'agent', to: 'art', conversation: room.id, source: 'answer', sourceId: 'in-elsewhere', fromKind: 'person', fromId: actor.id, words: `See ${sourced.id}`, refs: [sourced.id] });
+  tasks.moveToProject([sourced.id], 'shed', actor);
+  // The question keeps its room's labels. The answer to the agent took its project from the task, so it follows.
+  expect(labelsOf(inRoom.id)).toEqual({ project: 'pond', agent: 'art', member: null, conversation: room.id });
+  expect(labelsOf(back.id)).toEqual({ project: 'shed', agent: 'art', member: null, conversation: room.id });
+  expect(labelsOf(mention.id).project).toBe('pond');
 });

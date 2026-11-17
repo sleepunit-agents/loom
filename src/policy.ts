@@ -145,12 +145,28 @@ const bridgeConnection: Rule = any(householdOwner, agentOwners);
  * from anybody else. So every reply awaiting review has someone who can see it and decide. Never an agent. */
 const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seenWith('bridgeIncoming', 'incoming'),
   any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true))));
-/** A task shares by project first. Without a project it is its owner's: a member's own, or an agent's owners'. */
-const task: Rule = any(householdOwner, first([
-  [set('project'), inProject('project')],
+/** Whose a task is when it has no project: a member's own, or an agent's owners' and the agent's. The household's
+ * own task has nobody of that kind. */
+const taskOwner: Rule = first([
   [equal('ownerKind', 'member'), self('owner')],
   [equal('ownerKind', 'agent'), ownsAgent('owner')],
-], never));
+], never);
+/** A task shares by project first. Without a project it is its owner's: a member's own, or an agent's owners'. */
+const task: Rule = any(householdOwner, first([[set('project'), inProject('project')]], taskOwner));
+/** Who may move a task to another project, or out of every project. The row is the task's labels as they
+ * are now, with `to`: the project it would go to, or null for none.
+ *
+ * The mover must be able to act on the task where it is (rule `task`), and must be someone who could have
+ * filed it where it is going:
+ *  - into a project: a member or agent on that project, or a household owner;
+ *  - out of every project, where it becomes its owner's alone: that owner (`taskOwner`), or a household owner.
+ * So moving a task shows it to nobody the mover could not already have shown it to by filing it there
+ * themselves. Being in the destination is not enough to pull a task in, and being in the task's project is
+ * not enough to push it somewhere else, or to make it private to its owner.
+ *
+ * That `to` names a project in use is asked beside this rule, where a new task's project is
+ * (shared-task-access.ts): a removed project is nobody's destination, a household owner's included. */
+const moveTask: Rule = all(task, any(householdOwner, first([[set('to'), inProject('to')]], taskOwner)));
 /** The roster: who an agent is, what it reports it is doing, whether it is paused and which models it
  * prefers. Its owners, the agent itself, and anyone who shares a project with it. */
 const agentRoster = (field: string): Rule => any(householdOwner, ownsAgent(field), { is: 'sharesProjectWithAgent', field });
@@ -231,7 +247,7 @@ const ownNotice: Rule = all(currentMember, self('member'));
  * and the household owners' (ownedByMember('owner'), asked by the same read). */
 const accountSummary: Rule = currentViewer;
 
-export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
+export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, moveTask, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */

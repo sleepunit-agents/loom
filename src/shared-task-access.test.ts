@@ -103,3 +103,55 @@ it('refuses a new task whose owner has been removed from the household, member o
   expect(create({ kind: 'agent', id: 'mark' })).toBe(false);
   expect(create({ kind: 'agent', id: 'art' })).toBe(true);
 });
+it('moves tasks to a project only for someone who acts on each of them and could file work there', () => {
+  const f = fixture(), owner: Viewer = { kind: 'member', id: 'owner' }, art: Viewer = { kind: 'agent', id: 'art' };
+  const own = f.make(), inPond = f.make({ owner: { kind: 'member', id: 'lee' }, project: 'pond' }), hidden = f.make({ owner: { kind: 'member', id: 'lee' } });
+  const agents = f.make({ owner: { kind: 'agent', id: 'art' } });
+  const move = (ids: string[], project: string | null, viewer?: Viewer) => f.allowed({ action: 'move', ids, project }, viewer);
+  // sam is in pond and not in other.
+  expect(move([own.id], 'pond')).toBe(true);
+  expect(move([own.id, agents.id, inPond.id], 'pond')).toBe(true);
+  expect(move([inPond.id], 'other')).toBe(false);
+  expect(move([inPond.id], 'other', owner)).toBe(true);
+  // All or nothing: one task the caller cannot act on, or that is not there, refuses the whole move.
+  expect(move([own.id, hidden.id], 'pond')).toBe(false);
+  expect(move([own.id, 't-999'], 'pond')).toBe(false);
+  // Being in the destination is not enough: lee is put in other and still cannot pull sam's task there.
+  f.db.insert(projectMembers).values({ member: 'lee', project: 'other' }).run();
+  expect(move([own.id], 'other', { kind: 'member', id: 'lee' })).toBe(false);
+  expect(move([hidden.id], 'other', { kind: 'member', id: 'lee' })).toBe(true);
+  // An agent moves its own work into its project; its body working for someone outside that project does not.
+  expect(move([agents.id], 'pond', art)).toBe(true);
+  expect(move([agents.id], 'other', art)).toBe(false);
+  expect(move([agents.id], 'pond', { kind: 'agent', id: 'art', workingFor: 'sam' })).toBe(true);
+  expect(move([agents.id], 'pond', { kind: 'agent', id: 'art', workingFor: 'lee' })).toBe(false);
+  // A project that is removed, or was never there, is nobody's destination: not a household owner's either.
+  f.db.update(projects).set({ removedAt: at }).where(eq(projects.id, 'other')).run();
+  expect(move([inPond.id], 'other', owner)).toBe(false);
+  expect(move([inPond.id], 'nowhere', owner)).toBe(false);
+  expect(move([inPond.id], 'pond', owner)).toBe(true);
+  for (const viewer of [{ kind: 'service', id: 'tasks' }, { kind: 'runner', id: 'box' }, { kind: 'member', id: 'missing' }] as Viewer[]) expect(move([own.id], 'pond', viewer)).toBe(false);
+});
+it('takes a task out of every project only for its owner or a household owner', () => {
+  const f = fixture(), owner: Viewer = { kind: 'member', id: 'owner' };
+  const sams = f.make({ project: 'pond' }), lees = f.make({ owner: { kind: 'member', id: 'lee' }, project: 'pond' });
+  const arts = f.make({ owner: { kind: 'agent', id: 'art' }, project: 'pond' }), households = f.make({ owner: { kind: 'household' }, project: 'pond' });
+  const move = (ids: string[], viewer?: Viewer) => f.allowed({ action: 'move', ids, project: null }, viewer);
+  // Out of pond the task is its owner's alone. sam acts on all four and owns one, and has art.
+  expect(move([sams.id])).toBe(true);
+  expect(move([arts.id])).toBe(true);
+  expect(move([arts.id], { kind: 'agent', id: 'art' })).toBe(true);
+  expect(move([lees.id])).toBe(false);
+  expect(move([households.id])).toBe(false);
+  expect(move([sams.id, lees.id])).toBe(false);
+  // lee owns one and is not in pond, so cannot act on it there.
+  expect(move([lees.id], { kind: 'member', id: 'lee' })).toBe(false);
+  expect(move([sams.id, lees.id, arts.id, households.id], owner)).toBe(true);
+});
+it('still places a task in the hand-kept order under the same action name', () => {
+  const f = fixture(), own = f.make(), other = f.make(), hidden = f.make({ owner: { kind: 'member', id: 'lee' } });
+  expect(f.allowed({ action: 'move', id: own.id, before: null })).toBe(true);
+  expect(f.allowed({ action: 'move', id: own.id, before: other.id })).toBe(true);
+  expect(f.allowed({ action: 'move', id: own.id, before: hidden.id })).toBe(false);
+  expect(f.allowed({ action: 'move', id: hidden.id, before: null })).toBe(false);
+});

@@ -614,6 +614,16 @@ it('reads a review of a held reply with one shape at the door and in the service
   expect(bridgeReview.parse({ action: 'review', id: ' held ', decision: 'release' }).id).toBe(' held ');
 });
 
+it('asks policy.ts who may move a task to another project, at the one door that takes the move', () => {
+  // The door reads the rule for each task named and states none of its own.
+  const door = text('src/shared-task-access.ts');
+  expect(door).toContain('holds(rules.moveTask, viewer, { ...row, to }, sharing)');
+  expect(door).not.toMatch(/householdOwner|isHouseholdOwner|inProject|\.members\.includes|\.agents\.includes/);
+  // The rule is written in policy.ts and in no other file; the trusted service and the dispatcher carry no policy.
+  expect(sources('src').filter(file => /\bmoveTask\b\s*[:=]/.test(text(file)))).toEqual(['src/policy.ts']);
+  for (const file of ['src/apps/tasks.ts', 'src/apps/task-command.ts']) expect(text(file), file).not.toMatch(/from '\.\.\/policy\.js'/);
+});
+
 it('asks policy.ts which agents Home shows', () => {
   const home = text('src/core/data/comms-home.ts');
   expect(home).toContain("mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work')");

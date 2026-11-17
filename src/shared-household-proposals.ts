@@ -1,4 +1,4 @@
-/** Household changes an agent asks for: a project, a member, an agent's
+/** Household changes an agent asks for: a project, a merge of two projects, a member, an agent's
  * description, the household's own settings, a standing approval rule, or how
  * an agent treats outside people and which tools its body is not given. One
  * Three dangerous actions are proposed the same way: revoking a token, revoking
@@ -50,11 +50,14 @@ import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
 import {householdService,HouseholdError,memberInput,agentInput,settingsInput,removable,GITHUB_LOGIN} from './apps/household.js';
 import {householdSettings} from './core/data/household-settings.js';
-import {projectInput,type sharedProjects} from './shared-projects.js';
+import {projectInput,projectMergeInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
 const operation='household.change';
-const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
+const kinds={project:projectInput,
+ // One project emptied into another and removed. Its records cannot be told apart again afterwards.
+ projectMerge:projectMergeInput,
+ member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
  // Secrets: a standing answer for one secret, the household's default, and what an agent's house is handed at start.
  secretRule:secretRuleInput,secretDefault:z.object({answer:secretAnswer}).strict(),houseSecrets:houseSecretsInput,
  // A Discord or Slack connection, who answers in a channel, and which member an outside user is.
@@ -112,19 +115,22 @@ const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?
  :value.change==='bridge'?[value.input.action,...('id' in value.input?[value.input.id]:'channel' in value.input?[value.input.platform,value.input.workspace,value.input.channel]:[value.input.platform,value.input.workspace,value.input.user])].join(' ')
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
- :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member:value.input.id;
-const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
+ :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member
+ :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.input.id;
+const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
 const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:(value.change==='restore'?'remove':value.change)+':'+name(value));
 // The card's own words, for everyone who may read it: the change asked for, never what it would replace.
-const said=(value:Proposal)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
+const merged=(value:Proposal)=>'Merge '+label(value)+'. Everything filed under the first is filed under the second, and the first is removed.';
+const said=(value:Proposal)=>value.change==='projectMerge'?merged(value):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
  :label(value)+': '+JSON.stringify(sorted(value.input));
 // The same with what it would replace, for a household owner.
-const summary=(value:Proposal,before:unknown)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
+const summary=(value:Proposal,before:unknown)=>value.change==='projectMerge'?merged(value)+' As they stand: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
 const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+ :value.change==='projectMerge'?{ask:'Merge '+label(value)+'?',ifYes:'Everything filed under the first project is filed under the second, whose people and agents then see all of it. The first project\'s members, agents and repositories join the second, and the first is removed. Restoring it later does not undo this.',ifNo:'Both projects stay as they are.'}
  :value.change==='remove'?{ask:'Remove '+label(value)+'?',ifYes:'It is taken out of use. Its history stays, and it can be restored.',ifNo:'It stays as it is.'}
  :value.change==='restore'?{ask:'Restore '+label(value)+'?',ifYes:'It is put back in use.',ifNo:'It stays removed.'}
  :{ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'};
@@ -146,6 +152,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // What the change would replace, in the same shape as the input, or null when it would be new.
  const before=(value:Proposal):unknown=>{
   if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);return row?sorted({id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
+  if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
   if(value.change==='member'){const row=household.members().find(row=>row.id===value.input.id);return row?sorted({id:row.id,role:row.role,fullOwner:row.fullOwner,agents:row.agents}):null;}
   if(value.change==='agent'){const row=db.select().from(agents).where(eq(agents.id,value.input.id)).get();return row?sorted({id:row.id,about:row.about,markBg:row.markBg,markFg:row.markFg,faceShape:row.faceShape,faceEyes:row.faceEyes}):null;}
   if(value.change==='rule'){const scope=ruleScope(value.input),row=rules.list().find(row=>row.kind===value.input.kind&&row.scope===scope&&row.person===value.input.person);return row?sorted({kind:row.kind,scope:row.scope,person:row.person,tier:row.tier}):null;}
@@ -190,6 +197,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const change=(value:Proposal,by:string)=>{
   try{
    if(value.change==='project')projects.save(value.input);
+   else if(value.change==='projectMerge')projects.merge(value.input);
    else if(value.change==='member')household.setMember(value.input);
    else if(value.change==='agent')household.setAgent(value.input);
    else if(value.change==='settings')household.setSettings(value.input);
@@ -224,7 +232,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Why the change cannot be made on what is there now, in the words of the rule it breaks; nothing when it can.
  // These depend on what the asker may not read, so they are an owner's to hear: never the asker's.
  const refusal=(value:Proposal,was:unknown)=>
-  value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
+  value.change==='projectMerge'?projects.mergeRefusal(value.input)
+  :value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
   :value.change==='boxSettings'&&was===null?new OperationError('not-found','No live machine has that id')
   :value.change in danger&&was===null?new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser')
   :value.change==='rule'&&was===null&&value.input.tier===null?new OperationError('invalid','There is no such rule to remove')
