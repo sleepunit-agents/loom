@@ -14,7 +14,8 @@ const repository=text(2048).refine(value=>{
 },'Use a repository reference without credentials');
 /** The Housefile's path inside the repository. Empty is a house with no Housefile of its own: the core
  * house loom provides, with the repository copied in (docs/runtime/worker.md, "The core house"). */
-const houseFile=z.string().trim().max(512).refine(value=>!hasControlCharacter(value)).refine(value=>!value.startsWith('/')&&!value.includes('\\')&&!value.split('/').includes('..'));
+// The same rule a worker holds a Housefile's path to (houseFile in runtime/house-source.ts): no part that is empty, `.` or `..`.
+const houseFile=z.string().trim().max(512).refine(value=>!hasControlCharacter(value)).refine(value=>value===''||!value.includes('\\')&&value.split('/').every(part=>part!==''&&part!=='.'&&part!=='..'));
 export const agentRunSettingsInput=z.object({agent:text(200),houseRepository:repository,houseFile:houseFile,
    houseBranch:text(200).refine(value=>!value.startsWith('-')),nestedContainers:z.boolean(),gpu:z.boolean(),
    boxes:z.array(text(200)).max(128).refine(values=>new Set(values).size===values.length),

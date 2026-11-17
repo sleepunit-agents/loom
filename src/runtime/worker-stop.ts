@@ -31,7 +31,7 @@ export const WORKER_STOP = {
   signin: [51, '--account-signin was removed; sign the account in from loom (runtime.accountSignIn), which runs the provider\'s program listed under accountSignIn.programs in this worker\'s configuration'],
   /** A path under `accountLogins` or `container.mounts`, or `container.socket` or `container.nestedSocket`
    * (worker-mounts.ts has the rules). The line is followed by the configuration key at fault, never by a path. */
-  mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
+  mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
   /** A worker with container bodies builds each house itself and starts every body the same way.
    * The line is followed by the key that must go: `build`, `runners`, `accountRunners`, or `container.mounts`
    * when it is one list and not a list for each agent, or the `target` of an `accountLogins` entry. */
@@ -40,6 +40,9 @@ export const WORKER_STOP = {
   git: [54, `git ${GIT_MINIMUM.join('.')} or later, which fetches each house's repository, could not be run on this machine`],
   /** The directory the worker is installed in is mounted into every container for the body program. */
   program: [55, 'the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)'],
+  /** A worker with container bodies holds its engine and each sign-in directory to itself (worker-alone.ts).
+   * The line is followed by the configuration key of the one another worker holds, never by a path. */
+  shared: [57, 'another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine\'s houses'],
   /** The core house every house is built on is defined by files in the directory the worker is installed in. */
   core: [56, 'the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;

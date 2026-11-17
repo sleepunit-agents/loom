@@ -2,7 +2,7 @@ import { PassThrough } from 'node:stream';
 import { expect, it, vi } from 'vitest';
 import { DockerResponseError, type DockerEngine } from './docker-engine.js';
 import { UnmetHouseError } from './worker.js';
-import { buildCore, buildHouse, coreImage, coreImageName, houseBuilt, houseCore, houseImage, houseImageName, houseStart, pruneHouses, CORE_ARGUMENT, HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE } from './house-image.js';
+import { buildCore, buildHouse, coreImage, coreThere, coreImageName, houseBuilt, houseCore, houseImage, houseImageName, houseStart, pruneHouses, CORE_ARGUMENT, HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE } from './house-image.js';
 import { LISTING_MAX } from './docker-engine.js';
 
 const house = { repository: 'https://example.com/org/house.git', file: 'house/Housefile', branch: 'main' }, commit = 'c'.repeat(40);
@@ -234,5 +234,25 @@ it('keeps a core house while a house image that is kept was built on it, removes
   // The cores cannot be listed: nothing of them is removed, and whoever asked is told the disk was not looked at.
   const unlisted = engine((method, path) => { if (decodeURIComponent(path).includes('loom-core')) throw new Error('engine down'); return method === 'GET' ? [] : undefined; });
   expect(await pruneHouses(unlisted, keeping([]), true, never())).toBe(false);
+});
+it('removes the house images an earlier worker built under the name houses had before the core, and nothing else that is not its own', async () => {
+  const before = (houseHex: string, commitLetter: string) => `localhost/loom-house-${houseHex.repeat(16)}:${commitLetter.repeat(40)}`;
+  const rows = [{ name: before('a', '1'), built: 1 }, { name: before('a', '2'), built: 2 }, { name: before('b', '1'), built: 3 }, { name: tag('a', '3'), built: 4 },
+    { name: 'localhost/loom-house-art-new:abc', built: 5 }, { name: `localhost/loom-house-${'a'.repeat(16)}:latest`, built: 6 }, { name: 'docker.io/library/node:22', built: 7 }];
+  // One of them still has a container: the engine refuses, it is left, and nothing fails.
+  const all = listing(rows, [before('b', '1')]), asked: string[] = [];
+  expect(await pruneHouses(all.made, { take: name => { asked.push(name); return true; }, done: () => {}, used: () => undefined }, false, never())).toBe(true);
+  // However many there are, and whoever would hold one: no job can be given one again, so the guard is not asked and none counts for a place.
+  expect(all.removed).toEqual([before('a', '1'), before('a', '2')]); expect(asked).toEqual([]);
+  expect(all.asked.filter(call => call.startsWith('DELETE'))).toEqual([`DELETE /images/${before('a', '1')}`, `DELETE /images/${before('a', '2')}`, `DELETE /images/${before('b', '1')}`]);
+  expect(houseImageName(before('a', '1'))).toBe(false);
+});
+it('takes a core house that is there only when it is a house, and removes one that is not so that it is built again', async () => {
+  expect(await coreThere(engine(() => labelled(good)), core, never())).toBe(true);
+  expect(await coreThere(engine(() => { throw new DockerResponseError(404); }), core, never())).toBe(false);
+  await expect(coreThere(engine(() => { throw new DockerResponseError(500); }), core, never())).rejects.toThrow();
+  const calls: string[] = [], bad = engine((method, path) => { calls.push(`${method} ${path}`); return method === 'GET' ? labelled({ 'loom.house': '1' }) : undefined; });
+  expect(await coreThere(bad, core, never())).toBe(false); expect(calls).toEqual([`GET /images/${core}/json`, `DELETE /images/${core}`]);
+  await expect(coreThere(engine(), image, never())).rejects.toThrow('Invalid core house image');
 });
 

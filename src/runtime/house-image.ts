@@ -63,6 +63,13 @@ export const houseImageName = (image: unknown): image is string => {
   const cut = tag.indexOf('-');
   return cut > 0 && COMMIT.test(tag.slice(0, cut)) && CORE_TAG.test(tag.slice(cut + 1));
 };
+/** A house image as a worker named it before houses were built on a core: the house's digits and a commit,
+ * with no core's tag. No worker starts a body in one any more; they are only ever removed (pruneHouses). */
+const earlierHouseImage = (image: unknown): image is string => {
+  if (typeof image !== 'string' || !image.startsWith(PREFIX)) return false;
+  const [house, commit, ...more] = image.slice(PREFIX.length).split(':');
+  return more.length === 0 && HOUSE.test(house) && commit !== undefined && COMMIT.test(commit);
+};
 /** The commit a house image was built from, by its name: the one thing that says so, whatever the
  * job's branch has moved to since. */
 export const houseCommit = (image: string): string => {
@@ -103,6 +110,16 @@ export async function buildHouse(engine: DockerEngine, image: string, file: stri
   const given = encodeURIComponent(JSON.stringify({ [CORE_ARGUMENT]: houseCore(image) }));
   await engine.build(`/build?t=${encodeURIComponent(image)}&dockerfile=${encodeURIComponent(file)}&buildargs=${given}&${BUILD}`, context, signal);
   if (!await houseBuilt(engine, image, signal)) throw new Error('House image was not built');
+}
+/** Whether the engine has this core house, and it is one: an image under the core's name that does not
+ * meet the image contract (one whose removal failed after a build that made no house, say) is removed and
+ * counts as not there, so that it is built again and no house is ever built on it. */
+export async function coreThere(engine: DockerEngine, image: string, signal: AbortSignal): Promise<boolean> {
+  if (!coreImageName(image)) throw new Error('Invalid core house image');
+  let found: unknown;
+  try { found = await engine.json('GET', `/images/${image}/json`, undefined, signal); } catch (error) { if (missing(error)) return false; throw error; }
+  try { contract(found); return true; }
+  catch (error) { if (!(error instanceof UnmetHouseError)) throw error; await engine.json('DELETE', `/images/${image}`, undefined, signal).catch(() => {}); return false; }
 }
 /** Have the engine build the core house from the worker's own definition of it, with no argument at all.
  * The core is held to what a house is: when what was built does not say it is a house of this layout,
@@ -174,12 +191,17 @@ export async function pruneHouses(engine: DockerEngine, guard: HouseGuard, lefto
   try { listed = await engine.json('GET', `/images/json?filters=${filters({ reference: [`${PREFIX}*`] })}`, undefined, signal, LISTING_MAX); }
   catch { return false; }
   if (!Array.isArray(listed)) return false;
-  const images: { name: string; built: number }[] = [];
+  const images: { name: string; built: number }[] = [], earlier: string[] = [];
   for (const row of listed as unknown[]) {
     if (!row || typeof row !== 'object' || !('RepoTags' in row) || !Array.isArray(row.RepoTags)) continue;
     const built = 'Created' in row && typeof row.Created === 'number' ? row.Created : 0;
-    for (const name of row.RepoTags as unknown[]) if (houseImageName(name)) images.push({ name, built });
+    for (const name of row.RepoTags as unknown[]) if (houseImageName(name)) images.push({ name, built }); else if (earlierHouseImage(name)) earlier.push(name);
   }
+  /** Ask the engine to remove one image, never by force: it refuses one a container uses, and that is left. */
+  const remove = async (name: string) => { try { await engine.json('DELETE', `/images/${name}`, undefined, signal); } catch { /* in use, or gone */ } };
+  // What an earlier worker built under the name houses had before the core: no job can be given one
+  // again, so none is kept. One a container still runs in is refused by the engine and found again later.
+  for (const name of earlier) await remove(name);
   // Newest first: what this worker used most recently, then what it never touched, by the engine's time.
   images.sort((one, other) => (guard.used(other.name) ?? -1) - (guard.used(one.name) ?? -1) || other.built - one.built);
   const perHouse = new Map<string, number>(), keptNames: string[] = []; let kept = 0;
@@ -188,8 +210,7 @@ export async function pruneHouses(engine: DockerEngine, guard: HouseGuard, lefto
     if (count < HOUSE_IMAGES_PER_HOUSE && kept < HOUSE_IMAGES_KEPT) { perHouse.set(house, count + 1); kept++; keptNames.push(name); continue; }
     // Held back: it stays, and counts among what is kept.
     if (!guard.take(name)) { perHouse.set(house, count + 1); kept++; keptNames.push(name); continue; }
-    try { await engine.json('DELETE', `/images/${name}`, undefined, signal); } catch { /* in use, or gone */ }
-    finally { guard.done(name); }
+    try { await remove(name); } finally { guard.done(name); }
   }
   // Core houses: one is kept while a house image that is kept was built on it, and while the guard holds
   // it back (a build of it or on it is under way). They are not counted among the house images: there
@@ -203,8 +224,7 @@ export async function pruneHouses(engine: DockerEngine, guard: HouseGuard, lefto
     if (!row || typeof row !== 'object' || !('RepoTags' in row) || !Array.isArray(row.RepoTags)) continue;
     for (const name of row.RepoTags as unknown[]) {
       if (!coreImageName(name) || built.has(name) || !guard.take(name)) continue;
-      try { await engine.json('DELETE', `/images/${name}`, undefined, signal); } catch { /* in use, or gone */ }
-      finally { guard.done(name); }
+      try { await remove(name); } finally { guard.done(name); }
     }
   }
   if (!leftovers) return true;

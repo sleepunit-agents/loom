@@ -377,6 +377,9 @@ Entries are grouped by the part of the program they belong to.
   `buildTimeoutMs`. A machine without the network, or a week in which a download address is down, builds
   no core: jobs whose house image is not already there fail as a failed build until it can. A house whose
   image for this week exists is not affected.
+- **Once for an engine, because one worker has the engine.** Two workers on one engine would each build
+  the core and each remove the cores the other's houses are built on. A worker holds its engine to itself
+  (exit 57 for a second one), with the same limit as above for a worker in a network of its own.
 - **A house that does not start from the core pays too.** The core is built before every house build
   and every image is named for it, whether or not the Housefile uses `LOOM_CORE`. The worker does not read
   a Housefile, so it cannot tell.
@@ -466,8 +469,11 @@ Entries are grouped by the part of the program they belong to.
   before this one cleared the directory of everything but the sign-in before each start, lock included).
 - **What is not enforced.** That a house reaches its sign-in in place. The core house does; a Housefile
   that copies a sign-in file into its image or its home brings back the fault of copies, and nothing in
-  the worker can see that. The limit also holds for one worker: two workers on one machine with the same
-  directory configured would each count their own bodies.
+  the worker can see that. One worker counts the bodies on a directory because no second worker can
+  name it: a worker holds each sign-in directory, and its engine, to itself for as long as it lives, and a
+  second one stops at start (exit 57; `src/runtime/worker-alone.ts`). That hold is a name in the machine's
+  table of listening sockets, so a worker inside a container with a network of its own is not held apart
+  from one on the host: giving two such workers one directory is not refused.
 - **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
   configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
   engine's user can reach on the machine, every account's sign-in directory included: it can start a

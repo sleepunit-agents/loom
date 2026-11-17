@@ -621,7 +621,15 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(text('src/runtime/worker-mounts.ts')).toContain("import { lstatSync, realpathSync } from 'node:fs';");
   expect(text('src/runtime/worker-mounts.ts')).not.toMatch(/from 'node:fs\/promises'|node:child_process/);
   expect(sources('src').filter(file => /accountLogins/.test(text(file)))).toEqual(['src/runtime/job-exit.ts', 'src/runtime/worker-container.ts', 'src/runtime/worker-mounts.ts', 'src/runtime/worker-program.ts', 'src/runtime/worker-stop.ts']);
-  expect(text('src/runtime/worker-container.ts').match(/accountLogins/g)).toHaveLength(4);
+  // The file that mounts them reads one file in all, its own package.json, and the file that holds them
+  // to one worker makes its names from their paths and opens nothing at them.
+  expect(text('src/runtime/worker-container.ts')).toContain("import { lstatSync, readFileSync, realpathSync } from 'node:fs';");
+  expect(text('src/runtime/worker-container.ts').match(/readFileSync\(/g)).toEqual(['readFileSync(']);
+  expect(text('src/runtime/worker-container.ts')).toContain("readFileSync(join(program, 'package.json'), 'utf8')");
+  expect(text('src/runtime/worker-alone.ts')).toContain("import { rmSync } from 'node:fs';");
+  expect(text('src/runtime/worker-alone.ts')).toContain("const file = join(tmpdir(), `${nameOf(path)}-${userInfo().uid}.sock`);");
+  // One worker for an engine and a sign-in directory: asked in one place, before anything is ended or built.
+  expect(sources('src').filter(file => /holdAlone\b/.test(text(file)))).toEqual(['src/runtime/worker-alone.ts', 'src/runtime/worker-container.ts']);
   // The core house is defined in one directory of the install, and its image named in one file.
   expect(CORE_DIRECTORY).toBe('house/core');
   expect(sources('src').filter(file => /localhost\/loom-core/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);

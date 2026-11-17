@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:net';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
@@ -10,6 +10,7 @@ import { coreImage, houseCommit, houseImage } from './house-image.js';
 import { coreDefinition, coreWeek, NO_HOUSEFILE } from './house-core.js';
 import { turnsOf, workerTurns } from './worker-turns.js';
 import { DAY_MS } from '../core/day.js';
+import { holdAlone, type Alone } from './worker-alone.js';
 import { houseRepository, houseSource } from './house-source.js';
 import { HOUSE_ENV } from './house-layout.js';
 import type { DockerEngine } from './docker-engine.js';
@@ -53,7 +54,8 @@ function fixture() {
   const source = { fetch: vi.fn(async (_house: WorkerAssignment['house'], _credential: Uint8Array | undefined, _signal: AbortSignal) => commit),
     context: vi.fn((_house: WorkerAssignment['house'], _commit: string, _signal: AbortSignal) => { const tar = new PassThrough(); tar.end('tar'); return tar; }) };
   const config = { box: 'box', container: { socket: engineSock, setupTimeoutMs: 100, cleanupTimeoutMs: 50 } };
-  const deps = { engine: whole, source, program: programDirectory, core: { digest: coreDigest, context: vi.fn(coreContext) }, now: () => moment };
+  // Each test's worker has the engine to itself without asking the machine: the tests of that ask it themselves.
+  const deps = { engine: whole, source, program: programDirectory, core: { digest: coreDigest, context: vi.fn(coreContext) }, now: () => moment, alone: vi.fn(async (_wanted: readonly Alone[]) => () => {}) };
   const executor = containerWorkerExecutor(config, { ...deps, name: () => 'unique' });
   const abort = new AbortController();
   const start = (assignment = job) => executor.start(assignment, built, abort.signal);
@@ -1055,11 +1057,11 @@ it('gives an agent with no Housefile the core house with its repository copied i
   const plain = { ...job, id: 'plain', house: { ...job.house, file: '' } }, image = houseImage(plain.house, commit, core);
   expect(await f.executor.build(plain, f.abort.signal)).toBe(image);
   expect(engine.order).toEqual([core, image]);
-  // The worker's own four lines, added to the commit's files under a name of its own and named as the Housefile.
-  const [path] = f.engine.build.mock.calls[1], added = f.source.context.mock.calls[0][3] as { name: string; data: Buffer };
-  expect(new URL(path, 'http://engine').searchParams.get('dockerfile')).toBe('Housefile.loom-core'); expect(NO_HOUSEFILE).toBe('Housefile.loom-core');
-  expect(added.name).toBe('Housefile.loom-core');
-  expect(added.data.toString()).toBe('ARG LOOM_CORE\nFROM ${LOOM_CORE}\nCOPY . /home/agent/repo\nRUN rm /home/agent/repo/Housefile.loom-core\n');
+  // The worker's own three lines, beside the directory the commit's files are written into: never among what is copied.
+  const [path] = f.engine.build.mock.calls[1], apart = f.source.context.mock.calls[0][3] as { directory: string; beside: { name: string; data: Buffer } };
+  expect(new URL(path, 'http://engine').searchParams.get('dockerfile')).toBe('Housefile'); expect(NO_HOUSEFILE).toBe('Housefile');
+  expect([apart.directory, apart.beside.name]).toEqual(['repository', 'Housefile']);
+  expect(apart.beside.data.toString()).toBe('ARG LOOM_CORE\nFROM ${LOOM_CORE}\nCOPY repository/ /home/agent/repo/\n');
   // It is a house like any other from there: the core's labels are its own, and a body starts in it.
   const body = f.executor.start(plain, image, f.abort.signal); await body.spawned;
   expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Image: imageId, WorkingDir: '/home/agent/repo' }); await body.stop();
@@ -1126,5 +1128,50 @@ it.each(['https://user:secret-token@example.com/org/house.git', 'https://token@e
   // A source says what it fetches; the worker's own fetches https and nothing else.
   expect(houseSource({ directory: join(houseRoot, 'unused-mirrors') }).fetches!(repository)).toBe(false);
   expect(houseSource({ directory: join(houseRoot, 'unused-mirrors') }).fetches!('https://example.com/org/house.git')).toBe(true);
+});
+
+// One worker on an engine and on a sign-in directory.
+/** An engine with no container of an earlier worker's on it. */
+function nothingLeft(f: ReturnType<typeof fixture>) { const original = f.engine.json.getMockImplementation()!; f.engine.json.mockImplementation((method, path, body, signal) => path.startsWith('/containers/json') ? Promise.resolve([]) : original(method, path, body, signal)); return f; }
+it('holds its engine and every sign-in directory to itself before it ends anything or takes any work, and lets go when it closes', async () => {
+  const f = nothingLeft(fixture()), logins = { one: { harness: { source: loginA } }, 'an account': { harness: { source: loginB } } };
+  const config = { ...f.config, accountLogins: logins }, held: string[][] = []; let released = 0;
+  const alone = vi.fn(async (wanted: readonly Alone[]) => { held.push(wanted.map(one => `${one.key}=${one.path}`)); return () => { released++; }; });
+  const executor = containerWorkerExecutor(config, { ...f.deps, alone });
+  // Nothing is asked of the machine until the worker starts its work.
+  expect(alone).not.toHaveBeenCalled();
+  await executor.endLeft!(f.abort.signal);
+  // The engine where its socket really is, and each sign-in directory, by the key that names it.
+  expect(held).toEqual([[`container.socket=${realpathSync(engineSock)}`, `accountLogins.one.harness.source=${loginA}`, `accountLogins."an account".harness.source=${loginB}`]]);
+  // Asked once, however much work follows.
+  await executor.build({ ...job, account: 'one' }, f.abort.signal); await executor.endLeft!(f.abort.signal); expect(alone).toHaveBeenCalledOnce();
+  executor.close!(); await flush(); expect(released).toBe(1);
+});
+it('stops a second worker on the same engine, and one on another engine with the same sign-in directory, naming the key; and builds nothing', async () => {
+  const f = nothingLeft(fixture());
+  // Two real holds, in one process as in two: the first worker has the engine and an account's sign-in.
+  const first = containerWorkerExecutor({ ...f.config, accountLogins: { account: { harness: { source: loginA } } } }, { ...f.deps, alone: holdAlone });
+  await first.endLeft!(f.abort.signal);
+  const second = containerWorkerExecutor({ ...f.config, state: undefined }, { ...f.deps, alone: holdAlone });
+  await expect(second.endLeft!(f.abort.signal)).rejects.toMatchObject({ stage: 'shared', key: 'container.socket' });
+  // A worker that did not ask to end what was left is refused all the same when it is given a job, as a failed build.
+  await expect(second.build(job, f.abort.signal)).rejects.toThrow('Worker build failed'); expect(f.engine.build).not.toHaveBeenCalled(); expect(f.source.fetch).not.toHaveBeenCalled();
+  const elsewhere = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, socket: nestedSock }, accountLogins: { 'their name for it': { harness: { source: loginA } } } }, { ...f.deps, alone: holdAlone });
+  await expect(elsewhere.endLeft!(f.abort.signal)).rejects.toMatchObject({ stage: 'shared', key: 'accountLogins."their name for it".harness.source' });
+  // The first worker stops in good order: the next one has the machine.
+  first.close!(); await flush(); await new Promise(resolve => setTimeout(resolve, 20));
+  const next = containerWorkerExecutor({ ...f.config, accountLogins: { account: { harness: { source: loginA } } } }, { ...f.deps, alone: holdAlone });
+  await expect(next.endLeft!(f.abort.signal)).resolves.toBeDefined(); next.close!(); second.close!(); elsewhere.close!(); await flush();
+});
+it('starts and ends a body without touching anything inside its account\'s sign-in directory', async () => {
+  // What a harness's program keeps there, the lock it renews under among it.
+  const login = houseDirectory('logins/untouched-by-the-worker');
+  for (const name of ['.credentials.json', '.oauth_refresh.lock', 'auth.json']) writeFileSync(join(login, name), 'not read', { mode: 0o600 });
+  const seen = () => readdirSync(login).sort().map(name => { const found = statSync(join(login, name)); return [name, found.mtimeMs, found.atimeMs, found.size]; });
+  const before = seen(), f = nothingLeft(house([reported(login, '/run/loom/login/harness', true)], {}, { account: { harness: { source: login } } } as unknown as typeof accountLogins));
+  await f.executor.endLeft!(f.abort.signal);
+  const image = await f.executor.build(job, f.abort.signal), body = f.executor.start(job, image, f.abort.signal);
+  await body.spawned; await body.stop(); f.executor.close!(); await flush();
+  expect(seen()).toEqual(before);
 });
 

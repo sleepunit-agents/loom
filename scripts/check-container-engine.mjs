@@ -96,17 +96,24 @@ const program = join(work, 'install');
 mkdirSync(join(program, 'dist'), { recursive: true }); writeFileSync(join(program, 'package.json'), '{"dependencies":{}}');
 // In place of the body program: what the real core's node runs with --core. It writes down what a body
 // would find and never reads a sign-in; the stand-in core's "node" only looks whether it is there.
-writeFileSync(join(program, 'dist', 'body.js'), `const fs = require('node:fs'), { execFileSync } = require('node:child_process');
+// The versions and checksums the real core's Housefile pins, for that program to compare what it finds with.
+const pins = Object.fromEntries([...readFileSync(new URL('../house/core/Housefile', import.meta.url), 'utf8').matchAll(/^ARG ([A-Z0-9_]+)=(\S+)$/gm)].map(found => [found[1], found[2]]));
+writeFileSync(join(program, 'dist', 'body.js'), `const fs = require('node:fs'), { execFileSync } = require('node:child_process'), { createHash } = require('node:crypto');
+const pins = ${JSON.stringify(pins)};
 const tried = work => { try { return work(); } catch (error) { return 'FAILED: ' + String(error.message).split('\\n')[0]; } };
 const version = name => tried(() => execFileSync(name, ['--version'], { encoding: 'utf8', timeout: 60000 }).trim());
-const found = { node: process.version, 'node is': process.execPath, argv: process.argv.slice(1), HOME: process.env.HOME, cwd: process.cwd(), uid: process.getuid(),
+const sha256 = file => tried(() => createHash('sha256').update(fs.readFileSync(fs.realpathSync(file))).digest('hex'));
+const command = tried(() => JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).command);
+const found = { node: process.version, 'node is the pinned version': process.version === 'v' + pins.NODE_VERSION, 'node is': process.execPath,
+  'Claude Code is the file whose checksum is pinned': sha256(command) === pins.CLAUDE_SHA256, 'the checksum pinned for Claude Code': pins.CLAUDE_SHA256, 'the checksum of the program the body file names': sha256(command),
+  'the pinned versions': { node: pins.NODE_VERSION, claude: pins.CLAUDE_VERSION, codex: pins.CODEX_VERSION }, argv: process.argv.slice(1), HOME: process.env.HOME, cwd: process.cwd(), uid: process.getuid(),
   repository: tried(() => fs.readdirSync('.').sort()), 'body file': tried(() => JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))),
   'the program the body file names is there': tried(() => fs.existsSync(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).command)),
-  'built from': [process.env.LOOM_HOUSE_REPOSITORY, process.env.LOOM_HOUSE_BRANCH, process.env.LOOM_HOUSE_COMMIT],
+  'LOOM_HOUSE_REPOSITORY': process.env.LOOM_HOUSE_REPOSITORY, 'LOOM_HOUSE_BRANCH': process.env.LOOM_HOUSE_BRANCH, 'LOOM_HOUSE_COMMIT': process.env.LOOM_HOUSE_COMMIT,
   claude: version('claude'), codex: version('codex'), git: version('git'),
   'Claude Code keeps its sign-in in': process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR, 'Codex auth.json is a link to': tried(() => fs.readlinkSync(process.env.HOME + '/.codex/auth.json')),
   'the mounted sign-in directory can be written': tried(() => { fs.writeFileSync('/run/loom/login/claude/written-by-the-body', ''); return true; }) };
-fs.writeFileSync(process.env.HOME + '/written/core.json', JSON.stringify(found, null, 2));
+fs.writeFileSync(process.env.HOME + '/written/core-' + (process.env.CHECK ?? 'plain') + '.json', JSON.stringify(found, null, 2));
 `);
 // The core house a worker would build the houses on: a stand-in by default, the real one with --core.
 const stand = coreDefinition(standIn), shipped = realCore ? coreDefinition(new URL('../house/core', import.meta.url).pathname) : undefined;
@@ -117,7 +124,9 @@ const bootstrap = id => ({ origin: 'https://loom.invalid', job: id, token: Buffe
 const container = { socket, runtime: 'crun', setupTimeoutMs: 60_000, cleanupTimeoutMs: 30_000,
   mounts: { 'check-written': [{ source: written, target: 'written', readOnly: false }], 'check-read-only': [{ source: readOnly, target: 'read-only' }] } };
 const worker = (patch = {}, using = engine, name = 'check', core = stand) => containerWorkerExecutor({ box: 'houses-check', buildTimeoutMs: core === stand ? 600_000 : 3_600_000, state: join(work, 'state'), accountLogins, container: { ...container, ...patch } },
-  { engine: using, source: houseSource({ directory: join(work, 'mirrors'), protocols: ['file'] }), name: () => name, program, core });
+  { engine: using, source: houseSource({ directory: join(work, 'mirrors'), protocols: ['file'] }), name: () => name, program, core,
+    // This check is no worker: it holds nothing to itself, so it runs beside a machine's own worker and never stops one.
+    alone: async () => () => {} });
 let built;
 {
   calls.length = 0;
@@ -205,23 +214,43 @@ say('13. containers of this check still on the engine', await real.json('GET', `
 const removed = name => real.json('DELETE', `/images/${name}`, undefined, never).then(() => 'removed', error => `not removed: ${error instanceof DockerResponseError ? `HTTP ${error.status}` : error.message}`);
 say('14. the house image and the stand-in core removed', { house: await removed(built), core: await removed(houseCore(built)) });
 
-// The real core house, when asked for: built from this checkout's own definition, and one body run in a
-// house that has no Housefile. The body is the small program above, run by the core's own node.
+// The real core house, when asked for: built from this checkout's own definition, and two bodies run on it.
+// Each body is the small program above, run by the core's own node. The core's Housefile fails its build
+// unless both `sha256sum -c` checks pass and `claude --version` and `codex --version` answer, so a core that
+// is there has passed them; the bodies then say what is in it.
 if (shipped) {
-  calls.length = 0;
-  const executor = worker({}, engine, 'check-core', shipped), plain = { ...job('job-check-core', 'claude'), house: { ...house, file: '' } };
+  const repositoryOf = (name, files) => {
+    const path = join(work, name); mkdirSync(path);
+    for (const [file, content] of Object.entries(files)) { mkdirSync(join(path, file, '..'), { recursive: true }); writeFileSync(join(path, file), content); }
+    const run = (...args) => execFileSync('git', args, { cwd: path, stdio: 'ignore', env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'check', GIT_AUTHOR_EMAIL: 'check@example.invalid', GIT_COMMITTER_NAME: 'check', GIT_COMMITTER_EMAIL: 'check@example.invalid' } });
+    run('init', '--quiet', '--initial-branch=main'); run('add', '--all'); run('commit', '--quiet', '--message', 'a house for the engine check');
+    return `file://${path}`;
+  };
+  // A house with no Housefile, whose repository's ignore file lets through one name only and has a file
+  // named as the worker's own Housefile is: every file of it must be in the house all the same.
+  const plain = { repository: repositoryOf('plain', { '.dockerignore': '*\n!kept.txt\n', 'kept.txt': 'kept\n', 'left-out-by-the-ignore-file.txt': 'x\n', 'Housefile': 'not a Housefile\n', 'src/inner.txt': 'x\n' }), file: '', branch: 'main' };
+  // A house whose own image names the three variables the worker sets.
+  const naming = { repository: repositoryOf('naming', { 'house/Housefile': 'ARG LOOM_CORE\nFROM ${LOOM_CORE}\nENV CHECK=naming LOOM_HOUSE_REPOSITORY=set-by-the-image LOOM_HOUSE_BRANCH=set-by-the-image LOOM_HOUSE_COMMIT=set-by-the-image HOME=/set/by/the/image\nCOPY . /home/agent/repo\n', 'notes.txt': 'x\n' }), file: 'house/Housefile', branch: 'main' };
   const expected = coreImage(shipped.digest, coreWeek(Date.now()));
-  let outcome, image_;
-  try {
-    image_ = await executor.build(plain, never);
-    const started = executor.start(plain, image_, never);
-    try { await started.spawned; await started.release(bootstrap(plain.id)); outcome = await started.exited; }
-    catch (error) { outcome = { failed: error.message }; } finally { await started.stop(); }
-  } catch (error) { outcome = { 'build failed': error.message }; }
-  executor.close();
-  let found; try { found = JSON.parse(readFileSync(join(written, 'core.json'), 'utf8')); } catch { found = undefined; }
+  const one = async (title, name, ofHouse, wrote) => {
+    calls.length = 0;
+    const executor = worker({}, engine, name, shipped), assignment = { ...job(`job-${name}`, 'claude'), house: ofHouse };
+    let outcome, made;
+    try {
+      made = await executor.build(assignment, never);
+      const started = executor.start(assignment, made, never);
+      try { await started.spawned; await started.release(bootstrap(assignment.id)); outcome = await started.exited; }
+      catch (error) { outcome = { failed: error.message }; } finally { await started.stop(); }
+    } catch (error) { outcome = { 'build failed': error.message }; }
+    executor.close();
+    let found; try { found = JSON.parse(readFileSync(join(written, wrote), 'utf8')); } catch { found = undefined; }
+    say(title, { 'the house': made, 'the commit in its name': made && made.slice(made.indexOf(':') + 1).split('-')[0], outcome, 'what the body found': found, calls: [...calls] });
+    return made;
+  };
+  const first = await one('15. the real core house built, and a body in a house with no Housefile (the repository is every file of the commit, whatever its ignore file says)', 'check-core-plain', plain, 'core-plain.json');
   let labels; try { labels = (await real.json('GET', `/images/${expected}/json`, undefined, never)).Config; } catch (error) { labels = `not there: ${error.message}`; }
-  say('15. the real core house, and a body in a house with no Housefile', { 'the core house': expected, 'what it says of itself': labels && { Labels: labels.Labels, Volumes: labels.Volumes, User: labels.User }, 'the house': image_, outcome, 'what the body found': found, calls: [...calls] });
-  if (image_) say('16. the house with no Housefile removed (the core house stays for the next worker)', await removed(image_));
+  say('16. the real core house, as the engine has it', { 'the core house': expected, 'the pins its build checked': pins, 'what it says of itself': labels && { Labels: labels.Labels, Volumes: labels.Volumes, User: labels.User, Env: labels.Env } });
+  const second = await one('17. a body in a house on the real core whose image names LOOM_HOUSE_REPOSITORY, LOOM_HOUSE_BRANCH, LOOM_HOUSE_COMMIT and HOME itself (the body must see the worker\'s values)', 'check-core-naming', naming, 'core-naming.json');
+  say('18. the two houses removed (the core house stays for the next worker)', { plain: first && await removed(first), naming: second && await removed(second) });
 }
 rmSync(work, { recursive: true, force: true }); rmSync(written, { recursive: true, force: true }); rmSync(readOnly, { recursive: true, force: true }); rmSync(logins, { recursive: true, force: true });

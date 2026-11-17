@@ -57,8 +57,12 @@ it('says which week a moment is in: Monday to Sunday in UTC, by the year its Thu
   for (const moment of [0, Date.UTC(2026, 10, 17), Date.UTC(2099, 11, 31)]) expect(coreImage('a'.repeat(64), coreWeek(moment))).toMatch(/^localhost\/loom-core:a{16}-\d{4}w\d{2}$/);
   expect(() => coreWeek(Number.NaN)).toThrow('Invalid time');
 });
-it('writes the Housefile of a house that has none: the core, and the repository at its place', () => {
-  expect(noHousefile().data.toString()).toBe(`ARG LOOM_CORE\nFROM \${LOOM_CORE}\nCOPY . ${HOUSE_REPOSITORY}\nRUN rm ${HOUSE_REPOSITORY}/Housefile.loom-core\n`);
+it('writes the Housefile of a house that has none: the core, and the repository copied from its own directory of the context', () => {
+  const made = noHousefile();
+  expect([made.directory, made.beside.name]).toEqual(['repository', 'Housefile']);
+  // Three lines: no step runs in the image, so nothing depends on a shell there, and nothing is removed afterwards.
+  expect(made.beside.data.toString()).toBe(`ARG LOOM_CORE\nFROM \${LOOM_CORE}\nCOPY repository/ ${HOUSE_REPOSITORY}/\n`);
+  expect(made.beside.data.toString()).not.toMatch(/\bRUN\b/);
 });
 
 // The definition loom ships is held to what loom asks of any house.

@@ -228,6 +228,14 @@ it('stops a worker with container bodies whose install has no definition of the 
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on\n');
   expect(f.run).not.toHaveBeenCalled();
 });
+it('stops a worker whose engine or sign-in directory another worker already uses, with its own line and code, the key and no path', async () => {
+  const f = fixture(), endLeft = vi.fn(async () => { throw new WorkerStop('shared', 'accountLogins.subscription.claude.source'); });
+  const containerExecutor = vi.fn(() => ({ endLeft, close: vi.fn() }));
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor: containerExecutor as never })).toBe(57);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine\'s houses (accountLogins.subscription.claude.source)\n');
+  expect(f.run).not.toHaveBeenCalled();
+});
 it('prints what its container executor has to say, in the executor\'s own fixed words', async () => {
   const f = fixture(); let say: ((line: string) => void) | undefined;
   const containerExecutor = vi.fn((_config: unknown, given?: { say?: (line: string) => void }) => { say = given?.say; return {}; });
@@ -307,7 +315,7 @@ for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { contain
     expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 it('stops before any work is claimed when a path given to containers or an engine socket cannot be used, with its own line and code and no path in it', async () => {
-  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
+  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
   // The line, then the configuration key at fault in brackets: a key, never the path written under it.
   const line = (key: string) => `Worker stopped: ${WORKER_STOP.mounts[1]} (${key})\n`;
   const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path'), { createServer } = await import('node:http');

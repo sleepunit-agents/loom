@@ -192,11 +192,12 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
-| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
+| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
 | 53 | the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent's repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house. The line ends with the key in brackets: `(build)`, `(runners)`, `(accountRunners)`, `(container.mounts)` or the `target` of a sign-in directory, as in `(accountLogins.subscription-a.claude.target)` (see "Container bodies") |
 | 54 | git 2.32.0 or later, which fetches each house's repository, could not be run on this machine |
 | 55 | the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them) |
 | 56 | the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on |
+| 57 | another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine's houses. The line ends with the key of the one that is in use, in brackets: `(container.socket)` or `(accountLogins.subscription-a.claude.source)` (see "One worker for an engine") |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker
@@ -343,6 +344,32 @@ worker is installed in, and nothing else of it, to run the body program from. So
 A worker installed the second way stops at start with exit code 55: the body
 program would fail to load in every container.
 
+### One worker for an engine
+
+One worker runs a machine's houses, and the worker holds that itself. Before it
+takes any work, a worker with container bodies holds to itself its engine (by
+the real path of `container.socket`) and every sign-in directory under
+`accountLogins` (by its real path). A second worker that names the same engine
+or one of the same directories stops at start with exit code 57 and the key of
+the one in use, whatever its own state directory, configuration file or user.
+What is held is released when the worker ends, however it ends: one that was
+killed blocks nobody.
+
+Two things rest on it. The core house is built once for an engine and removed
+only when no house there is built on it, which one worker can know and two
+cannot. And the number of bodies that share one account's sign-in
+(`accountSlots`) is counted by the one worker that mounts it.
+
+On Linux what is held is a name in the system's table of listening sockets (an
+abstract socket named for the path's digest): no file is made anywhere, and
+nothing is put in a sign-in directory. Elsewhere it is a socket file in the
+temporary directory. So "a machine" here is what shares that table: two engines
+on one computer, each with its own socket and its own sign-in directories, are
+two machines and may each have a worker; so are two users with an engine each.
+A worker run inside a container with a network of its own does not see the
+host's table, and is not held apart from a worker on the host by this: do not
+give two such workers one engine socket or one sign-in directory.
+
 ### The worker builds a house itself
 
 A job's house is what its agent's run settings say: a repository, the path of a
@@ -366,8 +393,9 @@ copied in ("The core house").
    Housefile's path and one build argument, `LOOM_CORE`, which is the core
    house's image. One build runs at a time for one image; a second job that
    wants it waits for the same build.
-3. **Start.** The worker reads from the image how a body starts in it (below)
-   and creates the container.
+3. **Start.** The worker checks that the image is a house of this layout that
+   serves the job's harness, and creates the container. How a body starts in
+   it is the layout's, the same for every house ("The layout of every house").
 
 The worker never checks a repository out, never reads the Housefile and never
 runs anything from a repository, and neither does git on its behalf. The Housefile is the whole definition of a
@@ -453,6 +481,12 @@ layer was made, which for one built again from the engine's cache is long ago;
 that time ranks only the images this worker has not used since it started.) So
 the image a build has just made is the newest of its house.
 
+House images a worker built before houses were built on a core are named
+`localhost/loom-house-<16 hex>:<commit>`, with no core's tag. No job can be
+given one again, so every one of them is removed in the same upkeep, whichever
+house it was of; one a container still runs in is refused by the engine and
+removed in a later upkeep.
+
 Beyond those counts one kind of image is kept: one a job holds, or whose build
 is still being finished. A job holds its image from the moment it knows which
 one it wants until its body has ended or the job has ended without one, and
@@ -531,16 +565,25 @@ changes what it wants to: a body file of its own over the core's, another
 harness and the label that lists it.
 
 **An agent with no Housefile** (an empty Housefile path in its run settings) gets
-the core with its repository copied in. The worker writes those lines itself,
-adds them to the build's files under the name `Housefile.loom-core`, and takes
-that file out of the copy again. A repository that has a file of that name
-cannot be built this way (exit code 22).
+the core with its repository copied in. The worker writes that build itself, in
+two parts: the commit's files in a directory `repository/`, and beside it a
+Housefile of three lines (`ARG LOOM_CORE`, `FROM ${LOOM_CORE}`,
+`COPY repository/ /home/agent/repo/`). The Housefile is not in what is copied,
+so nothing has to be removed from the image and no step runs in it. Nothing of
+the repository is at the top of the build's files: a file of its own named
+`Housefile` or `repository` meets nothing, and its own `.dockerignore` is an
+ordinary file one directory down that leaves nothing out. Every file of the
+commit is in the house.
 
 **A Housefile that does not start from the core still works**, when the image
 it makes meets the contract and the layout by itself. Its build is given
 `LOOM_CORE` like every build and leaves it unused. The core is built first all
 the same, and the house's image is still named for it, so such a house too is
 built again each week, from the engine's cache.
+
+**The core is built for Linux on x86-64.** Its Housefile fetches the `linux-x64`
+builds of Node and Claude Code. On another architecture the core does not build
+and every job fails as a failed build (exit code 22).
 
 **Not in the core: `agy`.** Neither of the household's houses installed it, and
 there is no pinned install to copy. Adding it needs a download of one stated
@@ -712,8 +755,8 @@ directories of `accountLogins`.
   `/` and does not climb. It is not `repo` (the agent's repository) and does not
   hold it; it may be inside it.
 - No target is, holds or is inside the target of another directory that can be
-  in the same container: another mount of the same agent, a sign-in directory,
-  or `/opt/loom`. Two agents' mounts are never in one container and may use the
+  in the same container: another mount of the same agent. (A sign-in directory
+  and `/opt/loom` are outside the home, where no mount's target can be.) Two agents' mounts are never in one container and may use the
   same target. None is, holds or is inside `/var/run/docker.sock` or
   `/run/docker.sock` (the same place in most images, where a mount at `/run`
   would hide the socket).
@@ -788,9 +831,14 @@ to a few requests) and prints what the engine took and what it refused. The
 script as it now is has not yet been run against an engine. It builds a
 stand-in core house and a house on it and starts bodies in the fixed layout.
 With `--core` it also builds the real core house from `house/core` (which
-downloads the harnesses and takes some minutes), runs one body in a house with
-no Housefile, and prints what that body found: node, the harness programs'
-versions, where each looks for its sign-in. Its earlier form, which started bodies in an image already there, was
+downloads the harnesses and takes some minutes) and runs two bodies on it, one
+in a house with no Housefile whose repository has an ignore file that lets
+through one name only, one in a house whose own `ENV` names the three
+`LOOM_HOUSE_` variables. It prints what each body found: node's version and
+Claude Code's checksum against the pins, what `claude --version` and
+`codex --version` print, where each harness looks for its sign-in (the
+variable, the link and whether the mounted directory can be written; no sign-in
+is read), every file of the repository, and the three `LOOM_HOUSE_` values. Its earlier form, which started bodies in an image already there, was
 run against rootless podman 5.4.2 on 2026-11-17 and showed: podman takes these requests, reports a
 container's mounts in the same form, and honours the `none` log driver. It
 ignores the runtime's name and runs the runtime it is itself configured with,
@@ -832,8 +880,8 @@ selected command's environment plus the existing account/model/harness startup
 envelope after the running acknowledgement.
 
 `runners` and `accountRunners` are for a worker whose bodies are processes. A
-worker with container bodies has neither (exit code 53): its image says how a
-body starts, and an account reaches a body only as its sign-in directory (next
+worker with container bodies has neither (exit code 53): every body starts the
+same way ("The layout of every house"), and an account reaches a body only as its sign-in directory (next
 section). Without `accountLogins`, such a worker refuses a job when loom says
 several accounts of its provider are signed in on the machine (exit code 27).
 
@@ -911,9 +959,33 @@ of that is stated in "Two bodies on one account share one sign-in directory" in
 [`../accepted-tradeoffs.md`](../accepted-tradeoffs.md): what was read, in which
 version, and what is not established.
 
-**When a sign-in dies** (the provider ended it, or it was never made): sign the
-account in again on the machine, into that same directory. Every body on the
-account has it from its next start; nothing is restarted or rebuilt.
+**When a sign-in dies** (the provider ended it, or it was never made), the
+account is signed in again on the machine, into that same directory. Every body
+on the account has it from its next start; nothing is restarted or rebuilt.
+The directory is not where a harness's program keeps its sign-in on the machine
+by default, so the program has to be pointed at it, in the same way the core
+house points it:
+
+- **From loom** (`runtime.accountSignIn`, in
+  [`accounts.md`](accounts.md), "Signing in from anywhere"): the worker runs the
+  program configured for the provider under `accountSignIn.programs`, with the
+  environment that entry gives it. For Claude Code that entry's `env` carries
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` set to the account's `source` directory, so
+  what the program writes lands there. There is one program for a provider, so
+  this reaches one account's directory for each provider on a machine.
+- **By hand, at the machine, as the worker's user, with no body of that account
+  and harness running.** Claude Code: run it with
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR=<source>` in its environment and sign in with
+  its own `/login`. Codex: sign in with `codex login`, which writes
+  `~/.codex/auth.json`, then put that file in place as the household's earlier
+  loom did, by a copy inside the directory and a rename:
+  `cp ~/.codex/auth.json <source>/auth.json.new && mv <source>/auth.json.new <source>/auth.json`.
+  Then record it: `runtime.accountSignedIn {account, box}`.
+
+What this rests on: the household's earlier houses ran Claude Code 2.1.309 with
+that variable and Codex 0.162.1 through that link, and their sign-ins were
+renewed in those directories. Neither has been run yet in the core house, with
+the versions it pins.
 
 With a rootless engine the worker's user is the container's root, so the
 image's `USER` must be one that can write the directory; the core house's is.

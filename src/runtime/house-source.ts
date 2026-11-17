@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, utimesSync } from 'node:f
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { endGit, houseContext, relativeName, type ContextFile, type ContextLimits } from './house-context.js';
+import { endGit, houseContext, relativeName, type ContextApart, type ContextLimits } from './house-context.js';
 import { COMMIT } from '../apps/merge-target.js';
 import { GIT_MINIMUM } from './worker-limits.js';
 
@@ -113,8 +113,9 @@ export interface HouseSource {
   fetch(house: House, credential: Uint8Array | undefined, signal: AbortSignal): Promise<string>;
   /** That commit's files as a tar stream, written by the worker from git's objects (house-context.ts). The
    * stream fails when git does or the context is not one the worker writes, so a cut-off context is
-   * never taken for a whole one. `added` is one file of the worker's own, written after the commit's. */
-  context(house: House, commit: string, signal: AbortSignal, added?: ContextFile): Readable;
+   * never taken for a whole one. `apart` puts the commit's files one directory down, with one file of
+   * the worker's own beside them (house-context.ts). */
+  context(house: House, commit: string, signal: AbortSignal, apart?: ContextApart): Readable;
   /** Whether this source fetches from such an address. One that it does holds no credential. A source
    * that does not say is taken to fetch what a worker does (houseRepository). */
   fetches?(repository: string): boolean;
@@ -204,7 +205,7 @@ export function houseSource(options: {
       return next;
     },
     fetches: repository => houseAddress(repository, protocols) !== undefined,
-    context(house, commit, signal, added) {
+    context(house, commit, signal, apart) {
       if (!houseAddress(house.repository, protocols) || !COMMIT.test(commit)) return Readable.from((async function* (): AsyncGenerator<Buffer> { throw new HouseSourceError('House is not one this worker fetches'); })());
       const mirror = mirrorOf(house.repository), env = environment(options.directory, protocols);
       // The mirror is not removed while it is being read from.
@@ -215,7 +216,7 @@ export function houseSource(options: {
       const written = Readable.from((async function* (): AsyncGenerator<Buffer> {
         // A removal that began before this read was counted is waited for; the read then finds what is there.
         await gone(mirror);
-        yield* houseContext(store, commit, signal, { started: options.started, limits: options.limits, added });
+        yield* houseContext(store, commit, signal, { started: options.started, limits: options.limits, apart });
       })(), { objectMode: false });
       written.once('close', done);
       return written;

@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
-import { plainContext, type ContextFile } from './house-context.js';
+import { plainContext, type ContextApart, type ContextFile } from './house-context.js';
 import { CORE_ARGUMENT, CORE_FILE } from './house-image.js';
 import { HOUSE_REPOSITORY } from './house-layout.js';
 import { DAY_MS } from '../core/day.js';
@@ -59,9 +59,13 @@ export function coreWeek(now: number): string {
   const week = 1 + Math.floor((thursday.getTime() - first) / (7 * DAY_MS));
   return `${String(thursday.getUTCFullYear()).padStart(4, '0')}w${String(week).padStart(2, '0')}`;
 }
-/** The Housefile of a house that has none: the core, with the repository copied in at its place. The
- * worker adds it to the build's context under this name and takes it out of the copy again. A repository
- * that has a file of this name cannot be built without a Housefile of its own. */
-export const NO_HOUSEFILE = 'Housefile.loom-core';
-export const noHousefile = (): ContextFile => ({ name: NO_HOUSEFILE, data: Buffer.from(
-  `ARG ${CORE_ARGUMENT}\nFROM \${${CORE_ARGUMENT}}\nCOPY . ${HOUSE_REPOSITORY}\nRUN rm ${HOUSE_REPOSITORY}/${NO_HOUSEFILE}\n`) });
+/** The Housefile of a house that has none: the core, with the repository copied in at its place.
+ *
+ * The worker writes such a house's build context in two parts (house-context.ts): the commit's files in
+ * the directory NO_HOUSEFILE_REPOSITORY, and this Housefile beside it. So the Housefile is never in what
+ * is copied, whatever the repository holds: nothing has to be removed afterwards, no name of the
+ * repository's can meet it, and the repository's own ignore file, which is now one directory down and
+ * not at the context's top, leaves nothing out. Every file of the commit is in the house. */
+export const NO_HOUSEFILE = 'Housefile', NO_HOUSEFILE_REPOSITORY = 'repository';
+export const noHousefile = (): ContextApart => ({ directory: NO_HOUSEFILE_REPOSITORY, beside: { name: NO_HOUSEFILE, data: Buffer.from(
+  `ARG ${CORE_ARGUMENT}\nFROM \${${CORE_ARGUMENT}}\nCOPY ${NO_HOUSEFILE_REPOSITORY}/ ${HOUSE_REPOSITORY}/\n`) } });

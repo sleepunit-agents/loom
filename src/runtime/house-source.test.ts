@@ -109,13 +109,13 @@ it.each([
   await expect(all(source.context(house, 'a'.repeat(40), never()))).rejects.toThrow(HouseSourceError);
   expect(spawned).not.toHaveBeenCalled(); expect(existsSync(join(root, 'unused'))).toBe(false);
 });
-it('fetches a house that has no Housefile, and adds the worker\'s own to its files when it is given one', async () => {
+it('fetches a house that has no Housefile, and writes its files apart from the worker\'s own Housefile when it is given one', async () => {
   const origin = repository('no-housefile', { 'notes.txt': 'only notes\n' });
   const source = local('no-housefile-mirrors'), house = { repository: origin.address, file: '', branch: 'main' };
   expect(await source.fetch(house, undefined, never())).toBe(origin.first);
-  const tar = (await all(source.context(house, origin.first, never(), { name: 'Housefile.loom-core', data: Buffer.from('FROM ${LOOM_CORE}\n') }))).toString('latin1');
-  expect(tar).toContain('only notes'); expect(tar).toContain('Housefile.loom-core'); expect(tar).toContain('FROM ${LOOM_CORE}');
-  expect((await all(source.context(house, origin.first, never()))).toString('latin1')).not.toContain('Housefile.loom-core');
+  const tar = (await all(source.context(house, origin.first, never(), { directory: 'repository', beside: { name: 'Housefile', data: Buffer.from('FROM ${LOOM_CORE}\n') } }))).toString('latin1');
+  expect(tar).toContain('only notes'); expect(tar).toContain('repository/notes.txt'); expect(tar).toContain('FROM ${LOOM_CORE}');
+  expect((await all(source.context(house, origin.first, never()))).toString('latin1')).not.toContain('repository/notes.txt');
 });
 it.each([
   ['an option as a branch', { branch: '--upload-pack=x' }], ['a refspec in a branch', { branch: 'main:refs/heads/x' }], ['a pattern', { branch: 'ma*n' }],

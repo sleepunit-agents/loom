@@ -53,7 +53,7 @@ export const endGit = (child: ChildProcess): void => {
 };
 
 /** One 512-byte tar header. Every field the repository does not decide is fixed. */
-function header(name: Buffer, type: '0' | '2' | 'x', size: number, mode: number, link?: Buffer): Buffer {
+function header(name: Buffer, type: '0' | '2' | '5' | 'x', size: number, mode: number, link?: Buffer): Buffer {
   const block = Buffer.alloc(BLOCK);
   name.copy(block, 0, 0, Math.min(name.length, PLAIN_NAME));
   const octal = (value: number, at: number, width: number) => { block.write(value.toString(8).padStart(width - 1, '0'), at, width - 1, 'latin1'); };
@@ -76,7 +76,7 @@ function record(key: string, value: Buffer): Buffer {
   return Buffer.concat([Buffer.from(String(length)), rest]);
 }
 /** The headers of one entry: a pax header first when its name or its link's target does not fit a plain one. */
-function headers(name: Buffer, type: '0' | '2', size: number, mode: number, link?: Buffer): Buffer {
+function headers(name: Buffer, type: '0' | '2' | '5', size: number, mode: number, link?: Buffer): Buffer {
   const long = [...(name.length > PLAIN_NAME ? [record('path', name)] : []), ...(link && link.length > PLAIN_NAME ? [record('linkpath', link)] : [])];
   const plain = header(name, type, size, mode, link);
   if (!long.length) return plain;
@@ -87,6 +87,12 @@ function headers(name: Buffer, type: '0' | '2', size: number, mode: number, link
 /** A file the worker itself puts in a context: its name there, and its bytes. */
 export interface ContextFile { name: string; data: Buffer; executable?: boolean }
 const fileBlocks = (file: ContextFile): Buffer => Buffer.concat([headers(Buffer.from(file.name), '0', file.data.length, file.executable ? 0o755 : 0o644), padded(file.data)]);
+/** A context in two parts, for a house that has no Housefile of its own: the commit's files, every one
+ * of them, in `directory`, and one file of the worker's beside it. Nothing of the repository is at the
+ * context's top, so no file of its own is taken for a builder's (an ignore file there says what a `COPY`
+ * leaves out, and is an ordinary file one directory down), no name of its own can meet the worker's, and
+ * the worker's file is no part of what a copy of the directory copies. */
+export interface ContextApart { directory: string; beside: ContextFile }
 /** A whole context of files the worker holds in memory, as a tar stream: the core house's definition. */
 export function plainContext(files: readonly ContextFile[]): Readable {
   if (files.some(file => !relativeName(file.name)) || new Set(files.map(file => file.name)).size !== files.length) throw new HouseContextError('Context has a file name the worker does not take');
@@ -150,9 +156,9 @@ function entries(listing: Buffer, limits: ContextLimits): Entry[] {
  * or the signal, ends git. */
 export function houseContext(store: ObjectStore, commit: string, signal: AbortSignal,
   options: { limits?: ContextLimits; started?: (pid: number) => () => void;
-    /** One file of the worker's own, written after the commit's: the Housefile of a house that has none.
-     * A commit that has a file of that name, or files below it, is not one the worker takes. */
-    added?: ContextFile } = {}): Readable {
+    /** For a house that has no Housefile: the commit's files go one directory down, and the worker's own
+     * Housefile beside that directory. */
+    apart?: ContextApart } = {}): Readable {
   const limits = options.limits ?? CONTEXT_LIMITS, running = new Set<{ child: ChildProcess; forget?: () => void }>();
   const start = (args: readonly string[], input: 'pipe' | 'ignore') => {
     let child: ChildProcess;
@@ -179,10 +185,12 @@ export function houseContext(store: ObjectStore, commit: string, signal: AbortSi
         parts.push(piece);
       }
       if (await ended(lister) !== 0 || signal.aborted) throw new HouseContextError('git failed');
-      const found = entries(Buffer.concat(parts), limits), added = options.added;
+      const found = entries(Buffer.concat(parts), limits), apart = options.apart;
       parts.length = 0;
-      if (added && (!relativeName(added.name) || added.name.includes('/') || found.some(entry => { const name = text(entry.name); return name === added.name || name?.startsWith(`${added.name}/`); })))
-        throw new HouseContextError('House has a file name the worker does not take');
+      const plain = (name: string) => relativeName(name) && !name.includes('/');
+      if (apart && (!plain(apart.directory) || !plain(apart.beside.name) || apart.directory === apart.beside.name)) throw new HouseContextError('Context has a file name the worker does not take');
+      // Every name of the commit's below the one directory, which is there even for a commit with no files.
+      const below = apart ? Buffer.from(`${apart.directory}/`) : undefined, named = (name: Buffer) => below ? Buffer.concat([below, name]) : name;
       // One git answers for every file's bytes, asked for one at a time by the object's id.
       const batch = start(['cat-file', '--batch'], 'pipe'), answers = reader(batch.stdout!);
       batch.stdin!.on('error', () => {});
@@ -201,15 +209,15 @@ export function houseContext(store: ObjectStore, commit: string, signal: AbortSi
         if (target.includes(0) || (text(target) === undefined && target.length > PLAIN_NAME)) throw new HouseContextError('House has a link the worker does not take');
         entry.target = target;
       }
+      if (apart) { yield fileBlocks(apart.beside); yield headers(below!, '5', 0, 0o755); }
       for (const entry of found) {
-        if (entry.link) { yield headers(entry.name, '2', 0, 0o777, entry.target); continue; }
-        yield headers(entry.name, '0', entry.size, entry.executable ? 0o755 : 0o644);
+        if (entry.link) { yield headers(named(entry.name), '2', 0, 0o777, entry.target); continue; }
+        yield headers(named(entry.name), '0', entry.size, entry.executable ? 0o755 : 0o644);
         for await (const piece of object(entry)) yield Buffer.from(piece);
         if (entry.size % BLOCK) yield Buffer.alloc(BLOCK - entry.size % BLOCK);
       }
       batch.stdin!.end();
       if (await ended(batch) !== 0) throw new HouseContextError('git failed');
-      if (added) yield fileBlocks(added);
       // The end of a tar: two empty blocks.
       yield Buffer.alloc(2 * BLOCK);
     } finally { signal.removeEventListener('abort', stop); stop(); }
