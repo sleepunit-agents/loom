@@ -24,6 +24,9 @@ export class BridgeFiles {
       const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
       if (connection?.platform !== 'slack' || incoming?.connection !== input.connection) throw new Error('Attachment does not belong to this Slack connection');
       // A duplicate fetch must not reset the fourteen-day retention clock.
+      // The key is the connection and the file id, so a file is kept under the first message that carried
+      // it: the same Slack file shared again in a later message is not listed under that message
+      // (bridges.file reads by message). Naming it there needs a row per message, which is a schema change.
       tx.insert(bridgeFiles).values({ ...input, fetchedAt: new Date(this.clock.now()).toISOString() }).onConflictDoNothing().run();
     });
     this.sweep();
