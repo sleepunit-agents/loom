@@ -9,7 +9,7 @@ import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { tableRules, type Rule, type TableWithRule, type Viewer } from './policy.js';
 import * as schema from './core/data/schema.js';
 
-const { members, agents, memberAgents, projectMembers, projectAgents } = schema;
+const { members, agents, memberAgents, projects, projectMembers, projectAgents } = schema;
 /** The columns, or SQL values, a rule's fields are read from, by schema key. */
 export type RuleFields = Readonly<Record<string, AnyColumn | SQL>>;
 
@@ -20,6 +20,7 @@ const namedMember = alias(members, 'policy_named_member'), namedAgent = alias(ag
 const owned = alias(memberAgents, 'policy_member_agents');
 const people = alias(projectMembers, 'policy_project_members');
 const bodies = alias(projectAgents, 'policy_project_agents'), shared = alias(projectAgents, 'policy_agent_projects');
+const inUse = alias(projects, 'policy_project_in_use');
 const as = (table: AnySQLiteTable, name: string): SQL => sql`${table} as ${sql.identifier(name)}`;
 const no = sql`false`, yes = sql`true`;
 const text = (value: string): SQL => sql.raw(`'${value.replaceAll("'", "''")}'`);
@@ -39,10 +40,13 @@ function filter(rule: Rule, viewer: Viewer, fields: RuleFields, startDepth: numb
   const current = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${member ? id : bound ?? null} and ${viewerRow.removedAt} is null)`;
   const itsOwner = sql`exists (select 1 from ${as(members, 'policy_viewer')} where ${viewerRow.id} = ${bound ?? null} and ${viewerRow.role} = 'owner' and ${viewerRow.removedAt} is null)`;
   const onItsList = sql`(${current} and exists (select 1 from ${as(memberAgents, 'policy_member_agents')} where ${owned.agent} = ${id} and ${owned.member} = ${bound ?? null}))`;
+  // A removed project keeps its links for a restore and grants nothing through them (shared-sharing.ts leaves it out).
+  const live = (project: AnyColumn | SQL): SQL =>
+    sql`exists (select 1 from ${as(projects, 'policy_project_in_use')} where ${inUse.id} = ${project} and ${inUse.removedAt} is null)`;
   const memberIn = (project: AnyColumn | SQL, who: string): SQL =>
-    sql`(${current} and exists (select 1 from ${as(projectMembers, 'policy_project_members')} where ${people.project} = ${project} and ${people.member} = ${who}))`;
+    sql`(${current} and ${live(project)} and exists (select 1 from ${as(projectMembers, 'policy_project_members')} where ${people.project} = ${project} and ${people.member} = ${who}))`;
   const agentIn = (project: AnyColumn | SQL): SQL =>
-    sql`exists (select 1 from ${as(projectAgents, 'policy_project_agents')} where ${bodies.project} = ${project} and ${bodies.agent} = ${id})`;
+    sql`(${live(project)} and exists (select 1 from ${as(projectAgents, 'policy_project_agents')} where ${bodies.project} = ${project} and ${bodies.agent} = ${id}))`;
   const inProject = (project: AnyColumn | SQL): SQL => member ? memberIn(project, id)
     : bound === undefined ? agentIn(project) : sql`(${agentIn(project)} and (${itsOwner} or ${memberIn(project, bound)}))`;
   const build = (part: Rule, row: RuleFields, depth: number): SQL => {

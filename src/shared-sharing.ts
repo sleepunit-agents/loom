@@ -4,14 +4,15 @@ import { holds, isHouseholdOwner, maySee, rules, type Sharing, type Viewer } fro
 import type { DataDatabase } from './core/data/database.js';
 import { agents, members, memberAgents, projects, projectMembers, projectAgents, conversations } from './core/data/schema.js';
 
-/** Removed members are left out, so every rule treats them as nobody; removed agents are left out of `agents`. */
+/** Removed members are left out, so every rule treats them as nobody; removed agents are left out of `agents`.
+ * A removed project is left out too: its links stay in the tables for a restore, and grant nobody anything. */
 export function sharedSharing(db: DataDatabase): Sharing {
   const ownership = db.select().from(memberAgents).all(), people = db.select().from(projectMembers).all(), bodies = db.select().from(projectAgents).all();
   return {
     members: Object.fromEntries(db.select().from(members).where(isNull(members.removedAt)).all().map(member => [member.id, {
       owner: member.role === 'owner', agents: ownership.filter(row => row.member === member.id).map(row => row.agent),
     }])),
-    projects: Object.fromEntries(db.select().from(projects).all().map(project => [project.id, {
+    projects: Object.fromEntries(db.select().from(projects).where(isNull(projects.removedAt)).all().map(project => [project.id, {
       members: people.filter(row => row.project === project.id).map(row => row.member),
       agents: bodies.filter(row => row.project === project.id).map(row => row.agent),
     }])),

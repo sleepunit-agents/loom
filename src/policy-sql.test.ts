@@ -26,9 +26,10 @@ beforeAll(() => {
   ]).run();
   db.insert(s.agents).values(['art', 'mark', 'old'].map(id => ({ id, about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble' as const, faceEyes: 'dot' as const, removedAt: id === 'old' ? at : null }))).run();
   db.insert(s.memberAgents).values([['sam', 'art'], ['lee', 'mark'], ['gone', 'art'], ['exowner', 'mark'], ['full', 'art'], ['full', 'mark'], ['full', 'old']].map(([member, agent]) => ({ member, agent }))).run();
-  db.insert(s.projects).values(['pond', 'side'].map(id => ({ id, name: id }))).run();
-  db.insert(s.projectMembers).values([['pond', 'sam'], ['pond', 'gone'], ['side', 'lee']].map(([project, member]) => ({ project, member }))).run();
-  db.insert(s.projectAgents).values([['pond', 'art'], ['pond', 'old'], ['side', 'mark']].map(([project, agent]) => ({ project, agent }))).run();
+  // 'shut' is a removed project with every link left behind: it grants nobody anything.
+  db.insert(s.projects).values(['pond', 'side', 'shut'].map(id => ({ id, name: id, removedAt: id === 'shut' ? at : null }))).run();
+  db.insert(s.projectMembers).values([['pond', 'sam'], ['pond', 'gone'], ['side', 'lee'], ['shut', 'sam'], ['shut', 'lee']].map(([project, member]) => ({ project, member }))).run();
+  db.insert(s.projectAgents).values([['pond', 'art'], ['pond', 'old'], ['side', 'mark'], ['shut', 'art'], ['shut', 'mark']].map(([project, agent]) => ({ project, agent }))).run();
   // A few real parent rows with different labels, for the rules that see a child with its parent.
   const labels = [['p-pond', 'pond', 'mark', null], ['p-agent', 'side', 'art', null], ['p-private', 'pond', 'art', 'lee'], ['p-bare', null, 'mark', null]] as const;
   for (const [id, project, agent, member] of labels) {
@@ -74,7 +75,7 @@ function domains(rule: Rule, found = new Map<string, Set<string | null>>()): Map
   switch (rule.is) {
     case 'self': add(rule.field, memberIds); break;
     case 'names': add(rule.field, rule.kind === 'member' ? memberIds : agentIds); break;
-    case 'inProject': add(rule.field, ['pond', 'side', 'nowhere']); break;
+    case 'inProject': add(rule.field, ['pond', 'side', 'shut', 'nowhere']); break;
     case 'ownsAgent': case 'sharesProjectWithAgent': add(rule.field, agentIds); break;
     case 'equal': add(rule.field, [rule.value, 'something-else']); break;
     case 'set': add(rule.field, []); break;
@@ -207,6 +208,19 @@ describe('a body working for a member', () => {
   };
   const body = (id: string, workingFor: string): Viewer => ({ kind: 'agent', id, workingFor });
   const art: Viewer = { kind: 'agent', id: 'art' };
+  it('gives nobody anything through a removed project, though every link to it is still there', () => {
+    // sam and lee are members of shut, art and mark are agents in it, and shut is removed.
+    const task = { project: 'shut', ownerKind: 'agent', owner: 'mark' };
+    for (const viewer of [{ kind: 'member', id: 'sam' }, { kind: 'member', id: 'lee' }, art, body('art', 'sam'), { kind: 'agent', id: 'mark' }] as Viewer[]) {
+      expect(both(rules.task, viewer, { ...task, owner: 'nobody' }), JSON.stringify(viewer)).toBe(false);
+      for (const rule of [tableRules.changes, rules.conversation, tableRules.projects])
+        expect(both(rule, viewer, { id: 'shut', project: 'shut', agent: 'old', member: null, direct: false }), JSON.stringify(viewer)).toBe(false);
+    }
+    // A household owner still sees what was in it.
+    expect(both(tableRules.changes, { kind: 'member', id: 'owner' }, { id: 'shut', project: 'shut', agent: 'old', member: null, direct: false })).toBe(true);
+    // Sharing a removed project with an agent is not sharing a project with it: sam has art, not mark.
+    expect(both(tableRules.agentStatus, { kind: 'member', id: 'sam' }, { agent: 'mark' })).toBe(false);
+  });
   it('reaches a project only while its member is in it too, or is a household owner', () => {
     // art is in pond; sam is, lee is not, owner has the role. mark is in side with lee.
     const pondTask = { project: 'pond', ownerKind: 'member', owner: 'sam' }, sideTask = { project: 'side', ownerKind: 'agent', owner: 'mark' };
