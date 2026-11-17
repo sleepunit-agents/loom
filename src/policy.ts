@@ -302,6 +302,16 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: str
     && (r.agent === undefined || maySee(v, { agent: r.agent }, s));
 }
 
+/** May one agent hand work to another in the open, outside any member's private thread? Both must be
+ * agents of the household now. In a project, both must be in it. Outside one, some current member must
+ * have both on their own list. A removed member is nobody here too: the agents left on their list are
+ * not thereby each other's peers. */
+export function mayHandOff(from: string, to: string, project: string | null, s: Sharing): boolean {
+  if (!s.agents?.includes(from) || !s.agents.includes(to)) return false;
+  if (project !== null) { const found = entry(s.projects, project); return !!found && found.agents.includes(from) && found.agents.includes(to); }
+  return Object.values(s.members).some(member => member.agents.includes(from) && member.agents.includes(to));
+}
+
 /** Owning Clock/Runtime execution only. A committed source supplies scope;
  * current membership and both project grants supply authority. This confers
  * no registry visibility, member identity, or service private-read access. */

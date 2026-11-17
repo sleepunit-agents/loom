@@ -1,9 +1,9 @@
-import {handoffPeersAssigned} from './handoff-access.js';
+import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
 /** A current native body hands a brief to another assigned agent. Labels and
  * parent place come from its live conversation, never from caller claims. */
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
-import {agents,inbox} from '../data/schema.js';
+import {inbox} from '../data/schema.js';
 import {operation,OperationError,type Operations} from '../operations/index.js';
 import {bodyOperationDefaults,conversationBodyScope,requireBodyScope,type BodyProof} from './body-scope.js';
 import type {CommsMessages} from './messages.js';
@@ -17,7 +17,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   input:z.object({agent:z.string().min(1).max(200),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(100_000)}).strict(),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
-   const found=current(viewer);if(!found||input.agent===found.cv.agent||!db.select({id:agents.id}).from(agents).where(eq(agents.id,input.agent)).get())return false;
+   const found=current(viewer);if(!found||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;
    if(found.cv.member!==null&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
    return found.cv.member!==null&&found.cv.project===null||handoffPeersAssigned(db,found.cv.agent,input.agent,found.cv.project);
   },
