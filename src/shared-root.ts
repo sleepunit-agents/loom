@@ -373,6 +373,10 @@ export function sharedRoot(options: {
   });
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, issueProgram:programSetup?input=>{const parsed=programIssueInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid program token request');return programSetup.issue(parsed.data);}:undefined, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
+  // /mcp is not a door of its own. Its tools are a client of the command door below: the same caller, the
+  // same `may`, the same receipts, dispatched as 'http'. So an operation's `doors` list cannot keep it off
+  // /mcp while it is on /api, and none tries to: what a caller may do is decided by who they are, not by
+  // which of the two they came through.
   http.all('/mcp',c=>{const auth=authenticate(c.req.raw),agent=c.req.header('x-loom-agent');return sharedMcpRequest({request:bodyRequest(c.req.raw,c.get('shutdown'),true),clock,publicOrigin:options.publicOrigin,agent:auth?.viewer.kind==='agent'?auth.viewer.id:undefined,command:(name,input,id)=>auth?executeCommand(auth,name,input,id):Promise.resolve(failure('denied','Authentication required')),valid:()=>!closing&&!!auth?.valid()&&(!agent||auth.viewer.kind==='agent'&&auth.viewer.id===agent),fetch:async(input,init)=>http.fetch(new Request(input,init))});});
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
