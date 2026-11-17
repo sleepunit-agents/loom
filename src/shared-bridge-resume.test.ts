@@ -47,7 +47,7 @@ async function fixture(){
   return db.select().from(s.bridgeIncoming).all().at(-1)!;
  };
  /** One body's whole run for the conversation's waiting mail. */
- const run=async(id:string,conversation:string,native:HarnessRun,sessions:BodySessions)=>{
+ const run=async(id:string,conversation:string,native:HarnessRun,sessions:BodySessions,more:{reach?:'loom'|'all';saveAttachments?:Parameters<typeof bodyProgram>[0]['saveAttachments']}={})=>{
   const token='body_'+createHash('sha256').update(id).digest('hex');
   const job:WorkerAssignment={id,agent:'art',box:'box',conversation,venue:'slack',thread:null,model:'claude-opus-5-5',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
   root.writes.run(()=>{
@@ -55,8 +55,8 @@ async function fixture(){
    db.insert(s.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Synthetic body '+id,kind:'agent',agent:'art',job:id,createdAt:now()}).run();
   });
   const errors=vi.fn();
-  const exit=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.example',job:id,token}})),
-   env:{},signal:new AbortController().signal,clock,fetch:async(url,options)=>root.http.request(String(url),options),schedule:{every:()=>()=>{}},error:errors,startup:async()=>{},loadMemory:async()=>'IDENTITY',loadBrief:async()=>null,native,sessions});
+  const exit=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house',...(more.reach?{reach:more.reach}:{})}),stdin:async()=>Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.example',job:id,token}})),
+   env:{LOOM_BODY_SCRATCH:'/scratch-of-this-body'},signal:new AbortController().signal,clock,...(more.saveAttachments?{saveAttachments:more.saveAttachments}:{}),fetch:async(url,options)=>root.http.request(String(url),options),schedule:{every:()=>()=>{}},error:errors,startup:async()=>{},loadMemory:async()=>'IDENTITY',loadBrief:async()=>null,native,sessions});
   await daemon.idle();
   root.writes.run(()=>{db.update(s.jobs).set({state:'done'}).run();});
   return exit;
@@ -114,4 +114,23 @@ it('does not run the work twice for any other failure, and hands loom nothing fo
  // What loom keeps is left as it is; only this machine's copy goes.
  expect(one.calls).toEqual(['take','discard']);
  expect(f.db.select().from(s.bridgeSends).all()).toEqual([]);
+});
+
+it('writes what was sent with a message only for a body that has file tools to open it with',async()=>{
+ const f=await fixture(),first=await f.hear('Look at this');
+ const asked:{incoming:readonly string[];scratch:string|undefined}[]=[],seen:string[]=[];
+ const saveAttachments:NonNullable<Parameters<typeof bodyProgram>[0]['saveAttachments']>=async(_client,incoming,scratch)=>{asked.push({incoming:[...incoming],scratch});return 'Files sent with these messages are saved here for you to open:\n- /scratch-of-this-body/attachments-x/1-cat.png (cat.png, 3 bytes)';};
+ const native:HarnessRun=async(_job,words)=>{seen.push(words);return{text:'I see.',model:'claude-opus-5-5',actions:[]};};
+ // A body held to loom's own tools has nothing to open a file with: none is fetched for it or written, and it is told of none.
+ expect(await f.run('one',first.conversation!,native,keeper().sessions,{saveAttachments})).toBe(0);
+ expect(asked).toEqual([]);expect(seen[0]).toBe('IDENTITY\n\nLook at this');
+ expect(await f.run('two',(await f.hear('And this')).conversation!,native,keeper().sessions,{reach:'loom',saveAttachments})).toBe(0);
+ expect(asked).toEqual([]);
+ // A body with the harness's own tools is: for the messages it took, into its own scratch directory.
+ const third=await f.hear('And this one');
+ expect(await f.run('three',third.conversation!,native,keeper().sessions,{reach:'all',saveAttachments})).toBe(0);
+ expect(asked).toHaveLength(1);expect(asked[0].scratch).toBe('/scratch-of-this-body');
+ // The one message this job took, by the id loom keeps its files under.
+ expect(asked[0].incoming).toEqual([f.db.select().from(s.bridgeIncoming).all().find(row=>row.text==='And this one')!.id]);
+ expect(seen[2].endsWith('saved here for you to open:\n- /scratch-of-this-body/attachments-x/1-cat.png (cat.png, 3 bytes)')).toBe(true);
 });
