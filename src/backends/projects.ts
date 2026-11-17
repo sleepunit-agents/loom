@@ -28,7 +28,7 @@ import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { NOTE_PATH } from '../notes.js';
-import { MIGRATIONS, refuseNewerStore } from './migrations.js';
+import { refuseNewerStore, runMigrationSteps } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt, checkEnvelope,
   slugError, renderWhereLine, oneLine, mergeLevel, withoutNulls, stampWhere, whereCounts, hasTable, isReserved,
@@ -397,10 +397,7 @@ export class ProjectsStore {
         try { refuseNewerStore(this.db); } catch (error) { this.db.close(); throw error; }
         this.db.pragma('journal_mode = WAL');
         // Only this feature's migration, as the people store: a raw store must not half-run the memories ones.
-        for (const id of PROJECT_MIGRATIONS) {
-          const m = MIGRATIONS.find((x) => x.id === id)!;
-          if (m.pending(this.db)) m.run(this.db);
-        }
+        runMigrationSteps(this.db, PROJECT_MIGRATIONS);
       }
     }
     this.migrated = ['projects', 'project_revisions', 'project_names'].every((t) => hasTable(this.db, t));

@@ -542,22 +542,38 @@ export function runMigrations(
     }
   }
 
-  // Every step has now run or was already in place: record how many this store has had.
-  if (results.every((r) => r.status !== 'failed') && storeVersion(db) !== MIGRATIONS.length) {
-    db.pragma(`user_version = ${MIGRATIONS.length}`);
-  }
+  // Every step has now run or was already in place.
+  if (results.every((r) => r.status !== 'failed')) markStore(db);
   return results;
+}
+
+/**
+ * Run only the named steps, where pending, each whole. For a store that holds one feature's tables
+ * (the directory's people.db), or a feature opened before the memory tables exist: the other steps
+ * need the memories table and are left for runMigrations. The store is marked the same way.
+ */
+export function runMigrationSteps(db: Database, ids: readonly string[]): void {
+  for (const id of ids) {
+    const step = MIGRATIONS.find((m) => m.id === id);
+    if (!step) throw new Error(`Unknown migration '${id}'`);
+    if (step.pending(db)) db.transaction(() => step.run(db)).immediate();
+  }
+  markStore(db);
+}
+
+function markStore(db: Database): void {
+  if (storeVersion(db) !== MIGRATIONS.length) db.pragma(`user_version = ${MIGRATIONS.length}`);
 }
 
 const storeVersion = (db: Database) => db.pragma('user_version', { simple: true }) as number;
 
 /**
- * A memory store's version is the number of steps in MIGRATIONS it has had, kept in the file's
- * header (PRAGMA user_version) rather than a table. Each step still decides from the current shape
- * whether it is pending, so the number is not what drives an upgrade: it is what lets an older
- * program see that a newer one has been here, and stop before it creates or rewrites anything.
- * Call it before any write to a store. A store only some steps have run on (a people or projects
- * store opened on its own) stays at 0 and is never refused.
+ * A store's version is the number of steps in MIGRATIONS known to the newest program that has
+ * prepared it, kept in the file's header (PRAGMA user_version) rather than a table. It says nothing
+ * about which steps have run: each step still decides that from the current shape, and a store that
+ * holds one feature's tables has only that feature's. The number is what lets an older program see
+ * that a newer one has been here, and stop before it creates or rewrites anything.
+ * Call it before any write to a store.
  */
 export function refuseNewerStore(db: Database): void {
   const at = storeVersion(db);

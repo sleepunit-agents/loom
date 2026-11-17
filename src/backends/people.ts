@@ -22,7 +22,7 @@ import { dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
-import { MIGRATIONS, refuseNewerStore } from './migrations.js';
+import { refuseNewerStore, runMigrationSteps } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
   checkEnvelope, slugError, renderWhereLine, oneLine, byName, mergeLevel, withoutNulls, stampWhere, whereCounts,
@@ -383,10 +383,7 @@ export class PeopleStore {
         this.db.pragma('journal_mode = WAL');
         // Only this feature's migration: the people tables do not depend on the
         // memories schema, and a raw store must not half-run the others.
-        for (const id of PEOPLE_MIGRATIONS) {
-          const m = MIGRATIONS.find((x) => x.id === id)!;
-          if (m.pending(this.db)) m.run(this.db);
-        }
+        runMigrationSteps(this.db, PEOPLE_MIGRATIONS);
       }
     }
     this.holdsPeople = hasTable(this.db, 'people');
