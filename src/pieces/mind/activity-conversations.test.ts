@@ -6,6 +6,7 @@ import { agents, members, projects, projectMembers, conversations, digestItems }
 import { Conversations } from '../../core/conversations/index.js';
 import type { Sharing, Viewer } from '../../policy.js';
 import { sharedActivityConversations } from './activity-conversations.js';
+import { taskService } from '../../apps/tasks.js';
 
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -97,4 +98,16 @@ it('keeps Activity SQL fixed for two and ten conversations with real digest chil
  }
  f.statements.length=0;const rows=f.reader.list(teammate,f.query).rows;expect(rows).toHaveLength(10);expect(rows.every(row=>row.replies===1&&row.decided.length===1)).toBe(true);
  expect(f.statements.length).toBe(small);expect(small).toBe(5);
+});
+
+it('shows what a run needs of the viewer by the Inbox rule: not once the record the question waits on is no longer theirs to read', () => {
+ const f=fixture(),cv=f.service.open({agent:'fiction',venue:'discord',place:'channel',label:'Fit the hose',project:'pond'});
+ const task=taskService(f.db).create({title:'Hose',goal:'Fits',why:'Pond',project:'pond',owner:{kind:'member',id:'owner'}},{kind:'member',id:'owner'});
+ const dg=f.service.digest({conversation:cv.id,run:'run-1',summary:'Asked about the hose',items:[],question:{to:'teammate',words:'Order it?',answers:'yes-no',waitsOnKind:'task',waitsOnId:task.id}});
+ expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({needs:'Order it?',needsForMember:'teammate'});
+ // The task leaves the project and is its owner's alone. The conversation is still the teammate's to read; the question is not.
+ taskService(f.db).edit(task.id,{project:null});
+ expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({summary:'Asked about the hose'});
+ expect(f.reader.read(teammate,'fiction','digest',dg.id)).not.toHaveProperty('needs');
+ expect(f.reader.list(teammate,f.query).rows[0]).not.toHaveProperty('needs');
 });
