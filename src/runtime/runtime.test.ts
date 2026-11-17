@@ -5,8 +5,9 @@ import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { createTempo } from '../core/tempo/tempo.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox, boxFacts } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
 import { createRuntime } from './runtime.js';
+import { Dispatcher } from './dispatcher.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0).reverse()) close(); });
@@ -34,9 +35,9 @@ function fixture() {
     tempo?.sources.job(id);
   });
   const error = vi.fn();
-  const runtime = createRuntime(db, clock, {
-    roles: () => [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }], changed, jobEnded, error,
-  });
+  const runtime = createRuntime(db, clock, { changed, jobEnded, error });
+  // The worker's side, as shared-runtime.ts registers it: the runtime itself only admits, stops and sweeps.
+  const worker = new Dispatcher(db, now, () => [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }]);
   tempo = createTempo(db, clock, { conversations: comms, admit: runtime.admit, operation: () => {} });
   tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });
   cleanups.push(() => { runtime.close(); tempo!.close(); });
@@ -45,58 +46,42 @@ function fixture() {
     const mail = comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Work' });
     return { conversation, mail };
   }
-  return { db, clock, now, comms, tempo, runtime, changed, jobEnded, error, send };
+  return { db, clock, now, comms, tempo, runtime, worker, changed, jobEnded, error, send };
 }
 
-it('queues separate conversations from settled inbox mail and reports completion after commit', () => {
+it('queues separate conversations from settled inbox mail, once', () => {
   const f = fixture(), a = f.send('one'), b = f.send('two');
   f.tempo.changed();
-  expect(f.db.select().from(jobs).all()).toHaveLength(2);
+  expect(f.db.select().from(jobs).all().map(job => job.conversation).sort()).toEqual([a.conversation.id, b.conversation.id].sort());
   f.tempo.changed();
   expect(f.db.select().from(jobs).all()).toHaveLength(2);
-  const assigned = f.runtime.next('worker')!;
-  expect([a.conversation.id, b.conversation.id]).toContain(assigned.conversation);
-  f.runtime.started('worker', assigned.id, 'image');
-  f.tempo.triggers.set({ ownerKind: 'household', sourceKind: 'job', watches: `job:${assigned.id}`,
-    targetKind: 'inbox', toKind: 'person', to: 'owner', lifespan: 'once', note: 'Report completion', instructions: 'The work ended' });
-  for (const mail of f.comms.take(assigned.conversation!, assigned.id)) f.comms.confirm(mail.id, assigned.id);
-  f.runtime.finish('worker', assigned.id, 0, 'done');
-  expect(f.jobEnded).toHaveBeenCalledExactlyOnceWith(assigned.id);
-  expect(f.db.select().from(inbox).all().filter(row => row.source === 'trigger')).toMatchObject([{ to: 'owner', words: 'The work ended' }]);
-  expect(f.db.select().from(jobs).where(eq(jobs.id, assigned.id)).get()?.state).toBe('done');
+  // Mail for a person is not work, and mail addressed to another agent is not this agent's.
+  expect(f.runtime.admit({ kind: 'person', id: 'owner' }, [a.mail])).toBe(false);
+  expect(f.runtime.admit({ kind: 'agent', id: 'other' }, [a.mail])).toBe(false);
   expect(f.error).not.toHaveBeenCalled();
-});
-
-it('keeps the retry successor and backoff when a worker fails to start', () => {
-  const f = fixture(); f.send(); f.tempo.changed();
-  const first = f.runtime.next('worker')!;
-  const retry = f.runtime.finish('worker', first.id, 1, 'launch failure').retry!;
-  expect(f.jobEnded).toHaveBeenCalledExactlyOnceWith(first.id);
-  expect(f.db.select().from(jobs).all()).toHaveLength(2);
-  expect(f.runtime.next('worker')).toBeUndefined();
-  f.clock.advance(1000);
-  expect(f.runtime.next('worker')?.id).toBe(retry.id);
 });
 
 it('recovers silent jobs and alerts for always-on workers, then cancels its timer on close', () => {
   const f = fixture(); f.send(); f.tempo.changed();
-  const first = f.runtime.next('worker')!;
-  f.runtime.started('worker', first.id, 'image');
+  const first = f.worker.next('worker')!;
+  f.worker.started('worker', first.id, 'image');
   f.clock.advance(120_001);
   f.runtime.start();
   expect(f.db.select().from(jobs).where(eq(jobs.id, first.id)).get()?.state).toBe('lost');
   expect(f.jobEnded).toHaveBeenCalledExactlyOnceWith(first.id);
+  // The body had not confirmed its mail, so the lost work is queued again as the next attempt.
+  expect(f.db.select().from(jobs).where(eq(jobs.retryOf, first.id)).get()?.state).toBe('queued');
   const notices = () => f.db.select().from(inbox).all().filter(row => row.source === 'notice');
   expect(notices()).toHaveLength(1);
   f.clock.advance(60_000);
   expect(notices()).toHaveLength(1);
-  f.runtime.next('worker');
+  f.worker.machines.heartbeat('worker');
   expect(notices()[0].state).toBe('resolved');
   f.runtime.close();
   f.changed.mockClear();
   f.clock.advance(300_000);
   expect(f.changed).not.toHaveBeenCalled();
-  expect(() => f.runtime.next('worker')).toThrow('Runtime is closed');
+  expect(() => f.runtime.sweep()).toThrow('Runtime is closed');
 });
 
 it('publishes manual stops and does not revive stopped mail', () => {
@@ -106,7 +91,7 @@ it('publishes manual stops and does not revive stopped mail', () => {
   expect(f.jobEnded).toHaveBeenCalledExactlyOnceWith(job.id);
   f.tempo.changed();
   expect(f.db.select().from(jobs).all()).toHaveLength(1);
-  expect(f.runtime.next('worker')).toBeUndefined();
+  expect(f.worker.next('worker')).toBeUndefined();
 });
 
 it('keeps polling after a callback fails and start is idempotent', () => {
@@ -121,13 +106,4 @@ it('keeps polling after a callback fails and start is idempotent', () => {
   f.runtime.close();
   f.clock.advance(30_000);
   expect(f.changed).toHaveBeenCalledOnce();
-});
-
-it('forwards optional reported facts and clearing through the trusted runtime wrapper', () => {
-  const f = fixture(); f.clock.advance(1000);
-  expect(f.runtime.next('worker', ['gpu:5090'])).toBeUndefined();
-  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'gpu:5090', fromOwner: false }]);
-  expect(f.db.select().from(boxes).get()?.lastSeenAt).toBe(f.now());
-  f.runtime.next('worker'); expect(f.db.select().from(boxFacts).all()).toHaveLength(1);
-  f.runtime.next('worker', []); expect(f.db.select().from(boxFacts).all()).toEqual([]);
 });

@@ -35,6 +35,8 @@ it('runs Codex isolated from the machine\'s own settings, with the tools bearer 
   expect(args.slice(args.indexOf('-m'), args.indexOf('-m') + 4)).toEqual(['-m', 'gpt-fictional', '-C', '/house']);
   expect(args).toContain('mcp_servers.loom_secrets.url="http://127.0.0.1:4242"');
   expect(args).toContain('mcp_servers.loom_secrets.bearer_token_env_var="LOOM_BODY_TOOLS_TOKEN"');
+  // Codex itself holds the bearer for its tools server; the commands its shell runs are not handed it.
+  expect(args).toContain('shell_environment_policy.exclude=["LOOM_BODY_TOOLS_TOKEN"]');
   expect(args).toContain('mcp_servers.loom_secrets.enabled_tools=["recall","reply"]');
   expect(args).toContain('mcp_servers.loom_secrets.default_tools_approval_mode="approve"');
   expect(args.at(-1)).toBe('-');

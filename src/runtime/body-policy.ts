@@ -44,5 +44,5 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
       .where(and(eq(agentPeople.agent, job.agent), eq(agentPeople.person, person))).get()?.tier ?? null;
     people.set(JSON.stringify([kind, person]), { kind, person, tier });
   }
-  return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value) };
+  return { deniedTools, people: [...people.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, value]) => value), mail: items.map(item => item.id).sort() };
 }

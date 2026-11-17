@@ -17,7 +17,7 @@ it('accepts native UTF8 input near the existing receiving-envelope ceiling',asyn
  expect(JSON.stringify(f.launch.mock.calls)).not.toContain(words);
 });
 it('refuses native input above the receiving ceiling before spawn',async()=>{
- const f=nativeClaudeFixture();await expect(f.run(job,'x'.repeat(BODY_INPUT_BYTES+1),f.abort.signal)).rejects.toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();expect(f.words()).toBe('');
+ const f=nativeClaudeFixture();await expect(f.run(job,'x'.repeat(BODY_INPUT_BYTES+1),f.abort.signal)).rejects.toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();expect(f.words()).toBe('');
 });
 it('keeps native output bounded at one MiB independently of the larger input ceiling',async()=>{
  const f=nativeClaudeFixture(),result=f.run(job,'mail',f.abort.signal);f.finish('x'.repeat(1_048_577));await expect(result).rejects.toThrow();expect(f.child.kill).toHaveBeenCalledWith('SIGKILL');
@@ -49,7 +49,7 @@ it('counts UTF8 bytes rather than characters at the native input ceiling',async(
  const f=nativeClaudeFixture(),words='界'.repeat(Math.floor(BODY_INPUT_BYTES/3)+1);
  expect(words.length).toBeLessThan(BODY_INPUT_BYTES);expect(Buffer.byteLength(words)).toBeGreaterThan(BODY_INPUT_BYTES);
  const result=f.run(job,words,f.abort.signal);if(f.launch.mock.calls.length)f.finish(f.rows());
- await expect(result).rejects.toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
+ await expect(result).rejects.toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });
 it('erases source chunks, copies and joined response bytes after rejected JSON without retrying',async()=>{
  const f=await bodyFixture(clean),abort=new AbortController(),part=new TextEncoder().encode('PRIVATE MALFORMED JSON {'),copies:Buffer[]=[],joined:Buffer[]=[];

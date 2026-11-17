@@ -29,7 +29,8 @@ for (const platform of ['discord', 'slack'] as const) it(`looks up ${platform} o
   const f = fixture(platform);
   f.db.insert(agentPeople).values([{ agent: 'art', person: f.key, tier: 2 }, { agent: 'mark', person: f.key, tier: 3 }, { agent: 'art', person: 'unrelated', tier: 3 }]).run();
   f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guest-*', guestsOnly: true }, { agent: 'mark', pattern: 'other', guestsOnly: false }]).run();
-  expect(f.read()).toEqual({ people: [{ kind: 'outside', person: f.key, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guest-*', guestsOnly: true }] });
+  // `mail` names the inbox items the people were read from, so the body can tell mail that arrived later.
+  expect(f.read()).toEqual({ people: [{ kind: 'outside', person: f.key, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guest-*', guestsOnly: true }], mail: [f.db.select().from(inbox).get()!.id] });
   expect(f.db.select().from(inbox).get()).toMatchObject({ fromKind: 'unknown', fromId: null });
 });
 it('leaves missing tiers unknown instead of parsing trust claims from words', () => {

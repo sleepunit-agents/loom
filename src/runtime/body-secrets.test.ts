@@ -17,7 +17,7 @@ it('injects confirmed aliases into only the private environment, erases byte buf
 it('preserves Unicode and a leading BOM instead of changing credential text',async()=>{
  const value='\uFEFF clé\nvalue',f=fixture(new Map([['API_TOKEN',Buffer.from(value)]]));await f.start();expect(f.environment.API_TOKEN).toBe(value);f.abort.abort();expect(f.environment.API_TOKEN).toBeUndefined();
 });
-it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','OPENAI_API_KEY','CODEX_HOME','HTTPS_PROXY','MCP_TOOL_TIMEOUT','MAX_MCP_OUTPUT_TOKENS'])('refuses %s without partially modifying the environment',async alias=>{
+it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','HTTPS_PROXY','MCP_TOOL_TIMEOUT','MAX_MCP_OUTPUT_TOKENS','LOOM_BODY_SCRATCH'])('refuses %s without partially modifying the environment',async alias=>{
  const f=fixture(new Map([['GOOD_TOKEN',Buffer.from('FIRST_PRIVATE')],[alias,Buffer.from('SECOND_PRIVATE')]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);expect(JSON.stringify(f.environment)).not.toContain('PRIVATE');
 });
 it.each([Buffer.from([255]),Buffer.from('before\0after')])('refuses an unrepresentable environment value %j',async value=>{
@@ -54,4 +54,10 @@ it('erases the completed SDK batch when environment validation rejects it',async
  const f=fixture(new Map([['FIRST_TOKEN',Buffer.from('PRIVATE_FIRST')],['bad-name',Buffer.from('PRIVATE_SECOND')]])),copies:Buffer[]=[],concat=Buffer.concat;
  vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const bytes=concat(list,total);if(bytes.toString().startsWith('PRIVATE_'))copies.push(bytes);return bytes;});
  await expect(f.start()).rejects.toThrow();expect(copies.length).toBeGreaterThan(0);expect(copies.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.environment).toEqual(f.base);
+});
+// The names that sign a harness in to its account are refused for a body on that harness, and each harness lists its own.
+it.each([['claude','ANTHROPIC_API_KEY'],['claude','claude_config_dir'],['codex','OPENAI_API_KEY'],['codex','CODEX_HOME'],['agy','GEMINI_API_KEY'],['agy','GOOGLE_API_KEY'],['agy','GOOGLE_APPLICATION_CREDENTIALS']])('refuses a %s body the account name %s, and gives it to a body on another harness',async(harness,alias)=>{
+ const values=()=>new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]);
+ const own=fixture(values());await expect(own.hook.startup({...job,harness},own.bootstrap,own.abort.signal)).rejects.toThrow(/^Startup secret environment unavailable$/);expect(own.environment).toEqual(own.base);
+ const other=fixture(values());await other.hook.startup({...job,harness:harness==='agy'?'claude':'agy'},other.bootstrap,other.abort.signal);expect(other.environment[alias]).toBe('PRIVATE_STARTUP');
 });

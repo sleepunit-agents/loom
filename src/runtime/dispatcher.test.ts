@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations } from '../core/data/schema.js';
+import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
@@ -35,7 +35,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ venue:'loom', thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ venue:'loom', thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
@@ -177,7 +177,7 @@ it('projects current agent capabilities and only its configured ports at claim',
   ]).run();
   const assignment = f.runtime.next('first')!;
   expect(assignment.run).toEqual({ nestedContainers: true, gpu: true,
-    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } });
+    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id] } });
   f.db.update(agentRunSettings).set({ nestedContainers: false }).run();
   expect(assignment.run.nestedContainers).toBe(true);
 });
@@ -191,9 +191,21 @@ it('hands the configured outside tier and tool rules to the runner on actual cla
   const person = JSON.stringify(['discord', 'w', 'outside']);
   f.db.insert(agentPeople).values({ agent: 'art', person, tier: 2 }).run();
   f.db.insert(agentDeniedTools).values([{ agent: 'art', pattern: 'always', guestsOnly: false }, { agent: 'art', pattern: 'guests', guestsOnly: true }]).run();
+  // The fixture's model runs on Codex, which cannot be told what a body is not given: the job stays queued
+  // rather than go where it can only fail. On a harness that can, it is claimed with the rules.
+  expect(f.runtime.next('first')).toBeUndefined();
+  expect(f.runtime.jobs.get(job.id).state).toBe('queued');
+  f.roles[0].harness = 'claude';
   const assignment = f.runtime.next('first')!;
   expect(assignment.id).toBe(job.id);
-  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }] });
+  expect(assignment.run.policy).toEqual({ people: [{ kind: 'outside', person, tier: 2 }], deniedTools: [{ pattern: 'always', guestsOnly: false }, { pattern: 'guests', guestsOnly: true }], mail: [f.db.select().from(inbox).where(eq(inbox.conversation, incoming.conversation!)).get()!.id] });
+});
+it('passes over a model whose harness would refuse the job for the agent\'s next allowed model', () => {
+  const f = fixture();
+  f.db.insert(agentModels).values({ agent: 'art', model: 'second-choice', position: 1 }).run();
+  f.roles.push({ model: 'second-choice', provider: 'provider', harness: 'claude', series: 'series' });
+  f.db.insert(agentDeniedTools).values({ agent: 'art', pattern: 'Bash(*)', guestsOnly: false }).run();
+  expect(f.runtime.next('first')).toMatchObject({ id: f.job.id, model: 'second-choice', harness: 'claude' });
 });
 
 it('reads tool and person policy within the same placement and claim transaction', () => {
@@ -260,4 +272,29 @@ it('places a lane\'s work on what its trigger wants, read when the job is placed
   // The lane is edited to want the best model: the waiting job is placed on it.
   f.db.update(triggers).set({ wantsModel: 'best' }).where(eq(triggers.id, 'tr-lane')).run();
   expect(f.runtime.next('first')).toMatchObject({ id: lane.id, model: 'clever', harness: 'claude', venue: 'wake' });
+});
+
+it('ends a job it is still preparing when a Comms Stop is waiting at its heartbeat, and leaves a running body\'s Stop to the body', () => {
+  const stop = (f: ReturnType<typeof fixture>) => f.db.insert(threads).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
+  const f = fixture(); f.runtime.next('first'); stop(f);
+  expect(f.runtime.heartbeat('first', f.job.id, 'starting')).toEqual({ active: false, stopped: true });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
+  expect(f.db.select().from(threads).get()).toMatchObject({ stopRequested: false, working: false });
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: f.job.id });
+  expect(f.runtime.jobs.admit(f.conversation.id)).toBeUndefined();
+  const running = fixture(); running.runtime.next('first'); running.runtime.started('first', running.job.id, 'image'); stop(running);
+  expect(running.runtime.heartbeat('first', running.job.id, 'running')).toEqual({ active: true });
+  expect(running.runtime.jobs.get(running.job.id).state).toBe('running');
+  expect(running.db.select().from(threads).get()?.stopRequested).toBe(true);
+  // The body notices, leaves with the stopped exit, and the worker's report ends the job the same way.
+  expect(running.runtime.finish('first', running.job.id, 10, '').job).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
+  expect(running.db.select().from(threads).get()?.stopRequested).toBe(false);
+});
+it('takes the facts a worker reports with its poll, keeps them when a poll names none, and clears them on an empty list', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'reset'); f.tick(1000);
+  expect(f.runtime.next('first', ['gpu:5090'])).toBeUndefined();
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'first', fact: 'gpu:5090', fromOwner: false }]);
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
+  f.runtime.next('first'); expect(f.db.select().from(boxFacts).all()).toHaveLength(1);
+  f.runtime.next('first', []); expect(f.db.select().from(boxFacts).all()).toEqual([]);
 });

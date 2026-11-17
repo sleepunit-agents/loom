@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { bodyProgram, BODY_EXIT } from './body-program.js';
+import { bodyProgram } from './body-program.js';
+import { BODY_EXIT } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
 const raw = 'body_' + 'a'.repeat(64);
@@ -40,8 +41,8 @@ it('runs startup inside the receiving child before any mail acceptance', async (
   } })).toBe(0); expect(bytes!.every(byte => byte === 0)).toBe(true);
 });
 it('does not invoke the native model after a Stop', async () => {
-  const f = fixture(); f.stop(); expect(await bodyProgram(f.options)).toBe(0); expect(f.native).not.toHaveBeenCalled();
-  expect(f.calls.at(-1)?.body.input).toEqual({ state: 'idle', work: '', seenStop: true });
+  const f = fixture(); f.stop(); expect(await bodyProgram(f.options)).toBe(BODY_EXIT.stopped); expect(f.native).not.toHaveBeenCalled();
+  expect(f.calls.at(-1)?.body.input).toEqual({ state: 'idle', work: '' });
 });
 it.each(['token', 'job', 'origin', 'harness', 'conversation', 'thread', 'malformed', 'large', 'pre-abort'] as const)('refuses %s before native execution and erases input', async mode => {
   const f = fixture(), value = JSON.parse(f.input.toString());
@@ -53,7 +54,8 @@ it.each(['token', 'job', 'origin', 'harness', 'conversation', 'thread', 'malform
   if (mode === 'thread') value.job.thread = null;
   if (mode === 'pre-abort') f.abort.abort();
   const bytes = Buffer.from(mode === 'malformed' ? '{' : mode === 'large' ? 'x'.repeat(1_048_577) : JSON.stringify(value));
-  expect(await bodyProgram({ ...f.options, stdin: async () => bytes })).toBe(1); expect(f.native).not.toHaveBeenCalled(); expect(f.calls).toEqual([]);
+  const stage = mode === 'pre-abort' ? 'input' : mode === 'harness' || mode === 'conversation' || mode === 'thread' ? 'assignment' : 'envelope';
+  expect(await bodyProgram({ ...f.options, stdin: async () => bytes })).toBe(BODY_EXIT[stage]); expect(f.native).not.toHaveBeenCalled(); expect(f.calls).toEqual([]);
   if (mode !== 'pre-abort') expect(bytes.every(byte => byte === 0)).toBe(true);
   expect(f.error).toHaveBeenCalledWith('Body stopped: invalid input or unavailable execution\n');
 });
@@ -73,8 +75,8 @@ it('never reports private native diagnostics as a body error',async()=>{
 
 it('honors a Stop arriving after mail acceptance and before native startup',async()=>{
  const f=fixture(),fetcher=f.options.fetch;
- expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(String(url).endsWith('/confirm'))f.stop();return response;}})).toBe(0);
- expect(f.native).not.toHaveBeenCalled();expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:'',seenStop:true});
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(String(url).endsWith('/confirm'))f.stop();return response;}})).toBe(BODY_EXIT.stopped);
+ expect(f.native).not.toHaveBeenCalled();expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
 });
 it('keeps native work reported, serializes beats, and erases bootstrap before stopped native work settles',async()=>{
  const f=fixture(),cancel=vi.fn();let tick!:()=>void,entered!:()=>void,stopped!:()=>void,close!:()=>void,owned:Uint8Array|undefined,startupSignal:AbortSignal|undefined;
@@ -83,9 +85,9 @@ it('keeps native work reported, serializes beats, and erases bootstrap before st
  const pending=bodyProgram({...f.options,startup:async(_job,bootstrap,signal)=>{owned=bootstrap.token;startupSignal=signal;},
   schedule:{every:(ms,callback)=>{expect(ms).toBe(15_000);tick=callback;return cancel;}}});
  await started;f.stop();tick();tick();await cancelled;expect(owned!.every(byte=>byte===0)).toBe(true);expect(startupSignal!.aborted).toBe(true);close();
- expect(await pending).toBe(0);expect(cancel).toHaveBeenCalledOnce();
+ expect(await pending).toBe(BODY_EXIT.stopped);expect(cancel).toHaveBeenCalledOnce();
  expect(f.calls.filter(row=>row.path==='status'&&(row.body.input as {state:string}).state==='working')).toHaveLength(3);
- expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:'',seenStop:true});expect(f.calls.some(row=>row.path==='message')).toBe(false);
+ expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});expect(f.calls.some(row=>row.path==='message')).toBe(false);
 });
 it('ends native work when a current body status beat fails, without publishing a late reply',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,statuses=0;const started=new Promise<void>(resolve=>{entered=resolve;});
@@ -101,7 +103,7 @@ it('refuses mail arriving after Stop was observed during an outstanding take',as
  const running=bodyProgram({...f.options,startup:async(_job,_bootstrap,signal)=>{signal.addEventListener('abort',cancelled,{once:true});},schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
   const response=await fetcher(url,init);if(String(url).endsWith('/take')){entered();await held;}return response;
  }});
- await taking;f.stop();tick();await stopped;release();expect(await running).toBe(0);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:'',seenStop:true});
+ await taking;f.stop();tick();await stopped;release();expect(await running).toBe(BODY_EXIT.stopped);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
 });
 it('waits for an outstanding serialized status beat before publishing or releasing its client',async()=>{
  const f=fixture(),fetcher=f.options.fetch,cancel=vi.fn();let tick!:()=>void,entered!:()=>void,finish!:()=>void,beatEntered!:()=>void,release!:()=>void,statuses=0,settled=false,execution:AbortSignal|undefined;
@@ -118,7 +120,7 @@ it.each(['missing-ref','foreign-platform','unsupported-venue'])('refuses a %s br
  expect(await bodyProgram({...f.options,stdin:async()=>bytes,...(mode==='unsupported-venue'?{startup}:{}),fetch:async(url,options)=>{
   const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
   const batch=await response.json();Object.assign(batch.value.items[0],{source:mode==='foreign-platform'?'discord':'slack',refs:mode==='missing-ref'?[]:['bi:fixture']});return Response.json(batch);
- }})).toBe(mode==='unsupported-venue'?1:BODY_EXIT.mail);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);if(mode==='unsupported-venue'){expect(startup).not.toHaveBeenCalled();expect(f.calls).toEqual([]);}
+ }})).toBe(mode==='unsupported-venue'?BODY_EXIT.assignment:BODY_EXIT.mail);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);if(mode==='unsupported-venue'){expect(startup).not.toHaveBeenCalled();expect(f.calls).toEqual([]);}
 });
 
 it('replies to the last accepted matching bridge reference even when its words are unavailable',async()=>{
@@ -155,7 +157,7 @@ it('retires a Stop seen in the accepted batch before a held heartbeat drains',as
   expect(await Promise.race([aborted.then(()=>true),running.then(()=>false)])).toBe(true);expect(bootstrapBytes!.every(byte=>byte===0)).toBe(true);expect(f.native).not.toHaveBeenCalled();
   let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);
  }finally{release();}
- expect(await running).toBe(0);expect(f.calls.some(row=>row.path==='status'&&(row.body.input as {seenStop?:boolean}).seenStop===true)).toBe(true);
+ expect(await running).toBe(BODY_EXIT.stopped);expect(f.calls.at(-1)).toMatchObject({path:'status',body:{input:{state:'idle',work:''}}});
 });
 
 it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, recording words only in a bounded digest',async venue=>{
@@ -171,17 +173,60 @@ it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, r
 });
 it('refuses an unknown venue before accepting any mail',async()=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='unregistered';
- expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(BODY_EXIT.assignment);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
 });
 
 it.each(['wake','handoff'] as const)('refuses %s without a conversation before accepting mail',async venue=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue=venue;value.job.conversation=null;value.job.thread=null;
- expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(BODY_EXIT.assignment);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
 });
 it('keeps supplementary response words out of completion metadata',async()=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='wake';value.job.thread=null;
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),native:async()=>({text:'a'.repeat(599)+'😀',model:'observed',actions:[]})})).toBe(0);
  expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Completed this stretch of work.',ifAbsent:true});
+});
+
+it('never takes a Stop itself: it says idle and leaves with the stopped exit, and loom takes the Stop when the worker reports it',async()=>{
+ const f=fixture();f.stop();expect(await bodyProgram(f.options)).toBe(BODY_EXIT.stopped);
+ expect(f.calls.some(row=>'seenStop' in (row.body.input as object))).toBe(false);
+});
+
+it('says which early stage failed: the machine\'s body file, or the first report to loom',async()=>{
+ const f=fixture();
+ expect(await bodyProgram({...f.options,read:async()=>'{'})).toBe(BODY_EXIT.config);
+ expect(await bodyProgram({...f.options,read:async()=>{throw new Error('ENOENT');}})).toBe(BODY_EXIT.config);
+ const g=fixture();
+ expect(await bodyProgram({...g.options,fetch:async()=>new Response(null,{status:401})})).toBe(BODY_EXIT.report);
+ expect(g.native).not.toHaveBeenCalled();
+ expect(new Set(Object.values(BODY_EXIT)).size).toBe(Object.keys(BODY_EXIT).length);
+});
+
+it('counts outside mail that arrived after the claim as a guest in the room the harness is given',async()=>{
+ const policy={deniedTools:[{pattern:'Bash(*)',guestsOnly:true}],people:[{kind:'person' as const,person:'alice',tier:null}],mail:['mail']};
+ const claimed={...job,run:{nestedContainers:false,gpu:false,ports:[],policy}};
+ const run=async(late:boolean,fromKind:'unknown'|'person')=>{
+  const f=fixture(),bytes=Buffer.from(JSON.stringify({job:claimed,build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
+  const fetcher:typeof fetch=async(url,init)=>{
+   if(String(url).split('/').at(-1)!=='take')return f.options.fetch(url,init);
+   const first={id:'mail',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:'2026-11-15T00:00:00.000Z',words:'Hello',keepUntil:null,verdict:null,refs:[]};
+   return Response.json({ok:true,value:{job:'job',conversation:'cv',stopRequested:false,items:late?[first,{...first,id:'late',seq:2,fromKind,fromId:fromKind==='person'?'bob':null,words:'And me'}]:[first]}});
+  };
+  const native=vi.fn(async()=>({text:'Answer',model:'observed',actions:[]}));
+  expect(await bodyProgram({...f.options,stdin:async()=>bytes,fetch:fetcher,native})).toBe(0);
+  return (native.mock.calls[0] as unknown as [WorkerAssignment])[0].run!.policy!.people;
+ };
+ expect(await run(false,'unknown')).toEqual(policy.people);
+ // A household member who writes late is still no guest; a sender nobody vouched for is.
+ expect(await run(true,'person')).toEqual(policy.people);
+ expect(await run(true,'unknown')).toEqual([...policy.people,{kind:'unknown',person:null,tier:null}]);
+});
+it('refuses a job its harness cannot run before accepting any mail',async()=>{
+ for(const [harness,reach,deniedTools] of [['codex','loom',[]],['agy','all',[{pattern:'Bash(*)',guestsOnly:false}]]] as const){
+  const f=fixture(),bytes=Buffer.from(JSON.stringify({job:{...job,harness,run:{nestedContainers:false,gpu:false,ports:[],policy:{deniedTools,people:[]}}},build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
+  const {native:_native,...options}=f.options;
+  expect(await bodyProgram({...options,read:async()=>JSON.stringify({command:'/native/'+harness,cwd:'/house',reach}),stdin:async()=>bytes})).toBe(BODY_EXIT.assignment);
+  expect(f.calls).toEqual([]);
+ }
 });

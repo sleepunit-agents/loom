@@ -3,17 +3,19 @@
  * What differs from Claude, and why:
  * - The tools endpoint's bearer goes to Codex in one environment variable of the child, because Codex takes
  *   a server's bearer only by variable name. It is the short-lived token of this body's own tools server on
- *   loopback, never a loom credential, and it is in no argument.
+ *   loopback, never a loom credential, and it is in no argument. Codex is told to leave the variable out of
+ *   the environment of the commands its shell runs. A process of this user can still read it from the
+ *   Codex process itself while the body lives; it opens nothing the model's own tools do not.
  * - Codex always has its shell. There is no "loom's tools only", so a machine that has not given bodies full
  *   reach cannot run a Codex body, and a body with denied tools cannot either: Codex has no way to honour them.
  * - Codex's events do not name the model that answered. The reply carries the model the job asked for.
  */
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { harnessModel, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness } from './body-harness.js';
+import { harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness } from './body-harness.js';
+import { harnessCannotRun } from './harness-traits.js';
 
 const tokenVariable = 'LOOM_BODY_TOOLS_TOKEN';
-const toolName = /^mcp__loom_secrets__([a-zA-Z][a-zA-Z0-9_-]{0,63})$/;
 const event = z.object({ type: z.string() }).passthrough();
 const item = z.object({ type: z.string(), text: z.string().optional(), status: z.string().optional() }).passthrough();
 const quote = (value: string) => JSON.stringify(value);
@@ -21,21 +23,19 @@ const quote = (value: string) => JSON.stringify(value);
 export const codexBody: BodyHarness = input => {
   if (!input.command || !input.cwd || [input.command, input.cwd, ...Object.keys(input.env), ...Object.values(input.env).filter((v): v is string => v !== undefined)].some(v => v.includes('\0'))) throw harnessUnavailable();
   const tools = harnessTools(input.mcpConfig);
-  const names = (input.mcpTools ?? []).map(name => toolName.exec(name)?.[1]);
-  if (input.mcpTools && !tools || names.length > 34 || new Set(names).size !== names.length || names.some(name => !name)) throw harnessUnavailable();
+  if (input.mcpTools && !tools) throw harnessUnavailable();
+  const names = harnessToolNames(input.mcpTools ?? []);
   let used = false;
   return async (job, words, signal) => {
     if (tools && used) throw harnessUnavailable(); used = true;
-    if (signal.aborted || job.harness !== 'codex' || !harnessModel.test(job.model) || input.reach !== 'all'
+    if (signal.aborted || job.harness !== 'codex' || !harnessModel.test(job.model) || harnessCannotRun('codex', job.run?.policy, input.reach ?? 'loom')
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES) throw harnessUnavailable();
-    const guest = job.run?.policy?.people.some(person => person.kind !== 'person' && person.tier !== 3) ?? false;
-    if ((job.run?.policy?.deniedTools ?? []).some(rule => !rule.guestsOnly || guest)) throw harnessUnavailable();
     const server = 'mcp_servers.loom_secrets.';
     const args = ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox', '-m', job.model, '-C', input.cwd,
       ...(tools ? ['-c', `${server}url=${quote(tools.url)}`, '-c', `${server}bearer_token_env_var=${quote(tokenVariable)}`,
-        '-c', `${server}default_tools_approval_mode="approve"`, '-c', `${server}enabled_tools=[${names.map(name => quote(name!)).join(',')}]`,
-        '-c', `${server}tool_timeout_sec=86400`] : []),
+        '-c', `${server}default_tools_approval_mode="approve"`, '-c', `${server}enabled_tools=[${names.map(name => quote(name)).join(',')}]`,
+        '-c', `${server}tool_timeout_sec=86400`, '-c', `shell_environment_policy.exclude=[${quote(tokenVariable)}]`] : []),
       '-'];
     const env = { ...input.env, ...(tools ? { [tokenVariable]: tools.authorization.slice('Bearer '.length) } : {}) };
     const output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn });

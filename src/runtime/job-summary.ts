@@ -5,6 +5,7 @@ import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLStri
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { jobs } from '../core/data/schema.js';
+import { exitStage } from './job-exit.js';
 
 export class JobSummaries {
   constructor(readonly db: DataDatabase, readonly visibility: () => QueryVisibility) {}
@@ -24,7 +25,9 @@ export class JobSummaries {
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all();
+      .where(and(allowed, eq(jobs.agent, agent))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
+      // Where a failed job failed, read from its exit code: the one thing a private conversation's job keeps.
+      .map(row => ({ ...row, exitStage: exitStage(row.exitCode) ?? null }));
   }
 }
 const text = { type: GraphQLString };
@@ -32,7 +35,7 @@ const job = new GraphQLObjectType({ name: 'JobRecord', fields: {
   id: { type: new GraphQLNonNull(GraphQLString) }, agent: { type: new GraphQLNonNull(GraphQLString) },
   title: { type: new GraphQLNonNull(GraphQLString) }, state: { type: new GraphQLNonNull(GraphQLString) },
   box: text, conversation: text, project: text, brief: text, model: text, startedByKind: text, startedBy: text, retryOf: text,
-  exitCode: { type: GraphQLInt }, logTail: text, endedBy: text, endedReason: text,
+  exitCode: { type: GraphQLInt }, exitStage: text, logTail: text, endedBy: text, endedReason: text,
   queuedAt: { type: new GraphQLNonNull(GraphQLString) }, claimedAt: text, heardAt: text, endedAt: text,
 } });
 const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {

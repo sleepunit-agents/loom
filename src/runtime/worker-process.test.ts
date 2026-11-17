@@ -130,8 +130,9 @@ describe('worker command adapter (no child processes in tests)', () => {
     const fake = f.runtime.spawn(plan); vi.mocked(spawn).mockReturnValueOnce(fake);
     const executor = commandWorkerExecutor({ build: plan, runners: { 'custom-runner': plan } });
     const body = executor.start(job, 'image', new AbortController().signal);
+    // The configured environment and nothing of the worker's own, plus the body's scratch directory.
     expect(spawn).toHaveBeenLastCalledWith('/worker/build', ['--json'], {
-      cwd: '/worker', env: { PATH: '/usr/bin' }, shell: false, detached: true, stdio: 'pipe',
+      cwd: '/worker', env: { PATH: '/usr/bin', LOOM_BODY_SCRATCH: expect.any(String) }, shell: false, detached: true, stdio: 'pipe',
     });
     fake.emit('spawn'); await body.spawned; fake.emit('close', 0, null); await body.exited;
     // Fake has no real group: mock process.kill so cleanup launches no processes.
@@ -322,12 +323,12 @@ it('selects an exact account and harness command without borrowing another accou
   const executor = commandWorkerExecutor(config, f.runtime);
   selected.env.PROFILE = 'mutated-after-configuration'; selected.command = '/wrong'; selected.args.push('--wrong'); config.accountRunners.sub = { 'custom-runner': { ...selected, command: '/wrong-map' } };
   const body = executor.start(job, 'image', new AbortController().signal);
-  expect(f.runtime.spawn).toHaveBeenCalledWith({ ...plan, command: '/private/run-a', env: { PROFILE: 'only-a' } });
+  expect(f.runtime.spawn).toHaveBeenCalledWith({ ...plan, command: '/private/run-a', env: { PROFILE: 'only-a', LOOM_BODY_SCRATCH: expect.any(String) } });
   f.children[0].child.emit('spawn'); await body.spawned;
   await body.release(); expect(JSON.parse(f.children[0].input()).job).toMatchObject({ model: 'custom-model', account: 'sub', harness: 'custom-runner' });
   f.children[0].child.emit('close', 0, null); await body.stop();
   const other = executor.start({ ...job, account: 'other' }, 'image', new AbortController().signal);
-  expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ env: { PROFILE: 'only-b' } }));
+  expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ env: { PROFILE: 'only-b', LOOM_BODY_SCRATCH: expect.any(String) } }));
   f.children[1].child.emit('spawn'); await other.spawned; f.children[1].child.emit('close', 0, null); await other.stop();
   await expect(executor.build({ ...job, account: 'missing' }, new AbortController().signal)).rejects.toThrow('configured runner for account');
   expect(() => executor.start({ ...job, harness: 'missing' }, 'image', new AbortController().signal)).toThrow('configured runner for account');
@@ -355,7 +356,7 @@ it('selects each distinct harness within the same account', async () => {
   } } }, f.runtime);
   for (const [index, harness] of ['first', 'second'].entries()) {
     const body = executor.start({ ...job, harness }, 'image', new AbortController().signal);
-    expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/'+harness, env: { PROFILE: harness+'-only' } }));
+    expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/'+harness, env: { PROFILE: harness+'-only', LOOM_BODY_SCRATCH: expect.any(String) } }));
     f.children[index].child.emit('spawn'); await body.spawned; f.children[index].child.emit('close', 0, null); await body.stop();
   }
 });
@@ -396,4 +397,30 @@ it('clears retained stdout and both tails, then disables private output capture'
   expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
   retained.stdout('PRIVATE_BODY_TOKEN', 18); retained.stderr('PRIVATE_BODY_TOKEN');
   expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
+});
+
+describe('a body\'s scratch directory', () => {
+  const scratchOf = (f: ReturnType<typeof fixture>) => vi.mocked(f.runtime.spawn).mock.calls.at(-1)![0].env.LOOM_BODY_SCRATCH;
+  it('is private to the body, named in its environment, and removed once the body has exited', async () => {
+    const { existsSync, statSync, writeFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const f = fixture(), body = f.executor.start(job, 'image', new AbortController().signal), child = f.children[0].child;
+    const scratch = scratchOf(f);
+    expect(statSync(scratch).mode & 0o777).toBe(0o700);
+    expect(vi.mocked(f.runtime.spawn).mock.calls[0][0]).toMatchObject({ command: '/worker/run', env: { PATH: '/usr/bin' } });
+    writeFileSync(scratch + '/tools-file', 'BEARER');
+    child.emit('spawn'); await body.spawned; child.emit('close', 0, null); await body.exited;
+    expect(existsSync(scratch)).toBe(false);
+  });
+  it('is removed when the body is killed and never got to tidy up, and when it could not be launched', async () => {
+    const { existsSync, writeFileSync } = await vi.importActual<typeof import('node:fs')>('node:fs');
+    const f = fixture(), abort = new AbortController(), body = f.executor.start(job, 'image', abort.signal);
+    const scratch = scratchOf(f); writeFileSync(scratch + '/tools-file', 'BEARER');
+    f.children[0].child.emit('spawn'); await body.spawned;
+    abort.abort(); await body.stop();
+    expect(f.runtime.kill).toHaveBeenCalled(); expect(existsSync(scratch)).toBe(false);
+    const failing = fixture(); let made: string | undefined;
+    vi.mocked(failing.runtime.spawn).mockImplementation(plan => { made = plan.env.LOOM_BODY_SCRATCH; throw new Error('cannot spawn'); });
+    expect(() => failing.executor.start(job, 'image', new AbortController().signal)).toThrow('cannot spawn');
+    expect(made && existsSync(made)).toBe(false);
+  });
 });

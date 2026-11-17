@@ -3,6 +3,7 @@
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
 import { workerPolicy } from './body-policy.js';
+import { harnessCannotRun } from './harness-traits.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads, triggers } from '../core/data/schema.js';
@@ -17,7 +18,7 @@ export class Dispatcher {
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;
-    return this.db.select({id:threads.id,stop:threads.stopRequested,member:conversations.member}).from(threads)
+    return this.db.select({id:threads.id}).from(threads)
       .innerJoin(conversations,eq(conversations.id,threads.conversation))
       .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id),eq(conversations.agent,job.agent),eq(conversations.venue,'loom'))).get();
   }
@@ -36,7 +37,10 @@ export class Dispatcher {
         const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
         // Settings may gain GPU after admission; never claim an incapable box.
         if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
-        const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation) });
+        // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
+        const policy = workerPolicy(this.db, job);
+        const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
+          cannotRun: harness => harnessCannotRun(harness, policy) });
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
@@ -49,7 +53,7 @@ export class Dispatcher {
         const thread = this.currentThread(claimed);
         if(thread)new Threads(this.db,this.now).working(thread.id,true);
         const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
-        return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
@@ -84,16 +88,12 @@ export class Dispatcher {
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
-      if(state==='starting'&&job.conversation){
-        const thread=this.currentThread(job);
-        if(thread){
-          if(thread.stop&&thread.member){
-            this.jobs.stop(job.id,thread.member,'write-off');
-            new Threads(this.db,this.now).takeStop(thread.id);
-            return {active:false,stopped:true as const};
-          }
-          new Threads(this.db,this.now).working(thread.id,true);
-        }
+      if (state === 'starting') {
+        // Nothing is running yet, so a Comms Stop ends the job here. Once a body runs, the Stop is the body's
+        // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.
+        if (this.jobs.takeStop(job.id)) return { active: false, stopped: true as const };
+        const thread = this.currentThread(job);
+        if (thread) new Threads(this.db, this.now).working(thread.id, true);
       }
       // The worker reports a live process, not whether its body resumed work.
       // Preserve a body's explicit waiting status until a body status update.

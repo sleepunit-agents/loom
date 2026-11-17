@@ -122,13 +122,15 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
    await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
   }finally{releaseHeartbeat();}
  }
- expect(await running).toBe(failed?14:0);await actorFinished;if(failure)throw failure;
+ expect(await running).toBe(failed?14:stop?10:0);await actorFinished;if(failure)throw failure;
  expect(errors).toHaveBeenCalledTimes(failed?1:0);expect(cancel).toHaveBeenCalledOnce();
  expect(fixture.bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(fixture.sourceBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  expect(fixture.source).toHaveBeenCalledTimes(mode==='overlapping-waits'?2:1);
  expect(statusInputs.filter(value=>JSON.stringify(value)===JSON.stringify({state:'waiting',work:'Canonical waiting'}))).toHaveLength(mode==='stop'?1:2);
  const replies=fixture.db.select().from(schema.turns).all().filter(row=>row.kind==='reply');expect(replies).toHaveLength(stop||failed?0:1);
- if(stop){expect(killed).toBe(true);expect(statusInputs).toContainEqual({state:'idle',work:'',seenStop:true});expect(fixture.db.select().from(schema.threads).get()?.stopRequested).toBe(false);}
+ if(stop){expect(killed).toBe(true);expect(statusInputs.at(-1)).toEqual({state:'idle',work:''});
+  // The body leaves the Stop for loom to take when the worker reports this job.
+  expect(fixture.db.select().from(schema.threads).get()?.stopRequested).toBe(true);}
  else if(!failed)expect(replies[0]).toMatchObject({model:'observed',run:'job'});
  expect(fixture.db.$client.serialize().includes(Buffer.from(fixture.token))).toBe(false);expect(fixture.db.$client.serialize().includes(Buffer.from(fixture.value))).toBe(false);
  await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();

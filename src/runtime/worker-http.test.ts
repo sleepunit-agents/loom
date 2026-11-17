@@ -33,6 +33,20 @@ describe('worker operation client', () => {
     await expect(client(fetcher).started('j1', 'image')).rejects.toThrow(/^Worker started failed; outcome may be uncertain$/);
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it('sends a finish again under the same operation id after a dropped reply, and gives up after three tries', async () => {
+    const pauses: number[] = [], pause = async (ms: number) => { pauses.push(ms); };
+    const dropped = vi.fn<typeof fetch>().mockRejectedValueOnce(new Error('reset')).mockResolvedValueOnce(response({ ok: true }));
+    await httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: dropped, signal: new AbortController().signal, pause }).finish('j1', 0, 'done');
+    const sent = dropped.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(sent).toHaveLength(2); expect(sent[1]).toEqual(sent[0]); expect(pauses).toEqual([2_000]);
+    const down = vi.fn<typeof fetch>().mockRejectedValue(new Error('down'));
+    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: down, signal: new AbortController().signal, pause }).finish('j1', 0, 'done'))
+      .rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
+    expect(down).toHaveBeenCalledTimes(3);
+    const abort = new AbortController(), stopped = vi.fn<typeof fetch>().mockImplementation(async () => { abort.abort(); throw new Error('down'); });
+    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: stopped, signal: abort.signal, pause }).finish('j1', 0, 'done')).rejects.toThrow();
+    expect(stopped).toHaveBeenCalledTimes(1);
+  });
   it('rejects an oversized body and cancels its stream', async () => {
     const cancel = vi.fn();
     const stream = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1_048_577)); }, cancel });

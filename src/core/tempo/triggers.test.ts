@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
 import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
-import { TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
+import { MISSED_GRACE_MS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
 const stops: (() => void)[] = [];
 afterEach(() => { for (const stop of stops.splice(0).reverse()) stop(); });
@@ -88,14 +88,60 @@ it('skips missing DST wall times and runs a repeated time at its first instant o
   expect(new Date(nextTime('02:30', null, Date.parse('2026-03-08T00:00:00Z'), 'America/Chicago')).toISOString()).toBe('2026-03-09T07:30:00.000Z');
   expect(new Date(nextTime('01:30', null, Date.parse('2026-11-01T06:31:00Z'), 'America/Chicago')).toISOString()).toBe('2026-11-02T07:30:00.000Z');
 });
-it('holds an agent-owned operation with no inbox recipient and coalesces missed calendar occurrences', () => {
-  const { engine, clock, base, operations, row } = fixture();
+it('holds an agent-owned operation with no inbox recipient, and skips the times it was held through', () => {
+  const { engine, clock, base, operations, row, db } = fixture();
   const t = engine.set({ ...base, targetKind: 'operation', target: 'tasks.reconcile', toKind: null, to: null, times: '12:01', lifespan: 'until-stopped' });
   engine.pause('art'); clock.advance(2 * 86_400_000); expect(operations).toEqual([]);
-  engine.resume('art'); expect(operations).toEqual(['tasks.reconcile']);
-  expect(row(t.id).nextDueAt).toBe('2026-11-16T18:01:00.000Z');
+  engine.resume('art'); expect(operations).toEqual([]);
+  expect(row(t.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-16T18:01:00.000Z', lastFiredAt: null });
+  expect(db.select().from(triggerLog).where(andTrigger(t.id)).all().map(l => [l.event, l.note])).toContainEqual(['missed', 'time:2026-11-14T18:01:00.000Z']);
+  clock.advance(60_000); expect(operations).toEqual(['tasks.reconcile']);
 });
-
+// The missed-time rule (stated on TriggerEngine): a time fires at most MISSED_GRACE_MS late, however it came to be late.
+it.each(['pause', 'restart', 'slow clock'] as const)('fires a time up to the grace late after a %s, and skips it beyond that', how => {
+  for (const late of [MISSED_GRACE_MS, MISSED_GRACE_MS + 1]) {
+    const f = fixture(), due = f.clock.now() + 60_000;
+    const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
+    const once = f.engine.set({ ...f.base, times: new Date(due).toISOString(), instructions: 'Once' });
+    let engine = f.engine;
+    if (how === 'pause') f.engine.pause('art'); else f.engine.close();
+    if (how === 'slow clock') {
+      // The timer that should have woken the engine never ran; the next scan finds the time already behind it.
+      const stuck = new FakeClock(due + late); engine = new TriggerEngine(f.db, stuck, f.effects); stops.push(() => engine.close());
+    } else f.clock.advance(60_000 + late);
+    expect(f.items()).toEqual([]);
+    if (how === 'pause') f.engine.resume('art');
+    else if (how === 'restart') { engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); }
+    engine.tick();
+    const events = (id: string) => f.db.select().from(triggerLog).where(andTrigger(id)).all().map(l => l.event);
+    if (late <= MISSED_GRACE_MS) {
+      expect(f.items().map(i => i.words).sort()).toEqual(['Do the work', 'Once']);
+      expect(f.row(once.id)).toMatchObject({ state: 'fired', enabled: false });
+      expect(events(lane.id)).not.toContain('missed');
+    } else {
+      expect(f.items()).toEqual([]);
+      expect(f.row(once.id)).toMatchObject({ state: 'stopped', enabled: false, nextDueAt: null, lastFiredAt: null });
+      expect(events(lane.id).at(-1)).toBe('missed'); expect(events(once.id).at(-1)).toBe('missed');
+    }
+    // Either way the lane stands for tomorrow, and nothing fires a second time to catch up.
+    expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-15T18:01:00.000Z' });
+    engine.tick(); expect(f.items()).toHaveLength(late <= MISSED_GRACE_MS ? 2 : 0);
+  }
+});
+it('says which step of a firing failed', () => {
+  const failures = (f: ReturnType<typeof fixture>) => f.db.select().from(triggerLog).all().filter(l => l.event === 'failure').map(l => l.note);
+  const file = fixture({ instructions: () => { throw new Error('ENOENT: routines/check.md\nstack line'); } });
+  file.engine.set({ ...file.base, instructions: null, file: 'routines/check.md' }); file.clock.advance(10_000);
+  expect(failures(file)).toEqual(['instructions: ENOENT: routines/check.md']);
+  const inboxWrite = fixture({ inbox: () => { throw new Error('inbox is full'); } });
+  inboxWrite.engine.set(inboxWrite.base); inboxWrite.clock.advance(10_000);
+  expect(failures(inboxWrite)).toEqual(['inbox: inbox is full']);
+  const operation = fixture({ operation: () => { throw new Error('x'.repeat(500)); } });
+  const t = operation.engine.set({ ...operation.base, targetKind: 'operation', target: 'tasks.reconcile' }); operation.clock.advance(10_000);
+  expect(failures(operation)).toEqual(['operation: ' + 'x'.repeat(200)]);
+  // The failed row still carries the event id alone, so the same event is not tried again.
+  expect(operation.db.select().from(triggerLog).where(andTrigger(t.id)).all().filter(l => l.event === 'failed').map(l => l.note)).toEqual(['time:2026-11-14T18:00:10.000Z']);
+});
 it.each(['stop', 'pause'] as const)('honors an operation that will %s another due trigger without reentering itself', action => {
   const f = fixture();
   const calls: string[] = [];
