@@ -19,14 +19,15 @@ function fixture(){
   if(path==='startup'){notifyPlan();return Response.json({aliases:[{alias:'GITHUB_TOKEN'}],...(pending?{pending:true}:{})});}
   if(path==='read')return new Response(new Blob([privateValue]),{headers:{'content-type':'application/octet-stream','x-loom-secret-use':'use-input-'+'a'.repeat(64)}});
   if(path==='confirm'&&String(url).includes('/secrets/'))return Response.json({confirmed:true});
-  const values={status:{saved:true,stopRequested:stop},take:{job:'job',conversation:'cv',stopRequested:stop,items:[{id:'mail',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:'2026-11-15T00:00:00.000Z',words:'ACCEPTED_MAIL',keepUntil:null,verdict:null,refs:[]}]},confirm:{saved:true},message:{saved:true,seq:2},digest:{saved:true,digest:'digest',revision:1,item:null}};
+  const values={status:{saved:true,stopRequested:stop},take:{job:'job',conversation:'cv',stopRequested:stop,items:[{id:'mail',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:'2026-11-15T00:00:00.000Z',words:'ACCEPTED_MAIL',keepUntil:null,verdict:null,refs:[]}]},accept:{saved:true},confirm:{saved:true},message:{saved:true,seq:2},digest:{saved:true,digest:'digest',revision:1,item:null}};
   return Response.json({ok:true,value:values[path as keyof typeof values]});
  });
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
   expect((options as {env:NodeJS.ProcessEnv}).env).toEqual({...env,GITHUB_TOKEN:privateValue,CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS:'0',MAX_MCP_OUTPUT_TOKENS:'100000',MCP_TOOL_TIMEOUT:'86400000',CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:'86400000'});
   expect(JSON.stringify(args)).not.toContain(privateValue);expect(JSON.stringify(options)).not.toContain(raw);
   expect(calls.indexOf('read')).toBeGreaterThan(calls.indexOf('startup'));
-  expect(calls.filter(p=>p==='confirm')).toHaveLength(2);
+  // The secret's own confirmation only: the mail is received (accept) but not settled before the model answers.
+  expect(calls.filter(p=>p==='confirm')).toHaveLength(1);expect(calls).toContain('accept');
   const child=Object.assign(new EventEmitter(),{stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();}}),stdout:new PassThrough(),stderr:new PassThrough(),stdio:[null,null,null,new Writable({write(_chunk,_encoding,done){done();}})],kill:vi.fn(()=>true)}) as unknown as ChildProcessWithoutNullStreams;
   queueMicrotask(()=>{const list=args as string[],session=list[list.indexOf('--session-id')+1];
    child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'Answer'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'Answer'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
@@ -38,6 +39,7 @@ function fixture(){
 }
 it('uses default startup delivery before the actual native constructor and removes its environment on completion',async()=>{
  const f=fixture();expect(await bodyProgram(f.options)).toBe(0);expect(spawn).toHaveBeenCalledOnce();expect(f.words()).toBe('ACCEPTED_MAIL');expect(f.words()).not.toContain(privateValue);expect(f.env).toEqual({PATH:'/bin',ACCOUNT_PROFILE:'/account'});expect(f.errors).not.toHaveBeenCalled();expect(f.bytes.every(b=>b===0)).toBe(true);expect(f.cancel).toHaveBeenCalledOnce();
+ expect(f.calls.filter(p=>p==='confirm')).toHaveLength(2);expect(f.calls.lastIndexOf('confirm')).toBeGreaterThan(f.calls.indexOf('message'));
 });
 it('observes Stop while default startup consent is pending, without launching a model or injecting late values',async()=>{
  const f=fixture();f.pending();const running=bodyProgram(f.options);await f.planned;f.stop();expect(await running).toBe(10);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.calls).not.toContain('take');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.errors).not.toHaveBeenCalled();expect(f.cancel).toHaveBeenCalledOnce();

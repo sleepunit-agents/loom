@@ -11,7 +11,7 @@ import {bodyProgram} from './runtime/body-program.js';
 import {claudeBody} from './runtime/claude-body.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
 import {getRequestListener} from '@hono/node-server';
-import {eq} from 'drizzle-orm';
+import {and,eq,inArray} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
 import {commandWorkerExecutor,type ProcessRuntime} from './runtime/worker-process.js';
@@ -30,7 +30,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  const f=await bodyFixture(clean,{initialTime:Date.now(),modelRoles:()=>[{model:'requested-model',provider:'provider',harness,series:'series'}]});
  f.root.writes.run(()=>{
   if(variant==='tempo'){f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();f.db.insert(s.tempoSettings).values({whoKind:'person',who:'alice',settleSeconds:5,dimDays:3,muteDays:9}).run();}
-  f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();
+  f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.delete(s.jobs).run();
   f.db.insert(s.boxAgents).values({box:'box',agent:'art',lent:false}).run();f.db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();f.db.insert(s.agentModels).values({agent:'art',model:'requested-model',position:0}).run();
   f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
   f.db.insert(s.modelAccounts).values({id:'account',owner:'alice',provider:'provider',label:'Fixture account',hasRoom:true}).run();
@@ -105,7 +105,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    const protocol=new Client({name:'tempo-native-fixture',version:'1'},{capabilities:{}});
    try{
     expect(words).toBe('PRIVATE WORKER INPUT');expect(acknowledged).toBe(true);
-    expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
+    expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
     const tools=(await protocol.listTools()).tools;
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
@@ -156,7 +156,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
  // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
-expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2+nativeActions});
+expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({turnCount:2+nativeActions});expect(f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),inArray(s.jobs.state,['queued','starting','running','waiting']))).all()).toEqual([]);
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
  else expect(f.db.select().from(s.digests).all()).toMatchObject([{conversation:f.thread.conversation,run:job.id,revision:1,summary:'Completed this stretch of work.',inboxItem:null}]);
  expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:''});

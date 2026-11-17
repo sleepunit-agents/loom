@@ -91,18 +91,52 @@ export class ConversationMail {
     });
   }
 
-  /** Call only after the body accepts the mail, never on enqueue or take. */
+  /** The checks every report about one taken item shares: it is this conversation's agent mail, and a private
+   * item still points at the message it carried. Whether this job holds it is the caller's next check. */
+  private held(conversation: string, job: string, itemId: string): Item {
+    const { threads: { conversations } } = this.comms;
+    conversations.pending(conversation, job); // also validates done-item retries
+    const item = conversations.item(itemId), cv = conversations.conversation(conversation);
+    if (item.conversation !== conversation || item.toKind !== 'agent' || item.to !== cv.agent) throw new Error('Mail differs from conversation');
+    if(item.thread){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
+    return item;
+  }
+  private delivered(item: Item): void {
+    if (item.thread && item.messageSeq !== null) this.comms.db.update(messages).set({ delivery: 'delivered' })
+      .where(and(eq(messages.thread, item.thread), eq(messages.seq, item.messageSeq), eq(messages.inboxItem, item.id), eq(messages.kind, 'message'))).run();
+  }
+
+  /** The body has the mail: its sender sees it delivered. Call only after the body accepts the mail, never
+   * on enqueue or take. This settles nothing. Mail is settled by its answer (settle, confirm), so a body
+   * that dies before answering leaves it to the job's next attempt, where it shows as held again. */
+  accept(conversation: string, job: string, itemId: string): Item {
+    return this.comms.db.transaction(() => {
+      const item = this.held(conversation, job, itemId);
+      if (item.job !== job || !['taken', 'done'].includes(item.state)) throw new Error('Item is not held by this job');
+      this.delivered(item);
+      return item;
+    });
+  }
+
+  /** The mail is dealt with: done, and never handed to another body. A body calls this once the answer to
+   * the mail is recorded, or for mail that needs none. */
   confirm(conversation: string, job: string, itemId: string): Item {
     const { db, threads: { conversations } } = this.comms;
     return db.transaction(() => {
-      conversations.pending(conversation, job); // also validates done-item retries
-      const item = conversations.item(itemId), cv = conversations.conversation(conversation);
-      if (item.conversation !== conversation || item.toKind !== 'agent' || item.to !== cv.agent) throw new Error('Mail differs from conversation');
-      if(item.thread){const message=this.privateMessages([item]).get(item.id);if(!message||message.conversation!==conversation||message.message.thread!==item.thread||message.message.seq!==item.messageSeq)throw new Error('Private mail reference differs');}
+      const item = this.held(conversation, job, itemId);
       const result = conversations.confirm(itemId, job);
-      if (item.thread && item.messageSeq !== null) db.update(messages).set({ delivery: 'delivered' })
-        .where(and(eq(messages.thread, item.thread), eq(messages.seq, item.messageSeq), eq(messages.inboxItem, item.id), eq(messages.kind, 'message'))).run();
+      this.delivered(item);
       return result;
     });
+  }
+
+  /** A recorded reply is the answer to everything this job took before it. Settling that mail in the reply's
+   * own write means a body that dies before its own confirmation cannot have it answered a second time.
+   * Mail still waiting (it arrived while the body worked) is not touched. Returns the items settled. */
+  settle(conversation: string, job: string): string[] {
+    const { db } = this.comms;
+    return db.transaction(() => db.select({ id: inbox.id }).from(inbox)
+      .where(and(eq(inbox.conversation, conversation), eq(inbox.job, job), eq(inbox.state, 'taken'))).all()
+      .map(({ id }) => this.confirm(conversation, job, id).id));
   }
 }
