@@ -248,23 +248,30 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
  expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
 });
-// What a room's body can schedule, written down as it is and not as it should be: an open finding, not an
-// accepted trade-off. Tempo's rule (policy.ts, maySetTrigger) asks who the caller is and whom it works
-// for, not what room its job is in. Whoever closes it changes the first expectation below.
-it('lets the body of a room schedule its agent\'s own later work, whoever is in the room, and not another agent\'s or a person\'s',async()=>{
+// What a body may schedule depends on where its job is (policy.ts, maySchedule). A room's body would be
+// setting words that later run as the agent's own wake, outside the room and its limits; Tempo cannot yet
+// address a firing to a conversation, so every trigger from a room's body is refused.
+it('refuses every trigger a room\'s body sets or rewords, with a line that says what to do instead',async()=>{
  const f=fixture();const incoming=await f.receive();
  f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
- // The room's sender is an outside account at tier 2: a guest, so the job runs under the guests' tool denials.
- expect(f.db.select().from(inbox).get()).toMatchObject({fromKind:'unknown'});
+ // A Slack channel, and its sender an outside account: a room, with a guest in it.
+ expect(f.db.select().from(conversations).get()).toMatchObject({venue:'slack',member:null});expect(f.db.select().from(inbox).get()).toMatchObject({fromKind:'unknown'});
  const trigger=(more:Record<string,unknown>)=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3_600_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Words chosen in the room',note:'Set from a room',...more});
- // Its own agent's trigger: allowed. When it fires it is the agent's own wake, outside this room and its limits.
- const own=trigger({});expect((await f.call('tempo','set',own)).status).toBe(200);
- expect(f.db.select().from(triggers).all()).toMatchObject([{id:own.id,ownerKind:'agent',owner:'art',toKind:'agent',to:'art',instructions:'Words chosen in the room',member:null}]);
- // Not another agent's work, and not a message to a person.
- expect((await f.call('tempo','set',trigger({owner:'mark',to:'mark'}))).status).toBe(403);
- expect((await f.call('tempo','set',trigger({to:'mark'}))).status).toBe(403);
- expect((await f.call('tempo','set',trigger({toKind:'person',to:'owner'}))).status).toBe(403);
- expect(f.db.select().from(triggers).all()).toHaveLength(1);
+ const line='A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
+ // The agent's own wake: who the caller is would allow it; where its job is does not.
+ expect(await f.call('tempo','set',trigger({}))).toMatchObject({status:403,body:{ok:false,code:'denied',message:line}});
+ // Another agent's work, and a message to a person, were never the caller's to set.
+ for(const other of [{owner:'mark',to:'mark'},{to:'mark'},{toKind:'person',to:'owner'}])expect((await f.call('tempo','set',trigger(other))).status).toBe(403);
+ expect(f.db.select().from(triggers).all()).toEqual([]);
+ // Nor may it reword a trigger of its agent's that is already set: the words would run the same way.
+ // A body of the same agent whose job is not in a room is judged as before, by who it is: the other job here
+ // has no conversation at all.
+ const owned=trigger({instructions:'Set outside any room'});
+ expect((await f.call('tempo','set',owned,token.other)).status).toBe(200);
+ // Nor may the room's body reword that trigger: the words would run the same way.
+ expect(await f.call('tempo','edit',{id:owned.id,instructions:'Reworded in the room'})).toMatchObject({status:403,body:{message:line}});
+ expect(f.db.select().from(triggers).all()).toMatchObject([{id:owned.id,instructions:'Set outside any room'}]);
+ expect((await f.call('tempo','edit',{id:owned.id,instructions:'Reworded outside it'},token.other)).status).toBe(200);
 });
 it('attaches the earlier words of a bridge conversation to one piece of mail in a batch, not to each',async()=>{
  const f=fixture(()=>true,true);f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();

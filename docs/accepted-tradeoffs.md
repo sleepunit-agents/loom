@@ -936,6 +936,24 @@ Entries are grouped by the part of the program they belong to.
   an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
 - Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
 
+### A room's body schedules nothing
+- What: the body of a job in a room (a Discord or Slack conversation that is not one member's own: a
+  channel, a thread, a group direct message, a direct message from somebody who is no member) may not set
+  or reword any trigger. `tempo.set` and `tempo.edit` refuse it with "A body working in a room cannot
+  schedule work: ask in your own thread, or have an owner schedule it." A body in one member's own thread
+  or direct message, a person, and an agent's own session are judged as before. Stopping, starting and
+  running an existing trigger from a room are not changed.
+- Where: `isRoom`, `maySchedule` and `ROOM_SCHEDULE_REFUSAL` in `src/policy.ts`, beside `maySetTrigger`;
+  asked by the Tempo door (`placeRefusal` in `src/core/tempo/operations.ts`, wired in `src/shared-tempo.ts`
+  from the body's own conversation).
+- Why: a room's body works under the room's limits: who is in it, and the tools an agent's body is not
+  given when a guest is. A trigger it set for its agent would fire later as the agent's own wake, a new
+  job with no room, running words chosen in the room without those limits. The rule wanted is narrower:
+  a room's body may schedule work that comes back into the same conversation under the same limits. A
+  trigger cannot name a conversation today, so there is no such trigger to allow, and all are refused.
+- Would change it: a trigger that names a conversation, whose firing is mail in that conversation and so
+  a job with its room's people and denials. `maySchedule` then lets that one case through.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

@@ -35,3 +35,21 @@ Two other ways a time passes are not misses:
 
 Events (an answer, a job, a pull request) are not times. One seen while the
 agent is paused fires when the agent resumes.
+
+## Who may schedule, and from where
+
+Who may set a trigger is `maySetTrigger` in `src/policy.ts`. Where the caller
+is working matters too (`maySchedule`, beside it): the body of a job in a
+**room** may set or reword no trigger at all. A room is a Discord or Slack
+conversation that is not one member's own: a channel, a thread, a group direct
+message, or a direct message from somebody who is no member. Such a body is
+refused with "A body working in a room cannot schedule work: ask in your own
+thread, or have an owner schedule it."
+
+The reason: a trigger names an agent or a person, never a conversation, and a
+firing for an agent opens a wake of the agent's own. Words chosen in a room
+would later run outside it, without the room's people and the tool denials
+that go with them. When a trigger can be addressed to a conversation, a room's
+body will be able to set one that comes back into its own room. A body in one
+member's own thread or direct message is not in a room and is judged by who it
+is, as before. Stopping, starting and running a trigger are not changed.

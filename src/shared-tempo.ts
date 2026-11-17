@@ -12,7 +12,7 @@ import type { Recipient } from './core/tempo/volume.js';
 import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
 import { tempoCommandAllowed, recordedTrigger } from './shared-tempo-access.js';
-import { isHouseholdOwner, mayRunPrivateWork } from './policy.js';
+import { ROOM_SCHEDULE_REFUSAL, isHouseholdOwner, mayRunPrivateWork, maySchedule } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { Jobs, agentMailAdmission } from './runtime/jobs.js';
 import { repositoryInstructions } from './core/tempo/repository.js';
@@ -28,6 +28,9 @@ export interface SharedTempoOptions {
   changeRevision?: TempoOptions['changeRevision'];
   mailboxReceiptScope?:TempoOperationOptions['mailboxReceiptScope'];
   chatMember?(viewer: Viewer): string | undefined;
+  /** The conversation the caller's job is in, when the caller is the body of a job: what it may schedule
+   * depends on it (policy.ts, maySchedule). Nothing for a person or an agent's own session. */
+  bodyConversation?(viewer: Viewer): { venue: string; member: string | null } | undefined;
   beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
 }
@@ -57,6 +60,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     // Chat is the control surface: a current body may carry out its member's ordinary mailbox preference
     // without becoming that member. When is the volume rule in policy.ts, asked by tempoCommandAllowed;
     // chatMember is this door's proof that the caller is the current body of that member's chat.
-    commands: { mailboxReceiptScope:options.mailboxReceiptScope, recorded: (viewer, trigger) => recordedTrigger(db, viewer, trigger), authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember) },
+    commands: { mailboxReceiptScope:options.mailboxReceiptScope, recorded: (viewer, trigger) => recordedTrigger(db, viewer, trigger), authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember),
+      placeRefusal: (viewer, trigger) => { const at = options.bodyConversation?.(viewer); return at && !maySchedule(at, trigger) ? ROOM_SCHEDULE_REFUSAL : undefined; } },
   });
 }

@@ -533,6 +533,29 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
   if (!authored || t.project && !(Object.hasOwn(s.projects, t.project) && holds(rules.project, v, { id: t.project }, s))) return false;
   return t.toKind && t.to ? holds(recipient, v, { toKind: t.toKind, to: t.to }, s) : owner || own;
 }
+/** What a body may schedule depends on where its job is.
+ *
+ * A room is a bridge conversation that is not one member's own: a Discord or Slack channel or thread, a
+ * group direct message, or a direct message from somebody who is no member. Its body works under the
+ * room's limits: the people in it, and the tools an agent's body is not given when a guest is among them.
+ * A trigger such a body set for its agent would fire later as the agent's own wake, a job with no room and
+ * none of those limits, running words chosen in the room. So a room's body may set, or reword, a trigger
+ * only if its firing comes back into that same conversation, as a job with the room's limits.
+ *
+ * Tempo cannot address a conversation: a trigger names an agent or a person, and a firing for an agent
+ * opens a wake of its own (core/tempo/tempo.ts). So today no trigger is one a room's body may set, and
+ * every one is refused with ROOM_SCHEDULE_REFUSAL. When a trigger can name a conversation, this is where
+ * that one case is let through.
+ *
+ * A body in one member's own thread or direct message is not in a room: maySetTrigger alone decides for
+ * it, as for a person and for an agent's own session. */
+export const isRoom = (conversation: { venue: string; member: string | null }): boolean =>
+  (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
+export const ROOM_SCHEDULE_REFUSAL = 'A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
+/** Whether the body of a job in this conversation may set or reword this trigger, as far as where it works goes. */
+export function maySchedule(conversation: { venue: string; member: string | null }, _trigger: Pick<TriggerFacts, 'ownerKind' | 'owner' | 'toKind' | 'to'>): boolean {
+  return !isRoom(conversation);
+}
 /** Who may fire a trigger by hand, or turn a stopped one back on: someone who reads it (rule `trigger`,
  * which the caller checks on the stored row) and who may put its agent to work (directsAgent), as for
  * pausing the agent and setting the trigger. Being in the trigger's project shows it and lets a person
