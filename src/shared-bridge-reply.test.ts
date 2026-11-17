@@ -66,7 +66,7 @@ it('lets a body answer only mail it took, and settles that mail with the reply',
 });
 it('reads attachments under the rule of the message they hang off',async()=>{
  const f=fixture(),dm=f.receive(true),room=f.receive(false);
- f.root.writes.run(()=>{for(const [file,message] of [['FDM',dm],['FROOM',room]] as const)f.db.insert(s.bridgeFiles).values({connection:'slack',file,incoming:message.id,name:file+'.txt',contents:Buffer.from(file),fetchedAt:f.now()}).run();});
+ f.root.writes.run(()=>{for(const [file,message] of [['FDM',dm],['FROOM',room]] as const){f.db.insert(s.bridgeFiles).values({connection:'slack',file,incoming:message.id,name:file+'.txt',contents:Buffer.from(file),fetchedAt:f.now()}).run();f.db.insert(s.bridgeFileMessages).values({connection:'slack',file,incoming:message.id}).run();}});
  expect(f.db.select().from(s.conversations).where(eq(s.conversations.id,dm.conversation!)).get()?.member).toBe('member');
  const status=async(message:{id:string},bearer:string)=>(await f.call('file',{incoming:message.id},bearer)).status;
  // Members: whoever may read the message row. The private DM is its member's alone; not even a household owner's.
@@ -78,4 +78,11 @@ it('reads attachments under the rule of the message they hang off',async()=>{
  expect(await status(room,inRoom.token)).toBe(200);expect(await status(dm,inRoom.token)).toBe(403);
  const one=await f.call('file',{incoming:room.id,file:'FROOM'},inRoom.token);expect(Buffer.from(one.body.value.files[0].contents,'base64').toString()).toBe('FROOM');
  expect((await f.call('file',{incoming:room.id,file:'missing'},inRoom.token)).body).toMatchObject({code:'not-found'});
+ // A file is the message's only through its link: the one kept for the private message is not the room's.
+ expect((await f.call('file',{incoming:room.id,file:'FDM'},inRoom.token)).body).toMatchObject({code:'not-found'});
+ // The same file shared in a second message is kept once and listed under both.
+ const again=f.receive(false);f.root.writes.run(()=>{f.db.insert(s.bridgeFileMessages).values({connection:'slack',file:'FROOM',incoming:again.id}).run();});
+ expect((await f.call('file',{incoming:again.id},other)).body.value.files.map((file:{file:string})=>file.file)).toEqual(['FROOM']);
+ expect((await f.call('file',{incoming:room.id},other)).body.value.files.map((file:{file:string})=>file.file)).toEqual(['FROOM']);
+ expect(f.db.select().from(s.bridgeFiles).all()).toHaveLength(2);
 });

@@ -120,6 +120,24 @@ describe('upgrading a household database', () => {
     expect(old.prepare('SELECT id, made_by FROM sessions').all()).toEqual([{ id: 'browser', made_by: null }]);
   });
 
+  it('links each kept Slack file to its message in step 8 and removes the receipts that held a sign-in code', () => {
+    const old = household(7);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO secrets (name, description, changed_at, changed_by) VALUES ('s', '', '${at}', 'sam');
+      INSERT INTO bridge_connections (id, platform, agent, workspace, bot_user, token_secret, enabled, state, state_at) VALUES ('c', 'slack', 'art', 'w', 'bot', 's', 1, 'connected', '${at}');
+      INSERT INTO bridge_incoming (id, connection, channel, is_dm, user, text, posted_at, received_at, state) VALUES ('m1', 'c', 'r', 0, 'u', 'hi', '${at}', '${at}', 'delivered'), ('m2', 'c', 'r', 0, 'u', 'again', '${at}', '${at}', 'delivered');
+      INSERT INTO bridge_files (connection, file, incoming, name, contents, fetched_at) VALUES ('c', 'F1', 'm1', 'a.txt', x'6869', '${at}'), ('c', 'F2', 'm2', 'b.txt', x'6869', '${at}');
+      INSERT INTO operation_results (caller, id, operation, input_hash, result, expires_at) VALUES ('worker', 'old', 'runtime.signInCode', 'x', x'7b7d', '2999-01-01T00:00:00.000Z'), ('worker', 'kept', 'runtime.signInDone', 'x', x'7b7d', '2999-01-01T00:00:00.000Z')`);
+    upgradeDataSchema(old, () => '2026-11-16T00:00:00.000Z');
+    expect(old.prepare('SELECT connection, file, incoming FROM bridge_file_messages ORDER BY file').all()).toEqual([{ connection: 'c', file: 'F1', incoming: 'm1' }, { connection: 'c', file: 'F2', incoming: 'm2' }]);
+    expect(old.prepare('SELECT count(*) AS n FROM bridge_files').get()).toEqual({ n: 2 });
+    // The same file can now be listed under a second message; a link to a file that is not kept is refused.
+    old.prepare("INSERT INTO bridge_file_messages (connection, file, incoming) VALUES ('c', 'F1', 'm2')").run();
+    expect(() => old.prepare("INSERT INTO bridge_file_messages (connection, file, incoming) VALUES ('c', 'F9', 'm2')").run()).toThrow('FOREIGN KEY');
+    expect(old.prepare('SELECT id FROM operation_results').all()).toEqual([{ id: 'kept' }]);
+  });
+
   it('refuses to upgrade over a record whose member or agent is gone, and changes nothing', () => {
     // Step 6 puts guards on who edited a trigger. Before it nothing stopped that member's row being deleted,
     // and SQLite's own check does not see a kind-and-id reference.

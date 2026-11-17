@@ -192,6 +192,18 @@ const upgrades: readonly (readonly string[])[] = [
     'CREATE INDEX `jobs_agent_state_idx` ON `jobs` (`agent`,`state`)',
     'CREATE INDEX `jobs_box_state_idx` ON `jobs` (`box`,`state`)',
   ],
+  // 8: which messages carried a kept Slack file. A file was kept under the first message alone, so the
+  // same file shared again was not listed under the later one. Each file kept now is linked to the message
+  // it has. Both statements that make the table and its index are the fresh schema's own text.
+  [
+    "CREATE TABLE `bridge_file_messages` (\n\t`connection` text NOT NULL,\n\t`file` text NOT NULL,\n\t`incoming` text NOT NULL,\n\tPRIMARY KEY(`connection`, `file`, `incoming`),\n\tFOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`connection`,`file`) REFERENCES `bridge_files`(`connection`,`file`) ON UPDATE no action ON DELETE no action\n)",
+    'CREATE INDEX `bridge_file_messages_incoming_idx` ON `bridge_file_messages` (`incoming`)',
+    'INSERT INTO bridge_file_messages (connection, file, incoming) SELECT connection, file, incoming FROM bridge_files',
+    // runtime.signInCode was once a write, so its answers, the one-time code included, were kept as retry
+    // receipts. It is a read now and leaves none; the old ones go here, once. This ran at every start,
+    // outside the steps (src/shared-account-signin.ts), until this step.
+    "DELETE FROM operation_results WHERE operation = 'runtime.signInCode'",
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

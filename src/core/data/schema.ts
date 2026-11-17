@@ -1205,6 +1205,8 @@ export const bridgeSends = sqliteTable('bridge_sends', {
 export const bridgeFiles = sqliteTable('bridge_files', {
   connection: text('connection').notNull().references((): AnySQLiteColumn => bridgeConnections.id),
   file: text('file').notNull(),
+  /** The message it was first fetched for. Every message that carried it is in bridge_file_messages, and
+   * that is what says who may read it. */
   incoming: text('incoming').notNull().references((): AnySQLiteColumn => bridgeIncoming.id),
   name: text('name').notNull(),
   contents: blob('contents', { mode: 'buffer' }).notNull(),
@@ -1861,6 +1863,15 @@ export const bridgeSendParts = sqliteTable('bridge_send_parts', {
   part: integer('part').notNull(),
   postedId: text('posted_id').notNull(),
 }, t => [primaryKey({ columns: [t.send, t.part] }), index('bridge_send_parts_posted_id_idx').on(t.postedId)]);
+/** Which messages carried a kept Slack file. The same file shared in a second message is listed under
+ * both and its bytes are kept once; a file with no message left is removed. */
+export const bridgeFileMessages = sqliteTable('bridge_file_messages', {
+  connection: text('connection').notNull(),
+  file: text('file').notNull(),
+  incoming: text('incoming').notNull().references(() => bridgeIncoming.id),
+}, t => [primaryKey({ columns: [t.connection, t.file, t.incoming] }),
+  foreignKey({ columns: [t.connection, t.file], foreignColumns: [bridgeFiles.connection, bridgeFiles.file] }),
+  index('bridge_file_messages_incoming_idx').on(t.incoming)]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
   id: text('id').notNull(),
@@ -1898,7 +1909,7 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
 export const plumbing = {
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, secretWriteJournal };
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, bridgeFileMessages, secretWriteJournal };
 
 export const tables = {
   members,

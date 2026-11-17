@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../../core/data/database.js';
 import { FakeClock } from '../../core/clock.js';
-import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeFiles } from '../../core/data/schema.js';
+import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
 import { BridgeFiles } from './files.js';
 
 const stores: Database.Database[] = [];
@@ -22,7 +22,8 @@ function fixture() {
   }
   const input = { connection: 'slack', incoming: 'slack', file: 'F1', name: 'report.txt', contents: Buffer.from('synthetic attachment') };
   const rows = () => db.select().from(bridgeFiles).all();
-  return { db, clock, now, input, rows };
+  const links = () => db.select().from(bridgeFileMessages).all().map(row => `${row.file}@${row.incoming}`).sort();
+  return { db, clock, now, input, rows, links };
 }
 
 it('keeps Slack files for fourteen days, and duplicate fetches do not extend expiry', () => {
@@ -42,12 +43,35 @@ it('keeps Slack files for fourteen days, and duplicate fetches do not extend exp
   files.close();
 });
 
+it('keeps a file shared in a second message once and lists it under both, without a second fetch', () => {
+  const f = fixture(), files = new BridgeFiles(f.db, f.clock);
+  f.db.insert(bridgeIncoming).values({ id: 'second', connection: 'slack', channel: 'channel', isDm: false, user: 'person', text: 'same file', postedAt: f.now(), receivedAt: f.now(), state: 'pending' }).run();
+  files.store(f.input);
+  f.clock.advance(DAY);
+  // The second message carries F1, which is kept, and F2, which is not: only F2 is left to fetch.
+  expect(files.carry({ connection: 'slack', incoming: 'second', files: ['F1', 'F2'] })).toEqual(['F2']);
+  expect(f.links()).toEqual(['F1@second', 'F1@slack']);
+  expect(f.rows()).toHaveLength(1);
+  // Asked again (the frame is read again after a restart), nothing changes.
+  expect(files.carry({ connection: 'slack', incoming: 'second', files: ['F1'] })).toEqual([]);
+  expect(f.links()).toEqual(['F1@second', 'F1@slack']);
+  expect(() => files.carry({ connection: 'slack', incoming: 'discord', files: ['F1'] })).toThrow('Slack connection');
+  // The file goes fourteen days after its first fetch, with every listing of it.
+  f.clock.advance(13 * DAY);
+  expect(f.rows()).toEqual([]); expect(f.links()).toEqual([]);
+  files.store(f.input); files.carry({ connection: 'slack', incoming: 'second', files: ['F1'] });
+  files.remove('slack', 'F1');
+  expect(f.rows()).toEqual([]); expect(f.links()).toEqual([]);
+  files.close();
+});
+
 it('sweeps expired files on startup, including timestamps with whole seconds', () => {
   const f = fixture();
   f.db.insert(bridgeFiles).values({ ...f.input, fetchedAt: f.now().replace('.000Z', 'Z') }).run();
+  f.db.insert(bridgeFileMessages).values({ connection: 'slack', file: 'F1', incoming: 'slack' }).run();
   f.clock.advance(14 * DAY);
   const files = new BridgeFiles(f.db, f.clock);
-  expect(f.rows()).toEqual([]);
+  expect(f.rows()).toEqual([]); expect(f.links()).toEqual([]);
   files.close();
 });
 
