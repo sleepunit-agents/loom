@@ -349,10 +349,18 @@ it('erases a private DM\'s words at the keep time, in every column that holds th
   expect(() => f.ingress.receive({ ...f.message, id: 'room', user: 'another' })).toThrow('reused');
 });
 
+it('answers only the listed rooms and still takes direct messages', () => {
+  // "Only these channels" chooses rooms. Whether direct messages are taken is a separate choice, not made by it.
+  const f = fixture();
+  f.db.insert(bridgeChannelFilters).values({ connection: 'c', channel: 'elsewhere', rule: 'only' }).run();
+  expect(f.ingress.receive({ ...f.message, id: 'room' })).toMatchObject({ state: 'dropped', reason: 'Channel filtered' });
+  expect(f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Hello' })).toMatchObject({ state: 'delivered', member: 'jonathan' });
+});
+
 it('keeps no words of a message it drops, direct or not', () => {
   const f = fixture();
-  // An `only` filter drops everything outside its channels, a linked member's direct message included.
-  f.db.insert(bridgeChannelFilters).values({ connection: 'c', channel: 'elsewhere', rule: 'only' }).run();
+  // An `only` filter drops every room outside its channels; a direct message someone chose to ignore is dropped too.
+  f.db.insert(bridgeChannelFilters).values([{ connection: 'c', channel: 'elsewhere', rule: 'only' }, { connection: 'c', channel: 'direct', rule: 'ignore' }]).run();
   expect(f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' }))
     .toMatchObject({ state: 'dropped', reason: 'Channel filtered', member: 'jonathan', conversation: null, text: '' });
   expect(f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' })).toMatchObject({ state: 'dropped', text: '' });

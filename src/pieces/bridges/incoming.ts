@@ -105,7 +105,9 @@ export class BridgeIncoming {
       let reason: string | null = null;
       let matchedMember = sender ? null : link?.member ?? null;
       if (!connection.enabled || connection.removedAt) { state = 'held'; reason = 'Connection disabled'; }
-      else if (filters.some(f => f.rule === 'ignore' && f.channel === channel) || (filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === channel))) { state = 'dropped'; reason = 'Channel filtered'; }
+      // An `only` filter chooses which rooms are answered. A direct message is not a room: it is dropped only by
+      // an `ignore` that names it.
+      else if (filters.some(f => f.rule === 'ignore' && f.channel === channel) || (!message.isDm && filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === channel))) { state = 'dropped'; reason = 'Channel filtered'; }
       else if (message.user === connection.botUser) { state = 'dropped'; reason = 'Own message'; }
       else if (peers.some(p => p.botUser === connection.botUser && p.agent !== connection.agent)) { state = 'held'; reason = 'Ambiguous connection agent'; }
       // A Discord bot's session hears every direct message to the bot, whichever guild its connection
