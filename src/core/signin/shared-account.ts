@@ -3,7 +3,7 @@ import {readPersonalAccount} from '../data/personal-account-read.js';
 import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
-import { currentSession, currentToken } from '../data/authentication.js';
+import { sessionEnds, tokenLive as live } from '../data/authentication.js';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
@@ -18,11 +18,13 @@ const ref = (kind: string, id: string) => createHash('sha256').update(kind+':'+i
 export function sharedAccount(db: DataDatabase, clock: Clock) {
   const ownTokens = (member: string) => db.select().from(tokens).where(and(eq(tokens.kind,'owner'),eq(tokens.member,member))).all();
   return {
+    /** A person's own passkeys and browsers. The caller is that person, signed in, so they are in the household:
+     * for their own tokens, live is what the door means by current (core/data/authentication.ts, currentToken). */
     read(member: string) {
       const rows = readPersonalAccount(db,member);
       return {member,
-        passkeys:rows.passkeys.map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!currentToken(db,k.token,clock.now())})),
-        sessions:rows.sessions.map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!currentSession(db,s.id,clock.now())})),
+        passkeys:rows.passkeys.map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(rows.tokens.get(k.token)!,clock.now())})),
+        sessions:rows.sessions.map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(rows.tokens.get(s.token)!,clock.now())||sessionEnds(s)<=clock.now()})),
       };
     },
     removePasskey(member: string, reference: string) {

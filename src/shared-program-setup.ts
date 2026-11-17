@@ -4,11 +4,11 @@ import {readProgramSetupTokens} from './core/data/program-setup-read.js';
  * Root's door; persistence is supplied by the schema-owned same-DB adapter. */
 import {z} from 'zod';
 import {types} from 'node:util';
-import {eq} from 'drizzle-orm';
+import {eq,isNull} from 'drizzle-orm';
 import type {DataDatabase} from './core/data/database.js';
 import type {Clock} from './core/clock.js';
-import {tokens} from './core/data/schema.js';
-import {currentToken} from './core/data/authentication.js';
+import {members,tokens} from './core/data/schema.js';
+import {tokenLive} from './core/data/authentication.js';
 import {OperationError} from './core/operations/index.js';
 import {sharedTokens,sharedTokenInput,currentMemberToken} from './core/signin/shared-tokens.js';
 import {isReservedProgramOperation,normalizeProgramGrants,programSnapshot,sameProgramGrants,type ProgramGrantStore,type ProgramGrants} from './shared-program-access.js';
@@ -39,10 +39,13 @@ export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGran
   list(){
    return db.transaction(()=>{
     const rows=readProgramSetupTokens(db),grants=store.readMany(rows.map(row=>row.fingerprint));
+    // Ended means what the door means (core/data/authentication.ts, currentToken): the token is no longer live,
+    // or its member has been removed. One read of who is in the household, however many tokens there are.
+    const present=new Set(db.select({id:members.id}).from(members).where(isNull(members.removedAt)).all().map(row=>row.id));
     return rows.flatMap(token=>{
      const input=grants.get(token.fingerprint);if(!input)return[];
      const value=normalizeProgramGrants(input);
-     return[{...token,ended:!currentToken(db,token.fingerprint,clock.now()),...value}];
+     return[{...token,ended:!tokenLive(token,clock.now())||!present.has(token.member!),...value}];
     });
    });
   },

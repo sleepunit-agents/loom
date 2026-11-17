@@ -2,14 +2,9 @@
  * Descriptor-relative walks refuse links even if a directory is replaced while
  * reading. Linux /proc is required; unsupported hosts fail closed. */
 import fs, { constants as F } from 'node:fs';
+import { laneFile } from './lane-file.js';
 
 export const MAX_LANE_FILE_BYTES = 1_048_576;
-/** Which files of the checkout a lane may name: a relative path of plain names. No `.` or `..`, no empty
- * part, no backslash, and no hidden file or directory (`.git`, `.env`): a lane's words are routine files,
- * and whoever may set a trigger must not be able to read the checkout's settings through one. The one rule,
- * asked when a trigger is set and again when its file is read. */
-export const laneFile = (file: string): boolean =>
-  !!file && !file.includes('\\') && file.split('/').every(part => !!part && !part.startsWith('.') && !part.includes('\0'));
 export function repositoryInstructions(repository: string): (file: string) => string {
   return file => {
     const roots = repository.split('/'), parts = file.split('/');
