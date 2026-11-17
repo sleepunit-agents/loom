@@ -107,7 +107,7 @@ it('moves tasks to a project only for someone who acts on each of them and could
   const f = fixture(), owner: Viewer = { kind: 'member', id: 'owner' }, art: Viewer = { kind: 'agent', id: 'art' };
   const own = f.make(), inPond = f.make({ owner: { kind: 'member', id: 'lee' }, project: 'pond' }), hidden = f.make({ owner: { kind: 'member', id: 'lee' } });
   const agents = f.make({ owner: { kind: 'agent', id: 'art' } });
-  const move = (ids: string[], project: string | null, viewer?: Viewer) => f.allowed({ action: 'move', ids, project }, viewer);
+  const move = (ids: string[], project: string | null, viewer?: Viewer) => f.allowed({ action: 'moveToProject', ids, project }, viewer);
   // sam is in pond and not in other.
   expect(move([own.id], 'pond')).toBe(true);
   expect(move([own.id, agents.id, inPond.id], 'pond')).toBe(true);
@@ -136,7 +136,7 @@ it('takes a task out of every project only for its owner or a household owner', 
   const f = fixture(), owner: Viewer = { kind: 'member', id: 'owner' };
   const sams = f.make({ project: 'pond' }), lees = f.make({ owner: { kind: 'member', id: 'lee' }, project: 'pond' });
   const arts = f.make({ owner: { kind: 'agent', id: 'art' }, project: 'pond' }), households = f.make({ owner: { kind: 'household' }, project: 'pond' });
-  const move = (ids: string[], viewer?: Viewer) => f.allowed({ action: 'move', ids, project: null }, viewer);
+  const move = (ids: string[], viewer?: Viewer) => f.allowed({ action: 'moveToProject', ids, project: null }, viewer);
   // Out of pond the task is its owner's alone. sam acts on all four and owns one, and has art.
   expect(move([sams.id])).toBe(true);
   expect(move([arts.id])).toBe(true);
@@ -148,10 +148,30 @@ it('takes a task out of every project only for its owner or a household owner', 
   expect(move([lees.id], { kind: 'member', id: 'lee' })).toBe(false);
   expect(move([sams.id, lees.id, arts.id, households.id], owner)).toBe(true);
 });
-it('still places a task in the hand-kept order under the same action name', () => {
+it('still places a task in the hand-kept order with move, which means nothing else', () => {
   const f = fixture(), own = f.make(), other = f.make(), hidden = f.make({ owner: { kind: 'member', id: 'lee' } });
   expect(f.allowed({ action: 'move', id: own.id, before: null })).toBe(true);
   expect(f.allowed({ action: 'move', id: own.id, before: other.id })).toBe(true);
   expect(f.allowed({ action: 'move', id: own.id, before: hidden.id })).toBe(false);
   expect(f.allowed({ action: 'move', id: hidden.id, before: null })).toBe(false);
+});
+it('treats an edit that names another project as that same move, by the same rule', () => {
+  const f = fixture(), owner: Viewer = { kind: 'member', id: 'owner' };
+  const own = f.make(), lees = f.make({ owner: { kind: 'member', id: 'lee' }, project: 'pond' }), arts = f.make({ owner: { kind: 'agent', id: 'art' }, project: 'pond' });
+  const agrees = (id: string, project: string | null, viewer?: Viewer) => {
+    const edit = f.allowed({ action: 'edit', id, input: { project } }, viewer);
+    expect(f.allowed({ action: 'moveToProject', ids: [id], project }, viewer), `${id} to ${project}`).toBe(edit);
+    return edit;
+  };
+  expect(agrees(own.id, 'pond')).toBe(true);
+  expect(agrees(own.id, 'other')).toBe(false);
+  expect(agrees(lees.id, null)).toBe(false);
+  expect(agrees(arts.id, null)).toBe(true);
+  expect(agrees(lees.id, 'other', owner)).toBe(true);
+  // A removed project is refused to an edit as to a move, a household owner's included.
+  f.db.update(projects).set({ removedAt: at }).where(eq(projects.id, 'other')).run();
+  expect(agrees(lees.id, 'other', owner)).toBe(false);
+  // An edit of anything else, and one that names the project the task is already in, is as it was.
+  expect(f.allowed({ action: 'edit', id: lees.id, input: { title: 'Pump' } })).toBe(true);
+  expect(f.allowed({ action: 'edit', id: lees.id, input: { project: 'pond', priority: 1 } })).toBe(true);
 });

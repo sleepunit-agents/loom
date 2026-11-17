@@ -212,6 +212,10 @@ const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('age
  * name, reading the state of its own request or of a secret handed to its own job. Asking grants nothing:
  * who answers a request is the household owners' (rule for `secretRequests`) or a secret rule they set. */
 const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
+/** Who may ask for an agent to be let onto a project: the agent itself, for itself, or a household owner
+ * for any agent. Another agent, and a member who is not a household owner, may not ask for it. Asking
+ * grants nothing: a household owner allows the card, and only then is the agent on the project. */
+const asksToJoin: Rule = any(agentItself, householdOwner);
 /** Using a secret. Secrets are the household owners' (tableRules.secrets): no other member reads one, sets
  * one or answers for one. An agent uses a secret on a household owner's word, and that word comes two ways:
  *  - a standing answer: a secret rule, the household default, or a grant made for the agent and no one job;
@@ -247,7 +251,7 @@ const ownNotice: Rule = all(currentMember, self('member'));
  * and the household owners' (ownedByMember('owner'), asked by the same read). */
 const accountSummary: Rule = currentViewer;
 
-export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, moveTask, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
+export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, moveTask, asksToJoin, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */

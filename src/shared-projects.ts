@@ -56,6 +56,8 @@ export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string
  // After the repositories have moved: each pull request is filed under its repository's project.
  changes(db){reprojectChanges(db);},
 };
+/** One agent let onto one project. */
+export const projectJoinInput=z.object({project:id,agent:householdId}).strict();
 export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toISOString()){
  const validate=(value:z.infer<typeof projectInput>)=>{
   for(const member of value.members)if(!db.select().from(members).where(eq(members.id,member)).get())throw new OperationError('invalid','Choose existing members');
@@ -81,6 +83,24 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
     agents:db.select().from(projectAgents).where(eq(projectAgents.project,project)).all().map(link=>link.agent).sort(),
     repositories:db.select().from(projectRepositories).where(eq(projectRepositories.project,project)).all().map(link=>link.repository).sort()};
   },
+  /** Why this agent cannot be added to this project as things stand, or nothing when it can. */
+  joinRefusal(raw:z.input<typeof projectJoinInput>):OperationError|undefined{
+   const value=projectJoinInput.parse(raw);
+   const project=db.select().from(projects).where(eq(projects.id,value.project)).get(),agent=db.select().from(agents).where(eq(agents.id,value.agent)).get();
+   if(!project)return new OperationError('not-found','No project has the id '+value.project);
+   if(project.removedAt)return new OperationError('invalid','Project '+value.project+' is removed');
+   if(!agent)return new OperationError('not-found','No agent has the id '+value.agent);
+   if(agent.removedAt)return new OperationError('invalid','Agent '+value.agent+' is removed');
+   if(db.select().from(projectAgents).all().some(row=>row.project===value.project&&row.agent===value.agent))return new OperationError('invalid',value.agent+' is already on project '+value.project);
+   return undefined;
+  },
+  /** Add one agent to one project. Nothing else about the project changes: not its name, its people, its
+   * other agents or its repositories. Who may do this is decided at the outside door. */
+  join(raw:z.input<typeof projectJoinInput>){const value=projectJoinInput.parse(raw);return db.transaction(()=>{
+   const refused=this.joinRefusal(value);if(refused)throw refused;
+   db.insert(projectAgents).values({project:value.project,agent:value.agent}).run();
+   return{id:value.project};
+  });},
   /** Why these two projects cannot be merged as they stand, or nothing when they can. */
   mergeRefusal(raw:z.input<typeof projectMergeInput>):OperationError|undefined{
    const value=projectMergeInput.parse(raw);

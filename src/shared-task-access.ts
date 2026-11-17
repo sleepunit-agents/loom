@@ -27,15 +27,12 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
       && (!input.parent || !!visibleTask(input.parent))
       && (!input.source || (input.source.kind === 'conversation' && conversationVisible(viewer, input.source.id)));
   }
-  if (command.action === 'move' && 'ids' in command) {
-    // The destination must be a project in use, as a new task's must. Then every task named must be one this
-    // caller may move there (policy.ts, rule `moveTask`): one that may not, or is not there, refuses them all.
-    const to = command.project;
-    return (to === null || Object.hasOwn(sharing.projects, to)) && command.ids.every(id => {
-      const row = db.select().from(tasks).where(eq(tasks.id, id)).get();
-      return !!row && holds(rules.moveTask, viewer, { ...row, to }, sharing);
-    });
-  }
+  // A move to another project, however it is asked for. The destination must be a project in use, as a new
+  // task's must, and the task must be one this caller may move there (policy.ts, rule `moveTask`).
+  const mayMove = (row: TaskRow | undefined, to: string | null): boolean =>
+    !!row && (to === null || Object.hasOwn(sharing.projects, to)) && holds(rules.moveTask, viewer, { ...row, to }, sharing);
+  // Every task named must pass: one that does not, or is not there, refuses them all.
+  if (command.action === 'moveToProject') return command.ids.every(id => mayMove(db.select().from(tasks).where(eq(tasks.id, id)).get(), command.project));
   const task = visibleTask(command.id);
   if (!task) return false;
   switch (command.action) {
@@ -44,7 +41,8 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
       return !!question && holds(rules.answers, viewer, question, sharing)
         && question.source === 'task' && question.waitsOnKind === 'task' && question.waitsOnId === command.id;
     }
-    case 'edit': return labels({ ...task, project: command.input.project === undefined ? task.project : command.input.project });
+    // An edit that names another project is that same move. Any other edit leaves the labels as they are.
+    case 'edit': return command.input.project === undefined || command.input.project === task.project ? labels(task) : mayMove(task, command.input.project);
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
     case 'move': return command.before === null || !!visibleTask(command.before);
     // The person asked must be able to see the task themselves; someone removed sees nothing.

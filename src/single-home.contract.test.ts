@@ -336,7 +336,8 @@ it('lists the kinds of household change once', () => {
   expect(text('src/shared-mcp-named.ts')).toContain('z.enum(householdChanges)');
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
-  expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'tokenRevoke']);
+  // What cannot be put back: three revocations, and a merge of two projects.
+  expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'projectMerge', 'tokenRevoke']);
 });
 
 it('states how long a secret grant may last, and what an agent sends to ask for one, once', () => {

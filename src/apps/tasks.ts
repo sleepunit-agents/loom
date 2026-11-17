@@ -36,7 +36,8 @@ export interface TaskService {
   get(id: string): TaskDetail;
   ready(): TaskRow[];
   list(status?: TaskRow['status']): TaskRow[];
-  edit(id: string, input: Partial<Pick<TaskRow, keyof typeof summary>>): TaskRow;
+  /** `actor` is who is making the edit. A change of project is a move (moveToProject) and needs one. */
+  edit(id: string, input: Partial<Pick<TaskRow, keyof typeof summary>>, actor?: TaskActor): TaskRow;
   claim(id: string, actor: TaskActor): TaskRow;
   unclaim(id: string): TaskRow;
   close(id: string, reason: string): TaskRow;
@@ -127,6 +128,25 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     if (type === 'parent-child' && !db.select().from(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).get()) throw new Error('A task can have only one parent');
     touch(id, {});
   };
+  /** A task can go to no project, or to one that is in use. */
+  const destination = (project: string | null) => {
+    if (project === null) return;
+    const found = db.select({ removedAt: projects.removedAt }).from(projects).where(eq(projects.id, project)).get();
+    if (!found) throw new Error('Project not found');
+    if (found.removedAt) throw new Error('That project is removed');
+  };
+  /** The one place a task changes project, inside the caller's transaction. Says whether it moved: a task
+   * already there is left alone, with no comment. */
+  const moveOne = (id: string, project: string | null, actor: TaskActor): boolean => {
+    const from = row(id).project;
+    if (from === project) return false;
+    const task = touch(id, { project });
+    // Everything that took its labels from the task goes with it. Links and comments stay as they are.
+    for (const item of mailAbout(id)) { const taken = takenFromTask(task, item); if (taken) mail.relabel(item.id, taken); }
+    const named = (value: string | null) => value === null ? 'no project' : `project ${value}`;
+    addComment(id, `Moved from ${named(from)} to ${named(project)}`, actor);
+    return true;
+  };
   return {
     create(input, actor) {
       const value = taskCreateSchema.parse(input); person.parse(actor);
@@ -152,7 +172,17 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         .orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all();
     },
     list(status) { return db.select().from(tasks).where(status ? eq(tasks.status, status) : undefined).orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all(); },
-    edit(id, input) { const patch = taskEditSchema.parse(input); return db.transaction(() => touch(id, patch)); },
+    edit(id, input, actor) {
+      const { project, ...patch } = taskEditSchema.parse(input);
+      return db.transaction(() => {
+        // A task changes project one way: an edit that names another project is a move, with its record and its mail.
+        if (project !== undefined && project !== row(id).project) {
+          if (!actor) throw new Error('A change of project needs to say who made it');
+          destination(project); moveOne(id, project, person.parse(actor));
+        }
+        return touch(id, patch);
+      });
+    },
     claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
     unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
     close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
@@ -169,26 +199,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     },
     moveToProject(ids, project, actor) {
       person.parse(actor);
-      return db.transaction(() => {
-        if (project !== null) {
-          const found = db.select({ removedAt: projects.removedAt }).from(projects).where(eq(projects.id, project)).get();
-          if (!found) throw new Error('Project not found');
-          if (found.removedAt) throw new Error('That project is removed');
-        }
-        const named = (value: string | null) => value === null ? 'no project' : `project ${value}`;
-        const moved: string[] = [];
-        for (const id of new Set(ids)) {
-          const from = row(id).project;
-          // Already there: left alone, with no comment.
-          if (from === project) continue;
-          const task = touch(id, { project });
-          // Everything that took its labels from the task goes with it. Links and comments stay as they are.
-          for (const item of mailAbout(id)) { const taken = takenFromTask(task, item); if (taken) mail.relabel(item.id, taken); }
-          addComment(id, `Moved from ${named(from)} to ${named(project)}`, actor);
-          moved.push(id);
-        }
-        return moved;
-      });
+      return db.transaction(() => { destination(project); return [...new Set(ids)].filter(id => moveOne(id, project, actor)); });
     },
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },

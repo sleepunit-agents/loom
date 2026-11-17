@@ -164,8 +164,8 @@ it('records the line of a spec a task implements, one task per line', () => {
 const makeProjects = (...ids: string[]) => db.insert(projects).values(ids.map(id => ({ id, name: id }))).run();
 it('moves tasks to another project, and records on each who moved it and from where to where', () => {
   makeProjects('pond', 'shed');
-  const a = tasks.create({ title: 'Buy pump', goal: 'A pump', why: 'Pond', owner: actor, project: 'pond' }, actor), b = file('Sweep shed'), c = file('Paint shed');
-  tasks.edit(c.id, { project: 'shed' });
+  const a = tasks.create({ title: 'Buy pump', goal: 'A pump', why: 'Pond', owner: actor, project: 'pond' }, actor), b = file('Sweep shed');
+  const c = tasks.create({ title: 'Paint shed', goal: 'Painted', why: 'Shed', owner: { kind: 'household' }, project: 'shed' }, actor);
   tasks.link(b.id, a.id, 'parent-child');
   tasks.comment(a.id, 'The old one failed in March', other);
   expect(tasks.moveToProject([a.id, b.id, c.id, a.id], 'shed', other)).toEqual([a.id, b.id]);
@@ -243,4 +243,31 @@ it('takes the labels of mail filed under a task’s own labels with the task, an
   expect(labelsOf(inRoom.id)).toEqual({ project: 'pond', agent: 'art', member: null, conversation: room.id });
   expect(labelsOf(back.id)).toEqual({ project: 'shed', agent: 'art', member: null, conversation: room.id });
   expect(labelsOf(mention.id).project).toBe('pond');
+});
+
+it('changes a task’s project one way: an edit that names another project is the same move', () => {
+  makeProjects('pond', 'shed', 'shut');
+  db.update(projects).set({ removedAt: at }).where(eq(projects.id, 'shut')).run();
+  const task = tasks.create({ title: 'Order pump', goal: 'Pump ordered', why: 'Old pump failed', owner: actor }, actor);
+  tasks.ask(task.id, { to: actor, ask: 'Spend $180?', ifYes: 'I order it', ifNo: 'I look again' }, actor);
+  const question = db.select().from(inbox).where(eq(inbox.waitsOnId, task.id)).get()!;
+  tasks.answer(task.id, 'yes', '', actor);
+  const answered = db.select().from(inbox).where(eq(inbox.sourceId, question.id)).get()!;
+  // The edit moves the task, takes its mail along and leaves the record, and still makes the rest of the edit.
+  expect(tasks.edit(task.id, { project: 'pond', priority: 0 }, other)).toMatchObject({ project: 'pond', priority: 0 });
+  for (const item of [question, answered]) expect(db.select().from(inbox).where(eq(inbox.id, item.id)).get()).toMatchObject({ project: 'pond', member: null });
+  expect(tasks.get(task.id).comments.at(-1)).toMatchObject({ actorKind: 'member', actor: other.id, text: 'Moved from no project to project pond' });
+  // Naming the project it is already in is no move: no comment. An edit of something else needs nobody named.
+  const comments = tasks.get(task.id).comments.length;
+  tasks.edit(task.id, { project: 'pond', title: 'Order the pump' }, other);
+  tasks.edit(task.id, { priority: 1 });
+  expect(tasks.get(task.id)).toMatchObject({ project: 'pond', title: 'Order the pump', priority: 1 });
+  expect(tasks.get(task.id).comments).toHaveLength(comments);
+  // Refused as a move is, with nothing of the edit kept: a removed or missing project, and a move by nobody.
+  expect(() => tasks.edit(task.id, { project: 'shut', title: 'Never' }, other)).toThrow('That project is removed');
+  expect(() => tasks.edit(task.id, { project: 'nowhere', title: 'Never' }, other)).toThrow('Project not found');
+  expect(() => tasks.edit(task.id, { project: null, title: 'Never' })).toThrow('A change of project needs to say who made it');
+  expect(tasks.get(task.id)).toMatchObject({ project: 'pond', title: 'Order the pump' });
+  expect(db.select().from(inbox).where(eq(inbox.id, answered.id)).get()).toMatchObject({ project: 'pond' });
+  expect(tasks.get(task.id).comments).toHaveLength(comments);
 });

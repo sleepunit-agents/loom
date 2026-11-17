@@ -20,7 +20,7 @@ export function registerSharedTaskCommands(operations: Operations, db: DataDatab
         if (question?.state !== 'waiting') throw new OperationError('conflict', 'This question has already been answered or replaced');
       }
       const row = dispatchTaskCommand(service, command, ctx.viewer);
-      // A move to a project answers with the tasks it moved; one already there is not among them.
+      // moveToProject answers with the tasks it moved; one already there is not among them.
       if (row && 'moved' in row) { for (const id of row.moved) ctx.changed('task', id); return { moved: row.moved }; }
       const id = row?.id ?? ('id' in command ? command.id : undefined);
       if (id) ctx.changed('task', id);

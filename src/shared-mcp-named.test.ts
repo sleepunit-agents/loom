@@ -38,7 +38,7 @@ it('lists the names a terminal session already calls',async()=>{
  try{
   expect((await art.client.listTools()).tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(
    ['identity','remember','recall','update','forget','episodes','knowledge_recall','knowledge_write','note_read','note_write','note_list','person','person_write','project','project_write','memory_propose','memory_drafts','memory_ratify','memory_archive','memory_restore','memory_history','knowledge_read','knowledge_edit','knowledge_check','knowledge_restore',
-    'task_ready','task','task_create','task_edit','task_move','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
+    'task_ready','task','task_create','task_edit','task_move_to_project','task_claim','task_close','task_comment','propose','approvals','inbox','loom_query','loom_command','loom_commands']));
  }finally{await art.client.close();await p.close();}
 },30_000);
 
@@ -174,16 +174,16 @@ it('files, reads, claims, comments on and closes a task through the named tools'
   expect((await art.call('task_close',{id,reopen:true})).text).toBe('Reopened '+id);
   expect((await art.call('task',{id:'t-999'})).text).toBe('No task t-999 that you may see.');
   // Out of a project it is not in: nothing to do. Into a project it is not on, or with a task it cannot see: refused whole.
-  expect((await art.call('task_move',{ids:[id],project:null})).text).toBe('Nothing moved: none of them is in a project.');
-  const refused=await art.call('task_move',{ids:[id],project:'fictional-nowhere'});expect(refused.error).toBe(true);expect(refused.text).toMatch(/\(denied\)$/);
-  expect((await art.call('task_move',{ids:[id,'t-999'],project:null})).error).toBe(true);
-  expect((await art.call('task_move',{ids:[],project:null})).error).toBe(true);
+  expect((await art.call('task_move_to_project',{ids:[id],project:null})).text).toBe('Nothing moved: none of them is in a project.');
+  const refused=await art.call('task_move_to_project',{ids:[id],project:'fictional-nowhere'});expect(refused.error).toBe(true);expect(refused.text).toMatch(/\(denied\)$/);
+  expect((await art.call('task_move_to_project',{ids:[id,'t-999'],project:null})).error).toBe(true);
+  expect((await art.call('task_move_to_project',{ids:[],project:null})).error).toBe(true);
   // Into the project art is on, and not into one it is not on. The move leaves its record on the task.
-  expect((await art.call('task_move',{ids:[id],project:'fictional-shed'})).error).toBe(true);
-  expect((await art.call('task_move',{ids:[id],project:'fictional-pond'})).text).toBe('Moved '+id+' to project fictional-pond.');
-  expect((await art.call('task_move',{ids:[id],project:'fictional-pond'})).text).toBe('Nothing moved: they are already in project fictional-pond.');
+  expect((await art.call('task_move_to_project',{ids:[id],project:'fictional-shed'})).error).toBe(true);
+  expect((await art.call('task_move_to_project',{ids:[id],project:'fictional-pond'})).text).toBe('Moved '+id+' to project fictional-pond.');
+  expect((await art.call('task_move_to_project',{ids:[id],project:'fictional-pond'})).text).toBe('Nothing moved: they are already in project fictional-pond.');
   const movedTask=(await art.call('task',{id})).text;expect(movedTask).toContain('· fictional-pond ·');expect(movedTask).toContain('**art** ');expect(movedTask).toContain('Moved from no project to project fictional-pond');
-  expect((await art.call('task_move',{ids:[id],project:null})).text).toBe('Moved '+id+' out of every project.');
+  expect((await art.call('task_move_to_project',{ids:[id],project:null})).text).toBe('Moved '+id+' out of every project.');
  }finally{await art.client.close();await p.close();}
 },30_000);
 
@@ -260,5 +260,11 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect((await art.call('approvals',{state:'pending'})).text).toContain('## Merge project fictional-pond into fictional-shed?');
   expect((await art.call('propose',{change:'projectMerge',input:{from:'fictional-pond'},why:'x'})).error).toBe(true);
   expect(p.composition.services.projects.describe('fictional-pond')).toMatchObject({removed:false,agents:['art']});
+  // Asking to be let onto a project: for itself only, and not onto one it is already on.
+  expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-shed',agent:'art'},why:'FICTIONAL_JOIN'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
+  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Let art work on project fictional-shed?');
+  const forMark=await art.call('propose',{change:'projectJoin',input:{project:'fictional-shed',agent:'mark'},why:'x'});expect(forMark.error).toBe(true);expect(forMark.text).toMatch(/\(denied\)$/);
+  expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-pond',agent:'art'},why:'x'})).text).toBe('art is already on project fictional-pond (invalid)');
+  expect(p.composition.services.projects.describe('fictional-shed')).toMatchObject({agents:[]});
  }finally{await art.client.close();await p.close();}
 },30_000);

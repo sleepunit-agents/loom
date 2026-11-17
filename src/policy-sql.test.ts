@@ -106,7 +106,7 @@ function rows(rule: Rule): Row[] {
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
 const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['waitsOnReadable', rules.waitsOnReadable], ['answers', rules.answers],
-  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project], ['moveTask', rules.moveTask]];
+  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project], ['moveTask', rules.moveTask], ['asksToJoin', rules.asksToJoin]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
     const candidates = rows(rule), sharing = sharedSharing(db), seen = new Set<boolean>();
@@ -327,6 +327,25 @@ describe('moving a task to another project', () => {
     // The household's own task has no owner to be alone with: a household owner only.
     expect(moves(member('sam'), { project: 'pond', ownerKind: 'household', owner: null, to: null })).toBe(false);
     expect(moves(member('owner'), { project: 'pond', ownerKind: 'household', owner: null, to: null })).toBe(true);
+  });
+});
+
+describe('asking for an agent to be let onto a project', () => {
+  it('is for the agent itself, about itself, and for a household owner about any agent', () => {
+    const asks = (viewer: Viewer, agent: string) => {
+      const answer = holds(rules.asksToJoin, viewer, { agent }, sharedSharing(db));
+      expect(db.all<{ allowed: number }>(sql`select (${sqlRule(rules.asksToJoin, viewer, { agent: sql`${agent}` })}) as allowed`)[0].allowed).toBe(answer ? 1 : 0);
+      return answer;
+    };
+    expect(asks({ kind: 'agent', id: 'art' }, 'art')).toBe(true);
+    expect(asks({ kind: 'agent', id: 'art' }, 'mark')).toBe(false);
+    // A body asks for its agent while its member has that agent; a removed agent asks for nothing.
+    expect(asks({ kind: 'agent', id: 'art', workingFor: 'sam' }, 'art')).toBe(true);
+    expect(asks({ kind: 'agent', id: 'art', workingFor: 'lee' }, 'art')).toBe(false);
+    expect(asks({ kind: 'agent', id: 'old' }, 'old')).toBe(false);
+    // A household owner for any agent. A member who has the agent is not thereby one; nor is someone removed.
+    for (const agent of ['art', 'mark']) expect(asks({ kind: 'member', id: 'owner' }, agent)).toBe(true);
+    for (const member of ['sam', 'lee', 'exowner', 'gone']) expect(asks({ kind: 'member', id: member }, 'art'), member).toBe(false);
   });
 });
 

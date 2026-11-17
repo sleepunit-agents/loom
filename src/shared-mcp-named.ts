@@ -301,10 +301,10 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
   z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
- tool('task_move','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge.',
+ tool('task_move_to_project','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge. To be let onto a project yourself: propose projectJoin.',
   z.object({ids:z.array(taskId).min(1).max(TASK_MOVE_MAX),project:z.string().min(1).max(100).nullable()}).strict(),
   async input=>{
-   const value=await run('tasks.command',{action:'move',ids:input.ids,project:input.project}) as {moved?:string[]};
+   const value=await run('tasks.command',{action:'moveToProject',ids:input.ids,project:input.project}) as {moved?:string[]};
    const moved=value.moved??[],where=input.project===null?'out of every project':'to project '+input.project;
    return moved.length?'Moved '+moved.join(', ')+' '+where+'.'+(moved.length<new Set(input.ids).size?' The rest were already there.':''):'Nothing moved: '+(input.project===null?'none of them is in a project.':'they are already in project '+input.project+'.');
   });
