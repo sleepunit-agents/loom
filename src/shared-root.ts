@@ -420,7 +420,7 @@ export function sharedRoot(options: {
 
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
-  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words));
+  if(options.commsKey)registerSharedWorkBody(operations,db,services.approvals,services.approvalRules,bodyScope,words=>options.commsKey!.hash(words),credentials.agentSession);
   registerSharedWorkCommands(operations,db,services.approvals);
   registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);

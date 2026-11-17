@@ -416,6 +416,39 @@ export function machineMayHost(machine: { owner: string; hostsAny: boolean }, li
   return listed ? has || listed.lent : machine.hostsAny && has;
 }
 
+/** Whose standing approval rules answer for a piece of an agent's work.
+ *
+ * A standing rule has a `person`. A rule with none is the household's own: a household owner's answer, given
+ * ahead of time, for work done for a household owner. A rule that names a person answers for that person's
+ * work and nobody else's. Every piece of work has a principal, recorded on its card (`acting_for`):
+ *  - work for a member (their own thread, their trigger): that member;
+ *  - the agent's own work, done for no member: a terminal session, or a lane (a `wake` conversation with no
+ *    member). Written `agent:<id>`, which no member's id can be;
+ *  - anything else for no member (a room on a bridge, a handoff from one): `unknown`. People outside the
+ *    household talk to an agent in a room; what is asked there is nobody's account.
+ * `workPrincipal` names the principal; `rulesPerson` says which rules it reads. */
+export const OWN_WORK = 'agent:';
+export function workPrincipal(agent: string, where: { member: string | null; venue: string } | undefined): string {
+  return where?.member ?? (where === undefined || where.venue === 'wake' ? OWN_WORK + agent : 'unknown');
+}
+/** The `person` a rule must carry to answer for this principal: '' for the household's own rules, a member's
+ * id for rules naming them, or nothing when no standing rule answers and the card always asks.
+ *  - A member who is a household owner reads the household's own rules. Any other member reads only rules
+ *    that name them: an owner's rule with no person is never read for their work.
+ *  - The agent's own work reads the household's own rules, as a household owner's work does, while the agent
+ *    is in the household and some current household owner has it on their own list. An agent that only
+ *    members who are not owners have reads none: otherwise such a member would get, through the agent's lane
+ *    or terminal, an answer no rule gives their own work.
+ *  - Someone removed, and `unknown`, read none. */
+export function rulesPerson(principal: string, s: Sharing): string | undefined {
+  if (principal.startsWith(OWN_WORK)) {
+    const agent = principal.slice(OWN_WORK.length);
+    return s.agents?.includes(agent) && membersWithAgent(agent, s).some(id => s.members[id].owner) ? '' : undefined;
+  }
+  const member = entry(s.members, principal);
+  return member ? member.owner ? '' : principal : undefined;
+}
+
 /** Scheduled work: who may set a trigger, whose work its firing is, and who may fire it by hand.
  *
  * A trigger records who set it (`ownerKind`, `owner`) and may name a recipient (`toKind`, `to`). The agent

@@ -11,7 +11,7 @@ import { approvals, changes } from './core/data/schema.js';
 import { type Operations, type Context, OperationError } from './core/operations/index.js';
 import type { approvalService, Approval } from './apps/approvals.js';
 import { changeAnswers } from './apps/changes-answers.js';
-import type { ChangeRow } from './apps/changes.js';
+import { readsRepository, type ChangeRow } from './apps/changes.js';
 
 const id = z.string().trim().min(1);
 export function registerSharedWorkCommands(operations: Operations, db: DataDatabase,
@@ -23,7 +23,8 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     if (row.kind !== 'merge') return;
     const target = parseMergeTarget(row.target);
     if (!target) throw new OperationError('conflict', 'The merge request changed. Open it again.');
-    return { id: target.change, head: target.head };
+    // For a repository loom does not read there is no change to hold the card to: it is answered on its words.
+    return readsRepository(db, target.repository) ? { id: target.change, head: target.head } : undefined;
   };
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');

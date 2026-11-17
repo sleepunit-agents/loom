@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { createDataSchema, type DataDatabase } from './core/data/database.js';
 import * as s from './core/data/schema.js';
-import { holds, mayBeAskedAbout, rules, tableRules, type ParentLookup, type Row, type Rule, type Viewer } from './policy.js';
+import { holds, mayBeAskedAbout, rules, rulesPerson, tableRules, workPrincipal, type ParentLookup, type Row, type Rule, type Viewer } from './policy.js';
 import { sqlRule } from './policy-sql.js';
 import { sharedSharing } from './shared-sharing.js';
 import { sharedQueryTables } from './next-data.js';
@@ -362,6 +362,35 @@ describe('putting a question about a task to a person', () => {
     // It is the tasks rule, read for the person named: the two never differ.
     for (const member of memberIds) for (const project of ['pond', 'side', 'shut', null])
       expect(asked(member, { ...inPond, project }), `${member} ${project}`).toBe(holds(rules.task, { kind: 'member', id: member }, { ...inPond, project }, sharedSharing(db)));
+  });
+});
+
+describe('whose standing rules answer for a piece of an agent\'s work', () => {
+  it('names the principal from who the work is for, and a room as nobody\'s', () => {
+    expect(workPrincipal('art', { member: 'sam', venue: 'loom' })).toBe('sam');
+    expect(workPrincipal('art', { member: 'sam', venue: 'wake' })).toBe('sam');
+    // The agent's own work: a terminal session, and a lane for no member.
+    expect(workPrincipal('art', undefined)).toBe('agent:art');
+    expect(workPrincipal('art', { member: null, venue: 'wake' })).toBe('agent:art');
+    for (const venue of ['discord', 'slack', 'handoff', 'loom']) expect(workPrincipal('art', { member: null, venue }), venue).toBe('unknown');
+  });
+  it('reads the household\'s own rules for a household owner and for the agent\'s own work while a household owner has it, and for nobody else', () => {
+    const person = (principal: string) => rulesPerson(principal, sharedSharing(db));
+    // owner has the role; full is an owner with every agent; sam has art; lee has mark; exowner and gone are removed.
+    expect([person('owner'), person('full'), person('sam'), person('lee')]).toEqual(['', '', 'sam', 'lee']);
+    expect([person('exowner'), person('gone'), person('ghost'), person('unknown'), person('?')]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    // full, a household owner, has art and mark: each one's own work is read as a household owner's.
+    expect([person('agent:art'), person('agent:mark')]).toEqual(['', '']);
+    // A removed agent, and one nobody knows, read none; nor is an agent's name a member's.
+    expect([person('agent:old'), person('agent:nobody'), person('art')]).toEqual([undefined, undefined, undefined]);
+  });
+  it('gives an agent that only members who are not owners have nothing from the household\'s rules', () => {
+    const sharing = sharedSharing(db), without = { ...sharing, members: Object.fromEntries(Object.entries(sharing.members).filter(([id]) => id !== 'full')) };
+    // Without the full owner: sam has art, lee has mark, and neither is a household owner.
+    expect([rulesPerson('agent:art', without), rulesPerson('agent:mark', without)]).toEqual([undefined, undefined]);
+    // The owner role alone is not having the agent.
+    expect(without.members.owner).toMatchObject({ owner: true, agents: [] });
+    expect(rulesPerson('sam', without)).toBe('sam');
   });
 });
 

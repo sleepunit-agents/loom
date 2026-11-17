@@ -692,6 +692,18 @@ it('reads whether a project is retired, and whether a task is shelved, in one pl
   expect(text('web/src/pieces/tasks/query.ts')).toContain('isReady isShelved');
 });
 
+it('decides whose standing rules answer for a piece of work in policy.ts and nowhere else', () => {
+  // The rule service asks policy for the person, and keeps no reading of its own of who is a household owner for it.
+  const service = text('src/apps/approval-rules.ts');
+  expect(service).toContain('return rulesPerson(actingFor,sharedSharing(db));');
+  expect(service).not.toMatch(/\.owner\?''/);
+  // The door that files a card names the principal by policy's function; nobody else spells the agent's own.
+  expect(text('src/shared-work-body.ts').split('workPrincipal(').length).toBe(3);
+  expect(sources('src').filter(file => /'agent:'/.test(text(file)))).toEqual(['src/policy.ts']);
+  // A household change keeps nobody behind it when no member is: it does not ask for the agent's own account.
+  expect(text('src/shared-household-proposals.ts')).not.toMatch(/workPrincipal|OWN_WORK/);
+});
+
 it('asks policy.ts which agents Home shows', () => {
   const home = text('src/core/data/comms-home.ts');
   expect(home).toContain("mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work')");

@@ -120,6 +120,15 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
   };
 }
 
+/** Does loom read this repository: is it one of a project's, or is a change of it held here? For a
+ * repository loom reads, a merge card is held to the change loom holds. For one it does not, loom has no
+ * facts about the pull request, and the card's own words (one exact commit) are all there is. */
+export function readsRepository(db: DataDatabase, repository: string): boolean {
+  const wanted = repoId(repository);
+  return db.select({ repository: projectRepositories.repository }).from(projectRepositories).all().some(row => repoId(row.repository) === wanted)
+    || db.select({ repository: changes.repository }).from(changes).all().some(row => repoId(row.repository) === wanted);
+}
+
 /** Trusted repository-label refresh. The caller owns the enclosing DataWrites
  * transaction and current write authority. No GitHub facts or timestamps change.
  * Returning IDs lets that caller report affected Changes without another feed. */
