@@ -20,7 +20,7 @@ import {tokenLive} from './core/data/authentication.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
 import {ownHome} from './core/daemon-home.js';
 import {prepareOperatorHome,listenOperatorLinks,type operatorRequest} from './core/signin/operator.js';
-import {sameOrigin} from './core/signin/shared-browser.js';
+import {sameIncomingOrigin} from './core/data/origin.js';
 import {relyingParty} from './core/signin/webauthn.js';
 import {sharedSigninLinks} from './core/signin/shared-links.js';
 import {privateBytes} from './pieces/secrets/local-holder.js';
@@ -102,7 +102,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   }
   const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
-   originAllowed:sameOrigin,publicOrigin,
+   originAllowed:request=>sameIncomingOrigin(request,publicOrigin),publicOrigin,
    changes,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
    secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,memoryEmbedding:adapters.memoryEmbedding,

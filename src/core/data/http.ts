@@ -10,6 +10,7 @@ import type { Authentication } from '../live/index.js';
 import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { dataAuthentication } from './authentication.js';
+import { sameRequestOrigin } from './origin.js';
 import type { DataDatabase } from './database.js';
 import { readRetained } from './read-lease.js';
 import { ExecutionDrain } from './execution.js';
@@ -37,10 +38,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
     // No CORS: cookies must remain same-origin. Fetch Metadata also covers
     // browser requests without Origin. Bearers may be used by outside clients.
-    const origin = c.req.header('origin');
-    const url = new URL(c.req.url);
-    const originAllowed = !origin || origin === url.origin || (origin === publicOrigin && new URL(publicOrigin).host === url.host);
-    if (c.req.header('sec-fetch-site') === 'cross-site' || !originAllowed) return c.json({ errors: [{ message: 'Cross-origin request refused' }] }, 403);
+    if (!sameRequestOrigin(c.req.raw, publicOrigin)) return c.json({ errors: [{ message: 'Cross-origin request refused' }] }, 403);
     // The only live transport will be graphql-ws; do not negotiate Yoga SSE.
     if ((c.req.header('accept') ?? '').toLowerCase().includes('text/event-stream')) return c.json({ errors: [{ message: 'SSE is not supported' }] }, 406);
     if (c.req.method !== 'POST') return c.json({ errors: [{ message: 'Use POST' }] }, 405);

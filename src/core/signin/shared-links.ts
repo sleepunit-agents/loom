@@ -14,6 +14,7 @@ import type { Authentication } from '../live/index.js';
 import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
+import { sameRequestOrigin } from '../data/origin.js';
 
 const secret = () => randomBytes(32).toString('hex');
 const LINK_MS = 5 * 60_000;
@@ -73,11 +74,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     c.header('cache-control', 'no-store'); c.header('referrer-policy', 'no-referrer');
     c.header('x-content-type-options', 'nosniff');
     if (!options.admitted()) return c.json({ error: 'Sign-in unavailable' }, 503);
-    if (c.req.method === 'POST') {
-      const origin = c.req.header('origin'), url = new URL(c.req.url);
-      if (c.req.header('sec-fetch-site') === 'cross-site' || (origin && origin !== url.origin && !(origin === options.publicOrigin && new URL(origin).host === url.host)))
-        return c.json({ error: 'Cross-origin request refused' }, 403);
-    }
+    if (c.req.method === 'POST' && !sameRequestOrigin(c.req.raw, options.publicOrigin)) return c.json({ error: 'Cross-origin request refused' }, 403);
     await next();
   };
   routes.use('/api/signin/token', guard); routes.use('/api/signin/program',guard); routes.use('/api/signin/link', guard); routes.use('/login/*', guard);

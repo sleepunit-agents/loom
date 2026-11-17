@@ -234,6 +234,21 @@ it('keeps confirmation POST origin checks strict and accepts the same-origin bro
   expect(f.db.select().from(sessions).all()).toHaveLength(1);
 });
 
+it('judges a browser\'s origin by one rule at the sign-in routes, the data door and the operation door', async () => {
+  const f = fixture('https://loom');
+  // Behind the TLS proxy the program sees plain HTTP, but none of its pages is served at that origin.
+  for (const [origin, allowed] of [['https://loom', true], ['http://loom', false], ['https://elsewhere.test', false]] as const) {
+    const headers = { authorization: 'Bearer ' + credential, 'content-type': 'application/json', origin };
+    const answers = [
+      (await f.mint(headers)).status,
+      (await f.root.http.request('http://loom/graphql', { method: 'POST', headers, body: JSON.stringify({ query: '{ tasks { id } }' }) })).status,
+      (await f.root.http.request('http://loom/api/tasks/list', { method: 'POST', headers, body: JSON.stringify({ input: {} }) })).status,
+      (await f.root.http.request('http://loom/logout', { method: 'POST', headers })).status,
+    ];
+    expect(answers.map(status => status === 403)).toEqual(answers.map(() => !allowed));
+  }
+});
+
 it('limits the origin-only referrer policy to the valid confirmation document', async () => {
   const f = fixture();
   const minted = await f.mint();
