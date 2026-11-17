@@ -1,7 +1,7 @@
 /** Canonical shared sign-in clients: GraphQL reads, shared commands, one-time issuance. */
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { ConnectionError, doorConnection } from './connection.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './io.js';
 const reference=z.string().regex(/^[0-9a-f]{64}$/),time=z.string();
@@ -38,14 +38,8 @@ export async function runAccessClient(piece: 'token'|'program'|'sessions'|'accou
   if((read||link)&&Object.keys(input as object).length){io.stderr(`${program}: this command takes an empty JSON object\n`);return 2;}
   const fail = (message: string) => { io.stderr(`${program}: ${message}\n`); return 1; };
   let base: URL, token: string;
-  try {
-    if (!io.env.LOOM_URL) return fail('LOOM_URL is required');
-    base = new URL(io.env.LOOM_URL);
-    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) return fail('Invalid LOOM_URL');
-    if (!io.env.LOOM_TOKEN_FILE) return fail('LOOM_TOKEN_FILE is required');
-    token = (await readFile(io.env.LOOM_TOKEN_FILE, 'utf8')).trim();
-    if (!token) return fail('Token file is empty');
-  } catch { return fail('Cannot configure loom connection'); }
+  try { ({ base, token } = await doorConnection(io.env)); }
+  catch (error) { return fail(error instanceof ConnectionError ? error.message : 'Cannot configure loom connection'); }
   const query=`{ ${binding.root} { ${binding.fields} } }`;
   // Keep raw validated input: reserialization changes overflow numbers to null.
   // Never journal/retry returned bearer credentials. Ordinary mutations retain

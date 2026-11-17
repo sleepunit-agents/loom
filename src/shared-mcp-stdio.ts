@@ -1,5 +1,5 @@
 /** A stdio session proxies the running shared door; it never opens household stores. */
-import {readFileSync} from 'node:fs';
+import {readDoorTokenSync} from './cli/connection.js';
 import {parseArgs} from 'node:util';
 import {Server} from '@modelcontextprotocol/sdk/server/index.js';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
@@ -11,8 +11,9 @@ export function sharedStdioConfig(args:string[],env:NodeJS.ProcessEnv=process.en
  if(values.home)throw Error('--home cannot select a shared MCP server; use --url and --token-file for the running program');
  const url=values.url??env.LOOM_URL,file=values['token-file']??env.LOOM_TOKEN_FILE;
  if(!url||!file)throw Error('Shared stdio needs --url and --token-file (or LOOM_URL and LOOM_TOKEN_FILE) for the running program');
- const origin=bodyOrigin(url),token=readFileSync(file,'utf8').trim();
- if(!/^[^\s]{32,4096}$/.test(token))throw Error('Invalid MCP credential file');
+ const origin=bodyOrigin(url);
+ let token:string;
+ try{token=readDoorTokenSync(file);}catch{throw Error('Invalid MCP credential file');}
  return {url:new URL('/mcp',origin),token,agent:values.agent};
 }
 export function createSharedStdioServer(args:string[]){
