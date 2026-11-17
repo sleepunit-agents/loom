@@ -14,7 +14,7 @@ it('sets up a new machine, account and model and completes its first receiving-b
  const f=await bodyFixture(clean,{modelRoles:()=>[{model:'requested-fixture',provider:'fake-provider',harness:'claude',series:'fixture-series'}]});
  // Begin with the fixture household/conversation, removing its pre-bound job.
  // Every new machine/account/model/run setting below uses the public operations.
- f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();});
+ f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.delete(s.jobs).run();});
  const fetcher:typeof fetch=async(url,init)=>f.root.http.fetch(new Request(url,init)),signal=new AbortController().signal;
  let receipt=0;const call=async(name:string,input:unknown,token=raw.member)=>{const [piece,...rest]=name.split('.');// Machine and agent settings have no outside command: installed code sets them, anyone else proposes.
   const response=setupCall(f.root,name,input,'alice')??await fetcher('https://loom.example/api/'+piece+'/'+rest.join('.'),{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id:'setup-'+ ++receipt})});expect(response.status,name).toBe(200);const result=await response.json();expect(result.ok,name).toBe(true);return result.value;};

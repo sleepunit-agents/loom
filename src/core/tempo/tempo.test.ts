@@ -113,7 +113,6 @@ it('settles real conversation mail, retries capacity, and takes only audible ite
       attempts++;
       if (!capacity) return false;
       db.insert(jobs).values({ id: 'job', agent: 'art', conversation: cv.id, title: 'Pump', state: 'running', brief: '', model: 'test', startedByKind: 'agent', startedBy: 'art', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: at() }).run();
-      db.update(conversations).set({ job: 'job' }).where(eq(conversations.id, cv.id)).run();
       taken.push(mail.take(cv.id, 'job').map(item => item.id));
       // The root publishes claims after committing; this synchronous callback
       // also exercises settling's reentrant capacity notification boundary.

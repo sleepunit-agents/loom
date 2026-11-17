@@ -1,15 +1,17 @@
 /** Real Root + worker HTTP + private repository consent loop, fictitious data. */
 import {afterEach,expect,it,vi} from 'vitest';
-import {eq} from 'drizzle-orm';
+import {and,eq,inArray} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
 import {workOnce} from './runtime/worker.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
+/** Ids of the jobs working in the fixture's one conversation. */
+const working=(f:{db:Awaited<ReturnType<typeof bodyFixture>>['db']})=>f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.db.select().from(s.conversations).get()!.id),inArray(s.jobs.state,['queued','starting','running','waiting']))).all().map(row=>row.id);
 async function fixture(){
  const f=await bodyFixture(clean,{modelRoles:()=>[{model:'model',provider:'provider',harness:'claude',series:'series'}]}),now=()=>new Date(f.clock.now()).toISOString();
  f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();
- f.db.update(s.jobs).set({state:'done',endedAt:now()}).run();f.db.update(s.conversations).set({job:null}).run();
+ f.db.update(s.jobs).set({state:'done',endedAt:now()}).run();
  f.db.update(s.boxes).set({hostsAny:true}).where(eq(s.boxes.id,'box')).run();
  f.db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();f.db.insert(s.agentModels).values({agent:'art',model:'model',position:0}).run();
  f.db.insert(s.secrets).values({name:'REPO',description:'Synthetic repository key',changedAt:now(),changedBy:'alice'}).run();f.db.insert(s.secretChanges).values({id:'repository-add',secret:'REPO',action:'add',by:'alice',at:now()}).run();
@@ -33,7 +35,7 @@ it('honors Stop during the real pre-body repository consent wait without buildin
   expect((await f.member('stop')).status).toBe(200);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);
   pulse();expect(await running).toBe('abandoned');
   expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()).toMatchObject({state:'stopped',endedBy:'alice',endedReason:'write-off'});
-  expect(f.db.select().from(s.jobs).all()).toHaveLength(2);expect(f.db.select().from(s.conversations).get()?.job).toBeNull();
+  expect(f.db.select().from(s.jobs).all()).toHaveLength(2);expect(working(f)).toEqual([]);
   expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:false});
   expect(f.db.select().from(s.inbox).all().find(row=>row.toKind==='agent')).toMatchObject({state:'waiting',job:f.job.id});
   const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'bob',true));
@@ -59,7 +61,7 @@ it('commits stopped state and observed Stop with its heartbeat receipt before no
  const f=await fixture(),worker=control(f);await worker.next();await f.member('stop');
  const observed:{id:string;transaction:boolean;receipt:boolean}[]=[],notify=f.root.services.tempo.sources.job.bind(f.root.services.tempo.sources),ended=vi.spyOn(f.root.services.tempo.sources,'job').mockImplementation(id=>{observed.push({id,transaction:f.db.$client.inTransaction,receipt:f.db.select().from(s.operationResults).all().some(row=>row.id==='heartbeat-stop'&&row.operation==='runtime.heartbeat')});notify(id);});
  f.db.$client.exec("CREATE TEMP TRIGGER fail_stop_receipt BEFORE INSERT ON operation_results WHEN NEW.id='heartbeat-rollback' BEGIN SELECT RAISE(ABORT,'fixture'); END");
- expect((await heartbeat(f,'heartbeat-rollback')).status).toBe(503);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()?.state).toBe('starting');expect(f.db.select().from(s.conversations).get()?.job).toBe(f.job.id);expect(f.db.select().from(s.threads).get()).toMatchObject({working:true,stopRequested:true});expect(ended).not.toHaveBeenCalled();
+ expect((await heartbeat(f,'heartbeat-rollback')).status).toBe(503);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()?.state).toBe('starting');expect(working(f)).toEqual([f.job.id]);expect(f.db.select().from(s.threads).get()).toMatchObject({working:true,stopRequested:true});expect(ended).not.toHaveBeenCalled();
  expect(await(await heartbeat(f,'heartbeat-stop')).json()).toMatchObject({value:{active:false}});expect(ended).toHaveBeenCalledExactlyOnceWith(f.job.id);expect(observed).toEqual([{id:f.job.id,transaction:false,receipt:true}]);expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,stopRequested:false});
  expect((await heartbeat(f,'heartbeat-stop')).status).toBe(409);expect(await(await heartbeat(f,'terminal-heartbeat')).json()).toMatchObject({value:{active:false}});expect(ended).toHaveBeenCalledTimes(1);
 });
@@ -70,10 +72,10 @@ it('refreshes preparation beats without resetting the original working-since tim
 });
 
 it.each(['job','agent']as const)('a claim does not touch a thread after its current %s binding changes',async changed=>{
- const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set(changed==='job'?{job:'job'}:{agent:'mark'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.threads).set({stopRequested:true}).where(eq(s.threads.id,f.thread.id)).run();});
+ const f=await fixture();f.root.writes.run(()=>{if(changed==='job')f.db.update(s.jobs).set({conversation:null}).where(eq(s.jobs.id,f.job.id)).run();else f.db.update(s.conversations).set({agent:'mark'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.threads).set({stopRequested:true}).where(eq(s.threads.id,f.thread.id)).run();});
  const before=f.db.select().from(s.threads).get();expect(await control(f).next()).toMatchObject({id:f.job.id,thread:null});expect(f.db.select().from(s.threads).get()).toEqual(before);
 });
 it.each(['job','agent']as const)('a preparation heartbeat leaves Stop and working metadata untouched after current %s binding changes',async changed=>{
- const f=await fixture(),worker=control(f);await worker.next();await f.member('stop');f.root.writes.run(()=>{f.db.update(s.conversations).set(changed==='job'?{job:'job'}:{agent:'mark'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.root.services.comms!.threads.working(f.thread.id,false);});
+ const f=await fixture(),worker=control(f);await worker.next();await f.member('stop');f.root.writes.run(()=>{if(changed==='job')f.db.update(s.jobs).set({conversation:null}).where(eq(s.jobs.id,f.job.id)).run();else f.db.update(s.conversations).set({agent:'mark'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.root.services.comms!.threads.working(f.thread.id,false);});
  const before=f.db.select().from(s.threads).get();expect(await worker.heartbeat(f.job.id,'starting')).toBe(true);expect(f.db.select().from(s.threads).get()).toEqual(before);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()?.state).toBe('starting');
 });

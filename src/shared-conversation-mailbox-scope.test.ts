@@ -23,7 +23,7 @@ it.each(['project-agent','member-agent','project-member','cv-job','job-member'] 
   if(change==='project-agent')f.db.delete(s.projectAgents).run();
   if(change==='member-agent')f.db.delete(s.memberAgents).run();
   if(change==='project-member')f.db.delete(s.projectMembers).run();
-  if(change==='cv-job')f.db.update(s.conversations).set({job:null}).run();
+  if(change==='cv-job')f.db.update(s.jobs).set({conversation:null}).run();
   if(change==='job-member')f.db.update(s.jobs).set({member:'bob'}).run();
  });
  expect((await f.volume('saved')).status).toBe(403);

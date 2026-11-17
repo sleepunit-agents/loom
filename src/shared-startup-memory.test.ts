@@ -36,7 +36,6 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   p.composition.writes.run(()=>{
    p!.db.insert(s.boxes).values({id:'box',name:'Fictional box',owner:'alice',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now}).run();
    p!.db.insert(s.jobs).values({id:'memory-job',agent:'art',box:'box',member:'alice',conversation,title:'Fictional Memory body',state:'running',brief:'',model:'fixture',startedByKind:'member',startedBy:'alice',houseRepository:'fixture',houseFile:'HOUSE.md',houseBranch:'next',queuedAt:now}).run();
-   p!.db.update(s.conversations).set({job:'memory-job'}).where(eq(s.conversations.id,conversation)).run();
    p!.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional Memory body',kind:'agent',agent:'art',job:'memory-job',createdAt:now}).run();
   });
   writeFileSync(join(p.home,'agents/art/IDENTITY.md'),creed);
