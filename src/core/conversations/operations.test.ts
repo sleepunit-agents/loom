@@ -37,7 +37,7 @@ function fixture() {
   }, now);
   registerConversationOperations(operations, service, { authorize(viewer, access) { policyCalls.push({ viewer, access }); return allowed; } });
   const viewer: Viewer = { kind: 'member', id: 'jonathan' };
-  const call = (name: string, input: unknown, id: string, valid = () => true) => operations.callAsync('socket', viewer, name, input, id, true, valid);
+  const call = (name: string, input: unknown, id: string, valid = () => true) => operations.callAsync('http', viewer, name, input, id, true, valid);
   const thread = service.threads.open({ id: 'th:one', member: 'jonathan', agent: 'art', title: 'Pump' });
   return { client, db, clock, statements, service, operations,
     receipts: () => db.select().from(operationResults).all().map(row => ({ ...row, result: row.result.toString('utf8') })), changes, publicationTransactions, policyCalls, thread, call,
@@ -76,7 +76,7 @@ it('refuses a different SQLite connection before registering any operation', () 
   const first = fixture(), second = fixture();
   const operations = new Operations(first.client, new FakeClock(), () => {}, { receipts: new OperationResults(first.db) }); dispatchers.push(operations);
   expect(() => registerConversationOperations(operations, second.service, { authorize: () => true })).toThrow('shared connection');
-  expect(operations.offered('socket')).toEqual([]);
+  expect(operations.offered('http')).toEqual([]);
 });
 
 it('rechecks authentication and current resource policy after encryption without committing or publishing', async () => {
@@ -201,9 +201,9 @@ it('uses authenticated read marks and the metadata services for rename, pin, arc
 it('requires signed-in window dispatch, rejects claimed senders and binds opens to the authenticated member', async () => {
   const f = fixture(), input = { thread: 'th:two', agent: 'art', title: 'Second' };
   // Without a window, a member is still the member; an agent is never one.
-  expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'comms.open', input, 'no-window', false)).toMatchObject({ code: 'denied' });
+  expect(await f.operations.callAsync('http', { kind: 'agent', id: 'art' }, 'comms.open', input, 'no-window', false)).toMatchObject({ code: 'denied' });
   expect(await f.operations.callAsync('http', { kind: 'member', id: 'jonathan' }, 'comms.open', input, 'open-http', true)).toMatchObject({ ok: true });
-  expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'comms.open', input, 'open', true)).toMatchObject({ code: 'denied' });
+  expect(await f.operations.callAsync('http', { kind: 'agent', id: 'art' }, 'comms.open', input, 'open', true)).toMatchObject({ code: 'denied' });
   expect(await f.call('comms.open', { ...input, member: 'other' }, 'spoof')).toMatchObject({ code: 'invalid' });
   expect(await f.call('comms.open', input, 'open')).toMatchObject({ ok: true, value: { thread: 'th:two' } });
   expect(f.service.threads.conversations.conversation(f.service.threads.thread('th:two').conversation).member).toBe('jonathan');
@@ -237,8 +237,8 @@ it('dismisses only the signed-in member own action result through an authenticat
     { id: 'other', member: 'other', at, ok: false, text: 'Private outcome', page: '/inbox' },
   ]).run();
   for (const id of ['other', 'missing']) expect(await f.call('inbox.dismissResult', { id }, `deny-${id}`)).toMatchObject({ ok: false, code: 'denied' });
-  for (const kind of ['agent', 'runner', 'service'] as const) expect(await f.operations.callAsync('socket', { kind, id: 'jonathan' }, 'inbox.dismissResult', { id: 'mine' }, `deny-${kind}`, true)).toMatchObject({ ok: false, code: 'denied' });
-  expect(await f.operations.callAsync('socket', { kind: 'agent', id: 'art' }, 'inbox.dismissResult', { id: 'mine' }, 'no-window', false)).toMatchObject({ ok: false, code: 'denied' });
+  for (const kind of ['agent', 'runner', 'service'] as const) expect(await f.operations.callAsync('http', { kind, id: 'jonathan' }, 'inbox.dismissResult', { id: 'mine' }, `deny-${kind}`, true)).toMatchObject({ ok: false, code: 'denied' });
+  expect(await f.operations.callAsync('http', { kind: 'agent', id: 'art' }, 'inbox.dismissResult', { id: 'mine' }, 'no-window', false)).toMatchObject({ ok: false, code: 'denied' });
   expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'expired', () => false)).toMatchObject({ ok: false, code: 'denied' });
   expect(f.db.select().from(actionResults).all().every(r => r.readAt === null)).toBe(true);
   const result = await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss');

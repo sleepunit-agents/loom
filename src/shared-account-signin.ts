@@ -89,7 +89,7 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   // runtime.signInCode was once a write, so its results, code included, were kept as retry receipts.
   db.transaction(() => { db.delete(operationResults).where(eq(operationResults.operation, 'runtime.signInCode')).run(); sweep(now()); });
   const signedIn = new WeakSet<object>();
-  const people = { write: true, recheckPolicy: true, refuses: true, doors: ['http', 'socket'] as const };
+  const people = { write: true, recheckPolicy: true, refuses: true, doors: ['http'] as const };
   const workers = { write: true, recheckPolicy: true, doors: ['http'] as const };
 
   operations.register({ ...people, doors: [...people.doors], name: 'runtime.accountSignIn', input: z.object({ account: name, box: name }).strict(), output: z.object({ id: z.string() }).strict(),
