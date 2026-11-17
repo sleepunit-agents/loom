@@ -56,6 +56,17 @@ it('uses conversation labels for incoming and replies, preserving private-member
  expect(await f.read({kind:'agent',id:'art'})).toMatchObject({bridgeConnections:[],bridgeIncoming:[{id:'own'}],bridgeSends:[{id:'own'}],secrets:[]});
  expect(await f.read({kind:'runner',id:'r'})).toMatchObject({bridgeConnections:[],bridgeIncoming:[],bridgeSends:[],secrets:[]});
 });
+it('keeps direct-message words from the agent\'s own token, whoever sent them',async()=>{
+ const f=fixture();
+ // A DM from someone with no person link, and a group DM: neither has a member to be private to.
+ f.db.insert(conversations).values({id:'dm',agent:'art',venue:'slack',place:'dm',label:'dm',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+ f.db.insert(bridgeIncoming).values({id:'dm',connection:'c',channel:'D1',user:'stranger',isDm:true,text:'for the agent only',state:'delivered',postedAt:f.at,receivedAt:f.at,conversation:'dm'}).run();
+ f.db.insert(bridgeSends).values({id:'dm',incoming:'dm',connection:'c',channel:'D1',text:'the answer',state:'sent',createdAt:f.at}).run();
+ // A body of the same agent working anywhere else holds this identity. It reads its rooms, not its DMs.
+ expect(await f.read({kind:'agent',id:'art'})).toMatchObject({bridgeIncoming:[{id:'own'}],bridgeSends:[{id:'own'}]});
+ // The people the agent answers to still can.
+ expect(await f.read({kind:'member',id:'alice'})).toMatchObject({bridgeIncoming:[{id:'own'},{id:'private'},{id:'dm'}],bridgeSends:[{id:'own'},{id:'private'},{id:'dm'}]});
+});
 it('rechecks ownership and private labels in retained query schemas after revocation',async()=>{
  const f=fixture(),viewer={kind:'member',id:'alice'} as const, schema=f.schema(viewer);
  f.db.delete(memberAgents).where(eq(memberAgents.member,'alice')).run();
