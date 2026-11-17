@@ -25,9 +25,10 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
     removePasskey(member: string, reference: string) {
       const own = new Set(ownTokens(member).map(t=>t.fingerprint)), key = db.select().from(passkeys).all().find(k=>ref('passkey',k.id)===reference&&own.has(k.token));
       if(!key)throw new OperationError('not-found','Passkey not found');
-      // This stops new sign-ins with the passkey. Browsers it already signed in stay signed in until they
-      // are revoked or run out: a session does not record which passkey made it, so they cannot be told
-      // apart from the member's other passkey sign-ins. A lost passkey needs its browsers revoked as well.
+      // Removing a passkey takes back what it let in: the browsers it signed in end with it, including the
+      // one asking if the passkey made that one. A browser signed in before sessions recorded their
+      // passkey (schema step 6) names none and has to be revoked by hand.
+      for(const session of db.select({id:sessions.id}).from(sessions).where(eq(sessions.passkey,key.id)).all())endBrowser(db,session.id);
       db.delete(passkeys).where(eq(passkeys.id,key.id)).run();
       return {removed:true as const};
     },
@@ -43,7 +44,7 @@ export function registerSharedAccount(operations: Operations, db: DataDatabase, 
   const member = (viewer: Viewer) => viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
   const reference=z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict();
   operations.register({name:'account.removePasskey',write:true,recheckPolicy:true,input:reference,output:z.object({removed:z.literal(true)}),may:member,
-    run(ctx,input){const result=service.removePasskey(ctx.viewer.id,input.ref);ctx.changed('account',ctx.viewer.id);return result;}});
+    run(ctx,input){const result=service.removePasskey(ctx.viewer.id,input.ref);ctx.changed('account',ctx.viewer.id);ctx.changed('core.access',ctx.viewer.id);return result;}});
   operations.register({name:'account.revokeSession',write:true,recheckPolicy:true,input:reference,output:z.object({revoked:z.literal(true)}),may:member,
     run(ctx,input){const result=service.revokeSession(ctx.viewer.id,input.ref);ctx.changed('core.access',ctx.viewer.id);return result;}});
 }

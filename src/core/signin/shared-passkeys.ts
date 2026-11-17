@@ -45,7 +45,7 @@ export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpI
       if(issued.session||issued.token||verified.id!==key.id||verified.counter<=key.counter)throw Error('Passkey sign-in refused');
       const cookie=randomBytes(32).toString('hex'),at=new Date(clock.now()).toISOString(),isAgent=isAgentBrowser(userAgent);
       db.update(passkeys).set({counter:verified.counter,lastUsedAt:at}).where(eq(passkeys.id,key.id)).run();
-      db.insert(sessions).values({id:hash(cookie),token:token.fingerprint,device:isAgent?'HeadlessChrome':'Browser',via:'passkey',isAgent,issuedAt:at,seenAt:at,provedAt:at}).run();
+      db.insert(sessions).values({id:hash(cookie),token:token.fingerprint,device:isAgent?'HeadlessChrome':'Browser',via:'passkey',passkey:key.id,isAgent,issuedAt:at,seenAt:at,provedAt:at}).run();
       const maxAge=Math.floor((Math.min(clock.now()+(isAgent?AGENT_SESSION_MS:PERSON_SESSION_MS),token.expiresAt?Date.parse(token.expiresAt):Infinity)-clock.now())/1000);
       return {cookie,maxAge};
     },
