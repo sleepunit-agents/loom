@@ -1,5 +1,5 @@
 /** One hosted CI test, two windows, six screenshots; never launches on loom's machine. */
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import {expect,it} from 'vitest';
 import {existsSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';

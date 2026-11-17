@@ -31,3 +31,14 @@ it('names every table created outside the household schema', () => {
   expect(created.length).toBeGreaterThan(40);
   expect(created.filter(({ table }) => !named.has(table))).toEqual([]);
 });
+
+it('keeps test fixtures out of the build: each is named *.fixture.ts, and tsconfig excludes that name', () => {
+  const files = (directory: string): string[] => readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)]);
+  const { exclude } = JSON.parse(readFileSync(join(root, 'tsconfig.json'), 'utf8')) as { exclude: string[] };
+  expect(exclude).toEqual(expect.arrayContaining(['**/*.test.ts', '**/*.fixture.ts']));
+  // A fixture under any other name would be compiled into dist and published.
+  expect(files('src').filter(file => /fixture[^/]*\.ts$/i.test(file) && !/\.fixture\.ts$/.test(file))).toEqual([]);
+  // Every path the list names must exist, so a stale entry cannot stand in for a rule.
+  expect(exclude.filter(path => !path.includes('*') && !['node_modules', 'dist'].includes(path) && !existsSync(join(root, path)))).toEqual([]);
+});

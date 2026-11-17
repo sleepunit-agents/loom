@@ -1,5 +1,5 @@
 /** One CI-only browser test, two windows and six responsive look screenshots. */
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import { expect,it } from 'vitest';
 import { existsSync,mkdtempSync,mkdirSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

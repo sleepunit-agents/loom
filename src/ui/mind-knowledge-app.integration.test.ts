@@ -1,5 +1,5 @@
 /** One two-window proof; CI alone runs Chrome. LOOM_SHOTS retains six look/width images. */
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import { expect, it } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
