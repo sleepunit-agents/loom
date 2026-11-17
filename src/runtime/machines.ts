@@ -20,7 +20,10 @@ export class Machines {
       const box = this.db.select().from(boxes).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).get();
       if (!box) throw new Error('Machine not available');
       const at = this.now();
-      if (!Number.isFinite(Date.parse(at)) || Date.parse(at) < Date.parse(box.lastSeenAt ?? box.enrolledAt)) throw new Error('Invalid machine time');
+      if (!Number.isFinite(Date.parse(at))) throw new Error('Invalid machine time');
+      // The stamp is always this server's present time, also when that is earlier than the stamp before it.
+      // After the server's clock is set back, refusing the report would fail every worker call until the
+      // clock caught up, and a kept future stamp would hide the machine from placement for as long.
       if (reported !== undefined) {
         // Owner labels are a separate source of truth, including a fact that
         // overlaps a report. Omitted facts preserve the previous report.

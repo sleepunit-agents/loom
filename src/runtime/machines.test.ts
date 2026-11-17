@@ -79,3 +79,14 @@ for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\rfact'], ['bad\nlin
   expect(() => f.service.heartbeat('worker', facts)).toThrow();
   expect({ boxes: f.db.select().from(boxes).all(), facts: f.db.select().from(boxFacts).all(), notices: f.db.select().from(inbox).all() }).toEqual(before);
 });
+
+it('keeps taking reports after the server clock is set back, stamped with the present time', () => {
+  const { db, service, add, advance, now } = fixture();
+  add('worker'); advance(60_000); service.heartbeat('worker');
+  advance(-3_600_000);
+  expect(service.heartbeat('worker').lastSeenAt).toBe(now());
+  expect(db.select().from(boxes).where(eq(boxes.id, 'worker')).get()?.lastSeenAt).toBe(now());
+  // Silence is then measured on the same clock again: quiet for the interval, and only then an alert.
+  advance(120_000); expect(service.sweep()).toEqual([]);
+  advance(1); expect(service.sweep()).toHaveLength(1);
+});
