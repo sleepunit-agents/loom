@@ -1,11 +1,15 @@
 import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSends } from '../../core/data/schema.js';
-import { postReply } from './outbound.js';
+import { BridgeReplyNotSent, postReply } from './outbound.js';
 
 export type BridgeSend = typeof bridgeSends.$inferSelect;
 export interface SendTransport {
-  /** Resolve the current connection. Suppress generated mentions in platform posts. */
+  /** Whether a post for this connection can be attempted now. A reply waits,
+   * unclaimed, while this is false. Absent means always. */
+  ready?(connection: typeof bridgeConnections.$inferSelect): boolean;
+  /** Resolve the current connection. Suppress generated mentions in platform posts.
+   * Throw BridgeReplyNotSent when refusing before any request is made. */
   post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string): Promise<{ id: string }>;
 }
 
@@ -66,7 +70,8 @@ export class BridgeSends {
     this.changed();
   }
 
-  /** A single pass, with no retries of a post whose outcome is unknown. */
+  /** A single pass, with no retries of a post whose outcome is unknown. A reply
+   * that was claimed but never left stays pending for a later flush, not this one. */
   flush(): Promise<void> {
     if (this.db.$client.inTransaction) throw new Error('Flush sends after committing the transaction');
     if (this.closed) return Promise.resolve();
@@ -83,23 +88,29 @@ export class BridgeSends {
       const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, send.connection)).get();
       if (!connection?.enabled) { this.transition(send.id, 'pending', 'held'); continue; }
       // A reconnect can resume a pending send; it has not crossed the network yet.
-      if (connection.state !== 'connected') continue;
+      if (connection.state !== 'connected' || this.transport.ready?.(connection) === false) continue;
       const claim = this.commit(()=>this.db.update(bridgeSends).set({ state: 'sending' })
         .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'pending'))).run());
       if (!claim.changes) continue;
       this.changed();
-      let postedId: string | undefined;
+      let postedId: string | undefined, notSent: BridgeReplyNotSent | undefined;
       try {
         const receipt = await postReply(connection.platform, send.text, async text => {
           const current = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, connection.id)).get();
           if (this.closed || !current?.enabled || current.state !== 'connected'
             || current.platform !== connection.platform || current.workspace !== connection.workspace
-            || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new Error('Connection changed');
+            || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new BridgeReplyNotSent(true);
           return this.transport.post(current, { channel: send.channel, thread: send.thread }, text);
         });
         postedId = receipt.id;
-      } catch { /* upstream errors can contain credentials and are never recorded */ }
-      this.commit(()=>this.db.update(bridgeSends).set({ state: postedId ? 'sent' : 'uncertain', postedId: postedId ?? null })
+      } catch (error) {
+        // Upstream errors can contain credentials and are never recorded. Only our own
+        // refusal before the first request says the reply is still wholly unsent.
+        if (error instanceof BridgeReplyNotSent) notSent = error;
+      }
+      // Unsent goes back to wait for the connection, or to a person when waiting cannot help.
+      const state = postedId ? 'sent' : notSent ? (notSent.again ? 'pending' : 'held') : 'uncertain';
+      this.commit(()=>this.db.update(bridgeSends).set({ state, postedId: postedId ?? null })
         .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run());
       this.changed();
     }

@@ -2,6 +2,7 @@ import { liveDiscordReceipts } from './discord-receipts.js';
 import { slackFiles, type SlackFilesPermit } from './slack-files.js';
 import { BridgeSends } from './sends.js';
 import { bridgeReplyApi } from './reply-api.js';
+import { BridgeReplyNotSent } from './outbound.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
  * asynchronous metadata/drain work follows separately. Installed parts share the
  * database directly; all outside permissions live at their respective doors. */
@@ -52,8 +53,10 @@ export class SharedBridges {
  private readonly unobserve:()=>void;
  private closing?:Promise<void>;
  constructor(private readonly options:SharedBridgeOptions){
-  this.sends=new BridgeSends(options.db,{post:async(row,address,text)=>{
-   const life=this.lives.get(row.id);if(!life||!this.current(life)||configuration(row)!==life.key)throw Error('Bridge reply attempt uncertain');
+  const sender=(row:Connection)=>{const life=this.lives.get(row.id);return life&&this.current(life)&&configuration(row)===life.key?life:undefined;};
+  this.sends=new BridgeSends(options.db,{ready:row=>!!sender(row),post:async(row,address,text)=>{
+   // No lifetime to send through: nothing has left, so the reply waits for the next one.
+   const life=sender(row);if(!life)throw new BridgeReplyNotSent(true);
    return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life),request:options.request}).post(address,text);
   }},()=>new Date(options.clock.now()).toISOString(),()=>{},write=>{
    const result=options.writes.run(write);for(const _error of result.notificationErrors)this.report();return result.value;
