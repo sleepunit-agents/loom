@@ -525,6 +525,35 @@ Entries are grouped by the part of the program they belong to.
   and only for a member who is in the household now: removing a member keeps their link, and intake
   (`incoming.ts`) and the run policy (`body-policy.ts`) then take the account for an outside one.
 
+### A stranger wakes nothing, and a tier is what admits an outsider
+- What: a person's message is taken only from an account linked to a member who is in the household now
+  (`bridge_people`), or one the answering agent's owner has given a tier (`agent_people`). Anybody else is
+  dropped with the reason `Unknown sender`, in a room and in a direct message, and keeps no words. There is
+  no setting that lets everyone in a channel or on a connection talk to an agent.
+- Where: `receive` in `src/pieces/bridges/incoming.ts` (`hasTier`). What a guest's body is not given is
+  `src/runtime/harness-traits.ts` (`hasGuest`, `deniedTools`): a sender who is no member and is not at tier 3
+  is a guest, and one guest applies the agent's guests-only tool denials to the whole job.
+- Why: the bot can be written to by anyone who shares a server or a workspace with it, and a body acts with
+  the agent's tools. The owner places each outsider by a card (`bodyPolicy`), which already decides what
+  that person's body may not do; the same statement admits them, so there is one list and no second
+  authority. A tier admits and never says who somebody is: such a message is from nobody in the household.
+- Would change it: wanting an open room where anyone may talk to an agent as a guest. That is a setting on
+  the channel's rule (a column), off unless an owner turns it on. Or wanting to admit a person by their
+  People card: that is a link from the outside account to the card, kept beside the member link.
+
+### A bot wakes an agent only by writing its mention
+- What: a message from a bot or a webhook is delivered only in a channel whose rule has `botsMayTalk` on,
+  and only when it mentions the agent's bot in writing. A bot's reply, its post in a thread under the
+  agent's message, and the channel's own agent do not count for a bot, and a bot is never delivered in a
+  direct message. A bot that is another agent of this household is recorded as that agent; any other bot
+  or webhook is recorded as from nobody, so it is a guest.
+- Where: `receive` in `src/pieces/bridges/incoming.ts`.
+- Why: two agents in one room must not be able to answer each other for ever. With a written mention as the
+  only way in, each turn between bots is one a body chose to ask for. What a bot is comes from the
+  platform's own flag, so a household does not have to register every bot it lets speak.
+- Would change it: a channel that is one agent's private line to one bot, where every post should wake it
+  (the old bridge's "pair" channels). That is a second setting on the channel's rule.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

@@ -1,6 +1,10 @@
 /** Trusted bridge ingress. Platform adapters supply authenticated event fields;
  * person identity comes exclusively from household person links.
  *
+ * A person's message is taken only from somebody the household knows: an account linked to a member who is
+ * in the household now, or one the answering agent's owner has given a tier. Anybody else is dropped, in a
+ * room and in a direct message alike.
+ *
  * Who counts is the household's answer as it is now (policy.ts, inHousehold), asked each time a message is
  * received or tried again. A person link stands for its member only while that member is in the household:
  * removing a member keeps the link, and their account is then nobody's. A connection speaks for its agent
@@ -10,11 +14,11 @@
 import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { incomingId, inboxSourceId, parseIncomingId } from './keys.js';
+import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
 import { conversationPlace } from './place.js';
 import { inHousehold } from '../../policy.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { agentPeople, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -48,6 +52,11 @@ function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thre
  return row.channel===message.channel&&row.thread===(message.thread??null)&&row.isDm===message.isDm
   &&row.user===message.user&&row.postedAt===message.postedAt;
 }
+
+/** Why a person's message was not delivered: nobody the household knows sent it. */
+export const UNKNOWN_SENDER = 'Unknown sender';
+/** Why a bot's message was not delivered. */
+export const BOT_NOT_ADMITTED = 'Bot did not mention this agent, or bots may not talk here';
 
 export class BridgeIncoming {
   private readonly conversations: Conversations;
@@ -117,7 +126,14 @@ export class BridgeIncoming {
       else if (message.isDm && connection.platform === 'discord' && this.db.select({ id: bridgeConnections.id }).from(bridgeConnections)
         .where(and(eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.botUser, connection.botUser), eq(bridgeConnections.enabled, true), isNull(bridgeConnections.removedAt), ne(bridgeConnections.workspace, connection.workspace))).get()) { state = 'held'; reason = 'Bot is connected in another guild'; }
       else if (new Set(senders.map(p => p.agent)).size > 1) { state = 'held'; reason = 'Ambiguous bot identity'; }
-      else if ((message.bot || message.webhook || sender) && (!sender || !route?.botsMayTalk)) { state = 'dropped'; reason = 'Unknown bot or bots disabled'; }
+      // A bot wakes an agent only by writing its mention, and only where the channel's rule lets bots talk. A
+      // reply, a thread and the channel's own agent count for people alone, so two agents cannot wake each other
+      // unless each chooses to. The platform's own flag says what a bot is; one that is no agent of this
+      // household is delivered as from nobody.
+      else if (message.bot || message.webhook || sender) {
+        if (message.isDm || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = BOT_NOT_ADMITTED; }
+      }
+      else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
       else if (!message.isDm && !addressed.has(connection.botUser)) {
         if (peers.some(p => addressed.has(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
       }
@@ -162,6 +178,14 @@ export class BridgeIncoming {
       // A dropped message is never delivered or tried again, and nobody is shown it: it keeps no words.
       return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null, ...(state === 'dropped' ? { text: '' } : {}) }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
+  }
+
+  /** Whether this agent's owner has placed the outside account: a tier of any rank, set by a card the owner
+   * allowed (shared-agent-body-policy.ts). With a person link, this is everybody a message is taken from.
+   * A tier admits; it never says who somebody is (docs/accepted-tradeoffs.md, "A stranger wakes nothing"). */
+  private hasTier(connection: Pick<typeof bridgeConnections.$inferSelect, 'platform' | 'workspace' | 'agent'>, user: string): boolean {
+    return !!this.db.select({ tier: agentPeople.tier }).from(agentPeople)
+      .where(and(eq(agentPeople.agent, connection.agent), eq(agentPeople.person, outsidePersonKey(connection.platform, connection.workspace, user)))).get();
   }
 
   /** Try a held message again from its own row, against the household's rules as they are now. This is
