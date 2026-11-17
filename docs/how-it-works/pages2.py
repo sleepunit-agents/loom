@@ -350,7 +350,7 @@ def machines():
         ("Boxes", "violet", gate("Its owner says which agents may run there", "An agent can be lent a machine", "A box can report health and never run agents", "An always-on box raises an alert when it goes quiet"),
          "A box is a machine with a worker on it. A member owns it. A worker can share a machine with loom or sit on another one. Facts such as gpu:5090 match work to a machine."),
         ("Run settings", "amber", opts(("house", "the repository that defines it"), ("boxes", "preferred machines, in order"), ("may use", "named secrets, ports, a GPU")),
-         "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given."),
+         "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given. How a house is defined and built is on the <a href=\"houses.html\">Houses</a> page."),
     ]
     return app_page("Machines and jobs", "no app of its own", "Where agents run and what they are running.",
         "There are always two programs: loom and a worker. A worker runs agents' bodies and builds, on the same machine as loom or on another. Nothing runs inside loom itself.",
@@ -830,6 +830,159 @@ def tools():
 '''
     return page(idx, "Tools for agents · loom", body)
 
+# ───────────────────────── Houses (beside Machines and jobs; proposed, not yet on the guided path)
+HOUSEFILE = """# The house of the agent Fern: the image a body of hers runs in.
+# A loom worker builds it from this repository at one commit. Nothing else is given to the build.
+FROM docker.io/library/node:22-bookworm-slim
+
+# What the agent works with: git, and the harness programs her models run in.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git \\
+ && rm -rf /var/lib/apt/lists/* \\
+ && npm install -g @anthropic-ai/claude-code @openai/codex
+
+# This repository's own files. Last, so a commit that changes only them reuses the layers above.
+COPY . /home/fern/house
+
+# One body file for each harness: which program to start, in which directory, and what it may reach.
+COPY house/claude.json house/codex.json /etc/loom/body/
+
+# How a body starts here. Loom reads these labels, the WORKDIR and the ENV, and nothing else of the image.
+LABEL loom.house="1" \\
+      loom.house.node="/usr/local/bin/node" \\
+      loom.house.body.claude="/etc/loom/body/claude.json" \\
+      loom.house.body.codex="/etc/loom/body/codex.json"
+
+# A body's environment and where it starts. There is no USER line: a body here runs as the container's
+# root. Claude Code skips its permission prompts as root only when it is told it is in a sandbox.
+ENV HOME=/home/fern IS_SANDBOX=1
+WORKDIR /home/fern/house"""
+BODYFILE = """{"command": "/usr/local/bin/claude", "cwd": "/home/fern/house", "reach": "all"}"""
+
+def houses():
+    idx = NUM["Machines and jobs"]
+    def row(text, at):
+        return f'<li><p>{text}</p><span class="at">{at}</span></li>'
+    def group(title, tint, items):
+        return f'<section class="t-{tint}"><h2>{e(title)}</h2><ul>{"".join(items)}</ul></section>'
+    def band(tag, hid, title, intro, inner):
+        return f'<section class="band" aria-labelledby="{hid}"><div class="band__head"><span class="tag">{tag}</span><h2 id="{hid}">{title}</h2><p>{intro}</p></div>{inner}</section>'
+
+    what = how([
+        ("A container for a body", "cyan", flow("job", "starts", "container", "from", "house image"),
+         "A body is one run of an agent on a machine. It runs in a container, and the image that container is made from is the agent's house. The house holds what the agent works with: its harnesses (a harness is the program a model runs in, such as Claude Code or Codex), its tools, and its own repository."),
+        ("One worker, any agent", "violet", gate("A container engine", "git", "The loom worker, signed in to loom"),
+         "A worker runs any agent's house. Nothing is installed or configured on the machine for an agent: once a machine has a worker that loom knows, any agent allowed to run there can be sent to it, and its house is built there the first time it is needed. What a machine does hold is model sign-ins, which belong to accounts and not to agents."),
+        ("The agent's own to define", "pink", opts(("the agent's repository", "holds the Housefile"), ("the Housefile", "the whole definition"), ("loom", "builds it and runs bodies in it")),
+         "A house is defined by one file in a repository the agent's owners choose, called a Housefile. It is an ordinary container build file. Loom does not supply any part of a house: what is in the image is what the Housefile puts there."),
+    ])
+
+    named = '<div class="dec">' + group("An agent's run settings name its house", "amber", [
+        row("<b>Repository.</b> The address of the git repository that holds the Housefile. It must be an <code>https://</code> address.", "set by the agent's owners"),
+        row("<b>Housefile.</b> The file's path inside the repository, for example <code>Housefile</code> or <code>house/Housefile</code>.", "set by the agent's owners"),
+        row("<b>Branch.</b> The branch to build. Each job builds the commit that branch is at when the job starts.", "set by the agent's owners"),
+        row("<b>Repository secret.</b> For a private repository: the stored secret that fetches it. Left empty for a public one.", "a stored secret, named here"),
+        row("<b>Startup secrets.</b> Stored secrets a body is handed when it starts, each under an alias. The alias is the name of the environment variable the body finds it in.", "a stored secret and an alias, each"),
+    ]) + group("Who decides", "pink", [
+        row("An agent's owners set its run settings. An agent can propose a change to its own; a person allows it before it takes effect.", f'{plink("People and projects")} · {plink("Tools for agents")}'),
+        row("A secret named here is still a stored secret: who may use it, and whether a person is asked first, is decided by its own rule.", plink("Secrets")),
+        row("A job keeps the repository, Housefile and branch its agent had when the job was admitted. Changing the settings does not change a job already waiting.", plink("Machines and jobs")),
+    ]) + '</div>'
+
+    housefile = f"""<div class="two"><pre class="req">{e(HOUSEFILE)}</pre>
+<p class="note">A complete Housefile. The two body files it copies are one line each, such as <code>{e(BODYFILE)}</code>: the harness program in the image, the directory it starts in, and <code>reach</code>, which is <code>loom</code> for loom's own tools only or <code>all</code> for the harness's own tools as well (files, a shell, the web).</p></div>
+<div class="dec">""" + group("What the image must say", "cyan", [
+        row("<code>loom.house</code> is the version of this agreement between a house and loom. It is <code>1</code>.", "a label"),
+        row("<code>loom.house.node</code> is the path of the Node program in the image. Loom's body program is run with it. Node 22 or later.", "a label, an absolute path"),
+        row("<code>loom.house.body.&lt;harness&gt;</code> is the path of that harness's body file in the image, one label for each harness the house serves: <code>claude</code>, <code>codex</code>, <code>agy</code>.", "a label, an absolute path"),
+        row("A working directory. A body starts in the image's <code>WORKDIR</code>, which may not be <code>/</code>.", "WORKDIR"),
+        row("An environment. A body runs with the image's <code>ENV</code>, and as the image's <code>USER</code>. Loom adds one variable of its own, which names the body's scratch directory.", "ENV · USER"),
+    ]) + group("What the image must not hold", "amber", [
+        row("A copy of loom. Loom mounts its own body program into every container at <code>/opt/loom</code>, so the image must keep nothing there.", "nothing at /opt/loom"),
+        row("A declared volume. Loom checks that a container has exactly the storage it asked for, and an image that declares a <code>VOLUME</code> is refused.", "no VOLUME"),
+        row("A credential. A sign-in, a token or a key in an image is in every copy of that image. A body gets its model sign-in and its secrets when it starts, from outside the image.", "nothing secret"),
+        row("Anything that is not in the repository or at a public address. The build is given the repository's files and nothing else: no build argument, no secret, no file of the machine.", "builds from the repository alone"),
+    ]) + '</div>'
+
+    steps = how([
+        ("1 · Fetch", "cyan", log(("https only", "no ssh, no path, no plain http"), ("no user settings", "none of the machine user's git configuration or credentials"), ("one commit", "the branch as it is now")),
+         "The worker fetches the branch with the machine's git, into a copy of the repository it keeps for itself. Git is used to store and hand back the repository's objects, and nothing more: it runs with none of the machine user's settings, takes no address but an https one, and is not asked to check out, inspect or run anything. The reason is that whoever may set an agent's house chooses the address, and must not thereby borrow the machine user's access or have a program started. A repository secret is given to that one fetch and kept nowhere."),
+        ("2 · The files of the commit", "violet", log(("goes in", "every file, byte for byte; links as links"), ("left out", "submodules"), ("refused", "over 100 MiB a file, 1 GiB in all, 50,000 files")),
+         "The worker writes the build's input itself: every file of the commit, byte for byte, with whether it is executable, and every symbolic link as a link. Nothing in the repository changes what goes in: files that tell git to leave things out, substitute text or convert line endings are ordinary files here. A submodule is left out. A commit past the limits, or with a file name that could land outside the build (an absolute name, a name with <code>..</code> in it, one name twice), fails the job before anything is sent."),
+        ("3 · Build", "pink", flow("files", "to", "the engine", "builds", "image"),
+         "The machine's container engine builds the Housefile. A build has 30 minutes unless the machine's configuration says otherwise, and 60 at most; a job still waiting then fails, saying the build ran out of time. While a house builds, the worker goes on telling loom the job is alive, so a long build does not lose the job. A first build of a house with a full set of tools, from a bare base image, took about ten minutes on a small machine and made an image of about 1.5 GB."),
+        ("4 · Found again", "amber", opts(("the same commit", "the image is reused"), ("a new commit", "built, reusing unchanged steps"), ("a new loom", "nothing is rebuilt")),
+         "An image is named for its repository, its Housefile and its commit. The next job at the same commit finds the image and starts at once. A new commit is built, and the engine reuses the steps that did not change. Deploying a new loom rebuilds nothing, because no image holds any of loom."),
+    ])
+
+    runtime = '<div class="dec">' + group("What a body is given when it starts", "cyan", [
+        row("<b>Loom's body program.</b> The program that takes the job, starts the harness and reports back. It comes from the worker's own installation, read-only, so it is always the one that matches the loom that is running.", "mounted at /opt/loom"),
+        row("<b>Its account's sign-in.</b> A model sign-in is a directory of files that the provider's program rewrites when it renews, so it cannot be in an image. The machine's configuration names one directory for each account and harness, and a body gets the one for its job's account and no other. The same configuration says where in the container it appears; loom fixes no place, so a house must look where its machines put it. The body's user must be able to write it: under a rootless engine that is the container's root.", "from the machine's configuration"),
+        row("<b>Its agent's own directories.</b> The machine's configuration can give an agent directories of the machine, read-only unless it says otherwise: a little state kept between bodies, say. A body gets its own agent's and never another agent's.", "from the machine's configuration"),
+        row("<b>Its startup secrets.</b> Each is in the environment of the harness under its alias. They are handed over when the body starts, not before, and are in no image.", plink("Secrets")),
+        row("<b>Its job.</b> The work, and a credential of its own that is good for this one job.", plink("Signing in")),
+    ]) + group("What it is not given", "amber", [
+        row("Anything else of the machine. No other directory, no other account's sign-in, none of the worker's environment, and not the engine itself unless the agent is allowed nested containers and the machine has opted in.", "nothing by default"),
+        row("A body allowed nested containers holds the machine's container engine, and through it everything that engine's user can reach, every account's sign-in included. It is allowed only where both the agent's settings and the machine say so.", "a stated exception"),
+    ]) + '</div>'
+
+    several = how([
+        ("Slots", "violet", opts(("slots", "4 unless the machine says otherwise"), ("at most", "16")),
+         "A worker runs several jobs side by side, each in a slot. A house being built takes one slot, so another agent's job, whose house is already built, starts in a free one. Two jobs that want the same new image wait for one build. Loom keeps no count of a machine's jobs: a worker asks for a job only when it has a free slot."),
+        ("Bodies on one account", "pink", opts(("account slots", "4 unless the machine says otherwise"), ("set to 1", "one body at a time on an account")),
+         "Up to four bodies run on one model account at once. They share that account's sign-in, as several sessions of one person do. Two provider programs can renew a sign-in in the same moment and one be refused; that body fails and its work is tried again. A machine where that happens sets the limit to 1. A job beyond the limit waits, and loom shows it as starting."),
+        ("What is kept on the disk", "cyan", log(("images", "two a house, ten in all"), ("repositories", "the eight used most recently"), ("leftovers", "unnamed images after a day, build cache after a week")),
+         "After a build the worker removes what it no longer needs: house images beyond the two newest of each house and the ten newest in all, never one a job is using. It keeps its copies of the eight repositories used most recently. It also asks the engine to remove unnamed images older than a day and build cache unused for a week, which reaches every such leftover on that engine, not only loom's."),
+    ])
+
+    wrong = '<div class="dec">' + group("A job fails, and the worker carries on", "pink", [
+        row("<b>Build failed.</b> The address is not https, the branch or Housefile is not there, the secret does not fetch the repository, the commit is past a limit, or a step of the Housefile failed.", "worker build · exit code 22"),
+        row("<b>The build ran out of time.</b> The fetch and build together took longer than the build's limit.", "worker build time · exit code 32"),
+        row("<b>The house image does not meet the image contract</b>, followed by what is missing: <code>loom.house</code>, <code>loom.house.node</code>, <code>loom.house.body.codex</code>, <code>WORKDIR</code> or <code>VOLUME</code>.", "worker house · exit code 30"),
+        row("<b>Launch failed.</b> The Node program the label names is not in the image, or the engine could not start the container.", "worker launch · exit code 23"),
+        row("<b>Runner failed.</b> The machine has no sign-in directory for the job's account and harness.", "worker runner · exit code 27"),
+        row("<b>Body config.</b> The body file the label names is not in the image, or is not a body file.", "body config · exit code 16"),
+    ]) + group("The worker stops when it starts, with one line", "amber", [
+        row("<b>git 2.32.0 or later, which fetches each house's repository, could not be run on this machine.</b>", "worker exit code 54"),
+        row("<b>The directory the worker is installed in cannot give containers the body program.</b> The worker's packages are not inside its own directory.", "worker exit code 55"),
+        row("<b>A path the configuration gives to containers, or an engine socket, cannot be used.</b> The line ends with the key of the entry at fault, never a path.", "worker exit code 52"),
+        row("<b>The configuration has a key that a worker with container bodies no longer takes.</b> A build command, a runner, or directories listed for every agent at once. The line ends with the key.", "worker exit code 53"),
+    ]) + '</div>'
+
+    needs = '<div class="dec">' + group("What a machine needs", "cyan", [
+        row("A container engine that serves the Docker Engine API on a socket: Docker, or Podman.", "the engine"),
+        row("git 2.32 or later.", "to fetch"),
+        row("The loom worker, installed with its packages inside its own directory, as <code>npm install -g</code> does. An install that shares packages with a project, the npx cache and pnpm are not supported.", "to run bodies"),
+        row("A token for the machine, and a configuration that names the engine's socket.", plink("Signing in")),
+    ]) + group("Not supported", "amber", [
+        row("A repository at an <code>ssh</code> address, or fetched with a deploy key.", "https only"),
+        row("Submodules. A submodule's files are not in the build.", "left out"),
+        row("Git LFS. A file kept in LFS reaches the build as the small pointer file the commit holds.", "pointer only"),
+        row("A base image in a registry that needs a sign-in, unless the engine itself is signed in to it. Loom passes no registry credential.", "the engine's own"),
+    ]) + group("Not built yet", "violet", [
+        row("A core house that loom provides, so that an agent's Housefile adds only its own things. Today every house is built from a public base image, whole.", "stated direction"),
+        row("A conversation's harness session carried from one body to the next. Today each body starts its harness afresh.", "stated direction"),
+    ]) + '</div>'
+
+    body = f"""
+<section class="hero2">
+  <div class="hero2__text t-cyan">
+    <div><p class="eyebrow">Beside page {idx} · where a body runs</p><h1>Houses</h1>
+    <p class="lead"><b>A house is the container image an agent's body runs in.</b> One file in the agent's own repository, the Housefile, says how to build it.</p></div>
+    <p class="lead">Any worker builds and runs any agent's house. Nothing is set up on a machine for an agent.</p>
+  </div>
+</section>
+{band("What it is", "what-h", "A house, a worker and a Housefile", "", what)}
+{band("Where it is named", "named-h", "An agent's run settings", "", named)}
+{band("The Housefile", "file-h", "What a house says about itself", "An ordinary container build file, with labels that tell loom how to start a body in the image. Loom reads labels, and not a file inside the image, because an image's labels can be read without starting anything from it.", housefile)}
+{band("How it works", "how-h", "When a job needs a house", "", steps)}
+{band("At run time", "run-h", "What is not in the image", "", runtime)}
+{band("On one machine", "many-h", "Several jobs at once, and the disk", "", several)}
+{band("When it goes wrong", "wrong-h", "What a person sees", "", wrong)}
+{band("Limits", "limits-h", "What a machine needs, and what is not there", "", needs)}
+<footer class="foot"><p>Houses sits beside <b>Machines and jobs</b>.</p><a class="btn" href="{FILE["Machines and jobs"]}">Machines and jobs <span aria-hidden="true">›</span></a></footer>
+"""
+    return page(idx, "Houses · loom", body, beside="Machines and jobs")
+
 # ───────────────────────── Measuring
 def measuring():
     fig = f'''<div class="fork">
@@ -933,4 +1086,4 @@ def pages():
     return [("desk.html", desk()), ("approvals.html", approvals()), ("tempo.html", tempo()), ("changes.html", changes()), ("inbox.html", inbox()),
             ("memory.html", memory()), ("machines.html", machines()), ("models.html", models()), ("bridges.html", bridges()), ("secrets.html", secrets()),
             ("people.html", people()), ("signing-in.html", signing()), ("outside.html", outside()), ("tools.html", tools()), ("data.html", data()), ("measuring.html", measuring()),
-            ("decided.html", decided())]
+            ("decided.html", decided()), ("houses.html", houses())]
