@@ -1,6 +1,6 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
 import { doorTokenIn } from '../cli/connection.js';
-import { BUILD_DEADLINE_MAX_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
+import { ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
 import { workerTurns } from './worker-turns.js';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
@@ -41,6 +41,9 @@ const configSchema = z.object({
   build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),
   /** How many jobs the worker runs side by side. Left out: 4 with container bodies, 1 with process bodies. */
   slots: z.number().int().min(1).max(SLOTS_MAX).optional(),
+  /** How many of those may be bodies on one account at once. Left out: 4, or `slots` when that is fewer.
+   * 1 runs an account's bodies one after the other. Never more than `slots`. */
+  accountSlots: z.number().int().min(1).max(SLOTS_MAX).optional(),
   /** The longest a build may take. Left out: 5 minutes for a build command, 30 for a house's image. */
   buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
@@ -66,6 +69,7 @@ const configSchema = z.object({
   // A body run as a process is given nothing by a mount: sign-in directories that would be shared by every
   // body all the same are refused, never quietly ignored.
   if (config.accountLogins && !config.container) context.addIssue({ code: 'custom', message: 'Account sign-in directories need container bodies' });
+  if (config.accountSlots !== undefined && config.accountSlots > (config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1))) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
   // Bodies as processes need the command that builds and a runner for each harness, as before.
   if (!config.container && (!config.build || !config.runners)) context.addIssue({ code: 'custom', message: 'A worker without container bodies needs build and runners' });
 });
@@ -212,7 +216,8 @@ export async function workerProgram(input: {
     // the executor, the stop and whose turn it is for what two bodies cannot have at once (worker-turns.ts).
     // A slot that fails (a body it could not end) stops the others; each ends its own body before the
     // worker goes on to exit, and the first failure is the one reported.
-    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1), turns = workerTurns();
+    const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
+    const turns = workerTurns({ accounts: config.accountSlots ?? Math.min(ACCOUNT_SLOTS_DEFAULT, slots) });
     try {
       if (!abort.signal.aborted) {
         const running = Array.from({ length: slots }, () => (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor: executor!, turns })

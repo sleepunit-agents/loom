@@ -24,7 +24,7 @@ import { isHolderGeneration } from './pieces/secrets/role.js';
 import { isDiscordId } from './pieces/bridges/discord-id.js';
 import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
-import { BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
+import { ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
 import { CONVERSATION_ID, HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, TASK_ID, conversationId, householdId, scopedStoreId, slug, taskId } from './slug.js';
 import { MEMORY_CATEGORIES } from './categories.js';
 import { DAY } from './core/day.js';
@@ -621,7 +621,9 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(sources('src').filter(file => /\b4_?194_?304\b/.test(text(file)))).toEqual(['src/runtime/docker-engine.ts']);
   expect(text('src/runtime/house-image.ts')).toContain("import { houseFile, type House } from './house-source.js';");
   // How many jobs a worker runs side by side: the two numbers in one file, read by the schema and the program.
-  expect([HOUSE_SLOTS_DEFAULT, SLOTS_MAX]).toEqual([4, 16]);
+  expect([HOUSE_SLOTS_DEFAULT, SLOTS_MAX, ACCOUNT_SLOTS_DEFAULT]).toEqual([4, 16, 4]);
+  expect(text('src/runtime/worker-program.ts')).toContain('accountSlots: z.number().int().min(1).max(SLOTS_MAX).optional(),');
+  expect(text('src/runtime/worker-program.ts')).toContain('config.accountSlots ?? Math.min(ACCOUNT_SLOTS_DEFAULT, slots)');
   expect(text('src/runtime/worker-program.ts')).toContain('slots: z.number().int().min(1).max(SLOTS_MAX).optional(),');
   expect(text('src/runtime/worker-program.ts')).toContain('config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1)');
   // What two bodies cannot have at once is named in one place, and the loop asks there.

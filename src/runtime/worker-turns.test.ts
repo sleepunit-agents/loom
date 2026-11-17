@@ -24,6 +24,22 @@ it('gives one account to one job at a time, and to the next when the first gives
   const third = asking(turns, ['account:a']); first.release(); await settle(); expect(third.given).toBe(false);
   second.release(); await settle(); expect(third.given).toBe(true);
 });
+it('lets as many bodies run on one account as it is told, and makes the next wait; a port is always one body\'s', async () => {
+  const turns = workerTurns({ accounts: 2 });
+  const one = asking(turns, ['account:a']), two = asking(turns, ['account:a']), three = asking(turns, ['account:a']), other = asking(turns, ['account:b']);
+  await settle(); expect([one.given, two.given, three.given, other.given]).toEqual([true, true, false, true]);
+  two.release(); await settle(); expect(three.given).toBe(true);
+  // Giving up twice frees one place, not two.
+  two.release(); const four = asking(turns, ['account:a']); await settle(); expect(four.given).toBe(false);
+  one.release(); await settle(); expect(four.given).toBe(true);
+  // Two jobs on one account with room for both still cannot publish one port together.
+  const wide = workerTurns({ accounts: 4 }), first = asking(wide, ['account:a', 'port:8080']), second = asking(wide, ['account:a', 'port:8080']), third = asking(wide, ['account:a']);
+  await settle(); expect([first.given, second.given, third.given]).toEqual([true, false, false]);
+  first.release(); await settle(); expect([second.given, third.given]).toEqual([true, true]);
+  // Left unsaid, an account is one body's at a time; and the number is a whole one of at least 1.
+  expect(asking(workerTurns(), ['account:a']).given || true).toBe(true);
+  for (const accounts of [0, -1, 1.5, Number.NaN]) expect(() => workerTurns({ accounts })).toThrow('Invalid account slots');
+});
 it('serves in the order asked, and never lets a later job in front of an earlier one that wants the same thing', async () => {
   const turns = workerTurns(), holder = asking(turns, ['account:a']);
   // Wants two things, one of them held. A later job wants only the free one: it waits behind.

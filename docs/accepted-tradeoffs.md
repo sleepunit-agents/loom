@@ -363,10 +363,16 @@ Entries are grouped by the part of the program they belong to.
 ### Two bodies on one account share one sign-in directory
 
 - **What.** A container body is given its account's sign-in directory read-write (`accountLogins`). Two
-  bodies on the same account and harness are given the same directory, one after the other on one worker.
-  Each can read and change what the earlier one's provider program wrote there. Two workers on one
-  machine, or a worker and a person's own session, can still have two programs renewing one sign-in at
-  once.
+  bodies on the same account and harness are given the same directory, at once or one after the other.
+  Each can read and change what the other's provider program wrote there, and two programs can renew the
+  sign-in at the same moment. When they do, one of them may be refused by the provider (a renewal that
+  was already used) and that body's harness fails.
+- **What that failure looks like.** The body ends with its own code for a failed harness (exit 14, "body
+  harness", chosen by the body), and the job is recorded failed. It is tried again by the ordinary chain
+  when it left mail it had not confirmed: after 5 seconds, 30 seconds and 2 minutes, three times at most.
+  The retry reads the sign-in the other program just wrote. A machine that sees this more than rarely
+  sets `accountSlots` to 1 in its worker's configuration, which runs an account's bodies one after the
+  other.
 - **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
   `src/runtime/worker-container.ts`.
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
@@ -375,20 +381,23 @@ Entries are grouped by the part of the program they belong to.
   included); so does any mounted directory that is, holds or is inside either
   engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
   file. With `accountLogins` present, a job
-  with no exact entry does not run. On one worker, one body at a time runs on an account: a second job on
-  it waits until the first body has ended (`src/runtime/worker-turns.ts`).
+  with no exact entry does not run. On one worker, at most `accountSlots` bodies run on an account at once
+  (4 by default; `src/runtime/worker-turns.ts`): a job beyond that waits until one has ended.
 - **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
   configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
   engine's user can reach on the machine, every account's sign-in directory included: it can start a
   container of its own with any of them mounted. "Its own directory and no other" holds for every job
   that is not given the engine.
 - **Why the rest is accepted.** A sign-in is one set of files per account, which the provider's program
-  must be able to rewrite. Two processes signed in to one account on a host share them in the same way
-  today, and both bodies already act as that account. The engine's socket was already broad authority
+  must be able to rewrite. Many processes signed in to one account share them in the same way on this
+  household's machines and have for months, and every such body already acts as that account. Running
+  an account's bodies one at a time would make a household whose jobs are mostly on one account wait
+  for no gain most of the time. The engine's socket was already broad authority
   over the machine that both an agent's run settings and the machine's operator must opt in to; the
   sign-in directories are one more thing within its reach, not a new kind of reach.
 - **What would change the answer.** A provider program that takes its sign-in from a file it does not
-  rewrite, or renews through the worker. Each body could then have a copy of its own. For nested
+  rewrite, or renews through the worker; or a lock around renewal that every body of an account takes.
+  Each body could then have a copy of its own, or renew in turn. For nested
   containers: an engine of the job's own (one that cannot see the machine's files) in place of the
   machine's socket.
 

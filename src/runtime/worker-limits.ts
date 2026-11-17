@@ -21,3 +21,6 @@ export const HOUSE_BUILD_DEFAULT_MS = 1_800_000;
 export const HOUSE_SLOTS_DEFAULT = 4;
 /** The most jobs any worker may be told to run side by side. */
 export const SLOTS_MAX = 16;
+/** How many bodies a worker runs on one account at once when the configuration does not say
+ * (`accountSlots`); never more than its slots. */
+export const ACCOUNT_SLOTS_DEFAULT = 4;

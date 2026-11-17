@@ -400,3 +400,31 @@ it('ends every slot when the worker is asked to stop, and exits 0 once each has'
   f.handlers.get('SIGTERM')!();
   expect(await running).toBe(0); expect(ended.sort()).toEqual([1, 2, 3, 4]); expect(f.error).not.toHaveBeenCalled();
 });
+
+it('lets as many bodies run on one account as accountSlots says: four when it does not, never more than the slots, one after the other at 1', async () => {
+  const never = new AbortController().signal;
+  /** How many jobs on one account the worker's turns let start together. */
+  const together = async (patch: Record<string, unknown>) => {
+    const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
+    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }) : 'private-token');
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+    const turns = f.run.mock.calls[0][0].turns as { take(keys: string[], signal: AbortSignal): Promise<() => void> };
+    let given = 0; for (let job = 0; job < 20; job++) void turns.take(['account:one'], never).then(() => { given++; });
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    return given;
+  };
+  expect(await together({})).toBe(4); expect(await together({ slots: 8 })).toBe(4); expect(await together({ slots: 2 })).toBe(2);
+  expect(await together({ slots: 8, accountSlots: 6 })).toBe(6); expect(await together({ accountSlots: 1 })).toBe(1); expect(await together({ slots: 16, accountSlots: 16 })).toBe(16);
+});
+for (const patch of [{ accountSlots: 5 }, { slots: 2, accountSlots: 3 }, { accountSlots: 0 }, { accountSlots: 17, slots: 16 }, { accountSlots: 1.5 }, { accountSlots: '2' }])
+  it(`refuses ${JSON.stringify(patch)}: more bodies on one account than the worker has slots, or no whole number of them`, async () => {
+    const f = fixture(), containerExecutor = vi.fn();
+    f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }));
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  });
+it('holds a process worker to its one slot for accounts too', async () => {
+  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, accountSlots: 2 }));
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
+  const fine = fixture(); fine.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, slots: 3, accountSlots: 2 }) : 'private-token');
+  expect(await workerProgram(fine)).toBe(0); expect(fine.run).toHaveBeenCalledTimes(3);
+});

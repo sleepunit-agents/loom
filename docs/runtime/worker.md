@@ -208,7 +208,7 @@ notice, once, and closes the notice when the mail is admitted.
 ## Several jobs at once
 
 ```json
-{"slots": 4}
+{"slots": 4, "accountSlots": 4}
 ```
 
 `slots` is how many jobs a worker runs side by side: an integer from 1 to 16.
@@ -221,12 +221,18 @@ themselves. Memory, disk and GPU are not counted: `slots` is the only limit.
 
 What two jobs on one worker never have at the same time:
 
-- **An account.** A body is signed in through files its provider's program
-  rewrites when it renews (a sign-in directory, or a runner's own profile), and
-  nothing makes two programs renewing one sign-in at once safe. So one body at a
-  time runs on an account. A second job placed on that account is claimed,
-  fetched and built, and then waits for the first body to end.
-- **A port** a job publishes on the machine, on whatever address.
+- **An account, beyond `accountSlots` bodies.** `accountSlots` is how many
+  bodies may run on one account at once: 4 when it is left out (or `slots`, when
+  that is fewer), and never more than `slots`. Bodies on one account share its
+  sign-in, as several sessions of one person do. A job placed on an account
+  that is full is claimed, fetched and built, and then waits for one of its
+  bodies to end. Two provider programs renewing one sign-in at the same moment
+  can leave one of them refused; a machine that sees that sets `accountSlots`
+  to 1, which runs an account's bodies one after the other (see "Two bodies on
+  one account share one sign-in directory" in
+  [`../accepted-tradeoffs.md`](../accepted-tradeoffs.md)).
+- **A port** a job publishes on the machine, on whatever address: always one
+  body's at a time.
 - **A build command**, for a process worker: one runs at a time, and the build
   limit of the next counts from when its turn comes. A container worker builds
   different houses side by side, and builds one image once for every job that
@@ -234,8 +240,8 @@ What two jobs on one worker never have at the same time:
 
 A job that waits is reported to loom as starting all the while, takes what it
 needs all at once and in the order jobs asked, and stops waiting when it is
-stopped. Only a running body holds an account or a port: a job that is still
-building holds neither.
+stopped. Only a running body holds a place on an account or a port: a job that
+is still building holds neither.
 
 A Stop ends its own job and no other, whether that job is building, waiting or
 running; a build other jobs are waiting on goes on. When the worker is asked to

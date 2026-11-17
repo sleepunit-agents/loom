@@ -297,7 +297,7 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
   expect(token.toString()).toBe('body_'+'a'.repeat(64)); accepted.resolve(); await flush(); expect(token.every(byte => byte === 0)).toBe(true);
   f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
 });
-  it('starts a second job\'s body on the same account only when the first body has ended, reporting it as starting while it waits', async () => {
+  it('with one body at a time on an account, starts a second job\'s body only when the first body has ended, reporting it as starting while it waits', async () => {
     const turns = workerTurns(), first = fixture(turns), second = fixture(turns, { ...job, id: 'k' }), elsewhere = fixture(turns, { ...job, id: 'm', account: 'another-account', run: { ...job.run!, ports: [] } });
     // Another account again, but publishing the port the first job publishes: that waits too.
     const samePort = fixture(turns, { ...job, id: 'p', account: 'a-third-account' });
@@ -346,4 +346,17 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
     await expect(two).rejects.toThrow('cannot end'); await flush();
     expect(after.executor.start).not.toHaveBeenCalled();
     after.abort.abort(); expect(await three).toBe('abandoned');
+  });
+  it('runs two jobs on one account side by side when the account has room for both, and makes the third wait', async () => {
+    const turns = workerTurns({ accounts: 2 }), free = { ...job, run: { ...job.run!, ports: [] } };
+    const first = fixture(turns, { ...free, id: 'one' }), second = fixture(turns, { ...free, id: 'two' }), third = fixture(turns, { ...free, id: 'three' });
+    const one = first.run(), two = second.run(), three = third.run(); await flush();
+    for (const f of [first, second, third]) f.built.resolve('image'); await flush();
+    expect(first.executor.start).toHaveBeenCalledOnce(); expect(second.executor.start).toHaveBeenCalledOnce(); expect(third.executor.start).not.toHaveBeenCalled();
+    first.spawned.resolve(); second.spawned.resolve(); await flush();
+    expect(first.control.started).toHaveBeenCalledOnce(); expect(second.control.started).toHaveBeenCalledOnce();
+    // Either body ending makes room for the third.
+    second.exited.resolve({ exitCode: 0, logTail: '' }); expect(await two).toBe('finished'); await flush(); expect(third.executor.start).toHaveBeenCalledOnce();
+    first.exited.resolve({ exitCode: 0, logTail: '' }); expect(await one).toBe('finished');
+    third.spawned.resolve(); await flush(); third.exited.resolve({ exitCode: 0, logTail: '' }); expect(await three).toBe('finished');
   });

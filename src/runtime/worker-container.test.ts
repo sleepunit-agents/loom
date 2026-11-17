@@ -766,8 +766,8 @@ it('builds once for two jobs of one house, and a Stop on one of them ends that o
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
   expect(await second).toBe('finished'); expect(kept.finish).toHaveBeenCalledExactlyOnceWith('kept', 0, '', 'body');
 });
-it('gives one account\'s sign-in directory to one body at a time: the second job\'s container is not made until the first body has ended', async () => {
-  const f = house(), turns = workerTurns();
+it('with one body at a time on an account, gives its sign-in directory to one container: the second job\'s is not made until the first body has ended', async () => {
+  const f = house(), turns = workerTurns({ accounts: 1 });
   const one = controlFor({ ...job, id: 'one' }), two = controlFor({ ...job, id: 'two' });
   const first = workOnce({ box: 'box', control: one, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
   const second = workOnce({ box: 'box', control: two, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
@@ -781,4 +781,15 @@ it('gives one account\'s sign-in directory to one body at a time: the second job
   await flush(); expect(created()).toHaveLength(2);
   // (This fixture has one body's pipes; what becomes of the second body is not what is looked at here.)
   f.abort.abort(); await second;
+});
+it('with room for several bodies on an account, runs two jobs on it together, each container with the account\'s one sign-in directory', async () => {
+  const f = house(), turns = workerTurns({ accounts: 4 });
+  const one = controlFor({ ...job, id: 'one' }), two = controlFor({ ...job, id: 'two' });
+  const first = workOnce({ box: 'box', control: one, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  const second = workOnce({ box: 'box', control: two, executor: f.executor, signal: f.abort.signal, turns, schedule: { every: () => () => {} } });
+  await flush();
+  const created = f.engine.json.mock.calls.filter(call => call[1].startsWith('/containers/create'));
+  expect(created).toHaveLength(2); for (const call of created) expect(JSON.stringify(call[2])).toContain(loginA);
+  expect(one.started).toHaveBeenCalledOnce(); expect(two.started).toHaveBeenCalledOnce();
+  f.abort.abort(); await Promise.all([first, second]);
 });
