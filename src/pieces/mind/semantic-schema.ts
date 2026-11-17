@@ -12,7 +12,7 @@ export function semanticMemoryReady(db:Database){
  const rows=db.prepare('SELECT number,sql FROM memory_command_schema ORDER BY number').all() as Array<{number:number;sql:string}>;
  return rows.length===1&&rows[0].number===1&&rows[0].sql===sql;
 }
-/** Only exclusive fresh-file creation or the separate data move calls this. */
+/** Called only while a fresh file is being made under its temporary name (`prepareSharedMemorySources`). */
 export function prepareSemanticMemory(db:Database){
  db.transaction(()=>{
   if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_command_schema'").get())db.exec(schemaSql);

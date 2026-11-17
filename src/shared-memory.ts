@@ -3,9 +3,9 @@ import {Notes,notesDbPath} from './notes.js';
 import {sharedNotes} from './shared-notes.js';
 /** Memory stays in declared source files. Existing store/action modules own
  * their schema and retry receipts; this creates no legacy loom tables. */
-import {mkdirSync,openSync,closeSync} from 'node:fs';
+import {mkdirSync,openSync,closeSync,fsyncSync,linkSync,rmSync,statSync} from 'node:fs';
 import Database from 'better-sqlite3';
-import {dirname} from 'node:path';
+import {basename,dirname,join} from 'node:path';
 import type {DataDatabase} from './core/data/database.js';
 import {eq} from 'drizzle-orm';
 import type {Clock} from './core/clock.js';
@@ -40,25 +40,45 @@ export interface SharedMemoryOptions {
  sections?:{tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole};
 }
 /** Fresh declared files only. Existing precious files, including their schema,
- * are left to their existing owner. Run before readers and touch listeners. */
+ * are left to their existing owner. Run before readers and touch listeners.
+ *
+ * A file is made whole under a temporary name beside it and given its real name
+ * last, so a start that is killed part-way leaves nothing a later start would
+ * take for a prepared file. What such a start leaves behind is its temporary
+ * directory, which the next start removes before it begins again. */
 export async function prepareSharedMemorySources(options:SharedMemoryOptions|undefined){
  if(!options)return;
  const {commons,agents}=options.sources;
- const prepareReceipts=(path:string)=>{const db=new Database(path,{fileMustExist:true});try{migrateMindReceipts(db);}finally{db.close();}};
- const fresh=async(path:string,initialise:()=>void|Promise<void>)=>{
-  try{closeSync(openSync(path,'wx',0o600));}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')return;throw error;}
-  await initialise();prepareReceipts(path);
+ const fresh=async(path:string,initialise:(directory:string,path:string)=>void|Promise<void>)=>{
+  // An empty file under the real name holds nothing: an earlier program created
+  // the file first and prepared it after, and was killed between the two.
+  const present=statSync(path,{throwIfNoEntry:false});
+  if(present&&(present.size>0||!present.isFile()))return;
+  const directory=path+'.preparing',making=join(directory,basename(path));
+  rmSync(directory,{recursive:true,force:true});mkdirSync(directory,{mode:0o700});
+  closeSync(openSync(making,'wx',0o600));
+  await initialise(directory,making);
+  // The last connection folds the write-ahead log into the file as it closes,
+  // so the one file that is named below is the whole database.
+  const db=new Database(making,{fileMustExist:true});
+  try{migrateMindReceipts(db);db.pragma('wal_checkpoint(TRUNCATE)');}finally{db.close();}
+  if(statSync(making+'-wal',{throwIfNoEntry:false})?.size)throw Error('A prepared Memory file still has unsaved pages');
+  const file=openSync(making,'r');try{fsyncSync(file);}finally{closeSync(file);}
+  if(present)for(const suffix of ['','-wal','-shm','-journal'])rmSync(path+suffix,{force:true});
+  // Linking refuses a name that is taken, so a file that appeared meanwhile is kept.
+  try{linkSync(making,path);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+  rmSync(directory,{recursive:true,force:true});
  };
  for(const path of [commons.knowledge,commons.people,...agents.map(a=>a.memories)])mkdirSync(dirname(path),{recursive:true});
- await fresh(commons.knowledge,async()=>{
-  const knowledge=new SqliteKnowledgeBackend({dbPath:commons.knowledge});
+ await fresh(commons.knowledge,async(_directory,path)=>{
+  const knowledge=new SqliteKnowledgeBackend({dbPath:path});
   try{await knowledge.getPage('bootstrap-probe');}finally{knowledge.close();}
  });
- await fresh(commons.people,()=>{new PeopleStore({dbPath:commons.people}).close();});
- for(const agent of agents){await fresh(notesDbPath(agent.directory),()=>{new Notes(agent.directory).close();});await fresh(agent.memories,()=>{
-  new PeopleStore({dbPath:agent.memories,actor:agent.agent}).close();
-  new ProjectsStore({dbPath:agent.memories}).close();
-  const db=new Database(agent.memories,{fileMustExist:true});try{prepareSemanticMemory(db);}finally{db.close();}
+ await fresh(commons.people,(_directory,path)=>{new PeopleStore({dbPath:path}).close();});
+ for(const agent of agents){await fresh(notesDbPath(agent.directory),directory=>{new Notes(directory).close();});await fresh(agent.memories,(_directory,path)=>{
+  new PeopleStore({dbPath:path,actor:agent.agent}).close();
+  new ProjectsStore({dbPath:path}).close();
+  const db=new Database(path,{fileMustExist:true});try{prepareSemanticMemory(db);}finally{db.close();}
  });}
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
