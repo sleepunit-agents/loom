@@ -43,6 +43,18 @@ To change the schema:
 3. Copy the new `assets/data/schema.sql` to
    `src/core/data/shipped-shapes/<new number>.sql`. Never edit an earlier one.
 
+A step may rebuild a table (create the new one, copy the rows, drop the old one,
+rename): SQLite cannot drop a column that carries a foreign key, and step 6 does
+this to drop `conversations.job`. For that reason the steps run with foreign keys
+off, inside one transaction, and every reference in the database is checked
+(`PRAGMA foreign_key_check`) before the transaction commits; a step that would
+leave a row pointing at nothing changes nothing. A rebuilt table loses its
+indexes and triggers with the old one, so the step recreates each, written as the
+generated SQL writes it.
+
+When no step is pending, which is every ordinary start, nothing is rehearsed: the
+file's own shape is compared with a fresh database's.
+
 `src/core/data/upgrade.test.ts` upgrades the installation SQL of every shipped number
 and compares each table with a fresh database in full. It fails if the newest pinned
 shape is not today's `schema.sql`, so a schema change with no step cannot pass.

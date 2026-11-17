@@ -65,7 +65,11 @@ Slack socket per app.
 
 1. **A DM** is for the agent whose bot received it.
 2. **In a shared channel**, a mention decides: `@art …` in #mark is Art's, and
-   Mark doesn't answer. This is the "primary, mention-only" rule the Discord
+   Mark doesn't answer. Two things address a bot exactly as its mention does: an
+   explicit reply to one of its messages (with or without the reply ping), and
+   a message in a thread that hangs under one of its messages. Nothing looser
+   does: a bot that has only spoken in a thread, or spoke last in the channel,
+   is not addressed by what follows. This is the "primary, mention-only" rule the Discord
    bridge already follows, made the rule for every platform.
 3. **No mention** goes to the channel's **primary** agent, if it has one. A
    channel's primary is set in loom (the agent's Bridges section, or the
