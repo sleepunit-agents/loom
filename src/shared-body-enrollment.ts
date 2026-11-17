@@ -1,6 +1,7 @@
 /** Canonical metadata-only enrollment for the locally generated body credential.
  * Only the current assigned starting worker can bind a fingerprint to its job.
  * This decides who may enrol; the row itself is made by sharedTokens, like every token row. */
+import {SHA256_HEX} from './core/sha256-hex.js';
 import {createHash} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
@@ -11,7 +12,7 @@ import {sharedTokens} from './core/signin/shared-tokens.js';
 import {tokenLive} from './core/data/authentication.js';
 import type {Viewer} from './policy.js';
 import {liveWorker} from './shared-worker.js';
-const input=z.object({job:z.string().min(1).max(200),fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
+const input=z.object({job:z.string().min(1).max(200),fingerprint:z.string().regex(SHA256_HEX)}).strict();
 type EnrollmentProof=Readonly<{box:string;fingerprint:string}>;
 export function registerSharedBodyEnrollment(operations:Operations,db:DataDatabase,options:{
  now():string;runnerEnrollment(viewer:Viewer):EnrollmentProof|undefined;

@@ -19,6 +19,8 @@ export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: stri
  * Source preparation owns metadata; verification and its receipt
  * insertion share one immediate source transaction.
  */
+/** A knowledge page's slug as a command may send it. The page's own rules are the store's. */
+export const pageSlug = z.string().min(1).max(200);
 export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier }) {
   const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
   const recover = (ctx: Context) => {
@@ -36,7 +38,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     ['knowledgeRecheck', 'stale'],
   ] as const) {
     const name = `mind.${verb}`;
-    operations.register(operation({ name, write: true, input: z.object({ slug: z.string().min(1).max(200), note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
+    operations.register(operation({ name, write: true, input: z.object({ slug: pageSlug, note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
       recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
       run(ctx, input) {
@@ -126,7 +128,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
         return answer;
       },
     }));
-  const slug = z.string().min(1).max(200);
+  const slug = pageSlug;
   // Edit: new words, a source to add, or both.
   replace('mind.knowledgeEdit', 'edit', z.object({ slug, body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH).optional(), source: z.string().trim().max(4000).default('') }).strict()
     .refine(value => value.body !== undefined || value.source !== '', 'Give new words, a source, or both'),

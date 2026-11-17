@@ -13,10 +13,9 @@ import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs, secretRequests, secretUses } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-import { secretName, requestReason } from './pieces/secrets/input.js';
+import { agentSecretRequest } from './pieces/secrets/input.js';
 import type { SecretRequests } from './pieces/secrets/requests.js';
-const requestState=z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict();
-const request=z.object({id:z.uuid(),secret:secretName,why:requestReason,minutes:z.number().int().min(1).max(525600),scope:z.enum(['agent','job']).default('job')}).strict();
+const requestState=z.object({id:z.string(),state:z.enum(secretRequests.state.enumValues)}).strict();
 const handoff=z.object({id:z.string(),state:z.enum(['started','released','failed'])}).strict();
 export function registerSharedSecretAgentCommands(operations:Operations,db:DataDatabase,requests:SecretRequests,
  body:(viewer:Viewer)=>Readonly<{agent:string;job:string}>|undefined){
@@ -26,7 +25,7 @@ export function registerSharedSecretAgentCommands(operations:Operations,db:DataD
   const job=db.select({id:jobs.id,agent:jobs.agent,conversation:jobs.conversation}).from(jobs).where(eq(jobs.id,bound.job)).get();
   return job?.agent===bound.agent?job:undefined;
  };
- operations.register({name:'secrets.request',input:request,output:requestState,write:true,recheckPolicy:true,
+ operations.register({name:'secrets.request',input:agentSecretRequest,output:requestState,write:true,recheckPolicy:true,
   inputHash:(canonical,{actor})=>{const job=target(actor);return createHash('sha256').update('loom-shared-secret-request-receipt-v1\0').update(JSON.stringify([job?.id??null,job?.conversation??null,canonical])).digest('hex');},
   may:(viewer,input)=>itself(viewer,viewer.id)&&(input.scope==='agent'||!!target(viewer)),
   run(ctx,input){

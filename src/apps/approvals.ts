@@ -9,7 +9,7 @@ import { householdOwners } from '../shared-sharing.js';
 
 export type Approval = typeof approvals.$inferSelect;
 const request = z.object({
-  kind: z.enum(['merge', 'command', 'setting', 'dangerous']), target: z.string().trim().min(1),
+  kind: z.enum(approvals.kind.enumValues), target: z.string().trim().min(1),
   what: z.string().trim().min(1), why: z.string().trim().min(1), agent: z.string().min(1),
   askedFrom: z.string().min(1), actingFor: z.string().min(1), project: z.string().min(1).nullable().default(null),
   member: z.string().min(1).nullable().default(null), conversation: z.string().min(1).nullable().default(null),

@@ -57,12 +57,15 @@ export async function serve(args: string[], io: ServeIo = processIo): Promise<nu
   const host = values.host ?? process.env.LOOM_HTTP_HOST;
   const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
   if (host?.includes(',') || !Number.isInteger(port) || port < 0 || port > 65535) { io.stderr('Choose one --host and a valid --port\n'); return 2; }
-  const { startSharedHome } = await import('./shared-startup.js');
+  const { startSharedHome, StartupRefusal } = await import('./shared-startup.js');
   let handle: Awaited<ReturnType<typeof startSharedHome>>;
   try {
     handle = await startSharedHome({ home, program: values.program, host, port, stdout: io.stdout,
       reportError: () => { io.stderr('loom: service error\n'); } });
-  } catch { io.stderr('Startup refused. Supply a private program.json for an initialized household.\n'); return 2; }
+  } catch (error) {
+    io.stderr(error instanceof StartupRefusal ? `Startup refused. ${error.message}\n` : 'Startup refused. Supply a private program.json for an initialized household.\n');
+    return 2;
+  }
   io.stderr(`loom: shared app on ${handle.url}\n`);
   await new Promise<void>(done => {
     const stop = () => {

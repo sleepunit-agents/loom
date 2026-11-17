@@ -115,22 +115,24 @@ it('refuses a public startup inventory without starting a listener',async()=>{
  const f=await fixture();chmodSync(f.config,0o644);
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
 });
-it('refuses public assets overlapping private files or a startup owner who is not an owner',async()=>{
+it('refuses public assets overlapping private files, or a household that has no owner',async()=>{
  const f=await fixture();
  writeFileSync(f.config,JSON.stringify({...f.program,webRoot:f.home}),{mode:0o600});
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
  const alias=join(f.home,'public-alias');symlinkSync(f.home,alias);
  writeFileSync(f.config,JSON.stringify({...f.program,webRoot:alias}),{mode:0o600});
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
- writeFileSync(f.config,JSON.stringify({...f.program,signinMember:'peer'}),{mode:0o600});
- await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('existing household owner');
+ // The program file names nobody for sign-in any more; a household with no owner at all is still refused.
+ writeFileSync(f.config,JSON.stringify(f.program),{mode:0o600});
+ const client=new Database(f.program.database);client.prepare("UPDATE members SET role='member'").run();client.close();
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('needs an owner');
  expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);
 });
-it('rechecks the configured startup owner after service adapters finish',async()=>{
+it('rechecks that the household has an owner after service adapters finish',async()=>{
  const f=await fixture(),module=join(f.home,'demote.mjs'),printed=vi.fn();
  writeFileSync(module,"export default ({db})=>{db.$client.prepare(\"UPDATE members SET role='member' WHERE id='owner'\").run();return {};};",{mode:0o600});
  writeFileSync(f.config,JSON.stringify({...f.program,adapters:module}),{mode:0o600});
- await expect(startSharedHome({home:f.home,port:0,stdout:printed})).rejects.toThrow('no longer allowed');expect(printed).not.toHaveBeenCalled();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+ await expect(startSharedHome({home:f.home,port:0,stdout:printed})).rejects.toThrow('needs an owner');expect(printed).not.toHaveBeenCalled();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
  const client=new Database(f.program.database,{readonly:true});expect(client.prepare('SELECT count(*) AS n FROM signin_links').get()).toEqual({n:0});client.close();
 });
 it('keeps existing precious source bytes unchanged through failed and complete startup',async()=>{

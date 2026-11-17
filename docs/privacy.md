@@ -19,7 +19,7 @@ Everything loom writes is on your disk, in one home folder
 | Each agent's notes | `agents/<agent>/notes.db` and `agents/<agent>/note-files/` | Notes and the files attached to them. |
 | Knowledge and the people directory | `commons/knowledge.db`, `commons/people.db` | Shared by every agent of the household. |
 | Secret values | `secret-holder/` | Encrypted, and held by a separate process. Nowhere else. |
-| Where the stores are | `program.json` | Written at first install. |
+| Where the household database, the Comms key and the commons are | `program.json` | Written at first install. Names no person and no agent. |
 | Embedding model cache | `$LOOM_FASTEMBED_CACHE_DIR` (default `~/.cache/loom/fastembed/`) | One ~33 MB ONNX file after first run. |
 
 The words of a Comms thread are encrypted in `loom.db` with a key kept

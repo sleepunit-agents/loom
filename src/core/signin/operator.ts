@@ -1,11 +1,12 @@
 /** Local OS-owner capability: one bounded link request per connection, no database client. */
+import { LOGIN_PATH } from '../sha256-hex.js';
 import { createServer, createConnection, type Socket } from 'node:net';
 import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { assertHomeReady } from '../home-state.js';
 import { LINK_MS } from './link-lifetime.js';
-/** `member` may be left out: the issuer then uses the member it was configured with for local sign-in.
+/** `member` may be left out: the issuer then signs in a current household owner (src/shared-startup.ts).
  * `ttl` is in seconds, at most a link's own lifetime. `agent` says the link is for an automated browser,
  * which gets the short session and may not make links or add passkeys, whatever it calls itself. */
 export const operatorRequest = z.strictObject({
@@ -83,7 +84,7 @@ export async function requestLocalLink(home: string, input: unknown): Promise<{ 
       if (!data.includes(10)) return;
       try {
         const answer = JSON.parse(data.toString('utf8'));
-        if (!answer.ok || typeof answer.path !== 'string' || !/^\/login\/[0-9a-f]{64}$/.test(answer.path) || typeof answer.url !== 'string') throw new Error();
+        if (!answer.ok || typeof answer.path !== 'string' || !LOGIN_PATH.test(answer.path) || typeof answer.url !== 'string') throw new Error();
         finished = true; socket.destroy(); ok({ path: answer.path, url: answer.url });
       } catch { fail(); }
     });

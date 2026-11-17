@@ -7,12 +7,15 @@ import {privateOrigin} from '../../core/private-origin.js';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
 class PendingRepository extends Error {}
 const unavailable=()=>new Error('Private secret input unavailable');
+/** The longest one private read may take, and how long it is given when nobody says. A caller with a longer
+ * deadline of its own (the worker) is cut down to this. */
+export const PRIVATE_SECRET_TIMEOUT_MS=15_000;
 const aliases=z.object({aliases:z.array(z.object({alias:z.string().min(1).max(200)}).strict()).max(128),pending:z.literal(true).optional()}).strict();
 export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number}){
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
  const clock=options.clock??systemClock,request=options.fetch??fetch;
  if(!options.token||/[\0\r\n]/.test(options.token))throw unavailable();
- const timeout=options.timeoutMs??15000;if(!Number.isSafeInteger(timeout)||timeout<1||timeout>15000)throw unavailable();
+ const timeout=options.timeoutMs??PRIVATE_SECRET_TIMEOUT_MS;if(!Number.isSafeInteger(timeout)||timeout<1||timeout>PRIVATE_SECRET_TIMEOUT_MS)throw unavailable();
  let closed=false;const controllers=new Set<AbortController>(),owned=new Set<Uint8Array>(),batches=new Set<Map<string,Buffer>>();
  const cancelAll=()=>{for(const controller of controllers)controller.abort();for(const bytes of owned)bytes.fill(0);for(const batch of batches){for(const bytes of batch.values())bytes.fill(0);batch.clear();}};
  options.signal.addEventListener('abort',cancelAll,{once:true});

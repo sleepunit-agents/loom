@@ -1,4 +1,5 @@
 /** Pure Activity vocabulary and derivation. No old store or UI imports. */
+import {DAY} from '../../core/day.js';
 export type ActivityWhat = 'conversation' | 'work' | 'system';
 export interface ActivityLink {label:string;href?:string}
 export interface ActivityEntry {[key:string]:unknown;id:string;agent:string;at:string;day:string;hour:number;title:string;line?:string;venue:string;where:string;what:ActivityWhat;owner?:true;expires?:number}
@@ -31,7 +32,6 @@ export function dayBefore(day: string, n = 1): string {
   const [y, m, d] = day.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d - n)).toISOString().slice(0, 10);
 }
-export const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The first sentence (or the first 200 characters) of a summary: an entry's one line. */
 export function oneLine(s: string): string {

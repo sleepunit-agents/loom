@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 /** Actual normal startup and holder protocol/store; fake GitHub HTTP only. */
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
@@ -9,6 +10,8 @@ import {WebSocket} from 'ws';
 import {startSharedHome} from './shared-startup.js';
 import {initializeSharedHome} from './shared-initialize.js';
 import {FakeClock} from './core/clock.js';
+// The household's first owner: who it is is in the household database, not in program.json.
+const ownerOf=(database:string)=>{const db=new Database(database,{readonly:true});try{return (db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;}finally{db.close();}};
 const wire=vi.hoisted(()=>({start:vi.fn()}));
 vi.mock('./shared-holder-process.js',async()=>{const {inProcessSharedHolder}=await import('../test/fixtures/shared-holder.js');return{startSharedHolder:wire.start.mockImplementation(inProcessSharedHolder)};});
 const clean:Array<()=>void|Promise<void>>=[];
@@ -27,7 +30,7 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
  expect(app.refreshChanges).toBeUndefined();
  expect(await command(app,cookie,'secrets/set',{id:randomUUID(),name:'FORGE',value:'FICTITIOUS_GITHUB_TOKEN',mode:'add'})).toMatchObject({ok:true});
  const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
- app.writes.run(()=>app.services.setup.project({id:'app',name:'App',members:[program.signinMember],agents:['assistant'],repositories:['github:acme/app']}));
+ app.writes.run(()=>app.services.setup.project({id:'app',name:'App',members:[ownerOf(program.database)],agents:['assistant'],repositories:['github:acme/app']}));
  await app.close();program.githubBindings={ACME:'FORGE'};writeFileSync(file,JSON.stringify(program),{mode:0o600});
  let token='FICTITIOUS_GITHUB_TOKEN',fail=false,hold=false,release!:()=>void,began!:()=>void;
  const realFetch=globalThis.fetch,requests=vi.fn<typeof fetch>(async(input,init)=>{

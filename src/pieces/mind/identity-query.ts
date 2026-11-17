@@ -11,7 +11,7 @@ import {digestOnConnection} from '../../backends/salience.js';
 import {assembleTape,episodesOnConnection,DEFAULT_HOURS,HOUR_MS} from '../../backends/episodes.js';
 import {keepReadUntil} from '../../core/data/read-lease.js';
 import type {MemoryQueryContext} from './knowledge-query.js';
-import type {MindSources} from './sources.js';
+import {AgentFiles,type AgentSource,type MindSources} from './sources.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 const text={type:GraphQLString},required={type:new GraphQLNonNull(GraphQLString)};
 /** Authored pages beside the creed: one folder per kind, one Markdown file per name. */
@@ -27,10 +27,12 @@ function identity(directory:string,name:string){
  * handed the ones this viewer may see for this agent, written within the window. */
 export type TapeDigestReader=(viewer:Viewer,agent:string,window:{from:number;until:number})=>TapeDigest[];
 export function memoryIdentityFields(options:{sources?:MindSources;sharing():Sharing;now():number;timezone():string;digests?:TapeDigestReader},deadlines:QueryDeadlines){
- const sources=new Map<string,{directory:string;db?:Database.Database}>();let closed=false;
- const close=()=>{if(closed)return;closed=true;for(const source of sources.values())source.db?.close();sources.clear();};
- try{for(const source of options.sources?.agents??[]){if(sources.has(source.agent))throw Error('Duplicate Memory source');sources.set(source.agent,{directory:source.directory,db:existsSync(source.memories)?new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined});}}
- catch(error){close();throw error;}
+ // An agent's pages are files in its directory; its memory file is opened once it is there.
+ const stores=new AgentFiles<AgentSource,Database.Database>(()=>options.sources?.agents??[],source=>existsSync(source.memories)?new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined);
+ let closed=false;
+ const sources={get:(agent:string)=>{const source=closed?undefined:options.sources?.agents.find(source=>source.agent===agent);return source?{directory:source.directory,db:stores.get(agent)}:undefined;}};
+ const close=()=>{if(closed)return;closed=true;for(const db of stores.end())db.close();};
+ try{stores.follow();}catch(error){close();throw error;}
  const identityType=new GraphQLObjectType<{agent:string},MemoryQueryContext>({name:'MemoryIdentity',fields:{agent:required,readAt:required,creed:text,preferences:text,selfModel:text,topOfMind:text,recent:text,
   page:{type:GraphQLString,args:{kind:required,name:required},resolve:(parent,args:{kind:string;name:string},context)=>{
    const source=sources.get(parent.agent),folder=Object.hasOwn(pageFolders,args.kind)?pageFolders[args.kind]:undefined;

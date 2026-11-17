@@ -15,6 +15,13 @@ export function readTimings(db: DataDatabase, who: Recipient): Timings {
   return row ? { settleSeconds: row.settleSeconds, dimDays: row.dimDays, muteDays: row.muteDays } : { ...defaultTimings };
 }
 const day = 86_400_000;
+/** How long new mail may settle before it is shown (none to a day), and how long dim and mute may last (a day
+ * to ten years). The one statement of both: a household change is held to them where it is filed, and
+ * `setTimings` holds every caller to them. */
+export const SETTLE_SECONDS_MAX = 86_400, QUIET_DAYS_MAX = 3650;
+const within = (value: number, min: number, max: number) => Number.isSafeInteger(value) && value >= min && value <= max;
+export const validTimings = (value: Timings) => within(value.settleSeconds, 0, SETTLE_SECONDS_MAX)
+  && within(value.dimDays, 1, QUIET_DAYS_MAX) && within(value.muteDays, 1, QUIET_DAYS_MAX);
 
 /** Trusted in-process API. External callers must pass through the household door.
  * Inbox owns content and answers; Tempo owns only volume and its timings. */
@@ -25,11 +32,7 @@ export class InboxVolume {
 
   setTimings(who: Recipient, patch: Partial<Timings>): Timings {
     const value = { ...this.timings(who), ...patch };
-    if (!Number.isSafeInteger(value.settleSeconds) || value.settleSeconds < 0 ||
-        !Number.isSafeInteger(value.dimDays) || value.dimDays <= 0 ||
-        !Number.isSafeInteger(value.muteDays) || value.muteDays <= 0 ||
-        !Number.isFinite(this.clock.now() + Math.max(value.dimDays, value.muteDays) * day) ||
-        this.clock.now() + Math.max(value.dimDays, value.muteDays) * day > 8.64e15) throw new Error('Invalid Tempo timings');
+    if (!validTimings(value) || this.clock.now() + Math.max(value.dimDays, value.muteDays) * day > 8.64e15) throw new Error('Invalid Tempo timings');
     const key = and(eq(tempoSettings.whoKind, who.kind), eq(tempoSettings.who, who.id));
     if (Object.entries(defaultTimings).every(([k, v]) => value[k as keyof Timings] === v)) this.db.delete(tempoSettings).where(key).run();
     else this.db.insert(tempoSettings).values({ whoKind: who.kind, who: who.id, ...value }).onConflictDoUpdate({ target: [tempoSettings.whoKind, tempoSettings.who], set: value }).run();

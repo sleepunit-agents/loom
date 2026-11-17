@@ -13,6 +13,7 @@
  */
 import type { Database } from 'better-sqlite3';
 import { EPISODE_CATEGORY } from '../categories.js';
+import type { Observation } from './types.js';
 
 function hasColumn(db: Database, table: string, column: string): boolean {
   return (db.pragma(`table_info(${table})`) as { name: string }[]).some((c) => c.name === column);
@@ -76,7 +77,7 @@ export function clampConfidence(value: number): number {
 }
 
 /** Apply one confirming or contradicting observation to a stored confidence value. */
-export function applyObservation(current: number, kind: 'confirm' | 'contradict'): number {
+export function applyObservation(current: number, kind: Observation): number {
   const delta = kind === 'confirm' ? FEEDBACK_CONFIRM_DELTA : FEEDBACK_CONTRADICT_DELTA;
   return clampConfidence(current + delta);
 }

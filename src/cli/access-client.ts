@@ -1,10 +1,11 @@
 /** Canonical shared sign-in clients: GraphQL reads, shared commands, one-time issuance. */
+import {LOGIN_PATH,SHA256_HEX} from '../core/sha256-hex.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { ConnectionError, doorConnection } from './connection.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './io.js';
-const reference=z.string().regex(/^[0-9a-f]{64}$/),time=z.string();
+const reference=z.string().regex(SHA256_HEX),time=z.string();
 const tokenInfo=z.object({fingerprint:reference,label:z.string(),kind:z.enum(['owner','agent','runner']),expired:z.boolean(),identity:z.string(),createdAt:time,expiresAt:time.nullable(),revokedAt:time.nullable(),lastUsedAt:time.nullable()}).strict();
 const programInfo=z.object({fingerprint:reference,label:z.string(),member:z.string().nullable(),createdAt:time,expiresAt:time.nullable(),revokedAt:time.nullable(),ended:z.boolean(),records:z.array(z.string()),operations:z.array(z.string())}).strict();
 const sessionInfo=z.object({ref:reference,device:z.string(),member:z.string().nullable(),tokenLabel:z.string().nullable(),isAgent:z.boolean(),ended:z.boolean(),issuedAt:time,seenAt:time}).strict();
@@ -70,7 +71,7 @@ export async function runAccessClient(piece: 'token'|'program'|'sessions'|'accou
         const output=binding.field?(value as Record<string,unknown>)[binding.field]:value;
         const checked=binding.schema.safeParse(output);if(!checked.success)return fail('Invalid daemon response');io.stdout(JSON.stringify(checked.data,null,2)+'\n');
       }else{
-        const schema=link?z.object({path:z.string().regex(/^\/login\/[0-9a-f]{64}$/),expiresAt:time}).strict():piece==='household'?(name==='setAgentAccounts'?z.object({saved:z.literal(true)}).strict():z.object({id:z.string()}).strict()):issuance?z.object({token:z.string().min(32),fingerprint:reference}).strict():piece==='program'&&name==='setGrants'?z.object({saved:z.literal(true)}).strict():name==='removePasskey'?z.object({removed:z.literal(true)}).strict():z.object({revoked:z.literal(true)}).strict();
+        const schema=link?z.object({path:z.string().regex(LOGIN_PATH),expiresAt:time}).strict():piece==='household'?(name==='setAgentAccounts'?z.object({saved:z.literal(true)}).strict():z.object({id:z.string()}).strict()):issuance?z.object({token:z.string().min(32),fingerprint:reference}).strict():piece==='program'&&name==='setGrants'?z.object({saved:z.literal(true)}).strict():name==='removePasskey'?z.object({removed:z.literal(true)}).strict():z.object({revoked:z.literal(true)}).strict();
         const result=z.object({ok:z.literal(true),value:schema}).strict().safeParse(answer);
         if(!result.success)return fail(oneTime?unknownOutcome:'Invalid daemon response');
         io.stdout(link?new URL((result.data.value as {path:string}).path,base).href+'\n':issuance?(result.data.value as {token:string}).token+'\n':JSON.stringify(result.data.value,null,2)+'\n');

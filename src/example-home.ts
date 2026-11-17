@@ -74,7 +74,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');
   const adapterModule=pathToFileURL(join(import.meta.dirname,import.meta.filename.endsWith('.ts')?'example-home-adapters.ts':'example-home-adapters.js')).href;
   writeFileSync(adapters,'export {default} from '+JSON.stringify(adapterModule)+';\n',{mode:0o600});
-  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
+  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')}}}};
   const manifest={fictional:true,createdAt:new Date(clock.now()).toISOString(),retention:{thread:olderThread.id,seq:olderReply.seq,at:olderReply.at,until:olderReply.keepUntil},members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,runtime,gaps:[
    {page:'machines',promise:'A worker claims and executes its queued job',reason:'The example uses real setup, reporting and inbox admission, but does not claim a job or execute a worker/body/provider.'},
 

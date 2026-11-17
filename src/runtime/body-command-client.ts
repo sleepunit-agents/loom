@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import { privateOrigin } from '../core/private-origin.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
+import { BODY_REQUEST_MS,validBodyRequestMs } from './body-request-time.js';
 const unavailable=()=>new Error('Body request failed; outcome may be uncertain');
 const json=z.json();
 const result=z.discriminatedUnion('ok',[
@@ -27,8 +28,8 @@ function echoesCredential(text:string,token:string):boolean{
 }
 export function bodyCommandClient(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
- const token=options.token,clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??15000;
- if(!token||/[\s\u0000-\u001f\u007f]/u.test(token)||!Number.isSafeInteger(timeout)||timeout<1||timeout>30000)throw unavailable();
+ const token=options.token,clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??BODY_REQUEST_MS;
+ if(!token||/[\s\u0000-\u001f\u007f]/u.test(token)||!validBodyRequestMs(timeout))throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]),active=new Set<AbortController>();
  let closed=false;const current=()=>!closed&&!lifetime.aborted;
  async function post(path:string,payload:unknown){

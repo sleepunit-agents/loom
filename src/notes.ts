@@ -24,13 +24,17 @@ import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, re
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 
-export type Lifespan = 'keep' | 'while' | 'short';
-export const LIFESPANS: ReadonlySet<string> = new Set(['keep', 'while', 'short']);
+/** How long a note is kept, once: the store, the `memory.noteWrite` command and the terminal's `note_write` read this. */
+export const LIFESPAN_NAMES = ['keep', 'while', 'short'] as const;
+export type Lifespan = (typeof LIFESPAN_NAMES)[number];
+export const LIFESPANS: ReadonlySet<string> = new Set(LIFESPAN_NAMES);
 export const LIFESPAN_DAYS: Record<Exclude<Lifespan, 'keep'>, number> = { while: 60, short: 14 };
 /** Up to six segments of letters, digits and . _ - (no segment starting with a dot): `homelab/2026-10-30-dns-health`. */
 export const NOTE_PATH = /^(?!.*(^|\/)\.)[A-Za-z0-9][A-Za-z0-9._-]{0,99}(\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}){0,5}$/;
 /** A file's name inside its note: one segment, the same letters. */
 export const FILE_NAME = /^(?!\.)[A-Za-z0-9][A-Za-z0-9._ -]{0,149}$/;
+/** And no longer than this in all. */
+export const NOTE_PATH_MAX = 300;
 export const MAX_NOTE_BYTES = 1024 * 1024;
 /**
  * Notes travel in the household bundle, which is pushed nightly to a git host that refuses a file over 100 MB
@@ -94,7 +98,7 @@ export class Notes {
   private iso(): string { return new Date(this.now()).toISOString(); }
 
   private check(path: string): void {
-    if (!NOTE_PATH.test(path) || path.length > 300) throw new NoteError('a note path is up to six segments of letters, digits and . _ - (homelab/2026-10-30-dns-health)');
+    if (!NOTE_PATH.test(path) || path.length > NOTE_PATH_MAX) throw new NoteError('a note path is up to six segments of letters, digits and . _ - (homelab/2026-10-30-dns-health)');
   }
 
   /**

@@ -7,9 +7,11 @@ import type { DataDatabase } from '../core/data/database.js';
 import { OperationError } from '../core/operations/index.js';
 import { approvalRules, members, projects } from '../core/data/schema.js';
 import { householdOwners, sharedSharing } from '../shared-sharing.js';
-export const approvalRuleKind=z.enum(['merge','command','setting','dangerous']);
+export const approvalRuleKind=z.enum(approvalRules.kind.enumValues);
 const scope=z.string().trim().min(1).max(256).refine(value=>!/[\u0000-\u001f\u007f]/.test(value),'Invalid scope');
-export const approvalRuleInput=z.object({kind:approvalRuleKind,scope,person:z.string().max(100).default(''),tier:z.enum(['ask','tell','do']).nullable()}).strict();
+/** What a standing rule may answer: the column's own choices. */
+export const approvalTier=z.enum(approvalRules.tier.enumValues);
+export const approvalRuleInput=z.object({kind:approvalRuleKind,scope,person:z.string().max(100).default(''),tier:approvalTier.nullable()}).strict();
 export type RuleInput=z.input<typeof approvalRuleInput>;
 type Rule=typeof approvalRules.$inferSelect;
 /** Linear-space wildcard matching; a pattern cannot introduce a regular expression. */

@@ -1,4 +1,4 @@
-import { privateSecretClient } from '../pieces/secrets/private-client.js';
+import { privateSecretClient, PRIVATE_SECRET_TIMEOUT_MS } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. No local retries: a lost
  * claim or report is reconciled by loom's job-silence sweep. The one exception is
  * finish, which is sent again under the same operation id (see httpWorkerControl). */
@@ -129,7 +129,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
         return { origin: new URL(input.url).origin, job, token, erase };
       } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }
     },
-    repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,timeoutMs:Math.min(input.timeoutMs??15000,15000),signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
+    repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,timeoutMs:Math.min(input.timeoutMs??PRIVATE_SECRET_TIMEOUT_MS,PRIVATE_SECRET_TIMEOUT_MS),signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
     next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build) => { await call('started', { job, build }, ack); },
     heartbeat: async (job, state) => (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active,

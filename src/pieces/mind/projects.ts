@@ -1,6 +1,8 @@
-/** Computed hubs over existing private agent cards. Missing sources remain missing until restart. */
+/** Computed hubs over existing private agent cards. A source is opened when its agent is first listed; one whose file is missing then stays missing until restart. */
+import {STORE_ID} from '../../slug.js';
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
+import {AgentFiles} from './sources.js';
 import {z} from 'zod';
 import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import type {Clock} from '../../core/clock.js';
@@ -24,8 +26,8 @@ export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;s
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
 /** Read-only sources and typed roles; no registry, live transport or schema initialization. */
 export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
- const sources=new Map<string,Database>();
- try{for(const a of options.agents)if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch(e){for(const db of sources.values())db.close();throw e;}
+ const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>existsSync(a.memories)?new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined);
+ try{sources.follow();}catch(e){for(const db of sources.end())db.close();throw e;}
  const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},options.sharing());
  function ids(scope?:string){if(scope!==undefined)return scope?[scope]:[];return [...sources].flatMap(([agent,db])=>has(db,'projects')?(db.prepare('SELECT slug FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${agent}:${r.slug}`):[]);}
  function memorySection(db:Database,q:ProjectQuery,v:Viewer):ProjectSection{
@@ -126,7 +128,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   return {entries:page.map(({cursor:_cursor,uuid,archiveNote,...row})=>{
    let note=archiveNote,archivedAt:string|null=null;
    try{const parsed:unknown=JSON.parse(archiveNote??'null');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){const value=parsed as Record<string,unknown>;note=typeof value.note==='string'?value.note:null;archivedAt=typeof value.archived_at==='string'?value.archived_at:null;}}catch{/* Unparsed archive notes stay readable without source changes. */}
-   return {...row,id:uuid&&/^[a-f0-9-]{36}$/.test(uuid)?`${agent}:${kind==='proposal'?'proposal:':''}${uuid}`:null,note,archivedAt};
+   return {...row,id:uuid&&STORE_ID.test(uuid)?`${agent}:${kind==='proposal'?'proposal:':''}${uuid}`:null,note,archivedAt};
   }),nextBefore:rows.length>first?page.at(-1)!.cursor:null};
  };
  // Every live memory's line, newest first, under the same private Memory
@@ -140,7 +142,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   if(columns.has('expires_at')){clauses.push("(expires_at IS NULL OR julianday(expires_at)>julianday(?))");params.push(new Date(clock.now()).toISOString());}
   for(const name of ['category','project'] as const)if(filter[name]){clauses.push(`${column(name)}=?`);params.push(filter[name]);}
   const rows=db.prepare(`SELECT ${column('uuid')} AS uuid,${column('title')} AS title,${column('category')} AS category,${column('project')} AS project,${column('created')} AS created,coalesce(${column('updated')},${column('created')}) AS updated,${column('sourcing')} AS sourcing FROM memories WHERE ${clauses.join(' AND ')} ORDER BY ${column('created')} DESC,id DESC LIMIT ?`).all(...params,first) as Array<{uuid:string|null;title:string|null;category:string|null;project:string|null;created:string|null;updated:string|null;sourcing:string|null}>;
-  return rows.map(({uuid,...row})=>({id:uuid&&/^[a-f0-9-]{36}$/.test(uuid)?`${agent}:${uuid}`:null,...row}));
+  return rows.map(({uuid,...row})=>({id:uuid&&STORE_ID.test(uuid)?`${agent}:${uuid}`:null,...row}));
  };
  const memoryHistory=(id:string,v:Viewer)=>{
   const source=memorySource(id,v);if(!source||!has(source.db,'memory_revisions'))return [];const {db,selector,params}=source;

@@ -22,7 +22,21 @@ import { isDiscordId } from './pieces/bridges/discord-id.js';
 import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
 import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
-import { HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SLUG, householdId, slug } from './slug.js';
+import { HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, householdId, scopedStoreId, slug } from './slug.js';
+import { MEMORY_CATEGORIES } from './categories.js';
+import { DAY } from './core/day.js';
+import { BODY_REQUEST_MAX_MS, BODY_REQUEST_MS, validBodyRequestMs } from './runtime/body-request-time.js';
+import { LOGIN_PATH, SHA256_HEX } from './core/sha256-hex.js';
+import { QUIET_DAYS_MAX, SETTLE_SECONDS_MAX, validTimings } from './core/tempo/volume.js';
+import { LIFESPAN_DAYS, LIFESPAN_NAMES, NOTE_PATH_MAX } from './notes.js';
+import { GRANT_MINUTES_MAX, agentSecretRequest, grantMinutes } from './pieces/secrets/input.js';
+import { PRIVATE_SECRET_TIMEOUT_MS, privateSecretClient } from './pieces/secrets/private-client.js';
+import { SecretRequests, secretAnswer, secretRuleInput } from './pieces/secrets/requests.js';
+import { AgentFiles } from './pieces/mind/sources.js';
+import { dangerousHouseholdChanges, householdChanges } from './shared-household-proposals.js';
+import { householdMemorySources } from './shared-memory.js';
+import { householdSettings } from './core/data/household-settings.js';
+import { secretRules } from './core/data/schema.js';
 
 const root = new URL('../', import.meta.url).pathname;
 const sources = (directory: string): string[] => readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry =>
@@ -42,6 +56,8 @@ it('writes the slug pattern once, and keeps each length with its name', () => {
   expect(householdId.safeParse('a'.repeat(100)).success).toBe(true);
   expect(householdId.safeParse('a'.repeat(101)).success).toBe(false);
   expect(slug(PROJECT_CARD_SLUG_MAX).safeParse('a'.repeat(33)).success).toBe(false);
+  // The commands that write a card take the card's cap by name: no door gives a slug a number of its own.
+  expect(sources('src').filter(file => /slug:\s*z\.string\(\)(\.min\(\d+\))?\.max\((64|32)\)/.test(text(file)))).toEqual([]);
   // A secret's agent is a household agent: the same rule, not a second one.
   expect(secretAgent).toBe(householdId);
 });
@@ -229,7 +245,13 @@ it('writes each of these small patterns once', () => {
     expect(sources(within).filter(file => pattern.test(text(file))), String(pattern)).toEqual(home);
   // An identity page's name, a scoped memory id.
   once(/\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\{0,99\}\$\/;/, ['src/slug.ts']);
-  once(/\[\^:\]\+:\[a-f0-9-\]\{36\}\$\//, ['src/slug.ts']);
+  once(/\[a-f0-9-\]\{36\}/, ['src/slug.ts']);
+  const store = '3f2b8c1e-9d4a-4b6f-8a1c-0e5d7f9b2a34';
+  expect([STORE_ID.test(store), SCOPED_MEMORY_ID.test('art:' + store), scopedStoreId('proposal').test('art:proposal:' + store), scopedStoreId('person|project').test('art:project:' + store)]).toEqual([true, true, true, true]);
+  expect([STORE_ID.test(store + '0'), SCOPED_MEMORY_ID.test(store), SCOPED_MEMORY_ID.test('art:proposal:' + store), scopedStoreId('person|project').test('art:proposal:' + store), scopedStoreId('proposal').test('art:xproposal:' + store)]).toEqual([false, false, false, false, false]);
+  // A calendar day.
+  once(/\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//, ['src/core/day.ts']);
+  expect([DAY.test('2026-11-17'), DAY.test('2026-11-17T00:00:00Z'), DAY.test('26-11-17')]).toEqual([true, false, false]);
   // A body tool's name, a Discord id, a holder's generation, a time of day.
   once(/\[a-zA-Z\]\[a-zA-Z0-9_-\]\{0,63\}/, ['src/runtime/body-model-tools.ts']);
   once(/\\d\{1,20\}/, [], 'src/pieces/bridges');
@@ -243,4 +265,136 @@ it('writes each of these small patterns once', () => {
   expect(['24:00', '7:30', '12:60'].some(time => HH_MM.test(time))).toBe(false);
   // The address the program listens on when none is given is the listener's, and nobody else's.
   expect(sources('src').filter(file => /\?\?\s*'127\.0\.0\.1'/.test(text(file)))).toEqual(['src/shared-serve.ts']);
+});
+
+it('takes which agents have Memory, and who a local sign-in is for, from the household database', () => {
+  // program.json is read in one file, and the two names an earlier build kept there are named nowhere else.
+  expect(sources('src').filter(file => /signinMember/.test(text(file)))).toEqual(['src/shared-startup.ts']);
+  expect(text('src/shared-initialize.ts')).not.toMatch(/memories|signin/);
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z');
+    const commons = { directory: '/home/commons', knowledge: '/home/commons/knowledge.db', people: '/home/commons/people.db' };
+    const found = householdMemorySources(db, commons, '/home/agents');
+    expect(found.agents).toEqual([]);
+    const face = { about: '', markBg: '#000000', markFg: '#ffffff', faceShape: 'pebble', faceEyes: 'dot' } as const;
+    db.insert(agents).values([{ id: 'moss', ...face }, { id: 'fern', ...face }]).run();
+    expect(found.agents).toEqual([{ agent: 'fern', directory: '/home/agents/fern', memories: '/home/agents/fern/memories.db' },
+      { agent: 'moss', directory: '/home/agents/moss', memories: '/home/agents/moss/memories.db' }]);
+    // The same list object while nothing changes; a removed agent stays; an id that could not be a directory name gets none.
+    expect(found.agents).toBe(found.agents);
+    db.update(agents).set({ removedAt: '2026-11-16T00:00:00.000Z' }).run();
+    db.insert(agents).values({ id: '../elsewhere', ...face }).run();
+    expect(found.agents.map(source => source.agent)).toEqual(['fern', 'moss']);
+    // A reader's open files follow the list: each agent is opened once, when it is first listed.
+    const opened: string[] = [];
+    const files = new AgentFiles(() => found.agents, source => { opened.push(source.agent); return source.agent === 'moss' ? undefined : source.memories; });
+    expect([...files.keys()]).toEqual(['fern']);
+    db.insert(agents).values({ id: 'reed', ...face }).run();
+    expect(files.get('reed')).toBe('/home/agents/reed/memories.db');
+    expect([files.get('moss'), opened]).toEqual([undefined, ['fern', 'moss', 'reed']]);
+    expect(files.end()).toEqual(['/home/agents/fern/memories.db', '/home/agents/reed/memories.db']);
+    expect(files.size).toBe(0);
+  } finally { client.close(); }
+});
+
+it('lists the memory categories once', () => {
+  expect(sources('src').filter(file => /'pursuit'/.test(text(file)))).toEqual(['src/categories.ts']);
+  for (const file of ['src/pieces/mind/semantic-commands.ts', 'src/shared-mcp-named.ts']) expect(text(file), file).toContain('z.enum(MEMORY_CATEGORIES)');
+  expect(MEMORY_CATEGORIES).toContain('episode');
+});
+
+it('lists the kinds of household change once', () => {
+  // The card, the command and the terminal's tool take the list from the one table of kinds.
+  expect(sources('src').filter(file => /'tokenRevoke',\s*'boxRevoke'|'project',\s*'member',\s*'agent'/.test(text(file)))).toEqual([]);
+  expect(text('src/shared-mcp-named.ts')).toContain('z.enum(householdChanges)');
+  expect(new Set(householdChanges).size).toBe(householdChanges.length);
+  for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
+  expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'tokenRevoke']);
+});
+
+it('states how long a secret grant may last, and what an agent sends to ask for one, once', () => {
+  expect(sources('src').filter(file => /525_?600/.test(text(file)))).toEqual(['src/pieces/secrets/input.ts']);
+  expect([grantMinutes.safeParse(1).success, grantMinutes.safeParse(GRANT_MINUTES_MAX).success, grantMinutes.safeParse(0).success, grantMinutes.safeParse(GRANT_MINUTES_MAX + 1).success]).toEqual([true, true, false, false]);
+  // The operation and the body's tool take the same shape, so what the tool accepts the operation accepts.
+  for (const file of ['src/shared-secret-agent-commands.ts', 'src/runtime/body-secret-tools.ts']) expect(text(file), file).toMatch(/input(Schema)?:agentSecretRequest/);
+  const asked = { id: '3f2b8c1e-9d4a-4b6f-8a1c-0e5d7f9b2a34', secret: 'TOKEN', why: 'To push', minutes: GRANT_MINUTES_MAX };
+  expect(agentSecretRequest.parse(asked)).toEqual({ ...asked, scope: 'job' });
+  expect(secretRuleInput.safeParse({ secret: 'TOKEN', answer: 'auto', minutes: GRANT_MINUTES_MAX + 1, agents: [] }).success).toBe(false);
+  // The form's limit is a hint to the person typing, and the same number.
+  expect(/name="minutes" type="number" min=\{1\} max=\{(\d+)\}/.exec(text('web/src/pieces/settings/controls.tsx'))?.[1]).toBe(String(GRANT_MINUTES_MAX));
+});
+
+it('takes a secret\'s standing answers from the columns, and writes the household\'s default in one place', () => {
+  expect(secretAnswer.options).toEqual([...household.secretsDefault.enumValues]);
+  expect(secretAnswer.options).toEqual([...secretRules.answer.enumValues]);
+  expect(sources('src').filter(file => file !== 'src/core/data/schema.ts' && /'ask',\s*'auto',\s*'never'/.test(text(file)))).toEqual([]);
+  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set:\s*\{\s*secretsDefault/.test(text(file)))).toEqual(['src/pieces/secrets/requests.ts']);
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z'), requests = new SecretRequests(db);
+    expect(householdSettings(db).secretsDefault).toBe(household.secretsDefault.default);
+    requests.setDefault('never');
+    expect(householdSettings(db).secretsDefault).toBe('never');
+    requests.setDefault('auto');
+    expect(db.select().from(household).all().map(row => row.secretsDefault)).toEqual(['auto']);
+    expect(() => requests.setDefault('always' as 'auto')).toThrow();
+  } finally { client.close(); }
+});
+
+it('holds Tempo\'s timings to one range', () => {
+  const good = { settleSeconds: 0, dimDays: 1, muteDays: QUIET_DAYS_MAX };
+  expect([validTimings(good), validTimings({ ...good, settleSeconds: SETTLE_SECONDS_MAX })]).toEqual([true, true]);
+  for (const bad of [{ settleSeconds: -1 }, { settleSeconds: SETTLE_SECONDS_MAX + 1 }, { dimDays: 0 }, { dimDays: QUIET_DAYS_MAX + 1 }, { muteDays: 0 }, { muteDays: 1.5 }, { muteDays: QUIET_DAYS_MAX + 1 }])
+    expect(validTimings({ ...good, ...bad }), JSON.stringify(bad)).toBe(false);
+  // A household change is held to the same numbers where it is filed; it has none of its own.
+  expect(sources('src').filter(file => file !== 'src/core/tempo/volume.ts' && /(settleSeconds|dimDays|muteDays)[^\n]*\b(86_?400|3650)\b/.test(text(file)))).toEqual([]);
+  expect(text('src/shared-household-proposals.ts')).toMatch(/settleSeconds:z\.number\(\)\.int\(\)\.min\(0\)\.max\(SETTLE_SECONDS_MAX\)/);
+});
+
+it('states a note\'s lifespans and the length of its path once', () => {
+  expect(sources('src').filter(file => /'keep',\s*'while',\s*'short'/.test(text(file)))).toEqual(['src/notes.ts']);
+  expect(sources('src').filter(file => file !== 'src/notes.ts' && /(path|prefix)[^\n]{0,40}\b300\b/i.test(text(file)))).toEqual([]);
+  expect([...LIFESPAN_NAMES].filter(name => name !== 'keep').sort()).toEqual(Object.keys(LIFESPAN_DAYS).sort());
+  expect(NOTE_PATH_MAX).toBe(300);
+  for (const file of ['src/shared-notes.ts', 'src/shared-mcp-named.ts']) { expect(text(file), file).toContain('z.enum(LIFESPAN_NAMES)'); expect(text(file), file).toContain('max(NOTE_PATH_MAX)'); }
+});
+
+it('writes the shape of a SHA-256 digest in hex once', () => {
+  expect(sources('src').filter(file => /\[(a-f0-9|0-9a-f|0-9a-fA-F)\]\{64\}/.test(text(file)))).toEqual(['src/core/sha256-hex.ts']);
+  const digest = 'a1'.repeat(32);
+  expect([SHA256_HEX.test(digest), LOGIN_PATH.test('/login/' + digest)]).toEqual([true, true]);
+  expect([SHA256_HEX.test(digest.toUpperCase()), SHA256_HEX.test(digest + '0'), SHA256_HEX.test(digest.slice(1)), LOGIN_PATH.test('/login/' + digest + '/'), LOGIN_PATH.test('x/login/' + digest)]).toEqual([false, false, false, false, false]);
+  // The app checks the link it is handed with the same pattern, written out: it does not import the program.
+  expect(text('web/src/signin/DeviceLink.tsx')).toContain('/' + LOGIN_PATH.source + '/.test(');
+});
+
+it('caps a private secret read in one place', () => {
+  // Nor does a body's client carry its own wait: both read the one default and the one limit.
+  expect(sources('src').filter(file => /timeoutMs[^\n]{0,40}\b15_?000\b/.test(text(file)))).toEqual([]);
+  for (const file of ['src/runtime/body-command-client.ts', 'src/runtime/conversation-client.ts']) expect(text(file), file).toContain('validBodyRequestMs(timeout)');
+  expect([validBodyRequestMs(BODY_REQUEST_MS), validBodyRequestMs(BODY_REQUEST_MAX_MS), validBodyRequestMs(BODY_REQUEST_MAX_MS + 1), validBodyRequestMs(0)]).toEqual([true, true, false, false]);
+  expect(text('src/runtime/worker-http.ts')).toContain('PRIVATE_SECRET_TIMEOUT_MS');
+  const options = { url: 'http://127.0.0.1:1', token: 'body_x', signal: new AbortController().signal };
+  privateSecretClient({ ...options, timeoutMs: PRIVATE_SECRET_TIMEOUT_MS }).close();
+  expect(() => privateSecretClient({ ...options, timeoutMs: PRIVATE_SECRET_TIMEOUT_MS + 1 })).toThrow('Private secret input unavailable');
+});
+
+it('takes a choice the database also checks from the column, and states the others once', () => {
+  const holders = (list: RegExp) => sources('src').filter(file => file !== 'src/core/data/schema.ts' && list.test(text(file)));
+  // Checked by the schema: the door's own shapes read the column's list.
+  expect(holders(/'answered',\s*'progressed'/)).toEqual([]);
+  expect(holders(/'ask',\s*'tell',\s*'do'/)).toEqual([]);
+  expect(holders(/'merge',\s*'command',\s*'setting'/)).toEqual([]);
+  // The body is another program and states what it expects to be answered (docs/accepted-tradeoffs.md,
+  // "A client states the shape of the answer it expects"); on loom's side the list is the column's.
+  expect(holders(/'pending',\s*'allowed',\s*'denied',\s*'cancelled'/)).toEqual(['src/runtime/conversation-client.ts']);
+  expect(holders(/'working',\s*'waiting',\s*'idle'/)).toEqual(['src/runtime/body-program-tools.ts']);
+  for (const list of [/'task',\s*'bug'/, /'pending',\s*'allowed',\s*'denied',\s*'used'/, /'waiting',\s*'taken',\s*'done'/]) expect(holders(list), String(list)).toEqual([]);
+  // Not a column's list: a project card's status, what a second look at a memory found, what can be
+  // removed, and how tasks depend on each other.
+  expect(holders(/'active',\s*'paused',\s*'done'/)).toEqual(['src/backends/projects.ts']);
+  expect(holders(/'confirm',\s*'contradict'/)).toEqual(['src/backends/types.ts']);
+  expect(holders(/'member',\s*'agent',\s*'project',\s*'bridge'/)).toEqual(['src/apps/household.ts']);
+  expect(holders(/'blocks',\s*'parent-child'/)).toEqual(['src/apps/tasks.ts']);
 });

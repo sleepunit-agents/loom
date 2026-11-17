@@ -33,10 +33,11 @@ export async function initializeSharedHome(home:string,clock:Clock){
   });
   client.close();client=undefined;
   await loadKey(stage);
-  const commons=join(home,'commons'),agent=join(home,'agents/assistant');
-  const program={secretHolder:true,database:join(home,'loom.db'),commsKey:join(home,'comms.key'),signinMember:member,memory:{checkingAgent:'assistant',sources:{
+  // Where things are, and nothing about who is in the household: the first owner and agent are rows above,
+  // and sign-in and Memory read them from there (shared-startup.ts).
+  const commons=join(home,'commons');
+  const program={secretHolder:true,database:join(home,'loom.db'),commsKey:join(home,'comms.key'),memory:{checkingAgent:'assistant',sources:{
    commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},
-   agents:[{agent:'assistant',directory:agent,memories:join(agent,'memories.db')}],
   }}};
   publish('program.json',Buffer.from(JSON.stringify(program)+'\n'));
   // rename cannot replace a nonempty directory. A concurrent writer in home

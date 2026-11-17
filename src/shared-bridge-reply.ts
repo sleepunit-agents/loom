@@ -7,7 +7,7 @@ import { and,asc,eq,getTableColumns } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeIncoming,bridgeConnections,bridgeFiles,bridgeSends,inbox,inboxRefs } from './core/data/schema.js';
+import { bridgeIncoming,bridgeConnections,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
@@ -29,7 +29,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    .where(and(eq(inboxRefs.ref,incoming),eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.source,found.cv.venue as 'discord'|'slack'))).get();
   return mail?.job===found.job.id&&(mail.state==='taken'||mail.state==='done')?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,mail:mail.id}:undefined;
  };
- operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400),text:z.string().min(1).max(100000),model:z.string().min(1).max(200),outcome:z.enum(['answered','progressed','deferred','failed','none']).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
+ operations.register({name:'bridges.reply',input:z.object({id:z.uuid(),incoming:z.string().min(1).max(400),text:z.string().min(1).max(100000),model:z.string().min(1).max(200),outcome:z.enum(turns.outcome.enumValues).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
   may:(viewer,input)=>!!target(viewer,input.incoming),
   inputHash:(canonical,{actor,input})=>createHash('sha256').update('loom-shared-bridge-reply-receipt-v1\0').update(JSON.stringify([target(actor,input.incoming)??null,canonical])).digest('hex'),
   run(ctx,input){

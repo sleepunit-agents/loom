@@ -2,12 +2,12 @@
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
 import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLList} from 'graphql/index.js';
-import {Notes,notesDbPath,NOTE_PATH,MAX_NOTE_BYTES} from './notes.js';
+import {Notes,notesDbPath,NOTE_PATH,NOTE_PATH_MAX,LIFESPAN_NAMES,MAX_NOTE_BYTES} from './notes.js';
 import {mindReceipts,mindReceiptsReady} from './pieces/mind/receipt-schema.js';
-import type {MindSources} from './pieces/mind/sources.js';
+import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/sources.js';
 import {maySee,type Sharing,type Viewer} from './policy.js';
 import {OperationError,RecoveredWrite,type Operations,type WriteReceipt,type Context} from './core/operations/index.js';
-const path=z.string().max(300).regex(NOTE_PATH);
+const path=z.string().max(NOTE_PATH_MAX).regex(NOTE_PATH);
 const noteType=new GraphQLObjectType({name:'MemoryNote',fields:Object.fromEntries(['path','body','lifespan','created','updated','by'].map(name=>[name,{type:new GraphQLNonNull(GraphQLString)}]))});
 /** A listing carries no words: path, lifetime and size only. */
 const noteSummary=new GraphQLObjectType({name:'MemoryNoteSummary',fields:{
@@ -16,10 +16,9 @@ const noteSummary=new GraphQLObjectType({name:'MemoryNoteSummary',fields:{
 }});
 type Receipt=WriteReceipt;
 export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now():number}){
- const sources=new Map<string,Notes>();
- try{for(const source of options.sources?.agents??[])if(existsSync(notesDbPath(source.directory)))sources.set(source.agent,new Notes(source.directory,options.now,{prepared:true}));}
- catch(error){for(const notes of sources.values())notes.close();throw error;}
- const close=()=>{for(const notes of sources.values())notes.close();sources.clear();};
+ const sources=new AgentFiles<AgentSource,Notes>(()=>options.sources?.agents??[],source=>existsSync(notesDbPath(source.directory))?new Notes(source.directory,options.now,{prepared:true}):undefined);
+ const close=()=>{for(const notes of sources.end())notes.close();};
+ try{sources.follow();}catch(error){close();throw error;}
  const receipt=(notes:Notes,identity:Readonly<Receipt>,now:number)=>notes.atomicWrite(db=>{
   if(!mindReceiptsReady(db))throw new OperationError('unavailable','Notes are not prepared for commands');
   const prior=mindReceipts.find(db,identity,now);
@@ -36,7 +35,7 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
  }}},register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
   const recover=(ctx:Context)=>{const notes=selected(ctx.viewer),prior=notes&&ctx.receipt?receipt(notes,ctx.receipt,ctx.now):undefined;if(prior)ctx.changed('memory',ctx.viewer.id);return prior;};
-  operations.register({name:'memory.noteWrite',write:true,recheckPolicy:true,doors:['http'],input:z.object({path,body:z.string().refine(value=>Buffer.byteLength(value)<=MAX_NOTE_BYTES),lifespan:z.enum(['keep','while','short']).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),inputHash:words=>commands.hash(words),may:viewer=>!!selected(viewer),recover,
+  operations.register({name:'memory.noteWrite',write:true,recheckPolicy:true,doors:['http'],input:z.object({path,body:z.string().refine(value=>Buffer.byteLength(value)<=MAX_NOTE_BYTES),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),inputHash:words=>commands.hash(words),may:viewer=>!!selected(viewer),recover,
    run(ctx,input){const notes=selected(ctx.viewer),identity=ctx.receipt;if(!notes||!identity)throw new OperationError('denied','Authenticated agent required');
     const result=notes.atomicWrite(db=>{const previous=receipt(notes,identity,ctx.now);if(previous)return previous;mindReceipts.expire(db,ctx.now);
      notes.write(input.path,input.body,{lifespan:input.lifespan,by:ctx.viewer.id});const value={saved:true};

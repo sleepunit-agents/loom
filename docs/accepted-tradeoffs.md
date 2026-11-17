@@ -517,8 +517,9 @@ Entries are grouped by the part of the program they belong to.
   wrong: the store's tables would be created in it.
 - **Where.** `refuseNewerStore` in `src/backends/migrations.ts`, the constructor in `src/notes.ts`; compare
   `recogniseDataSchema` in `src/core/data/database.ts`.
-- **Why accepted.** The paths come from `program.json`, which the program writes at first install and nothing
-  else chooses. Several modules legitimately make their own tables in `memories.db` first (cards, receipts,
+- **Why accepted.** The commons paths come from `program.json`, which the program writes at first install, and
+  each agent's files are in `<home>/agents/<agent>` (`householdMemorySources` in `src/shared-memory.ts`);
+  nothing else chooses a path. Several modules legitimately make their own tables in `memories.db` first (cards, receipts,
   command bookkeeping), so "a file with other tables in it" is the normal case and "foreign" has no cheap
   definition. The household database, which a person might plausibly point at the wrong file, is recognised
   in full.
@@ -559,7 +560,8 @@ Entries are grouped by the part of the program they belong to.
   - `agents.sprite_version`: `src/desk-sprites.ts`, with the sprite it describes, in one transaction.
   - `bridge_connections` (switched off): `src/apps/household.ts`, when the connection is removed.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
-  - `household.secrets_default`: `src/shared-root.ts`, the settings operation for that one answer.
+  - `household.secrets_default`: `SecretRequests.setDefault` in `src/pieces/secrets/requests.ts`, beside the rule
+    that reads it. An allowed `secretDefault` household change and installed code both call it.
   - `boxes.last_seen_at`: `src/runtime/machines.ts`, on a machine's report.
 - **Why accepted.** Each was read against its owner: none skips a check the owner makes, and each write is in
   the transaction of the fact it records. Routing them through the owner would give every owner a method per
@@ -624,6 +626,25 @@ Entries are grouped by the part of the program they belong to.
   agent's token on every call.
 - **What would change the answer.** The owner deciding either way: the stricter rule for all would refuse a
   plain-`http` address the clients take today.
+
+### A client states the shape of the answer it expects
+- **What.** The household's vocabulary (the kinds of household change, memory categories, note lifespans, a
+  secret's answers, card slug caps and the like) is written once and read by every door. Two kinds of code
+  still write shapes of their own beside the operation they call: the terminal's named tools, which give each
+  tool's fields a bound (a title of at most 200 characters, a body of at most 65536); and the body's clients,
+  which check what loom answers them (the state of a secret request, an agent's status).
+- **Where.** `src/shared-mcp-named.ts`; `src/runtime/conversation-client.ts`, `src/runtime/body-program-tools.ts`.
+  The operations they call are in `src/pieces/mind/semantic-commands.ts`, `src/shared-secret-agent-commands.ts`
+  and `src/core/conversations/body-output.ts`.
+- **Why accepted.** The operation decides. A tool's bound only describes the tool to the model that calls it,
+  and every call is checked again by the operation, so a tool that is looser changes nothing and one that is
+  tighter refuses early, in words the model can act on. A body is a separate program that may be an older
+  build than the loom it talks to; it checks the answer it was built to understand and treats anything else
+  as loom being unavailable, which is the safe reading. Sharing the operation's own shape would not remove
+  that check, only move it.
+- **What would change the answer.** A named tool whose list of choices differs from its operation's (that is a
+  defect: the lists above are imported, not copied), or a tool bound tighter than the operation's that a real
+  caller hits.
 
 ### `memories.salience` is written and never read
 - **What.** Each memory is stored with a `salience` of 1 and the column is not updated afterwards.

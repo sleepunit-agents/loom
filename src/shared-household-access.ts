@@ -1,3 +1,4 @@
+import {SHA256_HEX} from './core/sha256-hex.js';
 import { readHouseholdSetup } from './core/data/household-read.js';
 import { reattributeChanges, AttributionConflict, type MergeRuleReader } from './apps/changes.js';
 /** Household-wide credential and roster projection, for outside owners only. */
@@ -25,7 +26,7 @@ export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:Merge
 }
 export function registerSharedHouseholdAccess(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
  const isOwner=(viewer:Viewer)=>householdOwner(db,viewer);
- operations.register({name:'sessions.revoke',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),output:z.object({revoked:z.literal(true)}).strict(),may:isOwner,run(ctx,input){const result=service.revokeSession(input.ref);ctx.changed('core.access','household');return result;}});
+ operations.register({name:'sessions.revoke',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(SHA256_HEX)}).strict(),output:z.object({revoked:z.literal(true)}).strict(),may:isOwner,run(ctx,input){const result=service.revokeSession(input.ref);ctx.changed('core.access','household');return result;}});
 }
 export function householdAccessQueries(db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
  const ownerReads=new WeakSet<Viewer>();

@@ -1,3 +1,4 @@
+import {SHA256_HEX} from '../sha256-hex.js';
 import {readPersonalAccount} from '../data/personal-account-read.js';
 import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
@@ -44,7 +45,7 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
 }
 export function registerSharedAccount(operations: Operations, db: DataDatabase, service: ReturnType<typeof sharedAccount>) {
   const member = (viewer: Viewer) => currentMember(db, viewer);
-  const reference=z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict();
+  const reference=z.object({ref:z.string().regex(SHA256_HEX)}).strict();
   operations.register({name:'account.removePasskey',write:true,recheckPolicy:true,input:reference,output:z.object({removed:z.literal(true)}),may:member,
     run(ctx,input){const result=service.removePasskey(ctx.viewer.id,input.ref);ctx.changed('account',ctx.viewer.id);ctx.changed('core.access',ctx.viewer.id);return result;}});
   operations.register({name:'account.revokeSession',write:true,recheckPolicy:true,input:reference,output:z.object({revoked:z.literal(true)}),may:member,
