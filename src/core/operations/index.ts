@@ -90,8 +90,11 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
   return JSON.stringify(value);
 }
+/** A receipt is kept by who the credential is: its kind and id. What a door wrote on the viewer for the
+ * rules to read (the member a body works for) is not part of the key, so a retry still finds its receipt;
+ * an operation that must not replay across such a change binds it through inputHash. */
 function callerKey(viewer: Viewer): string {
-  return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical(viewer);
+  return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical({ kind: viewer.kind, id: viewer.id });
 }
 /** Shared connection write boundary supplied only by trusted composition. */
 export interface OperationWrites {

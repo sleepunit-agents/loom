@@ -29,7 +29,7 @@ import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { boxes, household, members as membersTable, secretChanges } from './core/data/schema.js';
+import { boxes, household, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
@@ -75,7 +75,7 @@ import { DOOR_REQUEST_BYTES } from './core/data/http.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { mayRunPrivateWork } from './policy.js';
-import { sharedSharing } from './shared-sharing.js';
+import { bodyWorkingFor, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
@@ -157,7 +157,9 @@ export function sharedRoot(options: {
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
-  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
+  // Every outside door authenticates here. A body's viewer is told which member its work is for before any
+  // door sees it, so no rule can be asked about a body as though it were the whole agent.
+  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);if(auth)bodyWorkingFor(db,auth.viewer,credentials.body(auth.viewer));return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
@@ -184,7 +186,7 @@ export function sharedRoot(options: {
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
   // The list of commands is no secret: any current member or agent may read it. Each command still checks its own caller.
-  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer)||!!credentials.agentSession(viewer)||(viewer.kind==='member'&&!!db.select({id:membersTable.id}).from(membersTable).where(eq(membersTable.id,viewer.id)).get()));
+  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer)||!!credentials.agentSession(viewer)||currentMember(db,viewer));
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);

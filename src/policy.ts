@@ -8,10 +8,25 @@ import { isInternalCaller } from './core/internal.js';
  * two faces agree for every rule on a generated matrix of viewers and rows.
  * A door that needs a decision imports it from here; it does not restate it.
  *
- * Transport credentials never imply ownership. */
+ * Transport credentials never imply ownership.
+ *
+ * An agent's body doing a member's private work is still the agent, never that member. But it reaches
+ * no further than the member does: see `workingFor`. */
 export type Viewer =
   | { kind: 'member'; id: string }
-  | { kind: 'agent'; id: string }
+  /** `workingFor` is the member whose private work this agent's body is doing. The door sets it once, from
+   * the job the body's credential is bound to (bodyWorkingFor in shared-sharing.ts), never from request
+   * input. A terminal session, and a body whose job is for no member, has none and is the agent alone.
+   *
+   * With it, each way the agent reaches a record counts only while that member has the same reach:
+   *  - a project (inProject, sharesProjectWithAgent): the member is in it too, or is a household owner;
+   *  - being the agent a record names (ownsAgent): the member has this agent on their own list;
+   *  - being in the household (currentViewer): the member is in it too.
+   * So a body working for a member reads and changes nothing through a project the member is not in, and
+   * nothing at all once the member has left or lost the agent. It never gains what only a member holds
+   * (self, householdOwner). What stays the agent's own whoever it works for is listed in
+   * docs/accepted-tradeoffs.md, "A body keeps the agent's own knowledge". */
+  | { kind: 'agent'; id: string; workingFor?: string }
   | { kind: 'runner'; id: string }
   | { kind: 'service'; id: string };
 export interface Scope { project?: string; agent?: string; member?: string }
@@ -65,7 +80,11 @@ export type Rule =
   /** The first case whose `when` holds decides; with none, `otherwise` does. */
   | { is: 'first'; cases: readonly (readonly [when: Rule, then: Rule])[]; otherwise: Rule }
   /** The field holds the id of a row of `table`, and that row passes that table's own rule, or `as` when one is given. */
-  | { is: 'seenWith'; table: ParentTable; field: string; as?: Rule };
+  | { is: 'seenWith'; table: ParentTable; field: string; as?: Rule }
+  /** The viewer is a body working for a member who has its agent on their own list, and `rule` holds for
+   * that member. The one way a body does something on its member's word; a rule that does not say this
+   * gives a body nothing of its member's. */
+  | { is: 'forItsMember'; rule: Rule };
 
 const never: Rule = { is: 'never' };
 const householdOwner: Rule = { is: 'householdOwner' };
@@ -80,6 +99,7 @@ const any = (...of: Rule[]): Rule => ({ is: 'any', of });
 const all = (...of: Rule[]): Rule => ({ is: 'all', of });
 const first = (cases: (readonly [Rule, Rule])[], otherwise: Rule): Rule => ({ is: 'first', cases, otherwise });
 const seenWith = (table: ParentTable, field: string, as?: Rule): Rule => ({ is: 'seenWith', table, field, ...(as ? { as } : {}) });
+const currentViewer: Rule = { is: 'currentViewer' };
 
 /** A record labelled with a member, a project and an agent, that a household owner runs: an approval card,
  * a machine, a model account. A household owner sees it. A member label makes it that member's and the
@@ -137,11 +157,30 @@ const trigger: Rule = any(householdOwner,
 const recipient: Rule = first([
   [equal('toKind', 'agent'), all(names('agent', 'to'), ownsAgent('to'))],
 ], all(names('member', 'to'), ownedByMember('to')));
-/** Who may set how loudly an inbox item arrives: someone in the household who may address its recipient. */
-const inboxVolume: Rule = all({ is: 'currentViewer' }, recipient);
+/** Who may set how loudly an inbox item arrives: someone in the household who may address its recipient.
+ * A body may also set it for the member it is working for, on that member's word in the chat: how loudly
+ * that member's own mail arrives is theirs to say, and saying it to their agent is how they say it. */
+const addressesRecipient: Rule = all(currentViewer, recipient);
+const inboxVolume: Rule = any(addressesRecipient, { is: 'forItsMember', rule: addressesRecipient });
+/** Who may end a job by hand (a reset of stuck work, a write-off): a household owner, or a member who has
+ * the job's agent on their own list. Never an agent.
+ *
+ * This is decided on the job's agent alone and reads nothing, so it is wider than the jobs read rule on
+ * purpose: a household owner may end a job of another member's private thread, which no list shows them
+ * (rule `inTalk`). They must already know its id (from the worker's machine or a log), and the door
+ * answers with nothing of the job but that it stopped. The household has to be able to stop work on its
+ * own machines; it does not get to read the work to do so. */
+const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('agent')));
+/** The agent a record names, acting for itself and in the household now: asking for a secret in its own
+ * name, reading the state of its own request or of a secret handed to its own job. Asking grants nothing:
+ * who answers a request is the household owners' (rule for `secretRequests`) or a secret rule they set. */
+const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
+/** A member in the household now, for what every member may do for themselves (their own preferences,
+ * passkeys, browsers and devices). */
+const currentMember: Rule = all(viewerIs('member'), currentViewer);
 
-export const rules = { labelled, conversation, inTalk, task, trigger, recipient, inboxVolume, agentRoster, agentSetup, ownedByMember, householdOwner,
-  project: any(householdOwner, inProject('id')) } as const;
+export const rules = { labelled, conversation, inTalk, task, trigger, recipient, addressesRecipient, inboxVolume, stopJob, agentItself, currentMember, currentViewer,
+  agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */
 export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
@@ -210,7 +249,7 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   // can name a machine when it proposes a change, and nothing else about that machine.
   boxAgents: first([[viewerIs('agent'), ownsAgent('agent')]], seenWith('boxes', 'box')),
   boxFacts: seenWith('boxes', 'box'),
-  timingDays: any(householdOwner, all(viewerIs('agent'), { is: 'currentViewer' })),
+  timingDays: any(householdOwner, all(viewerIs('agent'), currentViewer)),
   measuringSettings: householdOwner,
 };
 
@@ -223,16 +262,20 @@ export type ParentLookup = (table: ParentTable, id: string) => Row | undefined;
 export function holds(rule: Rule, v: Viewer, row: Row, s: Sharing, parent?: ParentLookup): boolean {
   if (v.kind !== 'member' && v.kind !== 'agent') return false;
   const m = v.kind === 'member' ? entry(s.members, v.id) : undefined;
+  // A body working for a member: `its` is that member while they are in the household. See Viewer.
+  const bound = v.kind === 'agent' && v.workingFor !== undefined ? v.workingFor : undefined;
+  const its = bound === undefined ? undefined : entry(s.members, bound);
   const text = (field: string) => { const value = row[field]; return typeof value === 'string' ? value : undefined; };
-  const inside = (p: { members: string[]; agents: string[] } | undefined) => !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id) : p.agents.includes(v.id));
+  const inside = (p: { members: string[]; agents: string[] } | undefined) => !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id)
+    : p.agents.includes(v.id) && (bound === undefined || !!its && (its.owner || p.members.includes(bound))));
   switch (rule.is) {
     case 'never': return false;
     case 'householdOwner': return !!m?.owner;
     case 'viewerIs': return v.kind === rule.kind;
-    case 'currentViewer': return v.kind === 'member' ? !!m : !!s.agents?.includes(v.id);
+    case 'currentViewer': return v.kind === 'member' ? !!m : !!s.agents?.includes(v.id) && (bound === undefined || !!its);
     case 'self': return !!m && text(rule.field) === v.id;
     case 'inProject': { const id = text(rule.field); return id !== undefined && inside(entry(s.projects, id)); }
-    case 'ownsAgent': { const id = text(rule.field); return id !== undefined && (v.kind === 'agent' ? id === v.id : !!m?.agents.includes(id)); }
+    case 'ownsAgent': { const id = text(rule.field); return id !== undefined && (v.kind === 'agent' ? id === v.id && (bound === undefined || !!its?.agents.includes(v.id)) : !!m?.agents.includes(id)); }
     case 'sharesProjectWithAgent': { const id = text(rule.field); return id !== undefined && Object.values(s.projects).some(p => p.agents.includes(id) && inside(p)); }
     case 'names': { const id = text(rule.field); return id !== undefined && (rule.kind === 'member' ? !!entry(s.members, id) : !!s.agents?.includes(id)); }
     // A yes/no column reads as true or false through the schema and as 1 or 0 from SQL.
@@ -249,12 +292,17 @@ export function holds(rule: Rule, v: Viewer, row: Row, s: Sharing, parent?: Pare
       const id = text(rule.field), found = id === undefined ? undefined : parent(rule.table, id);
       return !!found && holds(rule.as ?? tableRules[rule.table], v, found, s, parent);
     }
+    case 'forItsMember': return bound !== undefined && !!its?.agents.includes(v.id) && holds(rule.rule, { kind: 'member', id: bound }, row, s, parent);
   }
 }
 
 /** Is the viewer in the household now: a member who is not removed, or an agent that is not removed? */
 export function inHousehold(v: Viewer, s: Sharing): boolean {
-  return holds({ is: 'currentViewer' }, v, {}, s);
+  return holds(currentViewer, v, {}, s);
+}
+/** Is this id a member, or an agent, that is in the household now? For a name a caller writes on a record. */
+export function namesCurrent(kind: 'member' | 'agent', id: string, s: Sharing): boolean {
+  return holds(names(kind, 'id'), { kind: 'member', id: '' }, { id }, s);
 }
 /** A current member whose role is owner. The role runs the household and sees its records. It does not by
  * itself direct an agent (directsAgent), and it does not read another member's conversation (conversation). */
