@@ -46,8 +46,9 @@ it('refuses a removed owner the bridge review, the bridge and secrets reader fac
   const f = fixture(), review = { action: 'review', id: 'missing', decision: 'dismiss' };
   expect(f.root.operations.call('http', f.member('gone'), 'bridges.command', review, randomUUID())).toMatchObject({ ok: false, code: 'denied' });
   expect(f.root.operations.call('http', f.member('lee'), 'bridges.command', review, randomUUID())).toMatchObject({ ok: false, code: 'denied' });
-  // The owner passes the check and reaches the service, which has no such reply.
-  expect(f.root.operations.call('http', f.member('owner'), 'bridges.command', review, randomUUID())).toMatchObject({ ok: false, code: 'invalid' });
+  // A reply that is not there is nobody's to review, the owner's included (rules.reviewsReply is asked of the stored
+  // reply). An owner reviewing a real one is in shared-bridge-commands.test.ts.
+  expect(f.root.operations.call('http', f.member('owner'), 'bridges.command', review, randomUUID())).toMatchObject({ ok: false, code: 'denied' });
   const fields = bridgeSecretsReaderFields(f.db), read = (name: 'bridgeReader' | 'secretsReader', who: string) => (fields[name].resolve as (s: unknown, a: unknown, c: { viewer: Viewer }) => unknown)(null, {}, { viewer: f.member(who) });
   expect(read('bridgeReader', 'owner')).toEqual({ id: 'owner', manage: true });
   expect(read('bridgeReader', 'lee')).toEqual({ id: 'lee', manage: false });
