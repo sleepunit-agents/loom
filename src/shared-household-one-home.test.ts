@@ -70,6 +70,14 @@ it('gives an agent added to a running household its Memory, notes and cards at o
  // The owner reads what the new agent wrote, through the same readers that were opened before it existed.
  const seen=await fetch(f.url()+'/graphql',{method:'POST',headers:{cookie:owner.cookie,'content-type':'application/json'},body:JSON.stringify({query:`{memoryProject(id:"${card.result.value.ids[0]}"){id card{name}} memoryNote(agent:"second",path:"plans/first"){body}}`})});
  expect(await seen.json()).toEqual({data:{memoryProject:{id:'second:pond',card:{name:'Pond'}},memoryNote:{body:'A note of the second agent'}}});
+ // The household's default agent is asked each time too: made the default, the new agent is the one a
+ // new person's relationship card goes to, with no restart.
+ const slugs=(agent:string)=>{const db=new Database(join(f.home,'agents',agent,'memories.db'),{readonly:true});try{return (db.prepare('SELECT slug FROM people').all() as {slug:string}[]).map(row=>row.slug);}finally{db.close();}};
+ expect((await f.call('mind/personAdd',{name:'Early Friend'},owner)).result).toMatchObject({ok:true,value:{slug:'early-friend'}});
+ await f.change(assistant,owner,{change:'settings',input:{defaultAgent:'second'}});
+ expect((await f.call('mind/personAdd',{name:'Later Friend'},owner)).result).toMatchObject({ok:true,value:{slug:'later-friend'}});
+ expect([slugs('assistant'),slugs('second')]).toEqual([['early-friend'],['later-friend']]);
+ await f.change(assistant,owner,{change:'settings',input:{defaultAgent:'assistant'}});
  // The first agent is untouched by any of this.
  const own=await f.call('memory/remember',{category:'project',title:'First of assistant',content:'beta words of the first agent'},{token:assistant});expect(own.result).toMatchObject({ok:true});
  expect((await f.call('memory/recall',{query:'alpha beta'},{token:assistant})).result.value.ids).toEqual(own.result.value.ids);

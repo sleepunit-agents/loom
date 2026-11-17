@@ -10,8 +10,8 @@ import type {DataDatabase} from './core/data/database.js';
 import {eq} from 'drizzle-orm';
 import type {Clock} from './core/clock.js';
 import type {Operations} from './core/operations/index.js';
-import {household,agents as agentRows} from './core/data/schema.js';
-import {householdTimezone} from './core/data/household-settings.js';
+import {agents as agentRows} from './core/data/schema.js';
+import {householdSettings,householdTimezone} from './core/data/household-settings.js';
 import {installTouched} from './core/touched/index.js';
 import {mindTouchSources,mindTouchResolver,agentTouchSource} from './pieces/mind/binding.js';
 import type {AgentSource,MindSources} from './pieces/mind/sources.js';
@@ -134,13 +134,12 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  }};
  // Handed to each reader as a property that is read again each time, never as a copy.
  const listed={get agents(){return sources?.agents??[];}};
- const settings=db.select().from(household).get();
  const conversationHref=(id:string)=>'/p/comms-preview/conversation/'+encodeURIComponent(id);
  const projectHref=(agent:string,slug:string)=>'/p/projects-preview/project/'+encodeURIComponent(agent+':'+slug);
  try{
   const people=peopleReader({directory:sources?.commons.people,get agents(){return listed.agents;},sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
   const projects=createProjectsReader(clock,{get agents(){return listed.agents;},sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
-  const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:settings?.githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
+  const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:()=>householdSettings(db).githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
@@ -149,8 +148,9 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){
     installTouched(operations,mindTouchResolver(touches));
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages});closers.push(knowledge.close);
-    const agent=settings?.defaultAgent??undefined;
-    const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:listed.agents.find(a=>a.agent===agent)?.memories,agent,sharing,create:createPersonHalf});closers.push(actions.close);
+    // The household's default agent, asked each time: it can be changed in Setup while the program runs.
+    const agent=()=>householdSettings(db).defaultAgent??undefined;
+    const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:()=>{const id=agent();return id===undefined?undefined:listed.agents.find(a=>a.agent===id)?.memories;},agent,sharing,create:createPersonHalf});closers.push(actions.close);
     if(commands)notes.register(operations,commands);
     if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),embedding,...commands}).close);
    },

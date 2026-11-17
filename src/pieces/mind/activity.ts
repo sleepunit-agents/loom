@@ -18,10 +18,12 @@ const has=(db:Database)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='t
 const parse=(s:string|null):Record<string,unknown>=>{try{const v=JSON.parse(s??'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{};}catch{return {};}};
 export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;conversations?:ActivityConversations;
  /** The household's zone: days and hours are shown in it. */
- timezone:string|(()=>string);owner?:string;ownerLabel?:string;github?:string}
+ timezone:string|(()=>string);owner?:string;ownerLabel?:string;
+ /** The household's GitHub owner, for short references. A function is asked each time. */
+ github?:string|(()=>string|undefined)}
 /** Read-only sources and the shared Conversations port; no legacy registry or transport. */
 export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOptions){
- const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone;isoDay(clock.now(),tz());
+ const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone,github=()=>typeof options.github==='function'?options.github():options.github;isoDay(clock.now(),tz());
  const sourceErrors=new Set<string>();
  const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>{
   try{if(existsSync(a.memories))return new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0});}catch{sourceErrors.add(a.agent);}
@@ -43,7 +45,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turn${r.turns===1?'':'s'}${r.replies?`, ${r.replies} repl${r.replies===1?'y':'ies'}`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(ownerPerson(v)&&c.people.includes(ownerPerson(v)!))?{owner:true as const}:{})};
  }
  function runOpen(r:ActivityRun,v:Viewer):ActivityOpen{
-  const entry=fromRun(r,v),refs=refsIn([r.summary??'',...r.asked,...r.decided,...r.tasks,...(r.references??[])].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
+  const entry=fromRun(r,v),refs=refsIn([r.summary??'',...r.asked,...r.decided,...r.tasks,...(r.references??[])].join('\n'),github()),theirs=v.kind==='member'&&r.needsForMember===v.id;
   return {...entry,asked:r.asked,decided:r.decided,...(r.summary?{story:r.summary}:{}),tasks:[...new Set([...refs.tasks])].map(id=>({label:id,href:`/p/tasks-preview/task/${encodeURIComponent(id)}`})),prs:refs.prs,
    links:[...r.links,...(theirs&&r.needsHref?[{label:'What it needs you for',href:r.needsHref}]:[])],...(theirs&&r.needs?{needs:r.needs}:{}),
    ...(entry.venue==='comms'&&r.steps?{steps:r.steps.filter(s=>s.tool!=='text')}:{}) ,more:r.more.slice(0,8)};
@@ -60,7 +62,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   // when its writer used "terminal" as the surface. Fail closed on named ids
   // the NEW owner cannot authorize; do not guess via legacy stores.
   if(p.conversation&&!related)return;
-  const parts=fallbackParts(e.content),refs=refsIn(`${p.title}\n${e.content}`,options.github);
+  const parts=fallbackParts(e.content),refs=refsIn(`${p.title}\n${e.content}`,github());
   return {id:`e~${agent}~${e.ref}`,...(p.conversation?{conversationId:p.conversation}:{}),agent,at:e.created,...stamp(e.created),...splitTitle(p.title),venue,where:whereLabel(p.where)||VENUES[venue]||venue,what:whatOf({place:p.where,title:p.title}),
    ...(ownerPerson(v)&&p.where.includes(ownerPerson(v)!)?{owner:true as const}:{}),...(e.expires_at||related?.expires!==undefined?{expires:Math.min(e.expires_at?Date.parse(e.expires_at):Infinity,related?.expires??Infinity)}:{}),
    asked:parts?.asked?[parts.asked]:[],decided:parts?.shipped??[],story:parts?parts.said:e.content,tasks:refs.tasks.map(id=>({label:id,href:`/p/tasks-preview/task/${id}`})),prs:refs.prs,links:[{label:'The memory',href:`/p/activity-preview/memory/${encodeURIComponent(`${agent}:${e.ref}`)}`}],more:[]};
