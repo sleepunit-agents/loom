@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { readFileSync } from 'node:fs';
+import { getTableName } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
-import { schema } from './schema.js';
+import { polymorphicReferences, schema } from './schema.js';
 
 /** Bind the one schema to an already-initialised connection; does no IO itself. */
 export function dataDatabase(client: Database.Database, now: () => string = () => new Date().toISOString()) {
@@ -154,7 +155,9 @@ function checks(sql: string, table: string): string[] {
 /** Everything about a database's shape that changes what it accepts or returns: each table's columns
  * (type, required, default, key), foreign keys with their actions, CHECKs, and unique or key constraints;
  * and each index, trigger and view as written. Row order of columns and a constraint's name are left out,
- * because a column an upgrade adds lands last and unnamed, where a fresh database has it in place and named. */
+ * because a column an upgrade adds lands last and unnamed, where a fresh database has it in place and named.
+ * So two recognised databases can order a table's columns differently, and no statement may place a value by
+ * position: src/stored-data.contract.test.ts fails on an insert that does not name its columns. */
 export function dataSchemaShape(client: Database.Database): unknown[] {
   const objects = client.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name").all() as { type: string; name: string; tbl_name: string; sql: string }[];
   return objects.map(object => object.type !== 'table' ? object : {
@@ -196,6 +199,19 @@ export function recogniseDataSchema(client: Database.Database): number {
   } finally { rehearsal.close(); }
   return number;
 }
+/** The first kind-and-id reference whose row names a parent that is not there, in words, or nothing.
+ * These references are held by triggers, which only look at a row when it is written, and SQLite's
+ * foreign_key_check does not know them. A step that adds such guards to a table with rows needs this. */
+function danglingKindAndId(client: Database.Database): string | undefined {
+  for (const reference of polymorphicReferences) {
+    const table = getTableName(reference.table), id = reference.id;
+    for (const [tag, parent] of Object.entries(reference.targets)) {
+      const tagged = 'kind' in reference ? `"${reference.kind}" = '${tag}' AND "${id}" IS NOT NULL` : `"${id}" IS NOT NULL${'emptyIsAbsent' in reference ? ` AND "${id}" <> ''` : ''}`;
+      if (client.prepare(`SELECT 1 FROM "${table}" WHERE ${tagged} AND NOT EXISTS (SELECT 1 FROM "${getTableName(parent)}" WHERE id = "${table}"."${id}") LIMIT 1`).get())
+        return `${table}.${id} names ${tag ? `a ${tag}` : `one of ${getTableName(parent)}`} that is not there`;
+    }
+  }
+}
 /** Bring an existing household database up to this program's shape. Safe to run at every start.
  * The database is recognised first, under the same write lock, so nothing is changed in one this
  * program does not know. */
@@ -210,7 +226,10 @@ export function upgradeDataSchema(client: Database.Database, now: () => string =
     client.transaction(() => {
       const from = recogniseDataSchema(client);
       applyUpgrades(client, from, now);
-      if (from < dataSchemaNumber && (client.pragma('foreign_key_check') as unknown[]).length) throw new Error('Upgrading this household database would leave a record pointing at nothing; nothing was changed');
+      if (from === dataSchemaNumber) return;
+      if ((client.pragma('foreign_key_check') as unknown[]).length) throw new Error('Upgrading this household database would leave a record pointing at nothing; nothing was changed');
+      const dangling = danglingKindAndId(client);
+      if (dangling) throw new Error(`Upgrading this household database would leave a record pointing at nothing (${dangling}); nothing was changed`);
     }).immediate();
   } finally { client.pragma(`foreign_keys = ${enforced ? 'ON' : 'OFF'}`); }
 }
