@@ -288,7 +288,7 @@ def index():
         <li class="node t-pink"><i class="wire"></i>{key("Approvals")}<div class="node__body"><b><a href="{FILE["Approvals"]}">Approvals</a></b><span>An agent asks permission to do one specific thing.</span></div></li>
         <li class="node t-pink"><i class="wire"></i>{key("Changes")}<div class="node__body"><b><a href="{FILE["Changes"]}">Changes</a></b><span>Pull requests a thread mentions show up as cards.</span></div></li>
         <li class="node t-cyan"><i class="wire"></i>{key("Memory")}<div class="node__body"><b>{plink("Memory")}</b><span>What the agent remembers afterwards. The one thing loom treats as precious.</span></div></li>
-        <li class="node t-cyan"><i class="wire"></i>{key("Machines and jobs")}<div class="node__body"><b><a href="{FILE["Machines and jobs"]}">Machines and jobs</a></b><span>One job at a time does the work, on a machine with a worker.</span></div></li>
+        <li class="node t-cyan"><i class="wire"></i>{key("Machines and jobs")}<div class="node__body"><b><a href="{FILE["Machines and jobs"]}">Machines and jobs</a></b><span>Jobs do the work, on a machine with a worker. A worker runs several side by side.</span></div></li>
       </ul>
     </div>
     <div class="map__base">

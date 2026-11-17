@@ -2,7 +2,7 @@
   "page": "decided",
   "title": "What we decided",
   "ownerTask": "t-2190",
-  "sourceSha256": "a863884862d2f8a7b96522e913871fe7b25f9d329c55f8f01ec0654089a7add7",
+  "sourceSha256": "43d58ed828449c5e251016376216439c5ab18e851fe703e28446ddb41238322b",
   "promises": [
     {
       "id": "decided-001",
@@ -136,7 +136,7 @@
     },
     {
       "id": "decided-027",
-      "promise": "The runtime handles model accounts, runners and which model a body uses.",
+      "promise": "The runtime handles model accounts, harnesses and which model a body uses.",
       "source": "docs/how-it-works/site/decided.html"
     },
     {

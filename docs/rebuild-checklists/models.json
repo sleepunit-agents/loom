@@ -2,11 +2,11 @@
   "page": "models",
   "title": "Models and accounts",
   "ownerTask": "t-2241",
-  "sourceSha256": "3054ebb282fe3c1bb6ecd4bebb366bf2ef9813d93d57cfe4bf753c206d8ba0b9",
+  "sourceSha256": "82769e9d600316c4f7a443bf7430b3783d57fe74961a4dc27a960d3b26e69e8a",
   "promises": [
     {
       "id": "models-001",
-      "promise": "Which model a body runs on, and the accounts it draws from. The runtime handles model accounts, runners and which model a body uses.",
+      "promise": "Which model a body runs on, and the accounts it draws from. The runtime handles model accounts, harnesses and which model a body uses.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
@@ -21,7 +21,7 @@
     },
     {
       "id": "models-004",
-      "promise": "Starts each body through a runner on a worker machine.",
+      "promise": "Starts each body in its model's harness, on a worker machine.",
       "source": "docs/how-it-works/site/models.html"
     },
     {
@@ -65,12 +65,12 @@
     },
     {
       "id": "models-012",
-      "promise": "A runner is the program on a machine that starts bodies. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration.",
+      "promise": "A harness is the program a model runs in, such as Claude Code or Codex. A worker starts each body in the harness its model needs; in a house, loom's own body program starts it. Loom keeps models, series, providers and harnesses distinct, and roles can be added through configuration.",
       "source": "docs/how-it-works/site/models.html#how-h"
     },
     {
       "id": "models-013",
-      "promise": "Signing in to a model account is handled by a separate private program. The runtime handles which account, which runner and which model a body uses.",
+      "promise": "Signing in to a model account is handled by a separate private program. The runtime handles which account, which harness and which model a body uses.",
       "source": "docs/how-it-works/site/models.html#how-h"
     },
     {
