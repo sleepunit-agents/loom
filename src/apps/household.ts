@@ -105,6 +105,22 @@ export function householdService(db: DataDatabase, now: () => string) {
         return { saved: true as const };
       });
     },
+    /** What a request for a secret is answered with when no rule covers it. Its own door and its own card,
+     * apart from the settings above; written here so the household row has one writer. */
+    setSecretsDefault(answer: 'ask' | 'auto' | 'never') {
+      db.insert(household).values({ secretsDefault: answer }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault: answer } }).run();
+    },
+    /** The order members or agents are listed in: every one of them, named exactly once. */
+    setOrder(of: 'members' | 'agents', ids: readonly string[]) {
+      return db.transaction(() => {
+        const table = of === 'members' ? members : agents;
+        const have = db.select({ id: table.id }).from(table).all().map(row => row.id);
+        if (new Set(ids).size !== ids.length || have.length !== ids.length || have.some(id => !ids.includes(id)))
+          throw new HouseholdError('invalid', 'Name every one of the ' + of + ' exactly once');
+        ids.forEach((id, position) => db.update(table).set({ position }).where(eq(table.id, id)).run());
+        return { saved: true as const };
+      });
+    },
     members() {
       return db.select().from(members).orderBy(asc(members.position), asc(members.id)).all().map(member => ({ ...member,
         agents: db.select({ id: memberAgents.agent }).from(memberAgents).where(eq(memberAgents.member, member.id)).orderBy(asc(memberAgents.agent)).all().map(row => row.id),

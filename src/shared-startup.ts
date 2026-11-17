@@ -107,7 +107,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    changes,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
    secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,memoryEmbedding:adapters.memoryEmbedding,
-   reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
+   reportError:options.reportError??(()=>{}),startupNote:line=>(options.stdout??(text=>{process.stdout.write(text);}))(line+'\n'),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock),issuer=sharedTokens(db,clock);
   // Adapters ran since the first check and may have changed the household.

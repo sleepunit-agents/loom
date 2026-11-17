@@ -29,7 +29,7 @@ import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { boxes, household, secretChanges } from './core/data/schema.js';
+import { boxes, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
@@ -124,6 +124,9 @@ export function sharedRoot(options: {
   notifications?: SharedNotificationOptions;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  /** One plain line for whoever runs the program, about stored rows it changed at start outside the
+   * upgrade steps. It names what was done and how many rows, never their content. */
+  startupNote?(line: string): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
@@ -154,7 +157,7 @@ export function sharedRoot(options: {
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
       tempo: () => late.tempo!(),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
-      digest: proposalDigest });
+      digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
@@ -281,7 +284,7 @@ export function sharedRoot(options: {
     rule(input: Parameters<typeof ruleSettings.set>[0], owner: string) { return ruleSettings.set(input, owner); },
     // Secrets and bridges.
     secretRule(input: Parameters<SecretRequests['setRule']>[0]) { requests.setRule(input); },
-    secretDefault(answer: 'ask' | 'auto' | 'never') { db.insert(household).values({ secretsDefault: answer }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault: answer } }).run(); },
+    secretDefault(answer: 'ask' | 'auto' | 'never') { householdSettings.setSecretsDefault(answer); },
     houseSecrets(input: Parameters<typeof setHouseSecrets>[1]) { setHouseSecrets(db, input); },
     bridge(input: Parameters<BridgeSettings['change']>[0]) { return late.bridges!().change(input); },
     /** File a proposal card on an agent's behalf, as household.propose does for an outside caller. */
