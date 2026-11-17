@@ -3,6 +3,7 @@ import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
 import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
+import { acceptAnswer } from './answer-rule.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, max, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
@@ -140,11 +141,7 @@ export class Conversations {
       const item = this.item(itemId);
       if (item.toKind !== 'person' || !item.answers) throw new Error('Item is not a question for a person');
       if (item.thread || isPrivateInboxQuestion(item)) throw new Error('Answer through encrypted conversation service');
-      if (item.state === 'answered') return item;
-      if (item.state !== 'waiting') throw new Error('Question is already settled');
-      if (item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
-      if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
-      if ((answer === 'words' || answer === 'replied') && !words?.trim()) throw new Error('Answer needs words');
+      if (acceptAnswer(item, member, answer, words, false) === 'repeat') return item;
       const at = this.now();
       inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
       const updated = this.db.update(inbox).set({ state: 'answered', answer, answerText: words ?? null, answeredBy: member, answeredAt: at, changedAt: at }).where(eq(inbox.id, itemId)).returning().get()!;

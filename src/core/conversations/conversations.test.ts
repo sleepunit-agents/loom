@@ -77,7 +77,8 @@ it('records one public answer and read mark, and returns exactly one answer item
   expect(db.select().from(inboxReads).all()).toEqual([{ item: question.id, member: 'jonathan', readAt: service.now() }]);
   const answered = service.answer(question.id, 'jonathan', 'yes');
   expect(answered).toMatchObject({ state: 'answered', answer: 'yes', answeredBy: 'jonathan', answeredAt: service.now() });
-  expect(service.answer(question.id, 'jonathan', 'no')).toEqual(answered);
+  expect(service.answer(question.id, 'jonathan', 'yes')).toEqual(answered);
+  expect(() => service.answer(question.id, 'jonathan', 'no')).toThrow('already answered');
   const answer = db.select().from(inbox).where(eq(inbox.source, 'answer')).all();
   expect(answer).toHaveLength(1);
   expect(answer[0]).toMatchObject({ toKind: 'agent', to: 'art', sourceId: question.id, conversation: cv.id, seq: 2, words: 'yes\nOrder it?\nI order it today.', member: null });
@@ -112,7 +113,8 @@ it('records one wordless person turn for an Inbox answer and no extra turn on re
   const cv = service.open({ agent: 'art', venue: 'wake', place: 'night', label: 'Night' });
   const question = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', words: 'Private wording?', answers: 'words' });
   const answer = service.answer(question.id, 'jonathan', 'words', 'Private answer');
-  expect(service.answer(question.id, 'jonathan', 'words', 'Retry')).toEqual(answer);
+  expect(service.answer(question.id, 'jonathan', 'words', 'Private answer')).toEqual(answer);
+  expect(() => service.answer(question.id, 'jonathan', 'words', 'Retry')).toThrow('already answered');
   expect(db.select().from(turns).all()).toMatchObject([{ conversation: cv.id, seq: 1, kind: 'message', fromKind: 'person', fromId: 'jonathan' }]);
   expect(JSON.stringify(db.select().from(turns).all())).not.toContain('Private');
   const second = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', words: 'Another?', answers: 'yes-no' });

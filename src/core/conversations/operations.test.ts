@@ -167,6 +167,21 @@ it('redirects task and approval answers to their source while ordinary answers u
   }
 });
 
+it('never reports a different answer to an answered question as saved', async () => {
+  const f = fixture(), cvs = f.service.threads.conversations;
+  // The same rule in each of the stores a question can live in: plain Inbox words, and a private thread.
+  const plain = cvs.send({ toKind: 'person', to: 'jonathan', source: 'notice', sourceId: 'plain', fromKind: 'agent', fromId: 'art', words: 'Proceed?', answers: 'yes-no' });
+  const ask = await f.service.ask(f.thread.id, 'art', 'ask', { words: 'Proceed privately?', answers: 'yes-no' });
+  for (const item of [plain.id, ask.inboxItem!]) {
+    expect(await f.call('inbox.answer', { item, answer: 'yes' }, `${item}-yes`)).toEqual({ ok: true, value: { saved: true } });
+    const changed = await f.call('inbox.answer', { item, answer: 'no' }, `${item}-no`);
+    expect(changed).toMatchObject({ ok: false, message: 'Question is already answered' });
+    expect(cvs.item(item)).toMatchObject({ state: 'answered', answer: 'yes' });
+    // Saying the same thing again, even as a new request, is still true.
+    expect(await f.call('inbox.answer', { item, answer: 'yes' }, `${item}-again`)).toEqual({ ok: true, value: { saved: true } });
+  }
+});
+
 it('uses authenticated read marks and the metadata services for rename, pin, archive, stop and delete', async () => {
   const f = fixture();
   const item = f.service.threads.conversations.send({ toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'agent', words: 'Ready' });

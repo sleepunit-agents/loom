@@ -4,6 +4,7 @@ import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxAnswer,hasPrivateInboxPayload,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion,isPrivateInboxQuestion} from './private-inbox-words.js';
 import { wordsDeadline } from './retention.js';
+import { answerable } from './answer-rule.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
 import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
@@ -51,9 +52,7 @@ export class InboxQueries {
   }
   canAnswer(viewer: Viewer, id: string): boolean {
     const item = this.current(viewer, id);
-    return viewer.kind === 'member' && !!item && item.toKind === 'person' && item.to === viewer.id
-      && item.state === 'waiting' && !!item.answers && !item.waitsOnKind
-      && !['task','approval','secret-request'].includes(item.source);
+    return viewer.kind === 'member' && !!item && item.to === viewer.id && answerable(item);
   }
   list(viewer: Viewer, filter: InboxFilter = {}): Item[] {
     const { limit = 50, offset = 0 } = filter;
