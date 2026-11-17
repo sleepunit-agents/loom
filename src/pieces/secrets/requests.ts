@@ -1,4 +1,3 @@
-import { inboxContentChanged } from '../../core/tempo/volume.js';
 /** Trusted metadata service. External operations authenticate callers and check
  * Settings ownership before invoking answer/setRule/revoke. No value enters it. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,7 +5,8 @@ import { and, eq, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { household, secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, members, jobs, conversations, inbox } from '../../core/data/schema.js';
+import { household, secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, members, jobs, conversations } from '../../core/data/schema.js';
+import { householdOwners } from '../../shared-sharing.js';
 import { secretName, secretAgent, requestReason } from './input.js';
 import { secretHasValue } from './presence.js';
 const duration = z.number().int().min(1).max(525600);
@@ -40,9 +40,9 @@ export class SecretRequests {
       const applies = rule && this.db.select().from(secretRuleAgents).where(and(eq(secretRuleAgents.secret, input.secret), eq(secretRuleAgents.agent, input.agent), eq(secretRuleAgents.when, when))).get();
       const decision = rule ? applies ? rule.answer : 'ask' : this.db.select().from(household).get()?.secretsDefault ?? 'ask';
       if (decision !== 'ask') return this.settle(row, 'rule', decision === 'auto', false, Math.min(input.minutes, rule?.minutes ?? input.minutes));
-      const owners = this.db.select().from(members).where(and(eq(members.role, 'owner'), isNull(members.removedAt))).all();
+      const owners = householdOwners(this.db);
       if (!owners.length) throw new Error('A secret request needs a household owner');
-      for (const owner of owners) this.mail.send({ toKind: 'person', to: owner.id, source: 'secret-request', sourceId: row.id, conversation: input.conversation,
+      for (const owner of owners) this.mail.send({ toKind: 'person', to: owner, source: 'secret-request', sourceId: row.id, conversation: input.conversation,
         fromKind: 'agent', fromId: input.agent, agent: input.agent, words: `Allow ${input.agent} to use ${input.secret} for ${input.minutes} minutes?`, why: input.why, answers: 'yes-no', waitsOnKind: 'secret-request', waitsOnId: row.id, refs: [row.id] });
       return row;
     });
@@ -143,11 +143,7 @@ export class SecretRequests {
     return this.read(row.id);
   }
   private resolve(id: string, reason: string): void {
-    // Source-specific resolution until Conversations exposes secret-request.
-    this.db.transaction(() => {
-      const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, id), eq(inbox.state, 'waiting'))).returning().all();
-      for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
-    });
+    this.mail.resolveSource('secret-request', id, reason);
   }
 }
 

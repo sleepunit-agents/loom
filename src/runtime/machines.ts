@@ -1,4 +1,3 @@
-import { inboxContentChanged } from '../core/tempo/volume.js';
 /** Trusted worker health records. Authentication of a worker belongs at the door. */
 import { and, eq, isNull } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
@@ -30,9 +29,7 @@ export class Machines {
         this.db.delete(boxFacts).where(and(eq(boxFacts.box, id), eq(boxFacts.fromOwner, false))).run();
         if (reported.length) this.db.insert(boxFacts).values(reported.map(fact => ({ box: id, fact, fromOwner: false }))).onConflictDoNothing().run();
       }
-      const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: 'Machine is reporting again', changedAt: at })
-        .where(and(eq(inbox.toKind, 'person'), eq(inbox.to, box.owner), eq(inbox.source, 'notice'), eq(inbox.sourceId, outage(box)), eq(inbox.state, 'waiting'))).returning().all();
-      for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
+      new Conversations(this.db, () => at).resolveSource('notice', outage(box), 'Machine is reporting again', { kind: 'person', id: box.owner });
       return this.db.update(boxes).set({ lastSeenAt: at }).where(eq(boxes.id, id)).returning().get()!;
     }, { behavior: 'immediate' });
   }

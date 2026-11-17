@@ -151,3 +151,35 @@ it.each(['dim','mute'] as const)('acknowledging already-taken mail preserves a l
  expect(service.confirm(item.id,'job-quiet')).toMatchObject({state:'done',volume:level,quietUntil});
  expect(service.confirm(item.id,'job-quiet')).toMatchObject({state:'done',volume:level,quietUntil});
 });
+it('closes only waiting items, by source or by id, returns unconfirmed mail to waiting and blanks an answer in one place each', () => {
+  const { db, service, cv } = fixture();
+  db.insert(members).values({ id: 'lee', role: 'member', joinedAt: service.now() }).run();
+  const notice = (to: string) => service.send({ toKind: 'person', to, source: 'notice', sourceId: 'outage:box', fromKind: 'unknown', words: 'Machine is quiet' });
+  const mine = notice('jonathan'), theirs = notice('lee');
+  // Named for one recipient, the other's item under the same source id stays.
+  expect(service.resolveSource('notice', 'outage:box', 'Reporting again', { kind: 'person', id: 'jonathan' }).map(item => item.id)).toEqual([mine.id]);
+  expect(service.item(mine.id)).toMatchObject({ state: 'resolved', resolution: 'Reporting again' });
+  expect(service.item(theirs.id).state).toBe('waiting');
+  // An item that no longer waits is not closed a second time, and keeps its first reason.
+  expect(service.resolveSource('notice', 'outage:box', 'Again')).toHaveLength(1);
+  expect(service.resolveItem(mine.id, 'Later')).toBeUndefined();
+  expect(service.item(mine.id).resolution).toBe('Reporting again');
+  const question = service.send({ toKind: 'person', to: 'jonathan', source: 'notice', sourceId: 'signin:1', fromKind: 'unknown', words: 'Answer with the code', answers: 'words' });
+  service.answer(question.id, 'jonathan', 'words', 'one-time-code');
+  service.redactAnswer(question.id, '(used)');
+  expect(service.item(question.id)).toMatchObject({ state: 'answered', answerText: '(used)' });
+  expect(service.resolveItem(question.id, 'Signed in')).toBeUndefined();
+  const waiting = service.send({ toKind: 'person', to: 'jonathan', source: 'notice', sourceId: 'signin:2', fromKind: 'unknown', words: 'Open the page' });
+  service.redactAnswer(waiting.id, '(used)');
+  expect(service.item(waiting.id).answerText).toBeNull();
+  expect(service.resolveItem(waiting.id, 'Signed in')?.state).toBe('resolved');
+  const mail = ['a', 'b'].map(sourceId => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'thread', sourceId, fromKind: 'person', fromId: 'jonathan', words: sourceId }));
+  for (const id of ['job-1', 'job-2']) db.insert(jobs).values({ id, agent: 'art', title: '', state: 'running', brief: '', model: 'm', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
+  db.update(inbox).set({ state: 'taken', job: 'job-1', takenAt: service.now() }).where(eq(inbox.id, mail[0].id)).run();
+  db.update(inbox).set({ state: 'done', job: 'job-1', takenAt: service.now(), doneAt: service.now() }).where(eq(inbox.id, mail[1].id)).run();
+  service.returnTaken('job-2');
+  expect(service.item(mail[0].id).state).toBe('taken');
+  service.returnTaken('job-1');
+  expect(service.item(mail[0].id)).toMatchObject({ state: 'waiting', job: 'job-1', takenAt: null });
+  expect(service.item(mail[1].id).state).toBe('done');
+});

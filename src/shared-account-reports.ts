@@ -4,7 +4,8 @@ import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { boxes, modelAccountBoxes, modelAccounts } from './core/data/schema.js';
+import { modelAccountBoxes, modelAccounts } from './core/data/schema.js';
+import { liveWorker } from './shared-worker.js';
 import type { Operations, Context } from './core/operations/index.js';
 import { accountCompletion, accountObservationCommitted } from './runtime/account-completion.js';
 import { quotaWindows } from './runtime/account-observation.js';
@@ -21,11 +22,10 @@ export function registerSharedAccountReports(operations: Operations, db: DataDat
     windows: readAccountWindows(db, account).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
   })).digest('hex');
   const canReport = (viewer: Viewer, input: z.infer<typeof identity>) => {
-    if (viewer.kind !== 'runner' || runner(viewer)?.box !== viewer.id) return false;
-    const box = db.select({ revokedAt: boxes.revokedAt }).from(boxes).where(eq(boxes.id, viewer.id)).get();
+    if (!liveWorker(db, viewer, runner(viewer))) return false;
     const account = db.select().from(modelAccounts).where(eq(modelAccounts.id, input.account)).get();
     const membership = db.select().from(modelAccountBoxes).where(and(eq(modelAccountBoxes.account, input.account), eq(modelAccountBoxes.box, viewer.id))).get();
-    return !!box && box.revokedAt === null && !!membership && account?.owner === input.owner && account?.provider === input.provider;
+    return !!membership && account?.owner === input.owner && account?.provider === input.provider;
   };
   const matches = (input: z.infer<typeof identity> & { basis: string }) => {
     const basis = bases.get(input.account);

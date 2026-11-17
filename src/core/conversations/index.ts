@@ -5,7 +5,7 @@ import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words
 import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
 import { acceptAnswer } from './answer-rule.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, max, ne, or } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, max, ne, or, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, conversationPeople, turns, inbox, inboxRefs, inboxReads, digests, digestItems, jobs } from '../data/schema.js';
 
@@ -73,6 +73,9 @@ export class Conversations {
       const at = this.now();
       const seq = conversation ? (this.db.select({ seq: max(inbox.seq) }).from(inbox).where(eq(inbox.conversation, conversation.id)).get()?.seq ?? 0) + 1 : null;
       const { refs = [], ...values } = input;
+      // The labels are a snapshot taken when the item is sent: the visibility rules read them without a
+      // join, and an item with no conversation has nowhere else to keep them. They do not follow a later
+      // change of the conversation's labels.
       const item = this.db.insert(inbox).values({
         project: conversation?.project, agent: conversation?.agent, member: conversation?.member,
         ...values, id: `in-${randomUUID()}`, seq, at, changedAt: at, state: 'waiting',
@@ -105,7 +108,7 @@ export class Conversations {
   pending(conversationId: string, jobId: string): Item[] {
     const conversation = this.conversation(conversationId);
     const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
-    if (conversation.job !== jobId || job?.conversation !== conversationId || job.agent !== conversation.agent || !liveConversationJob(job.state)) throw new Error('Job is not running in this conversation');
+    if (job?.conversation !== conversationId || job.agent !== conversation.agent || !liveConversationJob(job.state)) throw new Error('Job is not running in this conversation');
     return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent),
       or(eq(inbox.state, 'waiting'), and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
   }
@@ -162,13 +165,42 @@ export class Conversations {
     this.db.insert(inboxReads).values({ item, member, readAt: this.now() }).onConflictDoUpdate({ target: [inboxReads.item, inboxReads.member], set: { readAt: this.now() } }).run();
   }
 
-  /** Called by tasks/approvals when their durable outcome is committed. */
-  resolve(kind: 'task' | 'approval', id: string, reason: string, named?: Recipient): Item[] {
+  /** The one place a waiting item becomes resolved: only an item still waiting closes, and its
+   * recipient's volume hears of it. Every resolve below names which items; none restates this. */
+  private close(which: SQL | undefined, reason: string, named?: Recipient): Item[] {
     return this.db.transaction(() => {
-      const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.waitsOnKind, kind), eq(inbox.waitsOnId, id), eq(inbox.state, 'waiting'))).returning().all();
+      const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(which, eq(inbox.state, 'waiting'))).returning().all();
       for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id, named?.kind === item.toKind && named.id === item.to);
+      // Read again: the volume change above is part of what the caller is told.
       return resolved.map(item => this.item(item.id));
     });
+  }
+
+  /** Called by tasks/approvals when their durable outcome is committed. */
+  resolve(kind: 'task' | 'approval', id: string, reason: string, named?: Recipient): Item[] {
+    return this.close(and(eq(inbox.waitsOnKind, kind), eq(inbox.waitsOnId, id)), reason, named);
+  }
+
+  /** Close what a producer sent under its own source id (a secret request, a notice), for one recipient or for all. */
+  resolveSource(source: Item['source'], sourceId: string, reason: string, to?: Recipient): Item[] {
+    return this.close(and(eq(inbox.source, source), eq(inbox.sourceId, sourceId), to && and(eq(inbox.toKind, to.kind), eq(inbox.to, to.id))), reason);
+  }
+
+  /** Close one item by its id, if it still waits. */
+  resolveItem(id: string, reason: string): Item | undefined {
+    return this.close(eq(inbox.id, id), reason)[0];
+  }
+
+  /** The reverse of take: mail a job took and never confirmed waits again, still bound to that job,
+   * so whoever ends the job decides whether a next attempt gets it. */
+  returnTaken(jobId: string): void {
+    this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() }).where(and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))).run();
+  }
+
+  /** Replace the words of an answer that must not be kept (a one-time code) with a marker. The item
+   * stays answered; only words not already replaced change. */
+  redactAnswer(id: string, marker: string): void {
+    this.db.update(inbox).set({ answerText: marker, changedAt: this.now() }).where(and(eq(inbox.id, id), isNotNull(inbox.answerText), ne(inbox.answerText, marker))).run();
   }
 
   digest(input: DigestInput, questionItem?: string): typeof digests.$inferSelect {
@@ -187,8 +219,7 @@ export class Conversations {
       const old = this.db.select().from(digests).where(and(eq(digests.conversation, input.conversation), eq(digests.run, input.run))).get();
       // A rewrite retires its old pending question; answered questions stay as history.
       if (old?.inboxItem && old.inboxItem !== raised?.id) {
-        const retired = this.db.update(inbox).set({ state: 'resolved', resolution: 'Digest rewritten', changedAt: this.now() }).where(and(eq(inbox.id, old.inboxItem), eq(inbox.state, 'waiting'))).returning().get();
-        if (retired) inboxContentChanged(this.db, {kind:retired.toKind,id:retired.to}, retired.id);
+        this.resolveItem(old.inboxItem, 'Digest rewritten');
       }
       const revision = (old?.revision ?? 0) + 1;
       const question = input.question ? this.send({ ...input.question, toKind: 'person', conversation: conversation.id, source: 'thread', sourceId: `digest:${input.run}:${conversation.id}:${revision}`, fromKind: 'agent', fromId: conversation.agent }) : undefined;

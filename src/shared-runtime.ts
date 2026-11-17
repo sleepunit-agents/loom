@@ -4,11 +4,12 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { boxes, jobs, conversations } from './core/data/schema.js';
+import { jobs, conversations } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import { Dispatcher } from './runtime/dispatcher.js';
 import type { ModelRole } from './runtime/placement.js';
+import { liveWorker } from './shared-worker.js';
 import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
 
@@ -22,19 +23,16 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
 }) {
   const dispatcher = new Dispatcher(db, options.now, options.roles);
   const stopped=new WeakSet<object>();
-  const machine = (viewer: Viewer) => {
-    if (viewer.kind !== 'runner' || options.runner(viewer)?.box !== viewer.id) return false;
-    const row = db.select().from(boxes).where(eq(boxes.id, viewer.id)).get();
-    return !!row && row.revokedAt === null;
-  };
+  const machine = (viewer: Viewer) => !!liveWorker(db, viewer, options.runner(viewer));
   const assigned = (viewer: Viewer, id: string, states?: readonly string[]) => {
     if (!machine(viewer)) return false;
     const job = db.select({ box: jobs.box, state: jobs.state }).from(jobs).where(eq(jobs.id, id)).get();
     return job?.box === viewer.id && (!states || states.includes(job.state));
   };
   const runner = (viewer: Viewer) => {
-    if (viewer.kind !== 'runner' || options.runner(viewer)?.box !== viewer.id) throw new OperationError('denied', 'Worker required');
-    return viewer.id;
+    const box = liveWorker(db, viewer, options.runner(viewer));
+    if (!box) throw new OperationError('denied', 'Worker required');
+    return box;
   };
   operations.register({ name: 'runtime.health', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ facts: machineFacts.optional() }).strict(), output: ack, may: machine,

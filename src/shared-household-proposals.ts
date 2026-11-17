@@ -21,6 +21,8 @@ import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
 import type {ModelRole} from './runtime/placement.js';
 import {household as householdRow,secretRules,secretRuleAgents} from './core/data/schema.js';
 import {secretRuleInput,type SecretRequests} from './pieces/secrets/requests.js';
+import {secretDescription} from './pieces/secrets/input.js';
+import {describeSecret} from './pieces/secrets/shared-values.js';
 import {houseSecretsInput,setHouseSecrets,readHouseSecrets} from './shared-secret-commands.js';
 import {bridgeConfiguration,type BridgeSettings} from './pieces/bridges/settings.js';
 import {measuringValues} from './core/measuring/change.js';
@@ -54,7 +56,7 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  remove:z.object({of:z.enum(['member','agent','project','bridge']),id:z.string().min(1).max(200)}).strict(),
  restore:z.object({of:z.enum(['member','agent','project','bridge']),id:z.string().min(1).max(200)}).strict(),
  // What a secret is for. Its value is never on a card.
- secretDescription:z.object({secret:z.string().min(1).max(200),description:z.string().max(4000)}).strict(),
+ secretDescription:z.object({secret:z.string().min(1).max(200),description:secretDescription}).strict(),
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
  // A machine by the name people see; a signed-in browser by whose it is and its description.
  boxRevoke:z.object({name:z.string().trim().min(1).max(200)}).strict(),
@@ -175,7 +177,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     if(new Set(value.input.ids).size!==value.input.ids.length||have.length!==value.input.ids.length||have.some(id=>!value.input.ids.includes(id)))throw new OperationError('invalid','Name every one of the '+value.input.of+' exactly once');
     value.input.ids.forEach((id,position)=>db.update(table).set({position}).where(eq(table.id,id)).run());
    }
-   else if(value.change==='secretDescription'){if(!db.update(secrets).set({description:value.input.description,changedAt:now(),changedBy:by}).where(eq(secrets.name,value.input.secret)).run().changes)throw new OperationError('not-found','No secret has that name');}
+   else if(value.change==='secretDescription'){if(!describeSecret(db,{...value.input,by,at:now()}))throw new OperationError('not-found','No secret has that name');}
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
    else if(value.change==='boxRevoke')db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,liveBox(value.input.name)!.id)).run();
    else for(const row of browsers(value.input))endBrowser(db,row.id);
