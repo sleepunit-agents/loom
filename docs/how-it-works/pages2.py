@@ -833,6 +833,7 @@ def tools():
 # ───────────────────────── Houses (beside Machines and jobs; proposed, not yet on the guided path)
 HOUSEFILE = """# The house of the agent Fern: the image a body of hers runs in.
 # A loom worker builds it from this repository at one commit. Nothing else is given to the build.
+# This base image has Node at /usr/local/bin/node, where loom looks for it.
 FROM docker.io/library/node:22-bookworm-slim
 
 # What the agent works with: git, and the harness programs her models run in.
@@ -840,23 +841,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
  && rm -rf /var/lib/apt/lists/* \\
  && npm install -g @anthropic-ai/claude-code @openai/codex
 
-# This repository's own files. Last, so a commit that changes only them reuses the layers above.
-COPY . /home/fern/house
+# The home is the same in every house. There is no USER line: a body here runs as the container's
+# root. Claude Code skips its permission prompts as root only when it is told it is in a sandbox.
+ENV HOME=/home/agent IS_SANDBOX=1
 
-# One body file for each harness: which program to start, in which directory, and what it may reach.
+# Each harness is pointed at the place its account's sign-in is mounted when a body starts.
+ENV CLAUDE_SECURESTORAGE_CONFIG_DIR=/run/loom/login/claude
+RUN mkdir -p /home/agent/.codex && ln -s /run/loom/login/codex/auth.json /home/agent/.codex/auth.json
+
+# One body file for each harness, at the place loom looks for it.
 COPY house/claude.json house/codex.json /etc/loom/body/
 
-# How a body starts here. Loom reads these labels, the WORKDIR and the ENV, and nothing else of the image.
-LABEL loom.house="1" \\
-      loom.house.node="/usr/local/bin/node" \\
-      loom.house.body.claude="/etc/loom/body/claude.json" \\
-      loom.house.body.codex="/etc/loom/body/codex.json"
+# This repository's own files, at the place every house keeps its repository. A body starts there.
+COPY . /home/agent/repo
 
-# A body's environment and where it starts. There is no USER line: a body here runs as the container's
-# root. Claude Code skips its permission prompts as root only when it is told it is in a sandbox.
-ENV HOME=/home/fern IS_SANDBOX=1
-WORKDIR /home/fern/house"""
-BODYFILE = """{"command": "/usr/local/bin/claude", "cwd": "/home/fern/house", "reach": "all"}"""
+# That this image is a house of this layout, and the harnesses it serves.
+LABEL loom.house="2" \\
+      loom.house.harnesses="claude codex\""""
+BODYFILE = """{"command": "/usr/local/bin/claude", "cwd": "/home/agent/repo", "reach": "all"}"""
 
 def houses():
     idx = NUM["Machines and jobs"]
@@ -891,11 +893,16 @@ def houses():
     housefile = f"""<div class="two"><pre class="req">{e(HOUSEFILE)}</pre>
 <p class="note">A complete Housefile. The two body files it copies are one line each, such as <code>{e(BODYFILE)}</code>: the harness program in the image, the directory it starts in, and <code>reach</code>, which is <code>loom</code> for loom's own tools only or <code>all</code> for the harness's own tools as well (files, a shell, the web).</p></div>
 <div class="dec">""" + group("What the image must say", "cyan", [
-        row("<code>loom.house</code> is the version of this agreement between a house and loom. It is <code>1</code>.", "a label"),
-        row("<code>loom.house.node</code> is the path of the Node program in the image. Loom's body program is run with it. Node 22 or later.", "a label, an absolute path"),
-        row("<code>loom.house.body.&lt;harness&gt;</code> is the path of that harness's body file in the image, one label for each harness the house serves: <code>claude</code>, <code>codex</code>, <code>agy</code>.", "a label, an absolute path"),
-        row("A working directory. A body starts in the image's <code>WORKDIR</code>, which may not be <code>/</code>.", "WORKDIR"),
-        row("An environment. A body runs with the image's <code>ENV</code>, and as the image's <code>USER</code>. Loom adds one variable of its own, which names the body's scratch directory.", "ENV · USER"),
+        row("<code>loom.house</code> is the version of this agreement between a house and loom, and of the layout beside it. It is <code>2</code>. An image that says <code>1</code> is refused.", "a label"),
+        row("<code>loom.house.harnesses</code> names the harnesses the house serves, with a space between: <code>claude</code>, <code>codex</code>, <code>agy</code>. It is the one thing houses differ in that loom must know before it starts a body.", "a label"),
+        row("An environment. A body runs with the image's <code>ENV</code>, and as the image's <code>USER</code>. Loom sets two variables of its own: the home, and the body's scratch directory. The image's <code>WORKDIR</code> is not read.", "ENV · USER"),
+    ]) + group("Where things are in every house", "violet", [
+        row("<b>The home</b> is <code>/home/agent</code>. No path in a house is named for its agent: who lives there is the repository it was built from. Loom sets <code>HOME</code> to it when a body starts.", "/home/agent"),
+        row("<b>The agent's repository</b> is at <code>/home/agent/repo</code>. Every body starts in that directory.", "/home/agent/repo"),
+        row("<b>Node</b> is at <code>/usr/local/bin/node</code>, Node 22 or later. Loom's body program is run with it.", "/usr/local/bin/node"),
+        row("<b>A harness's body file</b> is at <code>/etc/loom/body/&lt;harness&gt;.json</code>, one for each harness the house serves.", "/etc/loom/body"),
+        row("<b>An account's sign-in</b> appears at <code>/run/loom/login/&lt;harness&gt;</code> when a body starts. The house points each harness there.", "/run/loom/login"),
+        row("A repository must not assume its own name in a path, a home other than <code>$HOME</code>, or a user of some name. A house that wants an older path makes a link to the fixed one.", "the same on every machine"),
     ]) + group("What the image must not hold", "amber", [
         row("A copy of loom. Loom mounts its own body program into every container at <code>/opt/loom</code>, so the image must keep nothing there.", "nothing at /opt/loom"),
         row("A declared volume. Loom checks that a container has exactly the storage it asked for, and an image that declares a <code>VOLUME</code> is refused.", "no VOLUME"),
@@ -916,8 +923,8 @@ def houses():
 
     runtime = '<div class="dec">' + group("What a body is given when it starts", "cyan", [
         row("<b>Loom's body program.</b> The program that takes the job, starts the harness and reports back. It comes from the worker's own installation, read-only, so it is always the one that matches the loom that is running.", "mounted at /opt/loom"),
-        row("<b>Its account's sign-in.</b> A model sign-in is a directory of files that the provider's program rewrites when it renews, so it cannot be in an image. The machine's configuration names one directory for each account and harness, and a body gets the one for its job's account and no other. The same configuration says where in the container it appears; loom fixes no place, so a house must look where its machines put it. The body's user must be able to write it: under a rootless engine that is the container's root.", "from the machine's configuration"),
-        row("<b>Its agent's own directories.</b> The machine's configuration can give an agent directories of the machine, read-only unless it says otherwise: a little state kept between bodies, say. A body gets its own agent's and never another agent's.", "from the machine's configuration"),
+        row("<b>Its account's sign-in.</b> A model sign-in is a directory of files that the provider's program rewrites when it renews, so it cannot be in an image. The machine's configuration names one directory for each account and harness, and a body gets the one for its job's account and no other. It appears at <code>/run/loom/login/&lt;harness&gt;</code> in every house on every machine. The body's user must be able to write it: under a rootless engine that is the container's root.", "mounted at /run/loom/login"),
+        row("<b>Its agent's own directories.</b> The machine's configuration can give an agent directories of the machine, read-only unless it says otherwise: a little state kept between bodies, say. Each lands under the home, at the path the configuration gives, and never on the repository. A body gets its own agent's and never another agent's.", "from the machine's configuration"),
         row("<b>Its startup secrets.</b> Each is in the environment of the harness under its alias. They are handed over when the body starts, not before, and are in no image.", plink("Secrets")),
         row("<b>Its job.</b> The work, and a credential of its own that is good for this one job.", plink("Signing in")),
     ]) + group("What it is not given", "amber", [
@@ -937,15 +944,15 @@ def houses():
     wrong = '<div class="dec">' + group("A job fails, and the worker carries on", "pink", [
         row("<b>Build failed.</b> The address is not https, the branch or Housefile is not there, the secret does not fetch the repository, the commit is past a limit, or a step of the Housefile failed.", "worker build · exit code 22"),
         row("<b>The build ran out of time.</b> The fetch and build together took longer than the build's limit.", "worker build time · exit code 32"),
-        row("<b>The house image does not meet the image contract</b>, followed by what is missing: <code>loom.house</code>, <code>loom.house.node</code>, <code>loom.house.body.codex</code>, <code>WORKDIR</code> or <code>VOLUME</code>.", "worker house · exit code 30"),
-        row("<b>Launch failed.</b> The Node program the label names is not in the image, or the engine could not start the container.", "worker launch · exit code 23"),
+        row("<b>The house image does not meet the image contract</b>, followed by what is at fault: <code>loom.house</code>, <code>loom.house.harnesses</code> or <code>VOLUME</code>.", "worker house · exit code 30"),
+        row("<b>Launch failed.</b> Node or the repository is not in the image at its place, or the engine could not start the container.", "worker launch · exit code 23"),
         row("<b>Runner failed.</b> The machine has no sign-in directory for the job's account and harness.", "worker runner · exit code 27"),
-        row("<b>Body config.</b> The body file the label names is not in the image, or is not a body file.", "body config · exit code 16"),
+        row("<b>Body config.</b> The harness's body file is not in the image at its place, or is not a body file.", "body config · exit code 16"),
     ]) + group("The worker stops when it starts, with one line", "amber", [
         row("<b>git 2.32.0 or later, which fetches each house's repository, could not be run on this machine.</b>", "worker exit code 54"),
         row("<b>The directory the worker is installed in cannot give containers the body program.</b> The worker's packages are not inside its own directory.", "worker exit code 55"),
         row("<b>A path the configuration gives to containers, or an engine socket, cannot be used.</b> The line ends with the key of the entry at fault, never a path.", "worker exit code 52"),
-        row("<b>The configuration has a key that a worker with container bodies no longer takes.</b> A build command, a runner, or directories listed for every agent at once. The line ends with the key.", "worker exit code 53"),
+        row("<b>The configuration has a key that a worker with container bodies no longer takes.</b> A build command, a runner, directories listed for every agent at once, or a place in the container for a sign-in. The line ends with the key.", "worker exit code 53"),
     ]) + '</div>'
 
     needs = '<div class="dec">' + group("What a machine needs", "cyan", [
@@ -973,7 +980,7 @@ def houses():
 </section>
 {band("What it is", "what-h", "A house, a worker and a Housefile", "", what)}
 {band("Where it is named", "named-h", "An agent's run settings", "", named)}
-{band("The Housefile", "file-h", "What a house says about itself", "An ordinary container build file, with labels that tell loom how to start a body in the image. Loom reads labels, and not a file inside the image, because an image's labels can be read without starting anything from it.", housefile)}
+{band("The Housefile", "file-h", "What a house says about itself", "An ordinary container build file. Where things are inside a house is the same in every house, so the image says only two things with labels. Loom reads labels, and not a file inside the image, because an image's labels can be read without starting anything from it.", housefile)}
 {band("How it works", "how-h", "When a job needs a house", "", steps)}
 {band("At run time", "run-h", "What is not in the image", "", runtime)}
 {band("On one machine", "many-h", "Several jobs at once, and the disk", "", several)}
