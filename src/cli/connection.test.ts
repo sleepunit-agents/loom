@@ -36,3 +36,20 @@ it('reads one token file the same way in every client', async () => {
   for (const bad of ['', '  \n', 'two words', 'bell\u0007', 'x'.repeat(4097), Buffer.alloc(8193, 0x20)])
     expect(await presented(bad), JSON.stringify(String(bad).slice(0, 12))).toEqual([undefined, undefined, undefined]);
 });
+
+it('takes the program\'s address by one rule in every client: https, or plain http to this machine only', async () => {
+  const file = join(directory, 'token'); writeFileSync(file, 'loom_fictional-token\n');
+  const reached = async (url: string): Promise<boolean[]> => {
+    const env = { LOOM_URL: url, LOOM_TOKEN_FILE: file }, io: IOStreams = { stdout() {}, stderr() {}, stdin: process.stdin, stdinIsTTY: true, env };
+    const hit = [false, false, false];
+    const runtime = (index: number) => ({ retry: async () => {}, request: (async () => { hit[index] = true; return Response.json({}, { status: 400 }); }) as typeof fetch });
+    await runAccessClient('token', ['list'], io, runtime(0)); await runSharedTaskClient(['list'], io, runtime(1));
+    try { sharedStdioConfig(['mcp'], env); hit[2] = true; } catch { hit[2] = false; }
+    return hit;
+  };
+  for (const good of ['https://loom.example', 'https://192.168.6.30:8443', 'http://127.0.0.1:8790', 'http://localhost:8790', 'http://[::1]:8790'])
+    expect(await reached(good), good).toEqual([true, true, true]);
+  // A token is never sent in the clear to another machine, by any client.
+  for (const bad of ['http://192.168.6.30:8790', 'http://loom.example', 'ftp://127.0.0.1', 'https://user:pw@loom.example', 'https://loom.example/path'])
+    expect(await reached(bad), bad).toEqual([false, false, false]);
+});

@@ -2,12 +2,12 @@
  * One reading of the token file for every client (`loom-token` and its siblings, `loom-taskstore`,
  * `loom mcp`, and the worker), so a file one of them accepts is accepted by all.
  *
- * The address is not one rule, on purpose. The command-line clients take plain http to any host, for a
- * household reached over its own network. `loom mcp` takes its address through `privateOrigin`
- * (src/core/private-origin.ts), which allows plain http to this machine only, because that session
- * is started by a harness on behalf of an agent. See docs/accepted-tradeoffs.md. */
+ * The address is one rule too: `privateOrigin` (src/core/private-origin.ts), which every program that sends
+ * a credential uses. https, or plain http to this machine only: a token is never sent in the clear to
+ * another machine. */
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { privateOrigin } from '../core/private-origin.js';
 
 /** What went wrong, in words a client may print. Never carries any part of the token. */
 export class ConnectionError extends Error {}
@@ -39,13 +39,11 @@ export async function readDoorToken(file: string | undefined): Promise<string> {
 }
 export function readDoorTokenSync(file: string): string { return tokenIn(readFileSync(file)); }
 
-/** The daemon's address for a command-line client: http or https, a host, and nothing else. */
+/** The daemon's address for a command-line client: an origin and nothing else, by the one rule. */
 export function doorUrl(value: string | undefined): URL {
   if (!value) throw new ConnectionError('LOOM_URL is required');
-  let base: URL;
-  try { base = new URL(value); } catch { throw new ConnectionError('Invalid LOOM_URL'); }
-  if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw new ConnectionError('Invalid LOOM_URL');
-  return base;
+  try { return privateOrigin(value); }
+  catch { throw new ConnectionError('Invalid LOOM_URL: use https, or http to this machine only'); }
 }
 /** Both, from a client's environment. Any failure that is not one of the above (an unreadable file) is reported plainly. */
 export async function doorConnection(env: NodeJS.ProcessEnv): Promise<{ base: URL; token: string }> {

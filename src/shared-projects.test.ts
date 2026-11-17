@@ -9,6 +9,7 @@ import type {Viewer} from './policy.js';
 import {createHash} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {afterEach,expect,it} from 'vitest';
+import {projectInput} from './shared-projects.js';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
 import {members,agents,tokens,projects,projectMembers,projectAgents,projectRepositories,changes} from './core/data/schema.js';
@@ -125,4 +126,12 @@ it('reads Sharing with fixed SQL work for two and ten projects through one API c
  expect(large.count).toBe(smallCount);
  expect(large.count).toBe(4);
  expect(large.rows.find((row:{id:string})=>row.id==='project-9')).toEqual({id:'project-9',name:'project-9',members:[],agents:['art'],repositories:['github:fixture/project-9']});
+});
+
+it('holds a project\'s id to the length its card allows, and leaves its name free',()=>{
+ const input={name:'A long and descriptive project name, far longer than its id may be',members:[],agents:[],repositories:[]};
+ expect(projectInput.safeParse({...input,id:'a'.repeat(32)}).success).toBe(true);
+ expect(projectInput.safeParse({...input,id:'a'.repeat(33)}).success).toBe(false);
+ // A member or an agent named on it may have a longer id than the project's own.
+ expect(projectInput.safeParse({...input,id:'pond',members:['m'.repeat(100)],agents:['a'.repeat(100)]}).success).toBe(true);
 });

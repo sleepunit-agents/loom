@@ -10,8 +10,8 @@ import type { DataDatabase } from './core/data/database.js';
 import { projects, projectMembers, projectAgents, projectRepositories, members, agents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { householdOwner } from './shared-sharing.js';
-import { householdId } from './slug.js';
-const id=householdId,list=z.array(id).max(1000).transform(values=>[...new Set(values)].sort());
+import { householdId, projectId } from './slug.js';
+const id=projectId,list=z.array(householdId).max(1000).transform(values=>[...new Set(values)].sort());
 export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
 export function sharedProjects(db:DataDatabase){
  const validate=(value:z.infer<typeof projectInput>)=>{

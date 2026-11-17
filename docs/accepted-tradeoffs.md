@@ -796,17 +796,6 @@ Entries are grouped by the part of the program they belong to.
   `mind_operation_receipts` has one reader and writer.
 - **What would change the answer.** Memory moving into the household database.
 
-### The command-line clients and `loom mcp` take the program's address by different rules
-- **What.** `loom-taskstore`, `loom-token` and their siblings accept plain `http` to any host. `loom mcp`
-  accepts plain `http` only to this machine. All three read the token file the same way.
-- **Where.** `src/cli/connection.ts` (`doorUrl`); `privateOrigin` in `src/core/private-origin.ts`, which the
-  worker, the body's clients and the secret client also use.
-- **Why accepted.** A household reaches its program over its own network with the command-line clients, and
-  that has worked over plain `http`. An MCP session is started by a harness for an agent and carries that
-  agent's token on every call.
-- **What would change the answer.** The owner deciding either way: the stricter rule for all would refuse a
-  plain-`http` address the clients take today.
-
 ### A client states the shape of the answer it expects
 - **What.** The household's vocabulary (the kinds of household change, memory categories, note lifespans, a
   secret's answers, card slug caps and the like) is written once and read by every door. Two kinds of code
