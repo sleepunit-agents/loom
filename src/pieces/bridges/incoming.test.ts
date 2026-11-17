@@ -8,6 +8,8 @@ import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { BridgeIncoming, type IncomingMessage } from './incoming.js';
+import { expirePrivateBridgeWords, oldestPrivateBridgeWords } from '../../core/conversations/private-bridge-words.js';
+import { bridgeSends } from '../../core/data/schema.js';
 import {normalizeSlack} from './normalize.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -241,4 +243,23 @@ it('reuses the original public channel place key',()=>{
  const f=fixture(),prior=new Conversations(f.db,f.now).open({agent:'art',venue:'discord',place:JSON.stringify(['w','room',null]),label:'Existing public room'});
  const row=f.ingress.receive(f.message);
  expect(row.conversation).toBe(prior.id);expect(f.db.select().from(conversations).all()).toHaveLength(1);
+});
+it('erases a private DM\'s words at the keep time, in every column that holds them, and nothing else', () => {
+  const f = fixture(), dm = f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' });
+  const room = f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' });
+  expect(f.db.select().from(conversations).where(eq(conversations.id, dm.conversation!)).get()?.member).toBe('jonathan');
+  for (const [id, incoming, state] of [['sent', dm.id, 'sent'], ['waiting', dm.id, 'held'], ['room', room.id, 'sent']] as const)
+    f.db.insert(bridgeSends).values({ id, incoming, connection: 'c', channel: 'x', text: 'Reply words', state, createdAt: f.now() }).run();
+  const words = () => ({ mail: f.db.select({ words: inbox.words }).from(inbox).all().map(row => row.words), received: f.db.select({ text: bridgeIncoming.text }).from(bridgeIncoming).all().map(row => row.text),
+    replies: Object.fromEntries(f.db.select().from(bridgeSends).all().map(row => [row.id, row.text])) });
+  expect(oldestPrivateBridgeWords(f.db)).toBe(Date.parse(f.now()));
+  // Younger than the keep time: untouched.
+  expect(expirePrivateBridgeWords(f.db, '2026-11-14T11:59:59.999Z')).toBe(0);
+  expect(expirePrivateBridgeWords(f.db, '2026-11-14T12:00:00.000Z')).toBe(3);
+  // The room is not private, and a reply a person has yet to decide on is still needed.
+  expect(words()).toEqual({ mail: [null, 'Room words'], received: ['', 'Room words'], replies: { sent: '', waiting: 'Reply words', room: 'Reply words' } });
+  expect(oldestPrivateBridgeWords(f.db)).toBeUndefined();
+  // A late replay of the erased message is still the same message, not a reused id.
+  expect(f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' })).toMatchObject({ id: dm.id, state: 'delivered', text: '' });
+  expect(() => f.ingress.receive({ ...f.message, id: 'room', text: 'Other words' })).toThrow('reused');
 });

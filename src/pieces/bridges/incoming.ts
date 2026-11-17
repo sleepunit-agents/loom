@@ -24,9 +24,11 @@ export interface IncomingMessage {
   webhook?: boolean;
 }
 
+/** Stored words that are empty were either sent empty or erased at the keep
+ * time (core/conversations/private-bridge-words.ts); neither can be compared. */
 function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
  return row.channel===message.channel&&row.thread===(message.thread??null)&&row.isDm===message.isDm
-  &&row.user===message.user&&row.text===message.text&&row.postedAt===message.postedAt;
+  &&row.user===message.user&&(row.text===''||row.text===message.text)&&row.postedAt===message.postedAt;
 }
 
 export class BridgeIncoming {
