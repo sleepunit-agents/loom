@@ -30,7 +30,8 @@ it('reads only conversations with this person, with metadata and the supplied ro
 });
 it('keeps private member precedence and project or agent visibility independent of the card',()=>{
  const {add,titles}=fixture();add('Agent');add('Team',{project:'team'});add('Private',{member:'bob',project:'team'});
- expect(titles({kind:'member',id:'owner'})).toEqual(['Agent','Private','Team']);
+ // The owner role reads the household's conversations, not another member's private one.
+ expect(titles({kind:'member',id:'owner'})).toEqual(['Agent','Team']);
  expect(titles({kind:'member',id:'alice'})).toEqual(['Agent','Team']);
  expect(titles({kind:'member',id:'peer'})).toEqual(['Team']);
  expect(titles({kind:'member',id:'bob'})).toEqual(['Private']);

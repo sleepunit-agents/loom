@@ -2,10 +2,10 @@
  * Every decision here is a rule from policy.ts, read for one trigger, recipient or record. */
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { eq } from 'drizzle-orm';
-import { holds, inHousehold, isHouseholdOwner, rules, type Viewer } from './policy.js';
+import { holds, inHousehold, isHouseholdOwner, rules, tableRules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { triggers, approvals, changes, inbox, jobs, secretRequests } from './core/data/schema.js';
+import { triggers, approvals, changes, conversations, inbox, jobs, secretRequests } from './core/data/schema.js';
 import type { TempoAccess } from './core/tempo/operations.js';
 
 export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: TempoAccess): boolean {
@@ -30,8 +30,11 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
       : kind === 'job' && prefix === 'job' ? db.select().from(jobs).where(eq(jobs.id, id)).get()
       : kind === 'answer' && prefix === 'approval' ? db.select().from(approvals).where(eq(approvals.id, id)).get()
       : kind === 'answer' && prefix === 'secret-request' ? db.select().from(secretRequests).where(eq(secretRequests.id, id)).get() : undefined;
-    // What is watched must be a record the caller sees, by the labels it carries.
-    return !!row && holds(rules.labelled, viewer, { member: 'member' in row ? row.member : null, project: 'project' in row ? row.project : null, agent: row.agent }, sharing);
+    // What is watched must be a record the caller sees, by the labels it carries. A job is read by the
+    // rule of its conversation, so nobody watches a job of somebody else's private thread into view.
+    if (!row) return false;
+    if (kind === 'job') return holds(tableRules.jobs, viewer, row, sharing, (_table, parent) => db.select().from(conversations).where(eq(conversations.id, parent)).get());
+    return holds(rules.labelled, viewer, { member: 'member' in row ? row.member : null, project: 'project' in row ? row.project : null, agent: row.agent }, sharing);
   };
   // Whoever could set this trigger for this recipient may also change its words and times.
   const maySet = (t: Extract<TempoAccess, { action: 'set' | 'edit' }>['trigger']) => {

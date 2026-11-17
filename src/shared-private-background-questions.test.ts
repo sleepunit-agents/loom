@@ -78,12 +78,13 @@ it('fails closed on corrupt answer ciphertext without confirming or discarding m
 it('rolls back both private answer and response mail when receipt persistence fails',async()=>{
  const f=await fixture(),id=await ask(f);f.db.$client.exec("CREATE TRIGGER reject_private_answer_receipt BEFORE INSERT ON operation_results WHEN NEW.operation='inbox.answer' BEGIN SELECT RAISE(FAIL,'fictional receipt failure'); END");expect((await answer(f,id)).status).toBe(503);expect(f.db.select().from(s.inbox).all()).toEqual([expect.objectContaining({id,state:'waiting',answer:null,answeredAt:null})]);noCopies(f);
 });
-it('lets household owners read private questions but keeps answering with the actual recipient',async()=>{
+it('keeps a private question from a household owner, to read as well as to answer',async()=>{
  const f=await fixture(),id=await ask(f),token='e'.repeat(64),cookie='f'.repeat(64),at=new Date(f.clock.now()).toISOString();
  f.root.writes.run(()=>{f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictitious Bob',kind:'owner',member:'bob',createdAt:at}).run();f.db.insert(s.sessions).values({id:credentialHash(cookie),token:credentialHash(token),device:'Fictional',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();});
  const read=()=>f.root.http.request('/graphql',{method:'POST',headers:{cookie:'loom_ui='+cookie,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${id}"){body{words} canAnswer}}`})});
  expect(await (await read()).json()).toEqual({data:{inboxItem:null}});f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run());
- expect(await (await read()).json()).toEqual({data:{inboxItem:{body:{words:question.words},canAnswer:false}}});
+ // Owning the agent and holding the owner role together still do not open another member's question.
+ expect(await (await read()).json()).toEqual({data:{inboxItem:null}});
  const denied=await f.root.http.request('/api/inbox/answer',{method:'POST',headers:{cookie:'loom_ui='+cookie,'content-type':'application/json'},body:JSON.stringify({input:{item:id,answer:'yes'},id:'other-owner-answer'})});expect(denied.status).toBe(403);expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,id)).get()?.state).toBe('waiting');noCopies(f);
 });
 it('rechecks current assignment before replaying a private digest receipt',async()=>{

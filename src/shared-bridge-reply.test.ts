@@ -34,7 +34,7 @@ function fixture(){
  const body=(conversation:string,job=`job-${randomUUID()}`)=>{
   const value='body_'+createHash('sha256').update(job).digest('hex'),cv=db.select().from(s.conversations).where(eq(s.conversations.id,conversation)).get()!;
   root.writes.run(()=>{db.insert(s.jobs).values({id:job,agent:'art',box:'box',conversation,member:cv.member,title:'',brief:'',model:'m',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'r',houseFile:'f',houseBranch:'next',queuedAt:now()}).run();
-   db.update(s.conversations).set({job}).where(eq(s.conversations.id,conversation)).run();token(value,{kind:'agent',agent:'art',job});});
+   token(value,{kind:'agent',agent:'art',job});});
   return {job,token:value};
  };
  const call=async(name:'reply'|'file',input:unknown,bearer:string)=>{const res=await root.http.request('http://loom/api/bridges/'+name,{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
@@ -61,8 +61,8 @@ it('reads attachments under the rule of the message they hang off',async()=>{
  f.root.writes.run(()=>{for(const [file,message] of [['FDM',dm],['FROOM',room]] as const)f.db.insert(s.bridgeFiles).values({connection:'slack',file,incoming:message.id,name:file+'.txt',contents:Buffer.from(file),fetchedAt:f.now()}).run();});
  expect(f.db.select().from(s.conversations).where(eq(s.conversations.id,dm.conversation!)).get()?.member).toBe('member');
  const status=async(message:{id:string},bearer:string)=>(await f.call('file',{incoming:message.id},bearer)).status;
- // Members: whoever may read the message row. The private DM is its member's and the household owner's.
- expect(await status(dm,member)).toBe(200);expect(await status(dm,owner)).toBe(200);expect(await status(dm,other)).toBe(403);
+ // Members: whoever may read the message row. The private DM is its member's alone; not even a household owner's.
+ expect(await status(dm,member)).toBe(200);expect(await status(dm,owner)).toBe(403);expect(await status(dm,other)).toBe(403);
  expect(await status(room,other)).toBe(200);
  // Agents: only the body working in that conversation. The agent's identity alone opens nothing.
  expect(await status(room,plainAgent)).toBe(403);expect(await status(dm,plainAgent)).toBe(403);

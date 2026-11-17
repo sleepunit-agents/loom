@@ -68,7 +68,9 @@ it('keeps moved conversations without a digest in the interval and reads more th
  expect(f.reader.list(owner,{...q,until:q.from}).rows).toEqual([]);
  expect(f.reader.list(owner,{...q,limit:0}).rows).toEqual([]);
  f.db.update(conversations).set({member:'teammate'}).where(eq(conversations.id,cv.id)).run();
- expect(f.reader.conversation(owner,'fiction',cv.id)).toMatchObject({member:'teammate'});
+ // Once it is a member's own, that member reads it and the household owner does not.
+ expect(f.reader.conversation(teammate,'fiction',cv.id)).toMatchObject({member:'teammate'});
+ expect(f.reader.conversation(owner,'fiction',cv.id)).toBeUndefined();
 });
 
 it('schedules the earliest future digest or conversation timestamp at both skew boundaries',()=>{

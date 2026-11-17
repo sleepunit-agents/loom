@@ -216,10 +216,10 @@ it.each(['project','owner'] as const)('withholds a pending public brief after %s
  release();const response=await pending;expect(response.status).toBe(403);expect(await response.text()).not.toContain(brief.words);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()?.state).toBe('waiting');
 });
-it('keeps private handoff body words visible to a household owner who is not its member',async()=>{
+it('keeps private handoff body words from a household owner who is not its member',async()=>{
  const f=await fixture(),created=await create(f),token='fictional-owner-body-read-'.repeat(4);
  f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional owner',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();});
- const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toEqual({data:{inboxItem:null}});
 });
 
 it.each(['project','owner'] as const)('withdraws published public handoff originals and clones after %s assignment changes',async kind=>{
