@@ -3,7 +3,8 @@
 // Usage: npx tsc -p . && node scripts/check-container-engine.mjs <socket> <directory> <image>
 //   <socket>     the engine's Unix socket
 //   <directory>  an existing directory of yours, written as its real path; it is mounted into the containers,
-//                and a file named seen-by-the-body is left in it
+//                and a file named seen-by-the-body is left in it. A symbolic link named check-link is made
+//                beside it and removed again: anything already at that name is deleted
 //   <image>      a small image already on the engine that has /bin/sh, cat, ls, touch, id, stat and sleep
 // It uses the built worker (dist/runtime) only: the executor for the whole life of one body, and the engine
 // client for a few questions the executor never asks. Every container it makes is named loom-check-* and

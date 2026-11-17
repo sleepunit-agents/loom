@@ -19,8 +19,9 @@ const command = z.object({ command: commandString.min(1), args: z.array(commandS
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
 const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(ENV_NAME), commandString) });
 /** A directory of this machine and where a container sees it. Only the shape is read here: every rule
- * about the two paths is in worker-mounts.ts, which stops the worker with a line of its own. */
-const hostDirectory = z.object({ source: commandString, target: commandString }).strict();
+ * about these paths, and about the two engine sockets below, is in worker-mounts.ts, which stops the worker
+ * with a line of its own (exit 52). A path written wrongly is that exit too, never this file's 41. */
+const hostDirectory = z.object({ source: z.string(), target: z.string() }).strict();
 const stepDeadline = z.number().int().min(1).max(STEP_DEADLINE_MAX_MS);
 const accountCommand = z.object({
   command,
@@ -46,7 +47,7 @@ const configSchema = z.object({
    * This is the one way a worker signs an account in. */
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
     intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
-  container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
+  container: z.object({ socket: z.string(), nestedSocket: z.string().optional(),
     runtime: z.enum(CONTAINER_RUNTIMES).optional(),
     mounts: z.array(hostDirectory.extend({ readOnly: z.boolean().optional() }).strict()).optional(),
     setupTimeoutMs: stepDeadline.optional(),

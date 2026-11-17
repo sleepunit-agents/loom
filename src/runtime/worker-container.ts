@@ -13,7 +13,7 @@ import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type Work
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
-import { bodyMounts, NESTED_SOCKET_TARGET, type AccountLogins, type BodyMount, type FixedMount } from './worker-mounts.js';
+import { bodyMounts, type AccountLogins, type BodyMount, type FixedMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
  * nothing is discovered. */
@@ -35,20 +35,14 @@ function deadline(value: number | undefined, fallback: number) {
   if (!validDeadline(result, STEP_DEADLINE_MAX_MS)) throw new Error('Invalid Docker deadline');
   return result;
 }
-/** The mounts of one job's container, as the engine is asked for them and as it must report them. */
-function jobMounts(job: WorkerAssignment, config: ContainerConfig, body: readonly BodyMount[]) {
-  const asked: { Type: string; Source: string; Target: string; ReadOnly: boolean }[] = [];
-  if (job.run?.nestedContainers) {
-    if (!config.nestedSocket?.startsWith('/') || config.nestedSocket.includes('\0')) throw new Error('Nested containers unavailable');
-    asked.push({ Type: 'bind', Source: config.nestedSocket, Target: NESTED_SOCKET_TARGET, ReadOnly: false });
-  }
-  for (const mount of body) asked.push({ Type: 'bind', Source: mount.source, Target: mount.target, ReadOnly: mount.readOnly });
-  return asked;
-}
+/** One bind mount as the engine is asked for it, and as it must report it. */
+interface EngineMount { Type: 'bind'; Source: string; Target: string; ReadOnly: boolean }
+const engineMounts = (mounts: readonly BodyMount[]): EngineMount[] =>
+  mounts.map(mount => ({ Type: 'bind', Source: mount.source, Target: mount.target, ReadOnly: mount.readOnly }));
 /** The created container has exactly the mounts the worker asked for: each one a bind mount of the same
  * source at the same place, writable or not as asked, and nothing else (an image's declared volume, a
  * mount an engine adds by itself). The order is the engine's own. */
-function ownMounts(inspect: unknown, asked: ReturnType<typeof jobMounts>): boolean {
+function ownMounts(inspect: unknown, asked: readonly EngineMount[]): boolean {
   if (!inspect || typeof inspect !== 'object' || !('Mounts' in inspect) || !Array.isArray(inspect.Mounts) || inspect.Mounts.length !== asked.length) return false;
   const left = new Map(asked.map(mount => [mount.Target, mount]));
   for (const found of inspect.Mounts as unknown[]) {
@@ -60,7 +54,7 @@ function ownMounts(inspect: unknown, asked: ReturnType<typeof jobMounts>): boole
   }
   return left.size === 0;
 }
-function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, config: ContainerConfig, mounts: ReturnType<typeof jobMounts>) {
+function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, config: ContainerConfig, mounts: readonly EngineMount[]) {
   if (!image.trim() || /[\s\0]/.test(image) || !plan.command || !plan.cwd.startsWith('/')) throw new Error('Invalid container command');
   const bindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
   for (const { address, port } of job.run?.ports ?? []) {
@@ -136,13 +130,19 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
   box: string;
   /** For the build commands, which are processes: see commandWorkerExecutor. */
   state?: string;
+  /** The file with the worker's token for loom, when the caller has one: no mount may reach it. */
+  tokenFile?: string;
 }, dependencies: { engine?: DockerEngine; builder?: WorkerExecutor; name?: () => string } = {}): WorkerExecutor {
   const fixed = structuredClone(config);
   const runner = workerRunner(fixed);
   if (fixed.container.runtime !== undefined && !CONTAINER_RUNTIMES.includes(fixed.container.runtime)) throw new Error('Invalid container runtime');
   // Checked and fixed here, before the builder takes the state directory or anything asks the engine: a
   // worker whose mounts cannot be used is not made (WorkerStop 'mounts').
-  const mountsFor = bodyMounts({ accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, nestedSocket: fixed.container.nestedSocket });
+  const mountsFor = bodyMounts({ accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, socket: fixed.container.socket,
+    nestedSocket: fixed.container.nestedSocket, state: fixed.state, tokenFile: fixed.tokenFile });
+  /** What must hold before a build is worth starting: the job has a sign-in directory, when those are configured.
+   * A nested job on a machine with no nested socket still fails when its body is started, as before. */
+  const signIn = (job: WorkerAssignment) => { mountsFor({ account: job.account, harness: job.harness }); };
   const engine = dependencies.engine ?? dockerEngine(fixed.container.socket);
   const builder = dependencies.builder ?? commandWorkerExecutor(fixed);
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
@@ -168,11 +168,11 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
         }
       }
     },
-    build: (job, signal, repositoryInput) => { runner(job); mountsFor(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
+    build: (job, signal, repositoryInput) => { runner(job); signIn(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job), plan = runner(assignment);
       if (!plan || signal.aborted) throw new Error('Container runner unavailable');
-      const mounts = jobMounts(assignment, fixed.container, mountsFor(assignment));
+      const mounts = engineMounts(mountsFor(assignment));
       const spec = createSpec(assignment, image, plan, fixed.container, mounts);
       const name = `loom-${(dependencies.name ?? randomUUID)()}`;
       if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');

@@ -27,7 +27,7 @@ function fixture() {
     return undefined;
   }) };
   const builder = { build: vi.fn(async () => 'image:built'), start: vi.fn() };
-  const config = { box: 'box', build: structuredClone(plan), runners: { harness: structuredClone(plan) }, container: { socket: '/configured/docker.sock', setupTimeoutMs: 100, cleanupTimeoutMs: 50 } };
+  const config = { box: 'box', build: structuredClone(plan), runners: { harness: structuredClone(plan) }, container: { socket: engineSock, setupTimeoutMs: 100, cleanupTimeoutMs: 50 } };
   const executor = containerWorkerExecutor(config, { engine, builder, name: () => 'unique' });
   const abort = new AbortController();
   const start = (assignment = job) => executor.start(assignment, 'image:built', abort.signal);
@@ -198,7 +198,7 @@ for (const configured of [true, false]) it(`bounds independent removal with ${co
   f.engine.json.mockImplementation((method, path, body, signal) => method === 'DELETE'
     ? new Promise((_yes, no) => { expect(signal.aborted).toBe(false); signal.addEventListener('abort', () => no(new Error('cleanup deadline')), { once: true }); })
     : original(method, path, body, signal));
-  const config = { ...f.config, container: configured ? f.config.container : { socket: '/configured/socket' } };
+  const config = { ...f.config, container: configured ? f.config.container : { socket: engineSock } };
   const executor = containerWorkerExecutor(config, { engine: f.engine, builder: f.builder });
   const control = { next: vi.fn(async () => job), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
   const run = workOnce({ box: 'box', control, executor, signal: f.abort.signal, schedule: { every: () => () => {} } });
@@ -211,7 +211,7 @@ it('uses the default setup deadline of thirty seconds', async () => {
   vi.useFakeTimers(); const f = fixture();
   f.engine.json.mockImplementation(async (method, _path, _body, signal) => method === 'DELETE' ? undefined
     : new Promise((_yes, no) => signal.addEventListener('abort', () => no(new Error('aborted')), { once: true })));
-  const executor = containerWorkerExecutor({ ...f.config, container: { socket: '/configured/socket' } }, { engine: f.engine, builder: f.builder });
+  const executor = containerWorkerExecutor({ ...f.config, container: { socket: engineSock } }, { engine: f.engine, builder: f.builder });
   const body = executor.start(job, 'image', f.abort.signal); let rejected = false; void body.spawned.catch(() => { rejected = true; });
   await vi.advanceTimersByTimeAsync(29_999); expect(rejected).toBe(false);
   await vi.advanceTimersByTimeAsync(1); await expect(body.spawned).rejects.toThrow(); await body.stop(); expect(vi.getTimerCount()).toBe(0);
@@ -316,11 +316,12 @@ const houseRoot = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-'));
 afterAll(() => rmSync(houseRoot, { recursive: true, force: true }));
 const houseDirectory = (name: string) => { const path = join(houseRoot, name); mkdirSync(path, { recursive: true }); return path; };
 const loginA = houseDirectory('logins/a'), loginB = houseDirectory('logins/b'), stamps = houseDirectory('stamps'), mirror = houseDirectory('mirror');
-// The engine's socket for nested containers must be a real socket (worker-mounts.ts).
-const nestedSock = join(houseDirectory('engine'), 'nested.sock');
-let nestedServer: Server;
-beforeAll(async () => { await new Promise<void>(done => { nestedServer = createServer().listen(nestedSock, done); }); });
-afterAll(() => { nestedServer.close(); });
+// The engine's own socket and its socket for nested containers must be real sockets (worker-mounts.ts).
+// Nothing connects to either: every test here gives the executor a fake engine.
+const nestedSock = join(houseDirectory('engine'), 'nested.sock'), engineSock = join(houseDirectory('engine'), 'engine.sock');
+const sockets: Server[] = [];
+beforeAll(async () => { for (const path of [nestedSock, engineSock]) await new Promise<void>(done => sockets.push(createServer().listen(path, done))); });
+afterAll(() => { for (const server of sockets) server.close(); });
 const accountLogins = { account: { harness: { source: loginA, target: '/home/agent/.claude' } }, other: { harness: { source: loginB, target: '/home/agent/.claude' } } };
 const houseMounts = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
 /** What an engine reports of a bind mount it made. */
@@ -425,6 +426,21 @@ it.each([
   const f = house(inspected(), { mounts: houseMounts, nestedSocket: nestedSock }), body = f.executor.start(nestedJob, 'image', f.abort.signal);
   await expect(body.spawned).rejects.toThrow('Unexpected container storage'); await body.stop();
   expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
+});
+it('still runs the build of a nested job on a machine with no nested socket, and fails it when its body is started', async () => {
+  const f = fixture(), nested = { ...job, run: { gpu: false, nestedContainers: true, ports: [] } };
+  expect(await f.executor.build(nested, f.abort.signal)).toBe('image:built');
+  expect(() => f.start(nested)).toThrow('Nested containers unavailable'); expect(f.engine.json).not.toHaveBeenCalled();
+});
+it('does not make a worker whose engine socket is not a socket, or that a mount would carry into a body', () => {
+  const f = fixture();
+  for (const container of [{ socket: '/loom-test/no.sock' }, { socket: 'relative.sock' }, { socket: join(houseRoot, 'engine') },
+    { mounts: [{ source: join(houseRoot, 'engine'), target: '/house/run' }] }, { mounts: [{ source: houseRoot, target: '/house/all' }] }])
+    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder })).toThrow(new WorkerStop('mounts'));
+  // Nor one whose mounts reach its own records or its token, or name one directory twice.
+  for (const patch of [{ state: join(stamps, 'state') }, { tokenFile: join(mirror, 'token') }, { container: { ...f.config.container, mounts: [...houseMounts, { source: stamps, target: '/again' }] } }])
+    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, mounts: houseMounts }, ...patch }, { engine: f.engine, builder: f.builder })).toThrow(new WorkerStop('mounts'));
+  expect(f.engine.json).not.toHaveBeenCalled();
 });
 it('does not make a worker whose nested socket is not a socket, or is a way into a mounted directory', () => {
   const f = fixture();

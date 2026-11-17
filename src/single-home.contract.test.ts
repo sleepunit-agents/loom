@@ -58,7 +58,7 @@ import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './pieces/mind/knowledge.js'
 import { RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME } from './pieces/bridges/events.js';
 import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
 import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
-import { NESTED_SOCKET_TARGET } from './runtime/worker-mounts.js';
+import { NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
 import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
 
@@ -576,7 +576,15 @@ it('names where a nested job finds the engine, the engine runtimes and a mount\'
   // The socket's place inside a container: what the worker mounts there and what no other mount may cover.
   expect(NESTED_SOCKET_TARGET).toBe('/var/run/docker.sock');
   expect(sources('src').filter(file => text(file).includes('/var/run/docker.sock'))).toEqual(['src/runtime/worker-mounts.ts']);
-  expect(text('src/runtime/worker-container.ts')).toContain('Target: NESTED_SOCKET_TARGET');
+  expect(text('src/runtime/worker-mounts.ts')).toContain('target: NESTED_SOCKET_TARGET');
+  // How a mounted path and an engine socket must be written is one function. The configuration's schema
+  // reads only that each is a string, and nothing else looks at how a socket's path begins.
+  expect(plainPath('/run/engine.sock')).toBe(true);
+  expect(['run/engine.sock', '/', '/run/', '/run//engine.sock', '/run/../engine.sock', '/run/./engine.sock', '/run/\0', '', 7, undefined].some(plainPath)).toBe(false);
+  expect(text('src/runtime/worker-program.ts')).toContain('container: z.object({ socket: z.string(), nestedSocket: z.string().optional(),');
+  expect(text('src/runtime/worker-program.ts')).toContain('const hostDirectory = z.object({ source: z.string(), target: z.string() }).strict();');
+  expect(text('src/runtime/docker-engine.ts')).toContain('if (!plainPath(socketPath))');
+  expect(sources('src/runtime').filter(file => /[sS]ocket(Path)?\??\.(startsWith|includes)\(/.test(text(file)))).toEqual([]);
   // The runtime names: the first is what a configuration that names none gets; the file is read by the same list.
   expect([...CONTAINER_RUNTIMES]).toEqual(['runc', 'crun']);
   expect(sources('src').filter(file => /['"`](runc|crun)['"`]/.test(text(file)))).toEqual(['src/runtime/worker-container.ts']);

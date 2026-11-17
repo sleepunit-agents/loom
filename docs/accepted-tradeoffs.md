@@ -369,8 +369,10 @@ Entries are grouped by the part of the program they belong to.
 - **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
   `src/runtime/worker-container.ts`.
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
-  harness and no other. A fixed mount, the nested engine socket or another entry that names the same
-  directory, one above it or one inside it stops the worker at start. With `accountLogins` present, a job
+  harness and no other. A fixed mount or another entry that names the same directory, one above it or one
+  inside it stops the worker at start; so does any mounted directory that is, holds or is inside either
+  engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
+  file. With `accountLogins` present, a job
   with no exact entry does not run.
 - **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
   configured on the machine) is handed the engine's socket. It has that engine, and with it everything the

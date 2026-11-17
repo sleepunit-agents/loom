@@ -179,7 +179,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
-| 52 | a path the configuration mounts into containers cannot be used: a source that is not an existing directory of this user, a nested socket that is not an existing socket, a source or target not written as a plain absolute path with no symbolic link in it, or two that overlap (see "Mounted directories" under "Container bodies") |
+| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user, an engine socket that is not an existing socket, a path not written as a plain absolute path with no symbolic link in it, or a mounted directory that overlaps another, an engine socket, the state directory or the token file (see "Mounted directories" under "Container bodies") |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker
@@ -243,7 +243,8 @@ separate work; an executable and root factory alone do not deploy a worker.
 ## Container bodies
 
 Add `"container": {"socket":"/run/docker.sock"}` to the configuration to run
-each body in its built image through the local Docker Engine API. The builder
+each body in its built image through the local Docker Engine API. The socket
+must be there when the worker starts. The builder
 still runs as the configured worker command; its `build` result must name an
 image already present on that engine. The runner's command, arguments, directory
 and explicit environment apply **inside** the image. The image must contain a
@@ -270,8 +271,9 @@ there is no fallback to a host runner or a container with broader settings.
 
 Nested containers additionally require a local `container.nestedSocket` path.
 It must name an existing Unix socket by its real path: not a directory, not a
-symbolic link, and not at, above or inside any directory the configuration
-mounts (exit code 52 otherwise; see "Mounted directories"). Only assignments
+symbolic link, and not at or inside any directory the configuration mounts. So
+must `container.socket` itself, which is never mounted (exit code 52 otherwise,
+for a relative path too; see "Mounted directories"). Only assignments
 with `run.nestedContainers` receive that socket at `/var/run/docker.sock`. This
 is broad authority over that configured engine; the local operator must
 deliberately opt in. A job given the engine can ask it to mount anything the
@@ -314,13 +316,22 @@ directories of `accountLogins`.
   `/`.
 - No target is another mount's target, or inside it. None is, holds or is inside
   a sign-in directory's target or `/var/run/docker.sock`.
-- No mount's source is a sign-in directory, holds one or is inside one, and no
-  two sign-in entries name directories that are the same or inside one another.
+- `container.socket`, and `container.nestedSocket` when there is one, is an
+  existing Unix socket named by its real path, written as plainly. It need not
+  belong to the worker's user. The two may be the same socket.
+- No two mounted directories (the fixed mounts and every sign-in directory,
+  taken together) have sources that are the same, or one inside the other.
   Otherwise a body could be handed another account's sign-in under another
-  name.
-- `container.nestedSocket` is an existing Unix socket named by its real path. It
-  need not belong to the worker's user. It is not a mounted directory or a
-  sign-in directory, does not hold one and is not inside one.
+  name, or a read-only directory could be written under a second one.
+- No mounted directory's source is, holds or is inside either engine socket, the
+  worker's state directory (`state`, or its default place) or its token file
+  (`tokenFile`). A body that could reach the engine's socket would hold the
+  engine. One that could write the state directory could change what the next
+  worker ends at start. The token is the machine's.
+
+A path that is written wrongly (a relative one, say) breaks these rules like any
+other and is exit code 52, not 41: the configuration file's own check reads only
+that each of these is a string.
 
 The paths are fixed when the worker starts; a later change to the file changes
 nothing until the worker is started again. The directory itself is looked at
