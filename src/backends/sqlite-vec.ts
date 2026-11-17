@@ -51,7 +51,7 @@ import type {
 import { computeExpiresAt, isExpired } from './ttl.js';
 import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
-import { runMigrations } from './migrations.js';
+import { refuseNewerStore, runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
 import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
@@ -1278,6 +1278,8 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   private initSchema(): void {
+    // Before the first CREATE: a store a newer program has changed is left exactly as it is.
+    refuseNewerStore(this.db);
     const statements = [
       `CREATE TABLE IF NOT EXISTS memories (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -3,7 +3,8 @@
  *
  * Each Migration is idempotent: the `pending` predicate checks current DB
  * state before `run` is called, so migrations are safe to re-run on every
- * backend connect.
+ * backend connect. The store's version (see refuseNewerStore) only guards
+ * against a file a newer program has changed.
  *
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
  * existing entries (future migrations may depend on prior state).
@@ -518,6 +519,7 @@ export function runMigrations(
 ): MigrationResult[] {
   const strict = opts.strict ?? true;
   const results: MigrationResult[] = [];
+  refuseNewerStore(db);
 
   for (const m of MIGRATIONS) {
     if (!m.pending(db)) {
@@ -536,7 +538,28 @@ export function runMigrations(
     }
   }
 
+  // Every step has now run or was already in place: record how many this store has had.
+  if (results.every((r) => r.status !== 'failed') && storeVersion(db) !== MIGRATIONS.length) {
+    db.pragma(`user_version = ${MIGRATIONS.length}`);
+  }
   return results;
+}
+
+const storeVersion = (db: Database) => db.pragma('user_version', { simple: true }) as number;
+
+/**
+ * A memory store's version is the number of steps in MIGRATIONS it has had, kept in the file's
+ * header (PRAGMA user_version) rather than a table. Each step still decides from the current shape
+ * whether it is pending, so the number is not what drives an upgrade: it is what lets an older
+ * program see that a newer one has been here, and stop before it creates or rewrites anything.
+ * Call it before any write to a store. A store only some steps have run on (a people or projects
+ * store opened on its own) stays at 0 and is never refused.
+ */
+export function refuseNewerStore(db: Database): void {
+  const at = storeVersion(db);
+  if (at > MIGRATIONS.length) {
+    throw new Error(`This memory store is from a newer program (it has had ${at} steps; this program knows ${MIGRATIONS.length})`);
+  }
 }
 
 /** Return migrations that have not yet been applied, without touching the DB. */

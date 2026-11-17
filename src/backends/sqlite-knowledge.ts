@@ -64,6 +64,18 @@ export interface SqliteKnowledgeConfig {
   busyTimeoutMs?: number;
 }
 
+/** The knowledge store's version, kept in the file header (PRAGMA user_version). */
+const KNOWLEDGE_VERSION = 1;
+/** Before anything is written: an empty file or a knowledge store this program knows, and nothing else.
+ * initSchema creates and alters tables and backfills rows on whatever it is given, so a store a newer
+ * program has changed, or some other SQLite file, has to be turned away here. */
+function recogniseKnowledgeStore(db: Database): void {
+  const at = db.pragma('user_version', { simple: true }) as number;
+  if (at > KNOWLEDGE_VERSION) throw new Error(`This knowledge store is from a newer program (version ${at}; this program knows ${KNOWLEDGE_VERSION})`);
+  const has = (table?: string) => db.prepare(`SELECT 1 FROM sqlite_schema WHERE type = 'table'${table ? ' AND name = ?' : ''}`).get(...(table ? [table] : [])) !== undefined;
+  if (has() && !has('pages')) throw new Error('This file is not a knowledge store');
+}
+
 export class SqliteKnowledgeBackend implements KnowledgeBackend {
   private db: Database | null = null;
 
@@ -71,11 +83,12 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     // Open in constructor for schema init; caller closes after use.
     this.db = new BetterSqlite3(config.dbPath);
+    try { recogniseKnowledgeStore(this.db); } catch (error) { this.db.close(); this.db = null; throw error; }
     this.db.pragma('journal_mode = WAL');
     // busy_timeout: concurrent sleeves retry brief write-lock windows rather
     // than failing immediately — see sqlite-vec.ts for the full rationale.
     this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    this.db.pragma('user_version = 1');
+    this.db.pragma(`user_version = ${KNOWLEDGE_VERSION}`);
     this.initSchema();
     notifyWrites(this, config.dbPath, 'knowledge', ['writePage', 'archivePage', 'restorePage', 'supersedePage', 'movePage', 'mergePages', 'purgePages', 'verifyPages', 'restoreRevision', 'addCitations'], ['slug', 'slugs', 'old_slug', 'new_slug', 'target_slug', 'source_slugs']);
   }

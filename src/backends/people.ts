@@ -22,7 +22,7 @@ import { dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
-import { MIGRATIONS } from './migrations.js';
+import { MIGRATIONS, refuseNewerStore } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
   checkEnvelope, slugError, renderWhereLine, oneLine, byName, mergeLevel, withoutNulls, stampWhere, whereCounts,
@@ -378,6 +378,7 @@ export class PeopleStore {
       this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
       this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
       if (!config.readonly) {
+        try { refuseNewerStore(this.db); } catch (error) { this.db.close(); throw error; }
         this.db.pragma('journal_mode = WAL');
         // Only this feature's migration: the people tables do not depend on the
         // memories schema, and a raw store must not half-run the others.

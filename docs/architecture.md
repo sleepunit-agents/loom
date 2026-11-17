@@ -156,11 +156,16 @@ neither by `src/pieces/mind/people-actions.ts`.
 `holder_receipts`, `holder_aborted_writes`, from `src/pieces/secrets/holder-store.ts`.
 Secret values are here, encrypted, and nowhere else.
 
-### None of these stores records its own version except `loom.db`
+### How each store knows its version
 
-`memories.db`, `knowledge.db`, `people.db` and `notes.db` are brought up to date by steps
-that look at the current shape (`src/backends/migrations.ts`), not by a stored number, so
-a file from a newer program is not refused.
+`loom.db` holds its schema number in `migrations` and is recognised in full before it is
+touched. The others keep a number in the file header (`PRAGMA user_version`) and no table:
+
+- `memories.db`: the count of steps in `src/backends/migrations.ts` it has had. Each step
+  still decides from the file's shape whether it is pending; the number only lets an older
+  program refuse a file a newer one has changed.
+- `knowledge.db`: 1. A newer number, or a file with tables but no `pages`, is refused.
+- `people.db` and `notes.db`: no number. They are never refused.
 
 ## Code that is here but not started
 
