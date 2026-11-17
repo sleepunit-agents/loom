@@ -1,11 +1,12 @@
 # Shared data schema
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
-schema is `src/core/data/schema.ts`: all 79 tables and 551 named columns in
-`model.py`, plus the eight internal bookkeeping tables listed there and three internal
-programme restriction/grant tables. The programme marker is independent of its
-record-type and operation rows, so clearing every grant cannot make a token
-ordinary. These additional tables contain no raw bearer credential. This module
+schema is `src/core/data/schema.ts`: all 81 tables in `model.py` with their named
+columns, `model_account_windows`, the eight internal bookkeeping tables listed there
+and three internal programme restriction/grant tables: 93 tables. The programme
+marker is independent of its record-type and operation rows, so clearing every grant
+cannot make a token ordinary. These additional tables contain no raw bearer
+credential. This module
 replaces per-part table definitions as each part is connected to it.
 
 Import typed table exports such as `tasks`, `taskComments`, `timingDays` and
@@ -16,11 +17,35 @@ direction and `<table>By<Column>` in reverse, for example `projectRow` and
 `taskCommentsByTask` on tasks. These names disambiguate multiple links to one table.
 
 `createDataSchema(client)` is only for a completely empty database. It refuses
-any existing schema and never imports, drops, upgrades or replaces old tables.
-The real-data move is separate work. The generated DDL is packaged in
+any existing schema and never imports, drops or replaces old tables. First install
+(`src/shared-initialize.ts`) calls it once. The generated DDL is packaged in
 `assets/data/schema.sql`; regenerate it with `npm run schema:generate`. The test
 checks both against the approved source and against a real in-memory SQLite DB.
-Nothing calls this initializer on an installed home yet.
+
+## Changing the schema
+
+The `migrations` table holds the schema number. Number 1 is the first shape; each
+entry in `upgrades` (`src/core/data/database.ts`) is the next number. A fresh
+database is created whole and marked with every number.
+
+At every start `upgradeDataSchema` first recognises the database without writing to
+it: the schema alone is copied into memory, the pending steps are run there, and the
+result must be exactly a fresh database's shape (columns, defaults, keys, foreign
+keys and their actions, CHECKs, and each index and trigger as written). Only then
+are the steps run on the real file. A foreign, interim, hand-altered or newer
+database is refused untouched; moving older data in is the separate real-data move.
+
+To change the schema:
+
+1. Edit `src/core/data/schema.ts` and run `npm run schema:generate`.
+2. Add the step to `upgrades`. An index or trigger must be written exactly as the
+   generated SQL writes it, because those are compared as text.
+3. Copy the new `assets/data/schema.sql` to
+   `src/core/data/shipped-shapes/<new number>.sql`. Never edit an earlier one.
+
+`src/core/data/upgrade.test.ts` upgrades the installation SQL of every shipped number
+and compares each table with a fresh database in full. It fails if the newest pinned
+shape is not today's `schema.sql`, so a schema change with no step cannot pass.
 
 ## Choices where the pages are silent
 
