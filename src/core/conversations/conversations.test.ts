@@ -42,7 +42,6 @@ it('deduplicates all sources and lets only the running conversation job take and
   expect(db.select().from(inboxRefs).all()).toHaveLength(5);
   expect(() => service.take(cv.id, 'wrong-job')).toThrow('not running');
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
-  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual(ids);
   expect(service.take(cv.id, 'job-1').map(i => i.seq)).toEqual([1, 2, 3, 4, 5]);
   expect(() => service.confirm(ids[0], 'wrong-job')).toThrow('not held');
@@ -60,7 +59,6 @@ it('leaves muted mail waiting when a running job takes other mail in the same co
   db.update(inbox).set({ volume: 'mute', quietUntil }).where(eq(inbox.id, muted.id)).run();
   db.update(inbox).set({ volume: 'dim', quietUntil }).where(eq(inbox.id, dim.id)).run();
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
-  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([dim.id]);
   expect(service.item(dim.id)).toMatchObject({volume:'dim',quietUntil});
   expect(service.item(muted.id)).toMatchObject({ state: 'waiting', job: null, takenAt: null });
@@ -144,7 +142,6 @@ it.each(['dim','mute'] as const)('acknowledging already-taken mail preserves a l
  const {db,service,cv}=fixture();
  const item=service.send({toKind:'agent',to:'art',conversation:cv.id,source:'trigger',fromKind:'schedule'});
  db.insert(jobs).values({id:'job-quiet',agent:'art',conversation:cv.id,title:'Mail',state:'running',brief:'',model:'model',startedByKind:'member',startedBy:'jonathan',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:service.now()}).run();
- db.update(conversations).set({job:'job-quiet'}).where(eq(conversations.id,cv.id)).run();
  service.take(cv.id,'job-quiet');
  const quietUntil='2026-11-16T18:00:00.000Z';
  db.update(inbox).set({volume:level,quietUntil}).where(eq(inbox.id,item.id)).run();
