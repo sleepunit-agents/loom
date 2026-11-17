@@ -26,7 +26,8 @@ async function prepare(){
   fixture.db.delete(schema.tokens).where(eq(schema.tokens.job,'job')).run();
   fixture.db.insert(schema.tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Fictional native',kind:'agent',agent:'art',job:'job',createdAt:new Date(fixture.clock.now()).toISOString()}).run();
   fixture.db.update(schema.jobs).set({model:'requested',harness:'claude'}).where(eq(schema.jobs.id,'job')).run();
-  fixture.db.update(schema.members).set({role:'owner'}).where(eq(schema.members.id,'bob')).run();
+  // The rule below is a standing answer, which serves a body only when the member it works for is a household owner.
+  fixture.db.update(schema.members).set({role:'owner'}).where(eq(schema.members.id,'alice')).run();
   fixture.db.insert(schema.secrets).values({name:'TOKEN',description:'Fictional credential',changedAt:new Date(fixture.clock.now()).toISOString(),changedBy:'alice'}).run();
   fixture.db.insert(schema.secretChanges).values({id:'baseline',secret:'TOKEN',action:'add',by:'alice',at:new Date(fixture.clock.now()).toISOString()}).run();
   fixture.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'on_request'}]});

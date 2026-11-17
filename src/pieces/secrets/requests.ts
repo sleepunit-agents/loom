@@ -57,7 +57,7 @@ export class SecretRequests {
       const owners = householdOwners(this.db);
       if (!owners.length) throw new Error('A secret request needs a household owner');
       for (const owner of owners) this.mail.send({ toKind: 'person', to: owner, source: 'secret-request', sourceId: row.id, conversation: input.conversation,
-        fromKind: 'agent', fromId: input.agent, agent: input.agent, words: `Allow ${input.agent} to use ${input.secret} for ${input.minutes} minutes${job?.member ? `, in its private work for ${job.member}` : ''}?`, why: input.why, answers: 'yes-no', waitsOnKind: 'secret-request', waitsOnId: row.id, refs: [row.id] });
+        fromKind: 'agent', fromId: input.agent, agent: input.agent, words: `Allow ${input.agent} to use ${input.secret} for ${input.minutes} minutes${!standing && job?.member ? `, in its private work for ${job.member}` : ''}?`, why: input.why, answers: 'yes-no', waitsOnKind: 'secret-request', waitsOnId: row.id, refs: [row.id] });
       return row;
     });
   }
