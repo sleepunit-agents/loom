@@ -1,10 +1,10 @@
-/** Work command installation. Current household owners answer permission cards;
- * optional trusted callbacks may narrow this rule, never broaden it. A configured
- * callback must return literal true; every other value denies. */
+/** Work command installation. A current household owner answers permission cards
+ * (workAnswersAllowed); there is no narrower rule per card or per change, because an
+ * owner already sees every change. What is checked beyond that is that the card and
+ * the change it names still exist; the exact head is checked when the answer runs. */
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { workAnswersAllowed } from './shared-work-access.js';
-import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
 import { approvals, changes } from './core/data/schema.js';
 import { type Operations, type Context, OperationError } from './core/operations/index.js';
@@ -12,7 +12,6 @@ import type { approvalService, Approval } from './apps/approvals.js';
 import { changeAnswers } from './apps/changes-answers.js';
 import type { ChangeRow } from './apps/changes.js';
 
-type Member = Extract<Viewer, { kind: 'member' }>;
 const id = z.string().trim().min(1);
 export function registerSharedWorkCommands(operations: Operations, db: DataDatabase,
   service: ReturnType<typeof approvalService>) {
@@ -27,10 +26,6 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   };
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');
-  };
-  const mayMerge = (viewer: Member, request: Approval, id: string) => {
-    const row = change(id);
-    return !!row;
   };
   const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
     if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
@@ -59,7 +54,8 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       const row = approval(input.id);
       if (!workAnswersAllowed(db, viewer) || !row) return false;
       const merge = mergeTarget(row);
-      return !merge || input.answer === 'deny' || mayMerge(viewer, row, merge.id);
+      // A yes to a merge needs its change to still be here; a no is always possible.
+      return !merge || input.answer === 'deny' || !!change(merge.id);
     },
     validateReplay(_viewer, input) {
       const row = approval(input.id);
@@ -91,7 +87,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const request = approval(input.approval);
-      return workAnswersAllowed(db, viewer) && !!request && mayMerge(viewer, request, input.id);
+      return workAnswersAllowed(db, viewer) && !!request && !!change(input.id);
     },
     validateReplay(_viewer, input) { currentHead(input); },
     run(ctx, input) {

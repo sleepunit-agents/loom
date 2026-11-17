@@ -1,6 +1,4 @@
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
-import { agents, members, conversations } from '../data/schema.js';
 import type { approvalService } from '../../apps/approvals.js';
 import { measuringValues } from './change.js';
 /** Root-owned Measuring lifecycle on the household's shared connection. Its settings are
@@ -16,7 +14,6 @@ export type MeasuringHost = Pick<Foundation, 'operations' | 'onClose'> & { live:
 export async function installMeasuring(app: MeasuringHost, db: DataDatabase) {
   const settings = measuringSettingsService(db);
   let enabled = false;
-  const owner = (viewer: { kind: string; id: string }) => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner';
   const store = timingStore(db);
   const runtime = measuringRuntime(settings.read, () => [
     ...app.operations.timingTargets(),

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFoundation, type Foundation } from './app.js';
 import { FakeClock } from './clock.js';
-import { mayAct, mayCreate, mayMove, maySee, type Viewer } from '../policy.js';
+import { mayAct, mayCreate, maySee, type Viewer } from '../policy.js';
 
 const homes: string[] = [], apps: Foundation[] = [];
 afterEach(() => {
@@ -25,7 +25,6 @@ it('lets an installed module call another without permission, including private 
   expect(may).not.toHaveBeenCalled();
   expect(mayAct(module.viewer, {member:'sam'}, sharing, 'household')).toBe(true);
   expect(mayCreate(module.viewer, {member:'sam'}, sharing)).toBe(true);
-  expect(mayMove(module.viewer, {member:'sam'}, {member:'jonathan'}, sharing)).toBe(true);
 });
 it('does not trust names, copies, JSON, other registries, external doors or ended handles', async () => {
   const app = fixture(), other = fixture(), module = app.operations.internal('changes');

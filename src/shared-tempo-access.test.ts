@@ -8,9 +8,10 @@ import type { TempoAccess } from './core/tempo/operations.js';
 const closes:(()=>void)[]=[];afterEach(()=>closes.splice(0).forEach(close=>close()));
 function fixture(){
  const client=new Database(':memory:'),now=()=> '2026-11-15T00:00:00Z',db=createDataSchema(client,now);closes.push(()=>client.close());
- db.insert(members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()},{id:'other',role:'member',joinedAt:now()}]).run();
+ // 'owner' is a full owner, with every agent on their list as Setup keeps it; 'scoped' has the owner role and no agent.
+ db.insert(members).values([{id:'owner',role:'owner',fullOwner:true,joinedAt:now()},{id:'scoped',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()},{id:'other',role:'member',joinedAt:now()}]).run();
  for(const id of ['art','mark'])db.insert(agents).values({id,about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
- db.insert(memberAgents).values({member:'sam',agent:'art'}).run();
+ db.insert(memberAgents).values([{member:'sam',agent:'art'},{member:'owner',agent:'art'},{member:'owner',agent:'mark'}]).run();
  db.insert(projects).values({id:'pond',name:'Pond'}).run();db.insert(projectMembers).values({project:'pond',member:'sam'}).run();
  const can=(kind:'member'|'agent'|'runner'|'service',id:string,access:TempoAccess)=>tempoCommandAllowed(db,{kind,id},access);
  const set:TempoAccess={action:'set',trigger:{ownerKind:'member',owner:'sam',sourceKind:'time',times:'09:00',lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',note:'Work'}};
@@ -24,7 +25,7 @@ it('requires current ownership for new work, pauses and settings; rejects forged
  expect(f.can('member','sam',{action:'set',trigger:{...f.set.trigger,to:'mark'}})).toBe(false);
  expect(f.can('agent','art',{action:'set',trigger:{...f.set.trigger,ownerKind:'agent',owner:'art'}})).toBe(true);
  expect(f.can('member','sam',{action:'pause',agent:'art'})).toBe(true);
- f.client.exec('DELETE FROM member_agents');expect(f.can('member','sam',f.set)).toBe(false);
+ f.client.exec("DELETE FROM member_agents WHERE member='sam'");expect(f.can('member','sam',f.set)).toBe(false);
  expect(f.can('member','sam',{action:'pause',agent:'art'})).toBe(false);
 });
 it('volume belongs to its recipient, including when someone else can see a shared project item',()=>{
@@ -93,5 +94,33 @@ it('lets whoever could set a trigger edit it: a project member can stop a shared
  expect(f.can('member','other',{action:'edit',trigger:row('lane')})).toBe(false);
  expect(f.can('agent','mark',{action:'edit',trigger:row('lane')})).toBe(false);
  expect(f.can('runner','art',{action:'edit',trigger:row('lane')})).toBe(false);
- f.client.exec('DELETE FROM member_agents');expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(false);
+ f.client.exec("DELETE FROM member_agents WHERE member='sam'");expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(false);
+});
+
+it('gives the owner role sight of every trigger but not direction of an agent off its own list',()=>{
+ const f=fixture(),insert=f.client.prepare(`INSERT INTO triggers(id,owner_kind,owner,source_kind,lifespan,target_kind,to_kind,"to",project,note,enabled,state,created_at,changed_at) VALUES('lane','agent','art','time','until-stopped','inbox','agent','art',null,'Lane',1,'standing',?,?)`);
+ insert.run(f.now(),f.now());const trigger=f.db.select().from(triggers).get()!;
+ // Seeing, and so stopping, follows the read rule: a household owner sees everything.
+ expect(f.can('member','scoped',{action:'stop',trigger})).toBe(true);
+ // Putting an agent to work does not: the agent must be on the member's own list.
+ expect(f.can('member','scoped',{action:'set',trigger:{...f.set.trigger,ownerKind:'member',owner:'scoped'}})).toBe(false);
+ expect(f.can('member','scoped',{action:'edit',trigger})).toBe(false);
+ expect(f.can('member','scoped',{action:'pause',agent:'art'})).toBe(false);
+ expect(f.can('member','scoped',{action:'resume',agent:'art'})).toBe(false);
+ // A person is different: an owner may set a reminder for someone in the household.
+ expect(f.can('member','scoped',{action:'set',trigger:{...f.set.trigger,ownerKind:'member',owner:'scoped',toKind:'person',to:'sam'}})).toBe(true);
+ f.db.insert(memberAgents).values({member:'scoped',agent:'art'}).run();
+ expect(f.can('member','scoped',{action:'pause',agent:'art'})).toBe(true);
+ expect(f.can('member','scoped',{action:'edit',trigger})).toBe(true);
+ // The full owner has every agent on their list.
+ expect(f.can('member','owner',{action:'pause',agent:'mark'})).toBe(true);
+});
+it('treats a removed member as nobody, owner role and leftover links included',()=>{
+ const f=fixture();f.db.insert(memberAgents).values({member:'scoped',agent:'art'}).run();
+ expect(f.can('member','scoped',{action:'pause',agent:'art'})).toBe(true);
+ f.client.prepare("UPDATE members SET removed_at=? WHERE id IN ('scoped','sam')").run(f.now());
+ expect(f.can('member','scoped',{action:'pause',agent:'art'})).toBe(false);
+ expect(f.can('member','sam',f.set)).toBe(false);
+ // Nor can anyone address work to someone who has been removed.
+ expect(f.can('member','owner',{action:'set',trigger:{...f.set.trigger,ownerKind:'member',owner:'owner',toKind:'person',to:'sam'}})).toBe(false);
 });

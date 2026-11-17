@@ -12,6 +12,7 @@ import {and,asc,eq,isNull} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import type {Viewer} from './policy.js';
+import {householdOwners} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
 import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
@@ -188,7 +189,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Try the change and undo it, so a card that could never be allowed is refused when it is filed.
  const undone=Symbol('rehearsal');
  const rehearse=(value:Proposal)=>{
-  const owner=db.select({id:members.id}).from(members).where(and(eq(members.role,'owner'),isNull(members.removedAt))).get()?.id;
+  const owner=householdOwners(db)[0];
   if(!owner)throw new OperationError('conflict','No household owner can allow this');
   try{db.transaction(()=>{change(value,owner);throw undone;});}catch(error){if(error!==undone)throw error instanceof OperationError?error:new OperationError('invalid','That change cannot be made');}
  };

@@ -1,11 +1,15 @@
 /** Model-account page projection. Public coarse capacity and private detail
  * are separate generated batches; location joins never run once per account. */
 import { and, asc, inArray, sql, type AnyColumn } from 'drizzle-orm';
-import type { Viewer } from '../../policy.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from './database.js';
 
+/** An account's private detail is its member's and household owners'. Rendered after Drizzle's
+ * alias pass over this relation, like every other policy filter. */
 function privateAccount(viewer: Viewer, fields: Record<string, AnyColumn>) {
-  return viewer.kind === 'member' ? sql`exists (select 1 from members where members.id = ${viewer.id} and (members.role = 'owner' or ${fields.owner} = ${viewer.id}))` : sql`false`;
+  const allowed = sqlRule(rules.ownedByMember('owner'), viewer, fields);
+  return sql`${{ getSQL: () => allowed }}`;
 }
 export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
   const rows = db.query.modelAccounts.findMany({ columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),

@@ -3,7 +3,7 @@
 import {eq,sql} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
-import {approvals,changes,members,approvalRecord} from './core/data/schema.js';
+import {approvals,changes,approvalRecord} from './core/data/schema.js';
 import {type Operations,OperationError} from './core/operations/index.js';
 import type {approvalService} from './apps/approvals.js';
 import type {approvalRulesService} from './apps/approval-rules.js';
@@ -21,15 +21,13 @@ export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,s
   if(!card||!row||card.kind!=='merge'||card.operation!==null||!row.agent||card.agent!==row.agent
    ||card.target!==`${row.id}@${input.head}`||row.headCommit!==input.head||card.project!==input.project||row.project!==input.project
    ||!card.actingFor||['unknown','?'].includes(card.actingFor))throw new OperationError('conflict','The merge request changed. Open it again.');
-  const principal=db.select().from(members).where(eq(members.id,card.actingFor)).get();
-  if(!principal||(principal.role==='owner'?'':principal.id)!==input.person)throw new OperationError('conflict','The person for this request changed. Open it again.');
+  if(rules.personFor(card.actingFor)!==input.person)throw new OperationError('conflict','The person for this request changed. Open it again.');
   return {card,row};
  };
  operations.register({name:'approvals.always',write:true,recheckPolicy:true,input:inputSchema,output:z.object({id}).strict(),
   may(viewer,input){
-   if(!workAnswersAllowed(db,viewer))return false;
-   const card=request(input.approval),row=change(input.change);
-   return !!card&&!!row;
+   // A current household owner, for a card and a change that still exist. run() checks that they match.
+   return workAnswersAllowed(db,viewer)&&!!request(input.approval)&&!!change(input.change);
   },
   validateReplay(_viewer,input){binding(input);},
   run(ctx,input){

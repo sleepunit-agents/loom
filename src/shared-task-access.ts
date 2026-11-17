@@ -1,29 +1,24 @@
-/** Outside Tasks policy. Trusted taskService/dispatcher carry no policy. */
-import { and, eq, getTableColumns, sql } from 'drizzle-orm';
-import type { Viewer } from './policy.js';
+/** Outside Tasks policy. Trusted taskService/dispatcher carry no policy.
+ * Every decision here is the tasks rule from policy.ts, read for one task. */
+import { eq } from 'drizzle-orm';
+import { holds, inHousehold, rules, type Viewer } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, members, memberAgents, projects, tasks, inbox } from './core/data/schema.js';
-import { taskVisibility } from './core/data/visibility.js';
+import { agents, members, tasks, inbox } from './core/data/schema.js';
 import type { TaskCommand } from './apps/task-command.js';
 import type { TaskRow } from './apps/tasks.js';
 
 export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: TaskCommand,
   conversationVisible: (viewer: Viewer, id: string) => boolean): boolean {
-  if (viewer.kind !== 'member' && viewer.kind !== 'agent') return false;
-  const actor = viewer.kind === 'member' ? db.select().from(members).where(eq(members.id, viewer.id)).get()
-    : db.select().from(agents).where(eq(agents.id, viewer.id)).get();
-  if (!actor) return false;
-  const owner = viewer.kind === 'member' && 'role' in actor && actor.role === 'owner';
-  const visibleTask = (id: string, who: Viewer = viewer) => db.select().from(tasks)
-    .where(and(eq(tasks.id, id), taskVisibility(who).tasks!(getTableColumns(tasks)))).get();
-  const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>): boolean => {
-    if (task.project) return !!db.select().from(projects).where(and(eq(projects.id, task.project), sql`(${taskVisibility(viewer).projects!(getTableColumns(projects))})`)).get();
-    if (owner) return true;
-    if (task.ownerKind === 'member') return viewer.kind === 'member' && task.owner === viewer.id;
-    if (task.ownerKind !== 'agent' || !task.owner) return false;
-    return viewer.kind === 'agent' ? task.owner === viewer.id : !!db.select().from(memberAgents)
-      .where(and(eq(memberAgents.agent, task.owner), eq(memberAgents.member, viewer.id))).get();
+  const sharing = sharedSharing(db);
+  if (!inHousehold(viewer, sharing)) return false;
+  const visibleTask = (id: string, who: Viewer = viewer) => {
+    const row = db.select().from(tasks).where(eq(tasks.id, id)).get();
+    return row && holds(rules.task, who, row, sharing) ? row : undefined;
   };
+  // The labels a task would carry: its project must exist, and the task so labelled must be one the caller sees.
+  const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>): boolean =>
+    (!task.project || Object.hasOwn(sharing.projects, task.project)) && holds(rules.task, viewer, task, sharing);
   if (command.action === 'create') {
     const input = command.input, person = input.owner;
     if (person.kind === 'member' && !db.select().from(members).where(eq(members.id, person.id)).get()) return false;
@@ -43,8 +38,8 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
     case 'edit': return labels({ ...task, project: command.input.project === undefined ? task.project : command.input.project });
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
     case 'move': return command.before === null || !!visibleTask(command.before);
-    case 'ask': return !!db.select().from(members).where(eq(members.id, command.input.to.id)).get()
-      && !!visibleTask(command.id, { kind: 'member', id: command.input.to.id });
+    // The person asked must be able to see the task themselves; someone removed sees nothing.
+    case 'ask': return !!visibleTask(command.id, { kind: 'member', id: command.input.to.id });
     default: return true;
   }
 }

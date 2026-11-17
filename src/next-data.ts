@@ -1,13 +1,12 @@
 import { assertReadSchema } from './core/data/read-schema.js';
 import { conversationTables, conversationVisibility } from './core/data/conversation-visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
-import { getTableColumns, sql, type AnyColumn } from 'drizzle-orm';
+import { getTableColumns } from 'drizzle-orm';
 import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
 import { bridgeSecretsTables, bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import { BridgeQueries, bridgeQueryFields } from './pieces/bridges/queries.js';
 import { bridgeSecretsReaderFields } from './pieces/bridges/readers.js';
 import {GraphQLSchema,GraphQLObjectType,GraphQLBoolean} from 'graphql/index.js';
-import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
@@ -26,6 +25,7 @@ import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
+import { sqlVisibility } from './policy-sql.js';
 import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
 
 // One explicit public read projection, shared by the outside doors and programme catalogue.
@@ -60,20 +60,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
 
   const emptyProgram=new GraphQLSchema({query:new GraphQLObjectType({name:'ProgramQuery',fields:{_empty:{type:GraphQLBoolean,resolve:()=>false}}})});
   const schema = (viewer: Viewer, full = false) => {
-    const agents=taskVisibility(viewer),byAgent=(fields:Record<string,AnyColumn>)=>agents.agents!({id:fields.agent});
     const records=full?undefined:programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
     return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
-    visibility: { ...boxVisibility(viewer), ...agents, ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
+    // Every rule is stated in policy.ts, apart from the bridge and secret tables' own file.
+    visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
-      // Reports and model preferences have their agent's current visibility.
-      agentStatus: byAgent,
-      agentModels: byAgent,
-      // How an agent runs: its house, its machines in order, its ports and startup secrets (names only),
-      // how it treats outside people and which tools its body is not given.
-      agentRunSettings: byAgent, agentBoxes: byAgent, agentHousePorts: byAgent, agentHouseSecrets: byAgent, agentPeople: byAgent, agentDeniedTools: byAgent,
-      members: fields => viewer.kind === 'member' ? sql`(exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner') or ${fields.id} = ${viewer.id})` : sql`false`,
-      memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
-      memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
+      ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
     },
   }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // Jobs carry the same agent/project/private-member labels as Approvals.

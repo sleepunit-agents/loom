@@ -3,10 +3,11 @@ import { createHmac, createSecretKey } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { members, household, secretGrants, secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
+import { household, secretGrants, secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { secretName, secretAgent } from './pieces/secrets/input.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
+import { householdOwner } from './shared-sharing.js';
 import type { SecretValues } from './pieces/secrets/shared-values.js';
 const id = z.string().min(1).max(200);
 const minutes = z.number().int().min(1).max(525600);
@@ -45,7 +46,7 @@ export function readHouseSecrets(db:DataDatabase,agent:string){
 }
 export function registerSharedSecretCommands(operations:Operations, db:DataDatabase, requests:SecretRequests,
   writes?:{values:SecretValues;fingerprintKey:Uint8Array}) {
-  const owner=(viewer:Parameters<Operations['call']>[1])=>viewer.kind==='member'&&db.select().from(members).where(eq(members.id,viewer.id)).get()?.role==='owner';
+  const owner=(viewer:Parameters<Operations['call']>[1])=>householdOwner(db,viewer);
   operations.register({name:'secrets.command',input:command,output:acknowledgement,write:true,recheckPolicy:true,may:owner,
     run(ctx,input){
       if(ctx.viewer.kind!=='member')throw new OperationError('denied','A household owner is required');
