@@ -1,10 +1,10 @@
-/** Canonical token issuance over the approved schema. Only fingerprints persist.
+/** Every token row is made and revoked here. Only fingerprints persist.
  * Trusted modules call this service; the HTTP identity door checks ownership.
  * Issuance is deliberately not retryable: a lost response requires a new label.
  */
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { activeJobStates, credentialFingerprint, currentToken } from '../data/authentication.js';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import type { Viewer } from '../../policy.js';
@@ -30,26 +30,44 @@ export function currentMemberToken(db: DataDatabase, clock: Clock, id: string) {
 export function activeMemberToken(db:DataDatabase,clock:Clock,id:string){
  const token=currentMemberToken(db,clock,id);if(!token)throw Error('Sign-in refused');return token;
 }
-export function sharedTokens(db: DataDatabase, clock: Clock) {
+export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
+  /** The checks every new row passes, whoever made its secret, and the one insert. */
+  const add = (value: z.infer<typeof sharedTokenInput>, fingerprint: string, madeFrom?: string) => {
+    const now = clock.now();
+    if (value.expiresAt && Date.parse(value.expiresAt) <= now) throw new OperationError('invalid', 'Expiry must be in the future');
+    if (db.select().from(tokens).where(and(eq(tokens.label, value.label), isNull(tokens.revokedAt))).all()
+      .some(row => !row.expiresAt || Date.parse(row.expiresAt) > now)) throw new OperationError('conflict', 'A live token already has that label');
+    if (value.kind === 'owner' && !db.select().from(members).where(eq(members.id, value.member)).get()) throw new OperationError('invalid', 'Choose an existing member');
+    if (value.kind === 'agent') {
+      if (!db.select().from(agents).where(eq(agents.id, value.agent)).get()) throw new OperationError('invalid', 'Choose an existing agent');
+      if (value.job) {
+        const job = db.select().from(jobs).where(eq(jobs.id, value.job)).get();
+        if (!job || job.agent !== value.agent || !job.box || !activeJobStates.includes(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
+      }
+    }
+    if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');
+    db.insert(tokens).values({ ...value, fingerprint, ...(madeFrom === undefined ? {} : { madeFrom }), createdAt: new Date(now).toISOString() }).run();
+  };
   return {
     issue(input: z.input<typeof sharedTokenInput>) {
-      const value = sharedTokenInput.parse(input), now = clock.now();
+      const value = sharedTokenInput.parse(input);
       return db.transaction(() => {
-        if (value.expiresAt && Date.parse(value.expiresAt) <= now) throw new OperationError('invalid', 'Expiry must be in the future');
-        if (db.select().from(tokens).where(and(eq(tokens.label, value.label), isNull(tokens.revokedAt))).all()
-          .some(row => !row.expiresAt || Date.parse(row.expiresAt) > now)) throw new OperationError('conflict', 'A live token already has that label');
-        if (value.kind === 'owner' && !db.select().from(members).where(eq(members.id, value.member)).get()) throw new OperationError('invalid', 'Choose an existing member');
-        if (value.kind === 'agent') {
-          if (!db.select().from(agents).where(eq(agents.id, value.agent)).get()) throw new OperationError('invalid', 'Choose an existing agent');
-          if (value.job) {
-            const job = db.select().from(jobs).where(eq(jobs.id, value.job)).get();
-            if (!job || job.agent !== value.agent || !job.box || !activeJobStates.includes(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
-          }
-        }
-        if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');
         const token = `loom_${randomBytes(32).toString('base64url')}`, fingerprint = credentialFingerprint(token);
-        db.insert(tokens).values({ ...value, fingerprint, createdAt: new Date(now).toISOString() }).run();
+        add(value, fingerprint);
         return { token, fingerprint };
+      });
+    },
+    /** A job body's token. Its worker made the secret and sends the fingerprint alone, so there is no
+     * bearer to hand back and loom never holds one. A job has one live body token: enrolling ends any
+     * other. `madeFrom` is the machine token that enrolled it; the body's token is current only while
+     * that one is (currentToken). The caller has already proved who is enrolling. */
+    enrolBody(input: { fingerprint: string; agent: string; job: string; madeFrom: string }) {
+      if (!/^[a-f0-9]{64}$/.test(input.fingerprint)) throw new OperationError('invalid', 'Invalid fingerprint');
+      return db.transaction(() => {
+        db.update(tokens).set({ revokedAt: new Date(clock.now()).toISOString() }).where(and(eq(tokens.kind, 'agent'), eq(tokens.job, input.job), ne(tokens.fingerprint, input.fingerprint), isNull(tokens.revokedAt))).run();
+        // Labels are unique while live; each job's token gets its own. The job column is what binds it.
+        add(sharedTokenInput.parse({ kind: 'agent', agent: input.agent, job: input.job, label: `Job body [${randomUUID()}]` }), input.fingerprint, input.madeFrom);
+        return { fingerprint: input.fingerprint };
       });
     },
     revoke(fingerprint: string) {

@@ -101,6 +101,21 @@ it('refuses, without any stronger door around it, a removed member, a revoked ma
   db.update(members).set({ removedAt: at }).run();
   expect(held.member.valid()).toBe(false); expect(currentSession(db, hash(cookie), Date.parse(at))).toBeUndefined();
 });
+it('ends a body\'s token with the machine token it was enrolled from: revoked or run out, the body is nobody', () => {
+  const { db, authenticate, request, tick } = fixture(), runner = 'c'.repeat(64), body = 'd'.repeat(64);
+  db.insert(agents).values({ id: 'bot', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(boxes).values({ id: 'box', owner: 'sam', name: 'box', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  db.insert(jobs).values({ id: 'job', agent: 'bot', box: 'box', title: '', state: 'running', brief: '', model: 'm', startedByKind: 'agent', startedBy: 'bot', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: at }).run();
+  db.insert(tokens).values({ fingerprint: hash(runner), label: 'runner', kind: 'runner', box: 'box', createdAt: at }).run();
+  db.insert(tokens).values({ fingerprint: hash(body), label: 'body', kind: 'agent', agent: 'bot', job: 'job', madeFrom: hash(runner), createdAt: at }).run();
+  const asBody = () => authenticate(request({ authorization: 'Bearer ' + body })), held = asBody()!;
+  expect(held).toMatchObject({ viewer: { kind: 'agent', id: 'bot' }, job: 'job' });
+  // The machine and the job are untouched: only the leaked machine token is revoked.
+  db.update(tokens).set({ revokedAt: at }).where(eq(tokens.fingerprint, hash(runner))).run();
+  expect(held.valid()).toBe(false); expect(asBody()).toBeUndefined();
+  db.update(tokens).set({ revokedAt: null, expiresAt: '2026-11-14T01:00:00.000Z' }).where(eq(tokens.fingerprint, hash(runner))).run();
+  expect(asBody()).toBeDefined(); tick(3600_000); expect(asBody()).toBeUndefined();
+});
 it('names the one credential a request presents, and which token and session it resolved', () => {
   const { authenticate, request } = fixture();
   expect(presentedCredential(request({ authorization: 'Bearer ' + raw, cookie: 'loom_ui=' + cookie }))).toEqual({ bearer: raw });

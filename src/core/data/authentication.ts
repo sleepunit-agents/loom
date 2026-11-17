@@ -57,10 +57,14 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
 
 /** A token that is live and whose holder is current: a member who has not been removed, an agent that has
  * not been removed, or a machine that has not been revoked. A token bound to a job is current only while
- * that job is this agent's current work on a machine that has not been revoked. */
-export function currentToken(db: DataDatabase, id: string, now: number) {
+ * that job is this agent's current work on a machine that has not been revoked. A token enrolled from
+ * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
+ * ends the bodies it started. */
+export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: { kind: 'member' | 'agent' | 'runner'; id: string }; job?: string } | undefined {
   const token = db.select().from(tokens).where(eq(tokens.fingerprint, id)).get();
   if (!token || !tokenLive(token, now)) return;
+  // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
+  if (token.madeFrom !== null && !tokenLive(db.select().from(tokens).where(eq(tokens.fingerprint, token.madeFrom)).get() ?? { revokedAt: 'gone', expiresAt: null }, now)) return;
   if (token.kind === 'owner' && token.member) {
     if (!db.select({ id: members.id }).from(members).where(and(eq(members.id, token.member), isNull(members.removedAt))).get()) return;
     return { token, viewer: { kind: 'member' as const, id: token.member } };
