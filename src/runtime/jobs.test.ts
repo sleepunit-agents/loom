@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { eq, notInArray } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
-import { Jobs } from './jobs.js';
-import { BODY_EXIT } from './job-exit.js';
+import { Jobs, QUEUE_DEADLINE_MS, agentMailAdmission } from './jobs.js';
+import { BODY_EXIT, LOOM_EXIT, exitStage } from './job-exit.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
@@ -307,4 +307,68 @@ it('preserves full multiline public mail in the same admission with a dim item',
   f.db.update(inbox).set({ words: 'Full first\nFull second' }).where(eq(inbox.id, full.id)).run();
   f.db.update(inbox).set({ volume: 'dim', words: 'Dim first\nDim second' }).where(eq(inbox.id, dim.id)).run();
   expect(f.runtime.admit(f.conversation.id)?.brief).toBe('Full first\nFull second\n\nDim first');
+});
+
+it('ends a job no machine took within the queue deadline, with a record of why, and lets fresh mail start again', () => {
+  const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
+  f.tick(QUEUE_DEADLINE_MS); expect(f.runtime.sweep()).toEqual([]);
+  f.tick(1);
+  const [ended] = f.runtime.sweep();
+  expect(ended).toMatchObject({ id: job.id, state: 'failed', exitCode: LOOM_EXIT.unplaced, endedAt: f.now(), box: null });
+  expect(ended.logTail).toMatch(/^Never started: no machine took it within 24 hours/);
+  expect(exitStage(ended.exitCode)).toBe('loom unplaced');
+  expect(working(f)).toEqual([]);
+  // No next attempt: it would only wait as long again. The mail stays with the ended job until fresh mail arrives.
+  expect(f.db.select().from(jobs).all()).toHaveLength(1);
+  expect(f.db.select().from(inbox).where(eq(inbox.id, mail.id)).get()).toMatchObject({ state: 'waiting', job: job.id });
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+  f.send();
+  expect(f.runtime.admit(f.conversation.id)).toMatchObject({ state: 'queued', retryOf: null });
+});
+it('counts the queue deadline of a retry from when it could first be claimed', () => {
+  const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker');
+  const retry = f.runtime.finish(job.id, 'worker', 1).retry!;
+  f.tick(Date.parse(retry.retryAt!) - Date.parse(f.now()) + QUEUE_DEADLINE_MS); expect(f.runtime.sweep()).toEqual([]);
+  f.tick(1); expect(f.runtime.sweep()).toMatchObject([{ id: retry.id, state: 'failed', exitCode: LOOM_EXIT.unplaced }]);
+});
+it('counts silence from now for a job stamped later than now, as after the server clock is set back', () => {
+  const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  f.tick(-600_000);
+  expect(f.runtime.sweep()).toEqual([]);
+  expect(f.runtime.get(job.id)).toMatchObject({ state: 'running', heardAt: f.now() });
+  f.tick(120_000); expect(f.runtime.sweep()).toEqual([]);
+  f.tick(1); expect(f.runtime.sweep()).toMatchObject([{ id: job.id, state: 'lost' }]);
+});
+it.each([
+  ['no model to run on', (f: ReturnType<typeof fixture>) => { f.db.delete(agentModels).run(); }, (f: ReturnType<typeof fixture>) => { f.db.insert(agentModels).values({ agent: 'art', model: 'primary', position: 0 }).run(); }],
+  ['no run settings', (f: ReturnType<typeof fixture>) => { f.db.delete(agentRunSettings).run(); }, (f: ReturnType<typeof fixture>) => { f.db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'r', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: false }).run(); }],
+  ['been removed', (f: ReturnType<typeof fixture>) => { f.db.update(agents).set({ removedAt: f.now() }).run(); }, (f: ReturnType<typeof fixture>) => { f.db.update(agents).set({ removedAt: null }).run(); }],
+] as const)('tells the owner once why mail did not become a job when the agent has %s, and closes the notice when it does', (why, breakIt, mend) => {
+  const f = fixture(); breakIt(f); f.send();
+  const notices = () => f.db.select().from(inbox).where(eq(inbox.source, 'notice')).all();
+  expect(f.runtime.admission(f.conversation.id)).toEqual({ declined: expect.stringContaining(why), noticed: true });
+  expect(notices()).toMatchObject([{ toKind: 'person', to: 'owner', state: 'waiting' }]);
+  expect(notices()[0].words).toContain(why); expect(notices()[0].words).toContain('art');
+  // Asked again, as every later settling does, and with more mail: still the one notice, and nothing new to announce.
+  f.send();
+  expect(f.runtime.admission(f.conversation.id)).toEqual({ declined: expect.stringContaining(why), noticed: false });
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+  expect(notices()).toHaveLength(1);
+  mend(f);
+  expect(f.runtime.admit(f.conversation.id)).toMatchObject({ state: 'queued' });
+  expect(notices()).toMatchObject([{ state: 'resolved' }]);
+});
+it('records an admission that threw as a notice, and offers the rest of the batch', () => {
+  const f = fixture(), mail = f.send(), changed = vi.fn();
+  const broken = new Jobs(f.db, f.now);
+  vi.spyOn(broken, 'admission').mockImplementationOnce(() => { throw new Error('disk I/O error\nwith private detail'); });
+  expect(agentMailAdmission(broken, changed)({ kind: 'agent', id: 'art' }, [mail])).toBe(false);
+  const notice = f.db.select().from(inbox).where(eq(inbox.source, 'notice')).get();
+  expect(notice).toMatchObject({ to: 'owner', state: 'waiting' });
+  expect(notice?.words).toContain('disk I/O error'); expect(notice?.words).not.toContain('private detail');
+  expect(changed).toHaveBeenCalledOnce();
+  expect(agentMailAdmission(broken, changed)({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
+  expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).get()?.state).toBe('resolved');
 });

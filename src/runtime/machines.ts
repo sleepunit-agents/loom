@@ -1,5 +1,5 @@
 /** Trusted worker health records. Authentication of a worker belongs at the door. */
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { machineFacts } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
@@ -42,6 +42,8 @@ export class Machines {
     if (!Number.isFinite(now)) throw new Error('Invalid machine time');
     return this.db.transaction(() => {
       const notices = new Conversations(this.db, () => at);
+      // As in Jobs.sweep: a stamp later than now is left by a clock since set back, and is counted from now.
+      this.db.update(boxes).set({ lastSeenAt: at }).where(gt(boxes.lastSeenAt, at)).run();
       return this.db.select().from(boxes).where(and(eq(boxes.alwaysOn, true), isNull(boxes.revokedAt))).all()
         .filter(box => now - Date.parse(box.lastSeenAt ?? box.enrolledAt) > silenceMs)
         .map(box => notices.send({ toKind: 'person', to: box.owner, member: box.owner, source: 'notice', sourceId: outage(box),

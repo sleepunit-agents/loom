@@ -2,8 +2,9 @@
  *
  * A job's log tail is dropped for a private conversation, and what a harness prints may hold the
  * conversation's words, so neither can carry the stage. The number can. The body's own program uses
- * BODY_EXIT; the worker uses WORKER_EXIT for a job whose body it could not get running. Any other code is
- * the runner's own (a builder, a custom runner), and 0 is success. */
+ * BODY_EXIT; the worker uses WORKER_EXIT for a job whose body it could not get running; loom itself uses
+ * LOOM_EXIT for a job it ended without any worker having run it. Any other code is the runner's own (a
+ * builder, a custom runner), and 0 is success. */
 export const BODY_EXIT = {
   /** Unexpected failure before the body knew what it was asked to do. */
   input: 1,
@@ -34,9 +35,15 @@ export const WORKER_EXIT = {
   reap: 26,
 } as const;
 
+export const LOOM_EXIT = {
+  /** No machine took the job within the queue deadline (Jobs.sweep): nothing ran. */
+  unplaced: 31,
+} as const;
+
 const stages = new Map<number, string>([
   ...Object.entries(BODY_EXIT).map(([stage, code]): [number, string] => [code, `body ${stage}`]),
   ...Object.entries(WORKER_EXIT).map(([stage, code]): [number, string] => [code, `worker ${stage}`]),
+  ...Object.entries(LOOM_EXIT).map(([stage, code]): [number, string] => [code, `loom ${stage}`]),
 ]);
 /** The stage a job's exit code names, for showing beside the number; undefined for 0 and for a runner's own code. */
 export function exitStage(code: number | null | undefined): string | undefined {
