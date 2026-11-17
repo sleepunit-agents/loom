@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Bridges: a ping of a bot's own role on Discord is a mention of the bot.** Discord's autocomplete offers a bot's managed role for its name; a written ping of that role now addresses the bot, for every bot in the guild. Any other role, `@everyone` and `@here` address nobody.
+- **Bridges: a Discord thread under a bot's message addresses that bot, whoever posted the message.** A thread started from a message loom did not post (the older program, a script using the same token) used to address nobody. A reply inside a thread still answers the message it points at.
+- **Bridges: Discord attachments are listed in the message's words**, with name, type, size and Discord's link, so a message that is only a picture is delivered and answered.
+- **Bridges: a post on Discord can ping a person or a bot.** A written `<@id>` in a reply now pings; `@everyone`, `@here` and roles still do not. Before this nothing in a reply pinged.
+
 - **Bridges: a stranger's message is not delivered.** A Discord or Slack message from a person is taken only when the account is linked to a member who is in the household now, or the answering agent's owner has given the account a tier (a `bodyPolicy` card). Anybody else is dropped with the reason `Unknown sender`, in a room and in a direct message, and keeps no words. Before this an unlinked person was delivered as a guest. An `only` filter still does not drop a direct message from someone known.
 - **Bridges: a bot wakes an agent only by writing its mention.** In a channel whose rule has `botsMayTalk` on, a bot's or webhook's message is delivered when it mentions the agent's bot in writing, whether or not the bot is an agent of this household (one that is not is recorded as from nobody). Without a written mention a bot's post wakes nobody, including the channel's own agent. Before this a household bot woke the channel's agent with any post, and no other bot could wake an agent at all.
 

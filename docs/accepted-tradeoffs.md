@@ -554,6 +554,42 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: a channel that is one agent's private line to one bot, where every post should wake it
   (the old bridge's "pair" channels). That is a second setting on the channel's rule.
 
+### A Discord post pings the users an agent names, and nothing else
+- What: a post by loom on Discord allows user mentions and no others (`allowed_mentions: {parse: ['users'],
+  replied_user: false}`). A written `<@id>` pings that person or bot. `@everyone`, `@here` and every role
+  stay words. Slack posts ping nobody: their text is escaped.
+- Where: `DISCORD_PINGS` in `src/pieces/bridges/reply-api.ts`, the one sender of every post.
+- Why: an agent has to be able to call a person's attention, and a written mention is the only thing that
+  wakes another bot (see "A bot wakes an agent only by writing its mention"). A model's text is not
+  trusted with a ping of a whole server or a whole role.
+- Would change it: a household wanting an agent to ping a role. Then the roles it may ping are named on the
+  connection, and only those are allowed.
+
+### A Discord attachment is a link in the message's words
+- What: a Discord message's attachments, ten at most, are listed after its words, one line each, with name,
+  type, size and Discord's own link. loom fetches and keeps none of them, so there is no size or type limit
+  of loom's; the link is signed by Discord and stops working after about a day. A link is passed on only
+  when it is on `cdn.discordapp.com` or `media.discordapp.net`. Slack files are fetched and kept as before.
+- Where: `discordWords` in `src/pieces/bridges/normalize.ts`.
+- Why: a message that is only a picture then has words and is answered, and a body can open what was sent.
+  The store loom has for attachments (`bridge_files`) is read by a body only as base64 text in a tool
+  result, which a model cannot look at and which does not fit its context.
+- Would change it: bodies being handed kept files as files in their working directory. Then Discord
+  attachments are fetched into `bridge_files` as Slack's are, with the same limits (25 MB, five a message).
+
+### Who a Discord thread hangs under is read once, from its starter message
+- What: a message in a thread, that is not itself a reply, answers whoever wrote the message the thread was
+  started from, so a thread under a bot's message addresses that bot whoever posted the message (loom, the
+  old bridge, a script with the same token). The author is read when loom first meets the thread and kept
+  for the connection's lifetime. A thread made on its own, or whose starter was deleted or cannot be read,
+  hangs under nobody's message. Which roles are a bot's own is read the same way, once when the connection
+  starts: a role made afterwards counts from the next reconnect.
+- Where: `starter` and `roles` in `src/pieces/bridges/channel-api.ts`, kept by `channels.ts`, used by
+  `normalizeDiscord`; the reads are made in `shared-daemon.ts`.
+- Why: Discord's message event carries neither. One read for a thread and one for a guild's roles is the
+  least that tells them, and both are stable.
+- Would change it: role pings that fail after a bot is re-invited. Then `GUILD_ROLE_UPDATE` is listened for.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

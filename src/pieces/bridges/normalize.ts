@@ -14,6 +14,9 @@ const discordMessage = z.object({
   author: z.object({ id, bot: z.boolean().optional() }),
   content: z.string(), timestamp: z.iso.datetime({ offset: true }),
   mentions: z.array(z.object({ id })), webhook_id: id.optional(),
+  // The roles the message pinged, as Discord resolved them.
+  mention_roles: z.array(id).optional(),
+  attachments: z.array(z.object({ filename: z.string(), size: z.number().int().nonnegative(), content_type: z.string().nullish(), url: z.string() }).passthrough()).optional(),
   // Present on a reply (type 19); null when the message replied to has been deleted.
   referenced_message: z.object({ author: z.object({ id }) }).nullish(),
 });
@@ -42,6 +45,8 @@ export interface DiscordChannel {
   kind: 'channel' | 'thread' | 'dm' | 'other';
   group?: boolean;
   parent?: string;
+  /** A thread only: who wrote the message it was started from, when that is known. */
+  starter?: string;
 }
 
 /** Who the author mentioned by writing their mention. Discord's `mentions` list
@@ -51,12 +56,32 @@ export interface DiscordChannel {
  * it pings, and that is carried separately as `repliesTo`. The list stays the
  * authority on who a written mention resolved to; the text only says which of
  * them were written. */
-function discordSummons(content: string, resolved: string[]): string[] {
-  const written = new Set([...content.matchAll(/<@!?([^<>\s]+)>/g)].map(match => match[1]));
-  return [...new Set(resolved.filter(id => written.has(id)))];
+function discordSummons(content: string, resolved: string[], roles: string[], botRoles: ReadonlyMap<string, string>): string[] {
+  const written = new Set([...content.matchAll(/<@!?([^<>\s&]+)>/g)].map(match => match[1]));
+  // A bot that joined through an integration owns a role of its own name, and Discord's autocomplete
+  // offers that role for the bot's name. A written ping of a bot's own role is a mention of that bot.
+  // Any other role, `@everyone` and `@here` mention nobody.
+  const writtenRoles = new Set([...content.matchAll(/<@&([^<>\s]+)>/g)].map(match => match[1]));
+  const bots = roles.filter(role => writtenRoles.has(role)).flatMap(role => botRoles.get(role) ?? []);
+  return [...new Set([...resolved.filter(id => written.has(id)), ...bots])];
 }
 
-export function normalizeDiscord(connection: PlatformConnection, payload: unknown, channel: DiscordChannel): IncomingMessage | null {
+/** The most attachments one Discord message carries, which is all that are listed. */
+export const DISCORD_ATTACHMENTS = 10;
+const ATTACHMENT_NAME = 200, ATTACHMENT_TYPE = 100;
+/** A message's words with its attachments listed after them, one line each, so that a message that is only
+ * a picture has words and a body can open what was sent. loom fetches nothing: the link is Discord's own
+ * signed one, and it is given only when it is on Discord's file hosts. */
+function discordWords(content: string, attachments: readonly { filename: string; size: number; content_type?: string | null; url: string }[]): string {
+  const plain = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f[\]]+/g, '_').slice(0, max);
+  const lines = attachments.slice(0, DISCORD_ATTACHMENTS).map(file => {
+    const link = /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\/[^\s\u0000-\u001f\u007f[\]]{1,2000}$/.test(file.url) ? ` ${file.url}` : '';
+    return `[attachment: ${plain(file.filename, ATTACHMENT_NAME) || 'file'} (${plain(file.content_type ?? '', ATTACHMENT_TYPE) || 'unknown type'}, ${file.size} bytes)${link}]`;
+  });
+  return [...(content ? [content] : []), ...lines].join('\n');
+}
+
+export function normalizeDiscord(connection: PlatformConnection, payload: unknown, channel: DiscordChannel, botRoles: ReadonlyMap<string, string> = new Map()): IncomingMessage | null {
   const dispatch = discordDispatch.parse(payload);
   if (dispatch.t !== 'MESSAGE_CREATE') return null;
   const message = discordMessage.parse(dispatch.d);
@@ -68,10 +93,13 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
     id: message.id, connection: connection.id, channel: message.channel_id,
     ...(channel.kind === 'thread' ? { parent: channel.parent, thread: channel.id } : {}),
     ...(channel.kind === 'dm' && channel.group ? { groupDm: true } : {}),
-    isDm: channel.kind === 'dm', user: message.author.id, text: message.content,
+    isDm: channel.kind === 'dm', user: message.author.id, text: discordWords(message.content, message.attachments ?? []),
     postedAt: new Date(message.timestamp).toISOString(),
-    mentions: discordSummons(message.content, message.mentions.map(mention => mention.id)),
-    ...(message.type === 19 && message.referenced_message ? { repliesTo: message.referenced_message.author.id } : {}),
+    mentions: discordSummons(message.content, message.mentions.map(mention => mention.id), message.mention_roles ?? [], botRoles),
+    // An explicit reply answers the author it points at. Any other message in a thread answers whoever
+    // wrote the message the thread was started from, as a Slack thread reply answers its root.
+    ...(message.type === 19 && message.referenced_message ? { repliesTo: message.referenced_message.author.id }
+      : message.type !== 19 && channel.kind === 'thread' && channel.starter ? { repliesTo: channel.starter } : {}),
     bot: message.author.bot ?? false, webhook: !!message.webhook_id,
   };
 }

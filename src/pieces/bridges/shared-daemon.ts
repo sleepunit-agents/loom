@@ -170,6 +170,13 @@ export class SharedBridges {
     secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).authenticate();
    if(!current()||!proof)throw Error();
    life.channels=this.channels.bind(row.id,{platform:row.platform,workspace:row.workspace});
+   // Which roles are a bot's own, so that a ping of one is a mention of that bot (normalize.ts). Read once
+   // for the lifetime, before anything is taken in. Unread, role pings address nobody; mentions still work.
+   if(row.platform==='discord'){
+    const roles=await bridgeChannelApi({platform:row.platform,workspace:row.workspace,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).roles();
+    if(!current())throw Error();
+    try{if(roles)life.channels.roles(roles);}catch{this.report();}
+   }
    life.authenticated=true;
    const state=(value:Connection['state'])=>{if(current()){this.state(row.id,value);if(value==='connected')this.track(this.sends.flush());}};
    if(row.platform==='discord'){
@@ -207,9 +214,13 @@ export class SharedBridges {
    const api=bridgeChannelApi({platform:row.platform,workspace:row.workspace,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,current,request:this.options.request});
    for(const id of this.receiver.missingChannels(row.id,64,true)){
     if(!current())return;const evidence=await api.channel(id);if(!current())return;
+    // A thread made from a message has that message's id. Who wrote it says whose message the thread hangs
+    // under; a thread with no such message, or one that cannot be read, hangs under nobody's.
+    const starter=row.platform==='discord'&&evidence&&(evidence.type===10||evidence.type===11)&&typeof evidence.parent_id==='string'?await api.starter(evidence.parent_id,id):undefined;
+    if(!current())return;
     // Details this code cannot classify leave that one channel's events waiting. They must not stop the
     // pass: every other channel of the connection is still to be drained.
-    try{if(evidence)life.channels!.put(id,evidence);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
+    try{if(evidence)life.channels!.put(id,evidence,starter);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
    }
    if(!current())return;
    const pendingFiles=new Map<string,SlackFilesPermit['files']>();

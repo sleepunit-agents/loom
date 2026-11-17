@@ -35,6 +35,8 @@ const slackChannelField = z.object({ channel: id });
 export const HELD_LIFETIME = UNREAD_EVENT_LIFETIME;
 export interface BridgeChannelCache {
   discord(connection: string, channel: string): DiscordChannel | undefined;
+  /** Discord role id to the bot it is managed for; none known is an empty map. */
+  botRoles?(connection: string): ReadonlyMap<string, string>;
   slack(connection: string, channel: string): SlackChannel | undefined;
 }
 
@@ -156,7 +158,7 @@ export class BridgeReceiver {
           if (frame.t !== 'MESSAGE_CREATE' || this.elsewhere(source, frame.d)) return;
           const channel = this.channels.discord(connection, channelField.parse(frame.d).channel_id);
           if (!channel) return false;
-          message = normalizeDiscord(source, frame, channel);
+          message = normalizeDiscord(source, frame, channel, this.channels.botRoles?.(connection));
         } else {
           const frame = slackFrame.parse(payload);
           const event = frame.payload.event;
