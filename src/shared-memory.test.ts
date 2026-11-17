@@ -145,9 +145,10 @@ it('refreshes Knowledge and Activity together at the shared root deadline withou
  try{for(const slug of ['recent','aging','due'])await knowledge.writePage({slug,title:slug,domain:'fiction',body:'Fictional fact'});}finally{knowledge.close();}
  const facts=new Database(f.sources.commons.knowledge);
  try{for(const [slug,days] of [['recent',7],['aging',20],['due',30]] as const)facts.prepare('UPDATE pages SET verified_at=? WHERE slug=?').run(new Date(now-days*86400000+1000).toISOString(),slug);}finally{facts.close();}
+ const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
+ // After the start: these few columns are all the Activity reader asks of the table, and not a store a start would accept.
  const episodes=new Database(f.sources.agents[0].memories);
  try{episodes.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');episodes.prepare("INSERT INTO memories VALUES('expiry','Expires soon','Fictional episode',?,NULL,'{}',?,'episode',0)").run(new Date(now).toISOString(),new Date(now+1000).toISOString());}finally{episodes.close();}
- const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
  const query='{ memoryKnowledge { pages { slug fresh recent } } memoryKnowledgePage(slug:"due") { fresh } memoryActivity { entries { id title } } memoryActivityEntry(id:"e~fiction~expiry") { title } }';
  const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw,origin:app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');
  await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})));
@@ -178,10 +179,10 @@ it('withdraws a selected private Memory card when sharing changes during a sibli
 });
 it('withdraws a selected private episode when its deadline passes during a sibling await without a SQL write',async()=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
- const source=new Database(f.sources.agents[0].memories);
- try{source.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');source.prepare("INSERT INTO memories VALUES('expiry','PRIVATE expiring episode','Fictional private words',?,NULL,'{}',?,'episode',0)").run(new Date(f.clock.now()).toISOString(),new Date(f.clock.now()+1000).toISOString());}finally{source.close();}
  let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
  const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
+ const source=new Database(f.sources.agents[0].memories);
+ try{source.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');source.prepare("INSERT INTO memories VALUES('expiry','PRIVATE expiring episode','Fictional private words',?,NULL,'{}',?,'episode',0)").run(new Date(f.clock.now()).toISOString(),new Date(f.clock.now()+1000).toISOString());}finally{source.close();}
  const committed=vi.fn(),stop=app.writes.observe(committed);cleanup.push(stop);
  try{
   const pending=fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryActivityEntry(id:"e~fiction~expiry") { title } held }'})});

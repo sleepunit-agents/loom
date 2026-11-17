@@ -28,6 +28,7 @@ import {LINK_MS} from './core/signin/link-lifetime.js';
 import {privateBytes} from './pieces/secrets/local-holder.js';
 import {readKey,wordsKey,type WordsKey} from './pieces/comms/crypto.js';
 import {serveShared} from './shared-serve.js';
+import {StartupRefusal} from './core/startup-refusal.js';
 import type {sharedRoot} from './shared-root.js';
 const path=z.string().refine(isAbsolute,'Use an absolute path');
 const githubBindings=z.record(z.string(),z.string()).refine(value=>{try{githubBindingNames(value);return true;}catch{return false;}},'Invalid GitHub credential bindings');
@@ -46,9 +47,7 @@ const programSchema=z.object({
   agents:z.array(z.object({agent:z.string().min(1),directory:path,memories:path}).strict()).optional(),
  }).strict()}).strict(),
 }).strict();
-/** A refusal to start whose words are for the operator: `loom serve` prints them. Any other failure
- * is printed as one fixed line, because its message may quote a private file. */
-export class StartupRefusal extends Error {}
+export {StartupRefusal};
 /** Every agent's Memory directory is in here, named after the agent. */
 export const agentsDirectory=(home:string)=>join(home,'agents');
 type RootOptions=Parameters<typeof sharedRoot>[0];

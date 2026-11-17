@@ -1,8 +1,8 @@
 import type {EmbeddingProvider} from './backends/types.js';
 import {Notes,notesDbPath} from './notes.js';
 import {sharedNotes} from './shared-notes.js';
-/** Memory stays in declared source files. Existing store/action modules own
- * their schema and retry receipts; this creates no legacy loom tables. */
+/** Memory stays in declared source files. The store and action modules own
+ * their schema and retry receipts; this file runs them at each start, and creates no tables of its own. */
 import {mkdirSync,openSync,closeSync,fsyncSync,linkSync,rmSync,statSync} from 'node:fs';
 import Database from 'better-sqlite3';
 import {basename,dirname,join} from 'node:path';
@@ -22,7 +22,9 @@ import type {ProjectSectionRole} from './pieces/mind/projects-roles.js';
 import {memoryQueryFields} from './transport/memory-queries.js';
 import {installMindKnowledgeActions} from './pieces/mind/actions.js';
 import {installMindPeopleActions} from './pieces/mind/people-actions.js';
-import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import {upgradeKnowledgeStore} from './backends/sqlite-knowledge.js';
+import {upgradeMemoryTables} from './backends/migrations.js';
+import {StartupRefusal} from './core/startup-refusal.js';
 import {verifyKnowledgePages} from './backends/knowledge-verification.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
@@ -30,8 +32,8 @@ import {createPersonHalf} from './backends/people-creation.js';
 import type {TaskService} from './apps/tasks.js';
 import {sharedProjectSections} from './shared-memory-projects.js';
 import {sharedSharing} from './shared-sharing.js';
-import {migrateMindReceipts} from './pieces/mind/receipt-schema.js';
-import {prepareSemanticMemory} from './pieces/mind/semantic-schema.js';
+import {migrateMindReceipts,upgradeMindReceipts} from './pieces/mind/receipt-schema.js';
+import {prepareSemanticMemory,checkSemanticMemory} from './pieces/mind/semantic-schema.js';
 import {registerSemanticMemory} from './pieces/mind/semantic-commands.js';
 export interface SharedMemoryOptions {
  sources:MindSources;
@@ -52,12 +54,21 @@ export function householdMemorySources(db:DataDatabase,commons:MindSources['comm
   return listed;
  }};
 }
-/** Fresh files only. Existing precious files, including their schema, are left to their existing owner.
+/** Every start checks and brings up to date every Memory file it will open, fresh or not, before any
+ * reader or command has it: the store's own version check (a file a newer program has changed is refused
+ * and left as it is) and the store's upgrade steps. The door's retry and command tables are made with a
+ * fresh file; in a file that was already there they are checked and brought up to date if the file has
+ * them, and not added if it never did (docs/accepted-tradeoffs.md, "A Memory file the program did not
+ * make is not given its retry tables").
  *
- * A file is made whole under a temporary name beside it and given its real name
+ * A fresh file is made whole under a temporary name beside it and given its real name
  * last, so a start that is killed part-way leaves nothing a later start would
  * take for a prepared file. What such a start leaves behind is its temporary
- * directory, which the next preparation removes before it begins again. */
+ * directory, which the next preparation removes before it begins again.
+ *
+ * An existing file is brought up to date where it is. Each step is one transaction and is found pending
+ * from the file's shape, so a start killed between two steps is finished by the next one, and a file
+ * that is already up to date is not written to. */
 function begin(path:string){
  // An empty file under the real name holds nothing: an earlier program created
  // the file first and prepared it after, and was killed between the two.
@@ -80,15 +91,27 @@ function finish(path:string,{directory,making,replaces}:NonNullable<ReturnType<t
  try{linkSync(making,path);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
  rmSync(directory,{recursive:true,force:true});
 }
-const fresh=(path:string,initialise:(directory:string,path:string)=>void)=>{const made=begin(path);if(made){initialise(made.directory,made.making);finish(path,made);}};
+/** `upgrade` is the store's own check and steps. It is given the file to work on, the directory it is
+ * in, and whether the file is being made now. */
+function prepare(path:string,upgrade:(directory:string,path:string,fresh:boolean)=>void){
+ const made=begin(path);
+ if(made){upgrade(made.directory,made.making,true);finish(path,made);return;}
+ try{
+  upgrade(dirname(path),path,false);
+  const db=new Database(path,{fileMustExist:true});try{upgradeMindReceipts(db);}finally{db.close();}
+ }catch(error){
+  // None of these messages quotes what a file holds: they name a version, a step or a table.
+  throw new StartupRefusal(`The Memory file ${path} cannot be used by this program: ${error instanceof Error?error.message:'it could not be opened'}`);
+ }
+}
 /** One agent's notes and memory files: at start for every agent, and for an agent added while the program runs. */
 export function prepareAgentMemory(agent:AgentSource){
  for(const directory of [agent.directory,dirname(agent.memories)])mkdirSync(directory,{recursive:true});
- fresh(notesDbPath(agent.directory),directory=>{new Notes(directory).close();});
- fresh(agent.memories,(_directory,path)=>{
+ prepare(notesDbPath(agent.directory),directory=>{new Notes(directory).close();});
+ prepare(agent.memories,(_directory,path,fresh)=>{
   new PeopleStore({dbPath:path,actor:agent.agent}).close();
   new ProjectsStore({dbPath:path}).close();
-  const db=new Database(path,{fileMustExist:true});try{prepareSemanticMemory(db);}finally{db.close();}
+  const db=new Database(path,{fileMustExist:true});try{upgradeMemoryTables(db);if(fresh)prepareSemanticMemory(db);else checkSemanticMemory(db);}finally{db.close();}
  });
 }
 /** Run before readers. */
@@ -96,13 +119,8 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
  if(!options)return;
  const {commons,agents}=options.sources;
  for(const path of [commons.knowledge,commons.people])mkdirSync(dirname(path),{recursive:true});
- const knowledge=begin(commons.knowledge);
- if(knowledge){
-  const store=new SqliteKnowledgeBackend({dbPath:knowledge.making});
-  try{await store.getPage('bootstrap-probe');}finally{store.close();}
-  finish(commons.knowledge,knowledge);
- }
- fresh(commons.people,(_directory,path)=>{new PeopleStore({dbPath:path}).close();});
+ prepare(commons.knowledge,(_directory,path)=>{const db=new Database(path,{fileMustExist:true});try{upgradeKnowledgeStore(db);}finally{db.close();}});
+ prepare(commons.people,(_directory,path)=>{new PeopleStore({dbPath:path}).close();});
  for(const agent of agents)prepareAgentMemory(agent);
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){

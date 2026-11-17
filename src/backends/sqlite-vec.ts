@@ -133,6 +133,8 @@ export class SqliteVecBackend implements MemoryBackend {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
     try{
+    // Whatever this connection goes on to do, reads that leave a mark included: not on a newer program's file.
+    refuseNewerStore(this.db);
     if(!config.deferSchema)this.db.pragma('journal_mode = WAL');
     // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
     // their own connection. A brief write-lock window (checkpoint, concurrent

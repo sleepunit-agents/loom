@@ -561,6 +561,16 @@ export function runMigrationSteps(db: Database, ids: readonly string[]): void {
   markStore(db);
 }
 
+/**
+ * For a start of the program on a memories.db that may be older than it: the memory tables' pending
+ * steps, when the file has memory tables. A file without them is left for the first write, which makes
+ * them (SqliteVecBackend); a file a newer program has changed throws and is not altered.
+ */
+export function upgradeMemoryTables(db: Database): void {
+  refuseNewerStore(db);
+  if (hasTable(db, 'memories')) runMigrations(db, { strict: true });
+}
+
 function markStore(db: Database): void {
   if (storeVersion(db) !== MIGRATIONS.length) db.pragma(`user_version = ${MIGRATIONS.length}`);
 }
