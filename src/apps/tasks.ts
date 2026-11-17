@@ -15,7 +15,7 @@ const summary = {
 export const taskCreateSchema = z.object({
   ...summary, doneWhen: summary.doneWhen.default(''), description: summary.description.default(''),
   priority: summary.priority.default(2), project: summary.project.default(null),
-  type: z.enum(['task', 'bug', 'feature', 'epic']).default('task'),
+  type: z.enum(tasks.type.enumValues).default('task'),
   owner: z.discriminatedUnion('kind', [person.extend({ kind: z.literal('member') }), person.extend({ kind: z.literal('agent') }), z.object({ kind: z.literal('household') })]),
   source: z.object({ kind: z.string().min(1), id: z.string().min(1) }).optional(),
   parent: z.string().min(1).optional(),

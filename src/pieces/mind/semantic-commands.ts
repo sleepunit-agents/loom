@@ -8,7 +8,7 @@ import {z} from 'zod';
 import {OperationError,RecoveredWrite,type Operations,type Context,type WriteReceipt} from '../../core/operations/index.js';
 import type {Viewer} from '../../policy.js';
 import {SqliteVecBackend} from '../../backends/sqlite-vec.js';
-import type {EmbeddingProvider} from '../../backends/types.js';
+import {OBSERVATIONS,type EmbeddingProvider} from '../../backends/types.js';
 import {createEmbeddingProvider} from '../../backends/index.js';
 import {semanticMemoryReady,semanticCardsReady} from './semantic-schema.js';
 import {opaqueCardReference} from './card-references.js';
@@ -16,7 +16,7 @@ import {prepareMemoryInput} from '../../tools/remember.js';
 import {proposeOnConnection,ratifyOnConnection} from '../../backends/proposals.js';
 import {AgentFiles,type AgentSource,type MindSources} from './sources.js';
 import {PeopleStore} from '../../backends/people.js';
-import {ProjectsStore} from '../../backends/projects.js';
+import {ProjectsStore,STATUSES} from '../../backends/projects.js';
 import {CardError,type CardConnection} from '../../backends/cards.js';
 type Identity={name:string;input_hash:string;expires:number};
 type Stored=Identity&{result:string};
@@ -110,7 +110,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const cardValue=z.union([z.string(),z.number(),z.boolean(),z.array(z.string())]);
  const stamp={verified_at:z.string().optional(),source:z.string().optional(),stale_after_days:z.number().optional()};
  const person=z.object({slug:z.string().min(1).max(PERSON_CARD_SLUG_MAX),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();
- const project=z.object({slug:z.string().min(1).max(PROJECT_CARD_SLUG_MAX),name:z.string().optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().optional(),goal:z.string().optional(),where:z.record(z.string(),z.object({value:z.string(),...stamp}).strict().nullable()).optional(),links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict();
+ const project=z.object({slug:z.string().min(1).max(PROJECT_CARD_SLUG_MAX),name:z.string().optional(),status:z.enum(STATUSES).optional(),summary:z.string().optional(),goal:z.string().optional(),where:z.record(z.string(),z.object({value:z.string(),...stamp}).strict().nullable()).optional(),links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict();
  const cardIds=z.object({ids:z.array(z.string().regex(scopedStoreId('person|project')))}).strict();
  const cardBase={...base,admit(ctx:Context){const source=current(ctx.viewer);if(!source||!semanticCardsReady(source.db))throw new OperationError('unavailable','Private cards are not prepared for commands');reserve(ctx);}};
  const withCard=<Store extends {close():void}>(db:Database.Database,viewer:Viewer,kind:'person'|'project',open:(connection:CardConnection)=>Store,change:(store:Store)=>{card:{slug:string}})=>{
@@ -139,7 +139,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   if(!row)throw new OperationError('not-found','Memory is absent');return {uuid,ref:row.ref};
  };
  operations.register({...base,doors:[...base.doors],name:'memory.update',
-  input:target.extend({content:authored.max(65536).optional(),metadata:remember.shape.metadata,observation:z.enum(['confirm','contradict']).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
+  input:target.extend({content:authored.max(65536).optional(),metadata:remember.shape.metadata,observation:z.enum(OBSERVATIONS).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
    const row=ownTarget(db,viewer,input.id),result=await backend.update({ref:row.ref,content:input.content,metadata:input.metadata,observation:input.observation});
    if(!result.updated)throw new OperationError('not-found','Memory is absent');return {ids:[row.uuid]};

@@ -92,7 +92,16 @@ in and `loom-taskstore` share. So are the address a credential may be sent to
 (`src/core/private-origin.ts`), when a card's field is stale (`src/backends/cards.ts`), a
 merge approval's target (`src/apps/merge-target.ts`), a worker's configuration limits
 (`src/runtime/worker-limits.ts`) and the id of a private secret use
-(`src/pieces/secrets/use-id.ts`). `src/single-home.contract.test.ts` and
+(`src/pieces/secrets/use-id.ts`). So are the household's lists and limits that more than
+one door takes: the kinds of household change (the keys of `kinds` in
+`src/shared-household-proposals.ts`), the memory categories (`src/categories.ts`), a note's
+lifespans and the length of its path (`src/notes.ts`), how long a secret grant may last and
+what an agent sends to ask for one (`src/pieces/secrets/input.ts`), a secret's standing
+answers and the writer of the household's default (`src/pieces/secrets/requests.ts`),
+Tempo's timing ranges (`src/core/tempo/volume.ts`), the shape of a SHA-256 digest in hex
+and of a sign-in link's path (`src/core/sha256-hex.ts`), and a calendar day
+(`src/core/day.ts`). A choice the database also checks is read from its column in
+`src/core/data/schema.ts`. `src/single-home.contract.test.ts` and
 `src/stored-data.contract.test.ts` fail when one of these is copied again in the files
 they name.
 

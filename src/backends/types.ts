@@ -147,7 +147,7 @@ export interface UpdateInput {
    * Computed in code (see salience.ts applyObservation) — never a prompt.
    * Ignored on non-feedback memories.
    */
-  observation?: 'confirm' | 'contradict';
+  observation?: Observation;
 }
 
 export interface ForgetResult {
@@ -794,3 +794,7 @@ export interface KnowledgeBackend {
   /** Close the underlying SQLite connection. */
   close(): void;
 }
+
+/** What a later look at a feedback memory found: it held, or it did not. */
+export const OBSERVATIONS = ['confirm', 'contradict'] as const;
+export type Observation = (typeof OBSERVATIONS)[number];

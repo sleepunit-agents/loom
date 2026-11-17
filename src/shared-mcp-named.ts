@@ -10,6 +10,9 @@ import type {McpServer} from '@modelcontextprotocol/server';
 import {householdChanges,dangerousHouseholdChanges} from './shared-household-proposals.js';
 import {MEMORY_CATEGORIES} from './categories.js';
 import {LIFESPAN_NAMES,NOTE_PATH_MAX} from './notes.js';
+import {OBSERVATIONS} from './backends/types.js';
+import {STATUSES} from './backends/projects.js';
+import {approvals,inbox,tasks} from './core/data/schema.js';
 
 type Variables=Record<string,string|number|null>;
 type QueryReply={data?:Record<string,unknown>|null;errors?:readonly unknown[]|null};
@@ -110,7 +113,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  tool('update','Edit one of your memories by its id. A changed body keeps the old one as a revision.',
-  z.object({id:memoryId,content:z.string().max(65536).optional(),metadata:z.record(z.string(),z.unknown()).optional(),observation:z.enum(['confirm','contradict']).optional()}).strict(),
+  z.object({id:memoryId,content:z.string().max(65536).optional(),metadata:z.record(z.string(),z.unknown()).optional(),observation:z.enum(OBSERVATIONS).optional()}).strict(),
   async input=>{await run('memory.update',input);return 'Updated '+input.id;});
 
  tool('forget','Delete one of your memories by its id. This is final.',
@@ -209,7 +212,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  tool('project_write','Write one of your project cards. Pass merge: true to change only the fields you name. Each entry under where is {value, source?, verified_at?}.',
-  z.object({slug:projectSlug,name:z.string().max(200).optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().max(4000).optional(),goal:z.string().max(4000).optional(),where:facts.optional(),
+  z.object({slug:projectSlug,name:z.string().max(200).optional(),status:z.enum(STATUSES).optional(),summary:z.string().max(4000).optional(),goal:z.string().max(4000).optional(),where:facts.optional(),
    links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict(),
   async input=>{await run('memory.projectWrite',input);return 'Saved project card '+input.slug;});
 
@@ -291,7 +294,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
  tool('task_create','File a task. It needs a plain title, a goal and a reason. You own it unless you name the household or a project owner.',
   z.object({title:z.string().min(1).max(300),goal:z.string().min(1).max(2000),why:z.string().min(1).max(2000),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),
-   project:z.string().min(1).max(100).optional(),type:z.enum(['task','bug','feature','epic']).optional(),parent:taskId.optional(),owner:z.enum(['me','household']).optional()}).strict(),
+   project:z.string().min(1).max(100).optional(),type:z.enum(tasks.type.enumValues).optional(),parent:taskId.optional(),owner:z.enum(['me','household']).optional()}).strict(),
   async(input,agent)=>{const {owner,...fields}=input;const value=await run('tasks.command',{action:'create',input:{...fields,owner:owner==='household'?{kind:'household'}:{kind:'agent',id:agent}}}) as {id?:string};return 'Filed '+value.id+': '+input.title;});
  tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
   z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
@@ -310,16 +313,16 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('propose','Ask a household owner to allow a change you cannot make yourself. Nothing changes until an owner allows it. Filing says nothing about what is there now or whether the change can be made: the owner is told that, and answers. change names what: '+householdChanges.filter(change=>!dangerous.has(change)).join(', ')+'; or a dangerous action an owner must also confirm: '+[...dangerous].join(', ')+'. input is that change\'s own fields: loom_commands({name:"household.propose"}) lists them.',
   z.object({change:z.enum(householdChanges),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
   async input=>{const value=await run('household.propose',input) as {id:string;state:string};return value.state==='pending'?'Filed approval '+value.id+'. It waits for a household owner.':'Approval '+value.id+' was answered by a standing rule and the change is made.';});
- tool('approvals','List approvals you may see, newest first. state narrows it: pending, allowed, denied, used, withdrawn or expired.',
-  z.object({state:z.enum(['pending','allowed','denied','used','withdrawn','expired']).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
+ tool('approvals','List approvals you may see, newest first. state narrows it: '+approvals.state.enumValues.join(', ')+'.',
+  z.object({state:z.enum(approvals.state.enumValues).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   async input=>{
-   // The state is one of six fixed words, so it is safe to write into the query as an enum value.
+   // The state is one of the column's own fixed words, so it is safe to write into the query as an enum value.
    const data=await read<{approvals:{id:string;kind:string;state:string;agent:string;ask:string;why:string;changeSummary:string|null;target:string;askedAt:string;decidedBy:string|null}[]}>(
     'query($limit:Int){approvals('+(input.state?'where:{state:{eq:'+input.state+'}},':'')+'limit:$limit,orderBy:{askedAt:{direction:desc,priority:1}}){id kind state agent ask why changeSummary target askedAt decidedBy}}',{limit:input.limit??20});
    return data.approvals.length?data.approvals.map(row=>'## '+row.ask+'\n_'+row.id+' · '+row.kind+' · '+row.state+' · asked by '+row.agent+' '+row.askedAt+(row.decidedBy?' · answered by '+row.decidedBy:'')+'_\n\n'+(row.changeSummary??row.target)+'\n\nWhy: '+row.why).join('\n\n---\n\n'):'No approvals'+(input.state?' are '+input.state:'')+'.';
   });
- tool('inbox','List what is in your inbox, newest first. state narrows it: waiting, taken, done, answered or resolved.',
-  z.object({state:z.enum(['waiting','taken','done','answered','resolved']).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
+ tool('inbox','List what is in your inbox, newest first. state narrows it: '+inbox.state.enumValues.join(', ')+'.',
+  z.object({state:z.enum(inbox.state.enumValues).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),
   async input=>{
    const data=await read<{inboxItems:{id:string;source:string;state:string;fromKind:string;fromId:string|null;at:string;body:{words:string|null;why:string|null}|null}[]}>(
     'query($state:String,$limit:Int){inboxItems(state:$state,limit:$limit){id source state fromKind fromId at body{words why}}}',{state:input.state??null,limit:input.limit??20});

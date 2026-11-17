@@ -390,7 +390,11 @@ it('takes a choice the database also checks from the column, and states the othe
   // "A client states the shape of the answer it expects"); on loom's side the list is the column's.
   expect(holders(/'pending',\s*'allowed',\s*'denied',\s*'cancelled'/)).toEqual(['src/runtime/conversation-client.ts']);
   expect(holders(/'working',\s*'waiting',\s*'idle'/)).toEqual(['src/runtime/body-program-tools.ts']);
-  // Not a column's list: what can be removed, and how tasks depend on each other.
+  for (const list of [/'task',\s*'bug'/, /'pending',\s*'allowed',\s*'denied',\s*'used'/, /'waiting',\s*'taken',\s*'done'/]) expect(holders(list), String(list)).toEqual([]);
+  // Not a column's list: a project card's status, what a second look at a memory found, what can be
+  // removed, and how tasks depend on each other.
+  expect(holders(/'active',\s*'paused',\s*'done'/)).toEqual(['src/backends/projects.ts']);
+  expect(holders(/'confirm',\s*'contradict'/)).toEqual(['src/backends/types.ts']);
   expect(holders(/'member',\s*'agent',\s*'project',\s*'bridge'/)).toEqual(['src/apps/household.ts']);
   expect(holders(/'blocks',\s*'parent-child'/)).toEqual(['src/apps/tasks.ts']);
 });
