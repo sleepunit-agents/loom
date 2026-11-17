@@ -95,7 +95,11 @@ export class SharedBridges {
   for(const _error of result.notificationErrors)this.report();
  }
  private retire(life:Life){
-  life.active=false;life.receipts?.reset();life.retry?.();life.channels?.close();life.secrets.close();
+  // A resume cursor outlives a restart, a pause and a lost socket, but not the credential it was made
+  // under: when this connection's own secrets or secret names changed, the next lifetime identifies afresh.
+  const row=this.options.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,life.connection.id)).get();
+  if(life.receipts&&!this.closed&&row&&(this.stamp(life.connection)!==life.stamp||row.tokenSecret!==life.connection.tokenSecret)){try{this.receiver.reset(row.id);}catch{this.report();}}
+  life.active=false;life.retry?.();life.channels?.close();life.secrets.close();
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
  }

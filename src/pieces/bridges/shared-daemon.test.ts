@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -137,6 +137,19 @@ it('connects Discord through its owned live cursor and durably retains raw befor
  let gateway:Parameters<NonNullable<SharedBridgeOptions['discord']>>[0]|undefined;
  const f=fixture({discord:options=>{gateway=options;expect(options.load()).toBeUndefined();return {close:async()=>{}};}});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();expect(gateway).toBeDefined();
  const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateway!.commit({type:'READY',data:{},seq:1},checkpoint,raw);expect(f.db.select().from(bridgeRawEvents).get()?.event).toEqual(raw);expect(gateway!.load()).toEqual(checkpoint);await gateway!.reset();expect(gateway!.load()).toBeUndefined();
+});
+it('keeps the Discord resume cursor across a restart and forgets it when the connection\'s own secret changes',async()=>{
+ type Gateway=Parameters<NonNullable<SharedBridgeOptions['discord']>>[0];const gateways:Gateway[]=[];
+ const discord:SharedBridgeOptions['discord']=options=>{gateways.push(options);return {close:async()=>{}};};
+ const f=fixture({discord});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();
+ const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateways[0].commit({type:'READY',data:{},seq:1},checkpoint,raw);
+ // A stop is not a reason to lose the place: the next process resumes from it.
+ await f.daemon.close();expect(f.db.select().from(bridgeResume).all()).toHaveLength(1);
+ const second=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>second.close());
+ await second.ready();await second.idle();expect(gateways).toHaveLength(2);expect(gateways[1].load()).toEqual(checkpoint);
+ // The token was replaced: the old session belongs to the old credential.
+ f.db.insert(secretChanges).values({id:'change-1',secret:'TOKEN',action:'replace',by:'owner',at:new Date(f.clock.now()).toISOString()}).run();second.changed(true);await second.idle();
+ expect(f.db.select().from(bridgeResume).all()).toEqual([]);
 });
 it('publishes an earlier committed intake when a later receipt in the drain fails',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const first=JSON.parse(f.raw('first','one').toString()),bad=JSON.parse(f.raw('bad','two').toString());first.payload.event.channel_type='channel';bad.payload.event.channel_type='channel';bad.payload.event.text=123;bad.payload.event.ts='1794432000.000002';

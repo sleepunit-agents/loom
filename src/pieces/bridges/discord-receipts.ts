@@ -1,19 +1,28 @@
-/** Resume only inside one authenticated connection lifetime. A process restart
- * starts a fresh Identify; no cursor can silently acquire another credential's
- * authority. Raw frames commit before the in-memory cursor advances. */
+/** The Discord resume cursor for one authenticated connection lifetime, kept in
+ * the database so a restart resumes the session and Discord replays what was
+ * posted while this program was down. The raw frame and the cursor commit in
+ * one transaction before the cursor is exposed. The cursor row names only its
+ * connection, not the credential it was made under: composition forgets it
+ * when the connection's own secrets change (see SharedBridges.retire). */
 import type { BridgeReceiver } from './receiver.js';
 import type { DiscordCheckpoint } from './discord-gateway.js';
-export function liveDiscordReceipts(receiver:Pick<BridgeReceiver,'discord'>,connection:string,current:()=>boolean){
- let saved:DiscordCheckpoint|undefined;
+export function liveDiscordReceipts(receiver:Pick<BridgeReceiver,'discord'|'checkpoint'|'reset'>,connection:string,current:()=>boolean){
+ const ended=()=>Error('Discord receipt lifetime ended');
+ const stored=():DiscordCheckpoint|undefined=>{
+  const row=receiver.checkpoint(connection);
+  return row&&{session:row.session,url:row.resumeUrl,seq:row.sequence};
+ };
  return {
-  checkpoint(){if(!current())throw Error('Discord receipt lifetime ended');return saved&&{...saved};},
+  checkpoint(){if(!current())throw ended();return stored();},
   retain(raw:Buffer,next:DiscordCheckpoint){
-   if(!current()||!next.session||!Number.isSafeInteger(next.seq)||next.seq<0||!next.url
-    ||saved&&(saved.session!==next.session||saved.url!==next.url||saved.seq>next.seq))throw Error('Discord receipt lifetime ended');
-   receiver.discord(connection,raw,{session:next.session,sequence:next.seq,resumeUrl:next.url},false);
-   if(!current())throw Error('Discord receipt lifetime ended');
-   saved={...next};
+   if(!current()||!next.session||!Number.isSafeInteger(next.seq)||next.seq<0||!next.url)throw ended();
+   const saved=stored();
+   // A new session, a new resume address or a rewind needs the gateway's reset first.
+   if(saved&&(saved.session!==next.session||saved.url!==next.url||saved.seq>next.seq))throw ended();
+   receiver.discord(connection,raw,{session:next.session,sequence:next.seq,resumeUrl:next.url});
+   if(!current())throw ended();
   },
-  reset(){saved=undefined;},
+  /** Discord refused the session: forget the cursor so the next connect identifies afresh. */
+  reset(){if(!current())throw ended();receiver.reset(connection);},
  };
 }
