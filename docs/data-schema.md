@@ -116,11 +116,7 @@ an installed module's unrestricted policy. Construct a separate schema for each
 identity/policy, and do not retain authority across session expiry or revocation.
 The policy map is copied at construction, but its functions must evaluate any
 changing sharing facts in SQL. Default relation depth is 2; supported depths are
-0–3. No HTTP route or installed-store composition uses this module yet.
-
-Still to connect: central household/project/private visibility predicates,
-authenticated GraphQL transport, Tasks `commentCount`, delta subscriptions,
-normalized client cache, Tasks tile replacement and configurable database provider.
+0–3. `src/next-data.ts` builds the served schema from it.
 
 Pinned-library limits: drizzle-graphql 0.8.5 conflates differently aliased nested
 relation requests, so this module rejects nested relation aliases before SQL,
@@ -134,13 +130,13 @@ permissive rewrite at both root and connected tables.
 ## Authenticated HTTP door
 
 `dataHttp(db, authenticate?)` is the Hono `/graphql` route, mounted by
-`listenNext` on its existing connection. It uses pinned GraphQL Yoga 6.1.0
+`src/next-data.ts` on the program's one connection. It uses pinned GraphQL Yoga 6.1.0
 ([Fetch server documentation](https://the-guild.dev/graphql/yoga-server/docs)).
 It accepts POST JSON only, refuses cross-origin browser requests (using the configured
 public origin behind a same-host TLS proxy), disables CORS,
 GraphiQL and batching, and sends `Cache-Control: no-store`. The generated schema
-has no mutations or subscriptions yet; SSE negotiation is explicitly refused.
-Subscriptions will use graphql-ws on the one websocket as consumers move.
+has no mutations: every write is a registered operation. Subscriptions use graphql-ws
+on the one websocket (`src/core/data/socket.ts`); SSE negotiation is refused.
 
 The first outside projection exposes Tasks, comments, links, projects and agent
 metadata. No session, token, passkey, plumbing or other table is reachable,

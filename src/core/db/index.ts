@@ -23,6 +23,9 @@ export function openDb(home: string): { db: Db; close(): void } {
   }
   const db = new Database(path, { timeout: 0 });
   try {
+    // A served home keeps the household database (src/core/data) at this same path. This older
+    // foundation would add its own table to it, and `loom serve` would then refuse the database.
+    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'migrations'").get()) throw new Error('This home holds a household database, which the older foundation must not open');
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.exec('CREATE TABLE IF NOT EXISTS core_migrations (piece TEXT NOT NULL, number INTEGER NOT NULL, sql TEXT NOT NULL, PRIMARY KEY(piece, number))');
