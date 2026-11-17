@@ -14,7 +14,7 @@
  *
  * Newest first until the bound is reached, then in the order they were said.
  */
-import { and, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSends, conversations, inbox, inboxRefs } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -30,21 +30,25 @@ export function prepareBridgeHistory(db: DataDatabase, now: () => string, conver
   if (!cv || !(bridgeConnections.platform.enumValues as readonly string[]).includes(cv.venue)) return () => [];
   // Erased with the household's keep time when the conversation is a direct one (private-bridge-words.ts).
   const erased = cv.member !== null || cv.direct;
+  // Two things said in the same instant keep the order they were recorded in (a message before the post
+  // that answers it), so the same words are always handed over in the same order.
+  type Said = Omit<HistoryLine, 'seq'> & { order: number };
   const read = (): Omit<HistoryLine, 'seq'>[] => {
     const days = commsKeepDays(db), until = (at: string) => erased ? keepUntilFor(at, days) : null;
-    const received = db.selectDistinct({ id: bridgeIncoming.id, at: bridgeIncoming.postedAt, dated: bridgeIncoming.receivedAt, words: bridgeIncoming.text, member: bridgeIncoming.member, bot: bridgeIncoming.bot, webhook: bridgeIncoming.webhook })
+    const received: Said[] = db.selectDistinct({ id: bridgeIncoming.id, order: sql<number>`${bridgeIncoming}.rowid`, at: bridgeIncoming.postedAt, dated: bridgeIncoming.receivedAt, words: bridgeIncoming.text, member: bridgeIncoming.member, bot: bridgeIncoming.bot, webhook: bridgeIncoming.webhook })
       .from(bridgeIncoming).innerJoin(inboxRefs, eq(inboxRefs.ref, bridgeIncoming.id)).innerJoin(inbox, eq(inbox.id, inboxRefs.item))
       .where(and(eq(bridgeIncoming.conversation, conversation), eq(bridgeIncoming.state, 'delivered'), ne(bridgeIncoming.text, ''),
         eq(inbox.conversation, conversation), eq(inbox.toKind, 'agent'), eq(inbox.to, cv.agent), eq(inbox.state, 'done')))
-      .orderBy(desc(bridgeIncoming.postedAt), desc(bridgeIncoming.id)).limit(HISTORY_LINES).all()
-      .map(row => ({ kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated) }));
-    const sent = db.select({ at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
+      .orderBy(desc(bridgeIncoming.postedAt), desc(sql`${bridgeIncoming}.rowid`)).limit(HISTORY_LINES).all()
+      .map(row => ({ kind: 'message' as const, sender: row.member ?? (row.bot || row.webhook ? 'a bot' : 'someone outside the household'), at: row.at, words: row.words, keepUntil: until(row.dated), order: row.order }));
+    const sent: Said[] = db.select({ order: sql<number>`${bridgeSends}.rowid`, at: bridgeSends.createdAt, words: bridgeSends.text }).from(bridgeSends)
       .where(and(eq(bridgeSends.state, 'sent'), ne(bridgeSends.text, ''),
         inArray(bridgeSends.incoming, db.select({ id: bridgeIncoming.id }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, conversation)))))
-      .orderBy(desc(bridgeSends.createdAt), desc(bridgeSends.id)).limit(HISTORY_LINES).all()
-      .map(row => ({ kind: 'reply' as const, sender: cv.agent, at: row.at, words: row.words, keepUntil: until(row.at) }));
+      .orderBy(desc(bridgeSends.createdAt), desc(sql`${bridgeSends}.rowid`)).limit(HISTORY_LINES).all()
+      .map(row => ({ kind: 'reply' as const, sender: cv.agent, at: row.at, words: row.words, keepUntil: until(row.at), order: row.order }));
     const kept = [...received, ...sent].filter(line => line.keepUntil === null || Date.parse(line.keepUntil) > Date.parse(now()))
-      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+      .sort((a, b) => Date.parse(b.at) - Date.parse(a.at) || Number(b.kind === 'reply') - Number(a.kind === 'reply') || b.order - a.order)
+      .map(({ order: _order, ...line }) => line);
     const lines: Omit<HistoryLine, 'seq'>[] = []; let bytes = 2;
     for (const line of kept.slice(0, HISTORY_LINES)) {
       // Measured as it will be sent, with the largest sequence number it could be given.

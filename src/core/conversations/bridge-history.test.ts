@@ -96,3 +96,12 @@ it('hands over the newest words that fit, and refuses to hand over what changed 
   f.db.update(bridgeSends).set({ text: '' }).run();
   expect(prepared).toThrow('Dialogue changed');
 });
+
+it('keeps things said in the same instant in the order they were recorded', () => {
+  const f = fixture();
+  const asked = f.hear('One question');
+  // Three posts in one instant, as a body that says two things and then replies makes them.
+  f.answer(asked, 'First');
+  for (const [id, text] of [['zzz', 'Second'], ['aaa', 'Third']]) f.db.insert(bridgeSends).values({ id, incoming: asked.id, connection: 'c', channel: 'room', thread: null, text, state: 'sent', createdAt: f.now() }).run();
+  for (let n = 0; n < 5; n++) expect(f.history(asked.conversation!).map(line => line.words)).toEqual(['One question', 'First', 'Second', 'Third']);
+});
