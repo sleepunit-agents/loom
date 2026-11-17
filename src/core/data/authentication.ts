@@ -27,7 +27,8 @@ export const freshProof = (session: Pick<typeof sessions.$inferSelect, 'isAgent'
   const proved = Date.parse(session.provedAt);
   return !session.isAgent && Number.isFinite(proved) && proved <= now && proved + FRESH_PROOF_MS > now;
 };
-/** An automated browser, by its own name for itself. */
+/** An automated browser, by its own name for itself. This catches only automation that does not hide; the
+ * limit that holds is the one a link's maker sets (startBrowser's `agent`; docs/accepted-tradeoffs.md). */
 export const isAgentBrowser = (userAgent: string) => /HeadlessChrome\//.test(userAgent);
 /** The moment a session stops being accepted, whatever its token allows. */
 export const sessionEnds = (session: Pick<typeof sessions.$inferSelect, 'issuedAt' | 'isAgent'>) =>

@@ -7,7 +7,7 @@ import { credentialKey } from './credential-key.js';
  * refuses: when it is full the oldest one is dropped. Somebody flooding it can no longer shut everyone out
  * for five minutes; they would have to push a thousand requests into the seconds one person's sign-in
  * takes. Challenges for adding a passkey come only from a freshly proved browser and have their own set,
- * which a stranger cannot touch. */
+ * which a stranger cannot touch. What is left is in docs/accepted-tradeoffs.md. */
 import { randomBytes } from 'node:crypto';
 import { credentialFingerprint as hash, currentSession, freshProof } from '../data/authentication.js';
 import { startBrowser } from './shared-browser.js';

@@ -1,7 +1,8 @@
 /** A replaceable push-signing key in the single home, published atomically.
  * This never reads or rewrites memories or an existing key.
  * The key is kept in clear, in a file only this OS user can read (privateBytes refuses any other mode):
- * the program has to be able to read it unattended, so whoever can read the home holds it.
+ * the program has to be able to read it unattended, so whoever can read the home holds it
+ * (docs/accepted-tradeoffs.md).
  */
 import {randomUUID,createECDH} from 'node:crypto';
 import {existsSync,openSync,writeFileSync,fsyncSync,closeSync,linkSync,unlinkSync} from 'node:fs';

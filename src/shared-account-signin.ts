@@ -13,7 +13,8 @@
  * take and no other reader ever gets it. A write's answer is kept as a retry receipt, which is why the code
  * itself is read and never returned by a write. Memory does not outlive the program: after a restart a
  * taken code is gone, the worker is told to stop, and the person asks again. The code is forgotten when
- * the sign-in ends, however it ends.
+ * the sign-in ends, however it ends. Until it is taken it is an ordinary inbox answer, in clear
+ * (docs/accepted-tradeoffs.md).
  */
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
@@ -130,7 +131,8 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       if (row.state !== 'started' || lapsed(row, at)) throw new OperationError('conflict', 'This sign-in is not waiting for its page');
       const of = account(row.account)!, box = db.select({ name: boxes.name }).from(boxes).where(eq(boxes.id, row.box)).get()!;
       // A device code is for the person to read and grants nothing without the half the provider's program
-      // keeps on the worker, so it stays in the item's words after the sign-in ends.
+      // keeps on the worker, so it stays in the item's words after the sign-in ends
+      // (docs/accepted-tradeoffs.md).
       const words = input.userCode
         ? `Sign ${of.label} in on ${box.name}. Open the page and enter the code ${input.userCode}. There is nothing to answer: this clears when the sign-in finishes.`
         : `Sign ${of.label} in on ${box.name}. Open the page, sign in, then answer with the code it shows.`;

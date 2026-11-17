@@ -70,7 +70,9 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
  *
  * The one-time code travels in the link's path. That is what a sign-in link is: something a person can be
  * handed and open. It is good once, for five minutes at most, the page that shows it sends no referrer
- * with the code, and redeeming is a POST from that page. */
+ * with the code, and redeeming is a POST from that page.
+ *
+ * Both choices are recorded in docs/accepted-tradeoffs.md. */
 export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; issueProgram?(input:unknown):{token:string;fingerprint:string}; authenticate(request:Request):Authentication|undefined }) {
   forgetSigninLinks(options.db);
   const signin = sharedSigninLinks(options.db, options.clock);
