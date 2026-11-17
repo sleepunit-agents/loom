@@ -42,6 +42,14 @@ function fixture(){
  const mail=(incomingId:string)=>db.select({item:s.inbox}).from(s.inboxRefs).innerJoin(s.inbox,eq(s.inbox.id,s.inboxRefs.item)).where(eq(s.inboxRefs.ref,incomingId)).get()!.item;
  return {db,root,now,receive,body,call,reply,mail};
 }
+it('settles everything the body took with its one reply, and leaves mail that arrived afterwards waiting',async()=>{
+ const f=fixture(),one=f.receive(true),two=f.receive(true);expect(two.conversation).toBe(one.conversation);
+ const body=f.body(one.conversation!);f.root.writes.run(()=>f.root.services.conversations.take(one.conversation!,body.job));
+ const late=f.receive(true);
+ // One reply, to the latest message it read, answers the batch: a body that died now would leave nothing to answer twice.
+ expect((await f.reply(two.id,body.token)).status).toBe(200);
+ expect([f.mail(one.id).state,f.mail(two.id).state,f.mail(late.id).state]).toEqual(['done','done','waiting']);
+});
 it('lets a body answer only mail it took, and settles that mail with the reply',async()=>{
  const f=fixture(),message=f.receive(false),first=f.body(message.conversation!);
  // Not taken yet: these words never reached this body.

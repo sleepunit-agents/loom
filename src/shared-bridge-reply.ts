@@ -36,9 +36,13 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const bound=target(ctx.viewer,input.incoming);if(!bound)throw new OperationError('denied','Current bridge body required');
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
    try{sends.queue({...input,held:!effectsAllowed()});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
-   // The reply is the answer to this mail. Settling it here, with the reply, means a body that dies
-   // before its own confirmation cannot leave answered mail waiting for a second body.
-   conversations.confirm(bound.mail,bound.job);ctx.changed('inbox',bound.mail);
+   // The reply is the answer to everything this job took in the conversation before it, as a thread reply
+   // is (ConversationMail.settle). Settling that mail here, with the reply, means a body that dies before
+   // its own confirmation cannot leave answered mail waiting for a second body. Mail that arrived since
+   // is still waiting and is not touched.
+   for(const item of db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.conversation,bound.conversation),eq(inbox.job,bound.job),eq(inbox.state,'taken'))).all()){
+    conversations.confirm(item.id,bound.job);ctx.changed('inbox',item.id);
+   }
    if(!existing){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
