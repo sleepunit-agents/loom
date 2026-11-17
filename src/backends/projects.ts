@@ -350,20 +350,6 @@ export interface ProjectsStoreConfig {
   actor?: string;
 }
 
-/** One memory in a hub's `memories` section. */
-export interface HubMemory {
-  ref: string;
-  category: string;
-  snippet: string;
-  created: string;
-  updated: string;
-  new: boolean;
-}
-
-const HUB_NEWEST = 20;
-const HUB_SALIENT = 10;
-const SNIPPET = 200;
-
 export interface ProjectListRow {
   row: ProjectRow | null;
   raw: { slug: string; name: string; status: string; archived_at: string | null; updated: string; synthesized_at: string | null };
@@ -718,50 +704,6 @@ export class ProjectsStore {
       )
       .get(this.nowIso(), ...names) as { at: string | null };
     return r.at;
-  }
-
-  /**
-   * The hub's `memories` section, or null when there is no memories table:
-   * the 20 newest by `created` plus the 10 with the highest stored salience
-   * (ties: newer first), deduplicated by ref, newest first; and a count per
-   * category over every match. `new` is "changed after `since`".
-   */
-  memorySection(names: readonly string[], since: string): { items: HubMemory[]; total: number; counts: Record<string, number> } | null {
-    if (!this.memoriesReady()) return null;
-    if (names.length === 0) return { items: [], total: 0, counts: {} };
-    const hasSalience = (this.db.pragma('table_info(memories)') as { name: string }[]).some((c) => c.name === 'salience');
-    const where = `archived = 0 AND (expires_at IS NULL OR expires_at > ?) AND ${this.nameClause(names)}`;
-    const args = [this.nowIso(), ...names];
-    type Row = { ref: string; category: string; title: string; content: string; created: string; updated: string | null };
-    const cols = 'ref, category, title, content, created, updated';
-    const newest = this.db.prepare(`SELECT ${cols} FROM memories WHERE ${where} ORDER BY created DESC, id DESC LIMIT ?`).all(...args, HUB_NEWEST) as Row[];
-    const salient = hasSalience
-      ? (this.db.prepare(`SELECT ${cols} FROM memories WHERE ${where} ORDER BY salience DESC, created DESC, id DESC LIMIT ?`).all(...args, HUB_SALIENT) as Row[])
-      : [];
-    const byRef = new Map<string, Row>();
-    for (const r of [...newest, ...salient]) byRef.set(r.ref, r);
-    const sinceMs = Date.parse(since);
-    const items = [...byRef.values()]
-      .sort((a, b) => (a.created < b.created ? 1 : a.created > b.created ? -1 : 0))
-      .map((r) => {
-        const updated = r.updated ?? r.created;
-        const text = oneLine(`${r.title} — ${r.content}`);
-        return {
-          ref: r.ref,
-          category: r.category,
-          snippet: text.length > SNIPPET ? `${text.slice(0, SNIPPET - 1)}…` : text,
-          created: r.created,
-          updated,
-          new: Date.parse(updated) > sinceMs,
-        };
-      });
-    const counts: Record<string, number> = {};
-    let total = 0;
-    for (const r of this.db.prepare(`SELECT category, COUNT(*) AS n FROM memories WHERE ${where} GROUP BY category ORDER BY category`).all(...args) as { category: string; n: number }[]) {
-      counts[r.category] = r.n;
-      total += r.n;
-    }
-    return { items, total, counts };
   }
 
   /**

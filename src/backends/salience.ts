@@ -4,7 +4,8 @@
  * A memory's temperature DECAYS by a per-category half-life and REHEATS when
  * it's written or edited (full heat) or recalled (heat added by rank, see
  * recallWeight) — so a frequently-used fact stays warm and an untouched one
- * cools. It's computed when read (heatOf); the stored scalar is a cache. The consolidation lane recomputes the stored field; the digest assembler
+ * cools. It's computed when read (heatOf); the `salience` column holds only what a
+ * memory was written with and is not read for ranking. The digest assembler
  * fills a token budget HOTTEST-FIRST from existing authored atoms, labeled into
  * tiers. It ASSEMBLES a view over authored memories — it never generates new
  * prose (the integrity line: loom holds the pen, unlike Anthropic's native digest
@@ -12,7 +13,6 @@
  */
 import type { Database } from 'better-sqlite3';
 import { EPISODE_CATEGORY } from '../categories.js';
-import { retryWrite } from './retry.js';
 
 function hasColumn(db: Database, table: string, column: string): boolean {
   return (db.pragma(`table_info(${table})`) as { name: string }[]).some((c) => c.name === column);
@@ -157,38 +157,20 @@ export function heatColumns(db: Database): string {
 }
 
 /**
- * Recompute and STORE the salience scalar for every non-archived memory. Called
- * by the consolidation lane. The digest no longer depends on it (it reads heat
- * live, see liveRows); the stored field is for anything that sorts in SQL.
- * Returns the number of memories recomputed.
+ * The ids of the `limit` hottest memories a WHERE clause selects, hottest first (ties: newer first).
+ * Heat is worked out now, from when each was written and how it has been recalled (heatOf). The
+ * stored `salience` column is not read: it is set when a memory is written and nothing refreshes it,
+ * so sorting by it in SQL gives the order of writing.
  */
-export interface TimestampCounts { invalidTimestamps: number; futureTimestamps: number }
-
-export function recomputeSalience(db: Database, nowMs: number, counts?: TimestampCounts): number {
+export function hottestIds(db: Database, where: string, args: readonly unknown[], limit: number, nowMs: number): number[] {
   const rows = db
-    .prepare(`SELECT id, category, ${heatColumns(db)} FROM memories WHERE archived = 0`)
-    .all() as Array<HeatInput & { id: number }>;
-  if (counts) {
-    counts.invalidTimestamps = 0;
-    counts.futureTimestamps = 0;
-    for (const r of rows) {
-      // Count timestamp fields, not rows; absent optional fields are not invalid.
-      for (const value of [r.created, r.updated, r.authored_at, r.recall_heat_at]) {
-        if (value == null) continue;
-        const ms = Date.parse(value);
-        if (!Number.isFinite(ms)) counts.invalidTimestamps++;
-        else if (ms > nowMs) counts.futureTimestamps++;
-      }
-    }
-  }
-  const upd = db.prepare('UPDATE memories SET salience = ? WHERE id = ?');
-  const tx = db.transaction(() => {
-    for (const r of rows) upd.run(heatOf(r, nowMs), r.id);
-  });
-  // The nightly full-table recompute is the heaviest write in loom; wrap it so
-  // a concurrent remember() call during the recompute retries instead of throwing.
-  retryWrite(() => tx());
-  return rows.length;
+    .prepare(`SELECT id, category, ${heatColumns(db)} FROM memories WHERE ${where}`)
+    .all(...args) as Array<HeatInput & { id: number }>;
+  return rows
+    .map((r) => ({ id: r.id, created: r.created, heat: heatOf(r, nowMs) }))
+    .sort((a, b) => b.heat - a.heat || (a.created < b.created ? 1 : a.created > b.created ? -1 : 0) || b.id - a.id)
+    .slice(0, limit)
+    .map((r) => r.id);
 }
 
 export interface DigestRow {
@@ -277,11 +259,11 @@ export function assembleDigest(rows: DigestRow[], opts: DigestOptions = {}): str
 /**
  * Every live authored memory (not episodes) with its heat computed NOW from
  * its timestamps, hottest first. The digest reads heat this way instead of
- * trusting the stored field: the stored field only moves when the
- * consolidation lane runs, and when the lane missed days (t-1488, and once
- * before for two months) Top of Mind froze, with ties at 1.0 falling back to
- * write order. The stored field stays, refreshed by the lane, for anything
- * that sorts in SQL.
+ * trusting the stored field: nothing in this program refreshes the stored
+ * field after a memory is written, and when an earlier program's refresh
+ * missed days (t-1488, and once before for two months) Top of Mind froze,
+ * with ties at 1.0 falling back to write order. Anything that ranks by heat
+ * works it out at the read (here, and hottestIds).
  */
 function liveRows(db: Database, nowMs: number,excludeExpired=false): Array<DigestRow & { stored: number }> {
   const expiry=excludeExpired&&hasColumn(db,'memories','expires_at')?' AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))':'';
