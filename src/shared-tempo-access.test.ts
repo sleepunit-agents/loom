@@ -48,11 +48,23 @@ it('shares existing trigger controls by project, agent ownership and owner role,
  const trigger=f.db.select().from(triggers).get()!;
  for(const action of ['stop','start','runNow'] as const){
   expect(f.can('member','owner',{action,trigger})).toBe(true);
-  expect(f.can('member','sam',{action,trigger})).toBe(true);
+  // Sam is in the trigger's project and does not direct mark: sees it, may stop it, may not put mark to work.
+  expect([action,f.can('member','sam',{action,trigger})]).toEqual([action,action==='stop']);
+  // The owner role alone directs no agent either.
+  expect([action,f.can('member','scoped',{action,trigger})]).toEqual([action,action==='stop']);
   expect(f.can('member','other',{action,trigger})).toBe(false);
   expect(f.can('agent','mark',{action,trigger})).toBe(true);
+  // An agent in the project that is not the one the trigger puts to work.
+  f.client.exec("INSERT INTO project_agents(project,agent) VALUES('pond','art')");
+  expect([action,f.can('agent','art',{action,trigger})]).toEqual([action,action==='stop']);
+  f.client.exec('DELETE FROM project_agents');
  }
+ // With mark on their list, sam starts it; without the project sam no longer reads it through the project, but does as mark's owner.
+ f.db.insert(memberAgents).values({member:'sam',agent:'mark'}).run();
+ expect(f.can('member','sam',{action:'runNow',trigger})).toBe(true);
+ f.client.exec("DELETE FROM member_agents WHERE member='sam' AND agent='mark'");
  f.client.exec('DELETE FROM project_members');
+ expect(f.can('member','sam',{action:'stop',trigger})).toBe(false);
  expect(f.can('member','sam',{action:'runNow',trigger})).toBe(false);
 });
 
@@ -90,11 +102,15 @@ it('lets whoever could set a trigger edit it: a project member can stop a shared
  expect(f.can('agent','mark',{action:'edit',trigger:row('shared')})).toBe(false);
  expect(f.can('member','owner',{action:'edit',trigger:row('shared')})).toBe(true);
  expect(f.can('agent','art',{action:'edit',trigger:row('lane')})).toBe(true);
- expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(true);
+ // Sam has art and is not a household owner: words sam gives art are work for sam, so sam does not reword art's own lane.
+ expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(false);
+ insert.run('sams','member','sam','art',null,f.now(),f.now());expect(f.can('member','sam',{action:'edit',trigger:row('sams')})).toBe(true);
+ expect(f.can('agent','art',{action:'edit',trigger:row('sams')})).toBe(false);expect(tempoCommandAllowed(f.db,{kind:'agent',id:'art',workingFor:'sam'},{action:'edit',trigger:row('sams')})).toBe(true);
+ expect(tempoCommandAllowed(f.db,{kind:'agent',id:'art',workingFor:'sam'},{action:'edit',trigger:row('lane')})).toBe(false);
  expect(f.can('member','other',{action:'edit',trigger:row('lane')})).toBe(false);
  expect(f.can('agent','mark',{action:'edit',trigger:row('lane')})).toBe(false);
  expect(f.can('runner','art',{action:'edit',trigger:row('lane')})).toBe(false);
- f.client.exec("DELETE FROM member_agents WHERE member='sam'");expect(f.can('member','sam',{action:'edit',trigger:row('lane')})).toBe(false);
+ f.client.exec("DELETE FROM member_agents WHERE member='sam'");expect(f.can('member','sam',{action:'edit',trigger:row('sams')})).toBe(false);
 });
 
 it('gives the owner role sight of every trigger but not direction of an agent off its own list',()=>{

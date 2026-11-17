@@ -2,23 +2,22 @@
  * Every decision here is a rule from policy.ts, read for one trigger, recipient or record. */
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { eq } from 'drizzle-orm';
-import { addressee, holds, inHousehold, isHouseholdOwner, rules, tableRules, type Viewer } from './policy.js';
+import { addressee, holds, inHousehold, maySetTrigger, mayStartTrigger, rules, tableRules, triggerAsSet, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { triggers, approvals, changes, conversations, inbox, jobs, secretRequests } from './core/data/schema.js';
 import type { TempoAccess } from './core/tempo/operations.js';
+import type { NewTrigger } from './core/tempo/triggers.js';
 
 /** `chatMember` is the door's proof that the caller is the current body of a member's chat, and names that
  * member. Only the volume command uses it: a body sets its member's volume on that member's word. */
 export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: TempoAccess, chatMember?: (viewer: Viewer) => string | undefined): boolean {
   const sharing = sharedSharing(db);
   if (!inHousehold(viewer, sharing)) return false;
-  const owner = isHouseholdOwner(viewer, sharing);
   const recipient = (kind: 'person' | 'agent', id: string) => holds(rules.recipient, viewer, { toKind: kind, to: id }, sharing);
   // Directing an agent takes the agent on the member's own list, or being that agent. The owner role alone
   // does not: a full owner has every agent on their list.
   const directs = (id: string) => recipient('agent', id);
-  const sharedProject = (id: string) => Object.hasOwn(sharing.projects, id) && holds(rules.project, viewer, { id }, sharing);
   const visibleItem = (id:string, who: Viewer = viewer) => conversationQuestionPolicy(db).sourceAllowsItem(who,id);
   // What is watched must be a record the caller reads. Nobody is let past that: a household owner reads
   // every change, approval card and secret request by those records' own rules, and does not read a job
@@ -40,16 +39,6 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
     if (kind === 'job') return holds(tableRules.jobs, viewer, row, sharing, (_table, parent) => db.select().from(conversations).where(eq(conversations.id, parent)).get());
     return holds(rules.labelled, viewer, { member: 'member' in row ? row.member : null, project: 'project' in row ? row.project : null, agent: row.agent }, sharing);
   };
-  // Whoever could set this trigger for this recipient may also change its words and times.
-  const maySet = (t: Extract<TempoAccess, { action: 'set' | 'edit' }>['trigger']) => {
-    const authored = owner || (t.ownerKind === 'agent' ? !!t.owner && directs(t.owner) :
-      t.ownerKind === 'member' && viewer.kind === 'member' && t.owner === viewer.id);
-    if (!authored || t.project && !sharedProject(t.project)) return false;
-    // Creating work for another recipient needs authority over that recipient, not
-    // merely a shared project. Reading and stopping shared triggers follows the
-    // trigger rule; starting new work binds its target too.
-    return t.toKind && t.to ? recipient(t.toKind, t.to) : owner || (t.ownerKind === 'agent' && !!t.owner && directs(t.owner));
-  };
   switch (access.action) {
     case 'volume': {
       // In the caller's own right: they may address the recipient, and the item is one they read.
@@ -61,11 +50,19 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
         && visibleItem(access.item.id, addressee(member));
     }
     case 'pause': case 'resume': return directs(access.agent);
-    case 'edit': return maySet(access.trigger);
+    // Setting, rewording and starting are policy.ts's ("Scheduled work"). Stopping is the read rule: whoever sees a trigger may stop it.
+    case 'edit': return maySetTrigger(viewer, access.trigger, sharing);
     case 'stop': case 'start': case 'runNow': {
       const stored = db.select().from(triggers).where(eq(triggers.id, access.trigger.id)).get();
-      return !!stored && holds(rules.trigger, viewer, stored, sharing);
+      return !!stored && holds(rules.trigger, viewer, stored, sharing) && (access.action === 'stop' || mayStartTrigger(viewer, stored, sharing));
     }
-    case 'set': return sourceAllowed(access.trigger.sourceKind, access.trigger.watches) && maySet(access.trigger);
+    // Judged as it will be recorded: see recordedTrigger.
+    case 'set': return sourceAllowed(access.trigger.sourceKind, access.trigger.watches) && maySetTrigger(viewer, triggerAsSet(viewer, access.trigger, sharing), sharing);
   }
+}
+
+/** A new trigger as `tempo.set` records it for this caller (policy.ts, triggerAsSet): work a member who is
+ * not a household owner schedules for an agent, themselves or through their body, is recorded as theirs. */
+export function recordedTrigger<T extends NewTrigger>(db: DataDatabase, viewer: Viewer, trigger: T): T {
+  return triggerAsSet(viewer, trigger, sharedSharing(db));
 }

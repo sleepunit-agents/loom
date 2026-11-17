@@ -19,6 +19,9 @@ export type TempoAccess =
   | { action: 'volume'; item: typeof inbox.$inferSelect };
 export interface TempoOperationOptions {
   authorize(viewer: Viewer, access: TempoAccess): boolean;
+  /** A new trigger as it is recorded for this caller: whose it is can follow who set it (policy.ts,
+   * triggerAsSet). `authorize` judges a `set` by the same reading. Without it, as given. */
+  recorded?(viewer: Viewer, trigger: NewTrigger): NewTrigger;
   /** Outside authenticated context for delegated mailbox receipt isolation. */
   mailboxReceiptScope?(viewer:Viewer):string|undefined;
 }
@@ -39,7 +42,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
   };
   operations.register(operation({ ...common, name: 'tempo.set', input: triggerInput, output: z.object({ id: z.string() }),
     may: (viewer, trigger) => options.authorize(viewer, { action: 'set', trigger }),
-    run(ctx, trigger) { const row = tempo.triggers.set(trigger); ctx.changed('triggers', row.id); return { id: row.id }; },
+    run(ctx, trigger) { const row = tempo.triggers.set(options.recorded?.(ctx.viewer, trigger) ?? trigger); ctx.changed('triggers', row.id); return { id: row.id }; },
   }));
   for (const action of ['stop', 'start', 'runNow'] as const) operations.register(operation({ ...common,
     name: `tempo.${action}`, input: id, output: saved,

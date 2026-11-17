@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays } from './core/data/schema.js';
+import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays, triggers, triggerLog, conversations, boxes } from './core/data/schema.js';
 import type { SharedTempoOptions } from './shared-tempo.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
@@ -185,4 +185,68 @@ it('retries an unconfirmed Run now with the same receipt rather than delivering 
  await expect(actions.runNow('delivery')).rejects.toThrow('Lost reply');expect(f.db.select().from(inbox).all()).toHaveLength(1);
  await actions.runNow('delivery');expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(ids[1]).toBe(ids[0]);
  await actions.runNow('delivery');expect(f.db.select().from(inbox).all()).toHaveLength(2);expect(ids[2]).not.toBe(ids[1]);
+});
+
+// Whose work a firing is follows who set the trigger (policy.ts, "Scheduled work").
+function scheduling(){
+ const f=fixture(),raw={sam:'sam-tempo-token-'.repeat(3),art:'art-terminal-token-'.repeat(3),body:'art-body-for-sam-'.repeat(3)},at=f.now();
+ f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();
+ f.db.insert(boxes).values({id:'box',name:'box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
+ // A body of art doing sam's private work, and art's own terminal session.
+ f.db.insert(jobs).values({id:'sam-job',agent:'art',box:'box',member:'sam',title:'',brief:'',model:'model',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:at}).run();
+ f.db.insert(tokens).values([{fingerprint:hash(raw.sam),label:'Sam',kind:'owner',member:'sam',createdAt:at},{fingerprint:hash(raw.art),label:'Art',kind:'agent',agent:'art',createdAt:at},
+  {fingerprint:hash(raw.body),label:'Body',kind:'agent',agent:'art',job:'sam-job',createdAt:at}]).run();
+ const as=(credential:string)=>(name:string,input:unknown,id:string)=>f.root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({input,id})});
+ const work={ownerKind:'agent',owner:'art',sourceKind:'time',lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Look at the pond',note:'Pond'};
+ // What one firing left: the trigger's recorded owner, and the member on its mail, its conversation and its job.
+ const fired=(id:string)=>{
+  const mail=f.db.select().from(inbox).all().filter(row=>row.source==='trigger'&&row.sourceId?.startsWith(id+':')),cv=mail[0]?.conversation?f.db.select().from(conversations).where(eq(conversations.id,mail[0].conversation)).get():undefined;
+  const t=f.db.select().from(triggers).where(eq(triggers.id,id)).get()!;
+  return {owner:[t.ownerKind,t.owner],mail:mail.map(row=>row.member),place:cv?.place,conversation:cv?.member,jobs:f.db.select().from(jobs).all().filter(job=>job.conversation&&job.conversation===cv?.id).map(job=>job.member)};
+ };
+ return {...f,raw,as,work,fired};
+}
+it('fires a trigger a member who is not a household owner set for an agent, or had their body set, as private work for that member',async()=>{
+ const f=scheduling();
+ // Sam names the agent as owner, as an agent's own trigger is written. It is recorded as sam's.
+ expect((await f.as(f.raw.sam)('tempo.set',{...f.work,id:'by-sam',times:f.now()},'by-sam')).status).toBe(200);
+ // Sam's body sets one for itself in sam's private work.
+ expect((await f.as(f.raw.body)('tempo.set',{...f.work,id:'by-body',times:f.now()},'by-body')).status).toBe(200);
+ f.clock.advance(5000);
+ for(const id of ['by-sam','by-body'])expect([id,f.fired(id)]).toEqual([id,{owner:['member','sam'],mail:['sam'],place:id+':for:sam',conversation:'sam',jobs:['sam']}]);
+ // Neither may schedule an operation for the agent, or reword a trigger that is the agent's own.
+ expect((await f.as(f.raw.sam)('tempo.set',{...f.work,id:'sweep',times:f.now(),targetKind:'operation',target:'tempo.sweep',instructions:undefined},'sweep')).status).toBe(403);
+ expect((await f.call('tempo.set',{...f.work,id:'own',times:new Date(f.clock.now()+3600000).toISOString()},'own')).status).toBe(200);
+ for(const who of [f.raw.sam,f.raw.body])expect((await f.as(who)('tempo.edit',{id:'own',instructions:'Read every project and tell me'},'reword-'+who)).status).toBe(403);
+ expect((await f.as(f.raw.art)('tempo.edit',{id:'own',instructions:'Look closer'},'reword-art')).status).toBe(200);
+ // The member is judged when the trigger fires. Once sam has lost the agent the firing fails and starts nothing.
+ expect((await f.as(f.raw.sam)('tempo.set',{...f.work,id:'later',times:new Date(f.clock.now()+60000).toISOString()},'later')).status).toBe(200);
+ f.root.writes.run(()=>f.db.delete(memberAgents).where(eq(memberAgents.member,'sam')).run());f.clock.advance(60000);
+ expect(f.fired('later')).toMatchObject({mail:[],jobs:[]});
+ expect(f.db.select().from(triggerLog).where(eq(triggerLog.trigger,'later')).all().map(row=>row.event+' '+row.note).slice(-2)).toEqual([expect.stringMatching(/^failed /),'failure inbox: The member this was set for no longer has the agent, or is not in its project']);
+ // Made a household owner, sam directs the whole agent: the same stored trigger fires as the agent's own.
+ f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
+  f.db.insert(triggers).values({id:'promoted',ownerKind:'member',owner:'sam',sourceKind:'time',times:f.now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'x',note:'P',enabled:true,state:'standing',nextDueAt:f.now(),createdAt:f.now(),changedAt:f.now()}).run();});
+ f.clock.advance(5000);expect(f.fired('promoted')).toEqual({owner:['member','sam'],mail:[null],place:'promoted',conversation:null,jobs:[null]});
+});
+it('keeps a trigger an agent set for itself, and one an owner set, the whole agent\'s: twenty standing triggers fire as they always have',async()=>{
+ const f=scheduling(),at=f.now();
+ // Rows as a household has them today, written before this rule: the agent's own lanes (words, and the sweep), and the owner's.
+ const stored=Array.from({length:20},(_,i)=>({id:'lane-'+i,ownerKind:'agent' as const,owner:'art',sourceKind:'time' as const,times:'09:00',lifespan:'until-stopped' as const,
+  ...(i%5===4?{targetKind:'operation' as const,target:'tempo.sweep'}:{targetKind:'inbox' as const,instructions:'Lane '+i}),toKind:'agent' as const,to:'art',note:'Lane '+i,enabled:true,state:'standing' as const,nextDueAt:at,createdAt:at,changedAt:at}));
+ f.root.writes.run(()=>f.db.insert(triggers).values([...stored,{...stored[0],id:'owners',ownerKind:'member' as const,owner:'owner'},{...stored[0],id:'households',ownerKind:'household' as const,owner:null}]).run());
+ // Set through the door now: by the agent in a terminal session, and by an owner in the agent's name.
+ expect((await f.as(f.raw.art)('tempo.set',{...f.work,id:'new-own',times:at},'new-own')).status).toBe(200);
+ expect((await f.call('tempo.set',{...f.work,id:'new-owner',times:at},'new-owner')).status).toBe(200);
+ f.clock.advance(5000);
+ for(const t of stored.filter(t=>t.targetKind==='inbox'))expect([t.id,f.fired(t.id)]).toEqual([t.id,{owner:['agent','art'],mail:[null],place:t.id,conversation:null,jobs:[null]}]);
+ expect(f.fired('owners')).toEqual({owner:['member','owner'],mail:[null],place:'owners',conversation:null,jobs:[null]});
+ expect(f.fired('households')).toEqual({owner:['household',null],mail:[null],place:'households',conversation:null,jobs:[null]});
+ for(const id of ['new-own','new-owner'])expect([id,f.fired(id)]).toEqual([id,{owner:['agent','art'],mail:[null],place:id,conversation:null,jobs:[null]}]);
+ // Every one fired, the sweeps included, and each standing lane stands for its next time.
+ const log=f.db.select().from(triggerLog).all();
+ for(const t of stored)expect([t.id,log.filter(row=>row.trigger===t.id).map(row=>row.event)]).toEqual([t.id,['fired']]);
+ expect(f.db.select().from(triggers).all().filter(t=>t.id.startsWith('lane-')).map(t=>[t.state,t.enabled,t.ownerKind,t.owner])).toEqual(stored.map(()=>['standing',true,'agent','art']));
+ // The agent still runs, rewords and restarts its own.
+ for(const [name,input] of [['tempo.runNow',{id:'lane-0'}],['tempo.edit',{id:'lane-0',instructions:'Lane 0, again'}],['tempo.stop',{id:'lane-1'}],['tempo.start',{id:'lane-1'}]] as const)expect([name,(await f.as(f.raw.art)(name,input,name)).status]).toEqual([name,200]);
 });

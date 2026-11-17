@@ -8,7 +8,7 @@ import { TempoSources } from './sources.js';
 /** Structural slice of Conversations: built-ins share one service/connection.
  * Kept small so Tempo does not own Inbox or conversation lifecycle. */
 export interface TempoConversations {
-  open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null }): { id: string };
+  open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null; member?: string }): { id: string; member?: string | null };
   send(input: { toKind: 'person' | 'agent'; to: string; conversation?: string; source: 'trigger' | 'notice'; sourceId: string;
     fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; member?: string; refs?: string[] }): unknown;
 }
@@ -20,11 +20,22 @@ export interface TempoOptions {
   /** Names of further operations the composition can run, beside tempo.sweep. */
   knows?(name: string): boolean;
   instructions?(file: string): string;
+  /** The member a firing of this trigger is private work for, or nobody when it is the agent's own
+   * (policy.ts, triggerWorksFor). Throws when that member may no longer be worked for; the firing then
+   * fails. Without it every firing is the agent's own. */
+  worksFor?(trigger: Trigger): string | undefined;
   /** Read Changes' persisted occurrence revision during source recovery. */
   changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
   changed?(): void;
 }
+
+/** The place of the conversation a trigger's firings run in: the trigger, and for a member's private work
+ * the member too. The one statement of it, for the firing and for whoever reads a trigger back from a
+ * conversation (the dispatcher, for the model a lane wants). */
+export const wakePlace = (trigger: string, member?: string): string => member === undefined ? trigger : `${trigger}:for:${member}`;
+/** The trigger ids a wake conversation's place may name: itself, and what stands before `:for:`. */
+export const wakePlaceTriggers = (place: string): string[] => { const at = place.lastIndexOf(':for:'); return at > 0 ? [place, place.slice(0, at)] : [place]; };
 
 export function createTempo(db: DataDatabase, clock: Clock, options: TempoOptions) {
   let closed = false;
@@ -35,11 +46,20 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
   });
   const engine = new TriggerEngine(db, clock, {
     inbox(t, occurrence, words) {
-      const conversation = t.toKind === 'agent' ? options.conversations.open({ agent: t.to!, venue: 'wake', place: t.id, label: t.note, project: t.project }).id : undefined;
+      // Work for a member is that member's private conversation with the agent, so the job it starts is
+      // theirs (runtime/jobs.ts copies the conversation's member). It has its own place: the trigger's
+      // own conversation, if it has fired as the agent's before, stays the agent's.
+      const member = t.toKind === 'agent' ? options.worksFor?.(t) : undefined;
+      const opened = t.toKind === 'agent' ? options.conversations.open({ agent: t.to!, venue: 'wake', place: wakePlace(t.id, member), label: t.note, project: t.project, ...(member === undefined ? {} : { member }) }) : undefined;
+      // A place is found, not made, when it exists. One that is somebody else's must not take this work.
+      if (opened && (opened.member ?? undefined) !== member) throw new Error('The conversation at this trigger\'s place belongs to other work');
+      const conversation = opened?.id;
       options.conversations.send({ toKind: t.toKind!, to: t.to!, conversation, source: 'trigger', sourceId: occurrence,
-        fromKind: 'schedule', fromId: t.owner ?? undefined, member: t.toKind === 'person' ? t.to! : undefined, words, project: t.project, agent: t.toKind === 'agent' ? t.to! : undefined, refs: [t.id] });
+        fromKind: 'schedule', fromId: t.owner ?? undefined, member: t.toKind === 'person' ? t.to! : member, words, project: t.project, agent: t.toKind === 'agent' ? t.to! : undefined, refs: [t.id] });
     },
     operation(name, t, occurrence) {
+      // An operation gathers by the agent's whole reach; it is not a member's to fire (policy.ts, "Scheduled work").
+      if (options.worksFor?.(t) !== undefined) throw new Error('A member who is not a household owner schedules words for an agent, not an operation');
       if (name === 'tempo.sweep') {
         if (!t.toKind || !t.to) throw new Error('A sweep needs a recipient');
         sweep.run({ kind: t.toKind, id: t.to }, occurrence);
