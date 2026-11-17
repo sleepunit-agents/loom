@@ -1,3 +1,4 @@
+import { ageLimit } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries} from './private-inbox-words.js';
 import {oldestPrivateBridgeWords} from './private-bridge-words.js';
@@ -24,13 +25,13 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
     const now = clock.now(), days = commsKeepDays(db);
     let next = Date.parse(new Date(now + 86400000).toISOString().slice(0,10) + 'T00:00:00.000Z');
     for (const row of db.select({ at: messages.at, until: messages.keepUntil }).from(messages).where(isNotNull(messages.words)).all()) {
-      const householdEnd = Date.parse(row.at) + days * 86400000, storedEnd = Date.parse(row.until ?? '');
+      const householdEnd = ageLimit(Date.parse(row.at), days), storedEnd = Date.parse(row.until ?? '');
       if (Number.isFinite(householdEnd)) next = Math.min(next, householdEnd);
       if (Number.isFinite(storedEnd)) next = Math.min(next, storedEnd);
     }
     for(const item of handoffExpiries(db,days))next=Math.min(next,item.until);
     for(const item of privateInboxExpiries(db,days))next=Math.min(next,item.until);
-    const bridgeWords=oldestPrivateBridgeWords(db);if(bridgeWords!==undefined)next=Math.min(next,bridgeWords+days*86400000);
+    const bridgeWords=oldestPrivateBridgeWords(db);if(bridgeWords!==undefined)next=Math.min(next,ageLimit(bridgeWords,days));
     cancel = clock.at(Math.max(now, next), () => {
       cancel = undefined; if (closed) return;
       try { sweep(); schedule(); }

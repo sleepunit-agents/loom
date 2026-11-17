@@ -5,6 +5,7 @@ import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { agentInput, settingsInput } from './apps/household.js';
 import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
+import { keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, household } from './core/data/schema.js';
 import { MAX_SLUG } from './backends/people.js';
@@ -57,6 +58,34 @@ it('reads how long Comms keeps words in one place, with the database\'s own defa
   expect(settingsInput.safeParse({ commsDays: COMMS_DAYS_MAX }).success).toBe(true);
   expect(settingsInput.safeParse({ commsDays: COMMS_DAYS_MAX + 1 }).success).toBe(false);
   const copies = sources('src').filter(file => file !== 'src/core/data/comms-days.ts' && /comms_?[dD]ays\s*\?\?\s*\d|\.days\s*\?\?\s*\d/.test(text(file)));
+  expect(copies).toEqual([]);
+});
+
+it('checks a Comms keep time, and works out when words stop being kept, in one place', () => {
+  // The column's check is a second statement of the range, in SQL. It and the constant must agree.
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z');
+    db.insert(household).values({ commsDays: COMMS_DAYS_MAX }).run();
+    for (const [days, allowed] of [[1, true], [COMMS_DAYS_MAX, true], [0, false], [COMMS_DAYS_MAX + 1, false]] as const) {
+      const set = () => db.update(household).set({ commsDays: days }).run();
+      if (allowed) set(); else expect(set, String(days)).toThrow(/household_comms_days_range/);
+      expect(validKeepDays(days), String(days)).toBe(allowed);
+    }
+  } finally { client.close(); }
+  expect(validKeepDays(1.5)).toBe(false);
+  const message = { at: '2026-11-01T00:00:00.000Z', keepUntil: '2026-11-04T00:00:00.000Z' };
+  // The earlier of the stamped limit and the current age limit; nothing is kept under a keep time that is not valid.
+  expect(wordsDeadline(message, 14)).toBe(Date.parse(message.keepUntil));
+  expect(wordsDeadline(message, 2)).toBe(Date.parse('2026-11-03T00:00:00.000Z'));
+  expect(wordsKept(message, 2, '2026-11-02T23:59:59.999Z')).toBe(true);
+  expect(wordsKept(message, 2, '2026-11-03T00:00:00.000Z')).toBe(false);
+  expect(wordsKept(message, COMMS_DAYS_MAX + 1, '2026-11-01T00:00:01.000Z')).toBe(false);
+  expect(wordsKept({ ...message, keepUntil: null }, 2, '2026-11-01T00:00:01.000Z')).toBe(false);
+  expect(keepUntilFor(message.at, 3)).toBe(message.keepUntil);
+  // No reader compares a keep time with a number of its own, or multiplies days into milliseconds itself.
+  const own = /\b(days|keep|count)\s*(<=?|>=?)\s*\d|\b(days|keep)\s*\*\s*86_?400_?000/;
+  const copies = sources('src/core/conversations').filter(file => file !== 'src/core/conversations/retention.ts' && own.test(text(file)));
   expect(copies).toEqual([]);
 });
 

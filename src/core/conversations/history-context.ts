@@ -11,7 +11,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
  const cv=db.select().from(conversations).where(eq(conversations.id,conversation)).get();
  if(!thread||!cv)return()=>[];
  const days=()=>commsKeepDays(db);
- const deadline=(row:typeof messages.$inferSelect)=>{const count=days();return Number.isInteger(count)&&count>=1&&count<=14?wordsDeadline(row,count):NaN;};
+ const deadline=(row:typeof messages.$inferSelect)=>wordsDeadline(row,days());
  // Questions and answers belong exclusively to the validated answer-context path.
  // Person words may recur only after an earlier body accepted their Full delivery.
  const deliveryFingerprint=(row:typeof messages.$inferSelect)=>{

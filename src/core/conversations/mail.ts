@@ -1,3 +1,4 @@
+import { wordsKept } from './retention.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from './private-inbox-words.js';
 /** Trusted in-process body delivery. Decrypted words are ephemeral output:
@@ -39,8 +40,7 @@ export class ConversationMail {
     const keepDays = () => commsKeepDays(db);
     const retained = (message: typeof messages.$inferSelect) => {
       const days = keepDays();
-      return !!message.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
-        && Date.parse(message.keepUntil) > Date.parse(now()) && Date.parse(message.at) + days * 86400000 > Date.parse(now());
+      return !!message.words && wordsKept(message, days, now());
     };
     const items = conversations.pending(conversation, job).slice(0,limit), privateRows = this.privateMessages(items);
     const refs = () => items.length ? db.select().from(inboxRefs).where(inArray(inboxRefs.item, items.map(item => item.id)))

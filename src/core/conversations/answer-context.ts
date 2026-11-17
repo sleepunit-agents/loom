@@ -36,8 +36,7 @@ export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Prom
  };
  const before=snapshot();if(!before)return()=>null;
  const deadline=(state:NonNullable<ReturnType<typeof snapshot>>)=>{
-  const days=commsKeepDays(db);
-  return Number.isInteger(days)&&days>=1&&days<=14?wordsDeadline(state.message,days):NaN;
+  return wordsDeadline(state.message,commsKeepDays(db));
  };
  if(!(deadline(before)>Date.parse(comms.now())))return()=>null;
  let text:string|null;
