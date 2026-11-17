@@ -10,7 +10,7 @@ import { BridgeReplyNotSent } from './outbound.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, inbox, inboxRefs, secretChanges } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, inbox, inboxRefs, jobs, secretChanges } from '../../core/data/schema.js';
 import type { DataWrites } from '../../core/data/writes.js';
 import type { SecretValueSource } from '../secrets/role.js';
 import type { HolderGeneration } from '../secrets/role.js';
@@ -18,7 +18,7 @@ import { bridgeCredentials } from './credentials.js';
 import { sharedBridgeSecretUse } from './shared-secret-use.js';
 import { BridgeChannels } from './channels.js';
 import { BridgeReceiver } from './receiver.js';
-import type { StopJob } from './incoming.js';
+import { STOP_WORD, type StopJob } from './incoming.js';
 import { BridgePresence, bridgePresenceApi } from './presence.js';
 import { bridgeAuthentication } from './authentication.js';
 import { bridgeChannelApi } from './channel-api.js';
@@ -275,7 +275,11 @@ export class SharedBridges {
     // An empty drain has no new publication. Publishing after every ordinary
     // body write would revoke its still-streaming guarded mail response.
     if(changes()!==beforeChanges)this.notify();
-    const stopped=this.receiver.takeStopped();
+    // Noted while the pass was writing, so asked again of what was committed: a pass that was rolled back
+    // stopped nothing and says nothing.
+    const stopped=this.receiver.takeStopped().filter(stop=>
+     this.options.db.select({state:jobs.state}).from(jobs).where(eq(jobs.id,stop.job)).get()?.state==='stopped'
+     &&this.options.db.select({reason:bridgeIncoming.reason}).from(bridgeIncoming).where(eq(bridgeIncoming.id,stop.incoming)).get()?.reason===STOP_WORD);
     if(stopped.length){
      try{this.options.jobsEnded?.(stopped.map(stop=>stop.job));}catch{this.report();}
      // One short line where it was said, through the queue every post goes through. Not saying it is no

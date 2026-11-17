@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agentPeople, agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { BridgeIncoming, BOT_NOT_ADMITTED, STOP_WORD, UNKNOWN_SENDER, isStopWord, type IncomingMessage } from './incoming.js';
+import { BridgeIncoming, BOT_NOT_ADMITTED, STOP_WORD, STOP_WORD_LATE, UNKNOWN_SENDER, isStopWord, type IncomingMessage } from './incoming.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { jobs, memberAgents } from '../../core/data/schema.js';
 import { outsidePersonKey } from './keys.js';
@@ -156,6 +156,17 @@ describe('shared-schema bridge ingress', () => {
     expect(f.ingress.receive({ ...f.message, id: 'dm', user: 'stranger', channel: 'direct', isDm: true })).toMatchObject({ state: 'delivered', member: null });
     // A tier admits; it never says who somebody is.
     expect(f.db.select({ fromKind: inbox.fromKind, fromId: inbox.fromId, member: inbox.member }).from(inbox).all()).toEqual([{ fromKind: 'unknown', fromId: null, member: null }, { fromKind: 'unknown', fromId: null, member: null }]);
+  });
+  it('tries a held message again against the tiers as they are then: one given since admits, one taken away does not', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    f.tier('leaving');
+    const unplaced = f.ingress.receive({ ...f.message, id: 'unplaced', user: 'arriving' }), placed = f.ingress.receive({ ...f.message, id: 'placed', user: 'leaving' });
+    expect([unplaced.state, placed.state]).toEqual(['held', 'held']);
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    f.tier('arriving'); f.db.delete(agentPeople).where(eq(agentPeople.person, outsidePersonKey('discord', 'w', 'leaving'))).run();
+    expect(f.ingress.retry(unplaced.id)).toMatchObject({ state: 'delivered', member: null });
+    expect(f.ingress.retry(placed.id)).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER, text: '' });
   });
   it('tries a held stranger again against the links as they are then', () => {
     const f = fixture();
@@ -580,6 +591,36 @@ describe('the stop word', () => {
     f.db.update(bridgeChannels).set({ answers: 'mark' }).run();
     expect(f.ingress.receive({ ...f.message, id: 'plain-stop', text: 'stop' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
     expect(f.state().state).toBe('stopped');
+  });
+  it('never acts on a stop word that was held: said about what was working then, it stops nothing later and is not delivered', () => {
+    const f = working();
+    // The connection was off when it was said, so it waited.
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const held = f.ingress.receive({ ...f.message, id: 'late-stop', text: 'Stop' });
+    expect(held).toMatchObject({ state: 'held', reason: 'Connection disabled', text: 'Stop' });
+    expect(f.state().state).toBe('running');
+    // Hours later the connection is back, the job it was said about has ended, and another is working there.
+    new Jobs(f.db, f.now).stop('job', 'jonathan', 'write-off');
+    f.start('later');
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    for (const again of [() => f.ingress.retry(held.id), () => f.ingress.receive({ ...f.message, id: 'late-stop', text: 'Stop' }, true)]) {
+      expect(again()).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE, text: '', conversation: null });
+      expect(f.state('later').state).toBe('running');
+    }
+    expect(f.ingress.takeStopped()).toEqual([]);
+    // Nor does it arrive as a message nobody meant: the one piece of mail is still the first.
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    // With no job working at all when its hold ends, the same.
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const second = f.ingress.receive({ ...f.message, id: 'late-cancel', text: 'cancel.' });
+    new Jobs(f.db, f.now).stop('later', 'jonathan', 'write-off');
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    expect(f.ingress.retry(second.id)).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE });
+    // An ordinary message that was held is delivered when its hold ends, as before.
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const words = f.ingress.receive({ ...f.message, id: 'late-words', text: 'stop the pump at noon' });
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    expect(f.ingress.retry(words.id)).toMatchObject({ state: 'delivered', text: 'stop the pump at noon' });
   });
   it('without the runtime\'s Stop to call, takes the words as a message', () => {
     const f = working();

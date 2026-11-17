@@ -58,6 +58,8 @@ function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thre
 export const UNKNOWN_SENDER = 'Unknown sender';
 /** Why a message was neither delivered nor answered: it was the stop word, and it stopped a job. */
 export const STOP_WORD = 'Stop word';
+/** Why a stop word that was held is not delivered when its hold is over: too late to stop what it was said about. */
+export const STOP_WORD_LATE = 'Stop word, held too long to stop anything';
 /** A message that is only "stop" or "cancel", in any case, with trailing full stops or exclamation marks
  * and its mentions set aside. The list is the earlier bridge's. */
 export function isStopWord(text: string): boolean {
@@ -150,10 +152,15 @@ export class BridgeIncoming {
         if (message.isDm || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = BOT_NOT_ADMITTED; }
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
+      // A stop word that had to wait (it was held, and this is its retry) is spent: it was said about
+      // whatever was working when it was said, and must not stop a job that started since, nor arrive later as
+      // a message nobody meant. It is dropped, saying so.
+      else if (existing && isStopWord(message.text)) { state = 'dropped'; reason = STOP_WORD_LATE; }
       // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
-      // working, and not said to another agent: that job is ended and the message is nobody's mail. It names
-      // the one job found unended here now, so it can never reach a later one. Anywhere else, and from
-      // anybody else, the same words are an ordinary message.
+      // working, and not said to another agent: that job is ended and the message is nobody's mail. It is
+      // acted on only as the message is first taken in (a held one is spent, above), and names the one job
+      // found unended here then, so it can never reach a later one. Anywhere else, and from anybody else,
+      // the same words are an ordinary message.
       else if (link && this.stop && isStopWord(message.text) && (addressed.has(connection.botUser) || !peers.some(p => addressed.has(p.botUser)))
         && holds(rules.stopJob, { kind: 'member', id: link.member }, { agent: connection.agent }, sharing)) {
         const place = conversationPlace(connection.workspace, message, message.isDm && !message.groupDm ? link.member : null);
