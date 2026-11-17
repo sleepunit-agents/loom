@@ -1,4 +1,4 @@
-import { endBrowser } from './shared-browser.js';
+import { browserCookie, endBrowser, startBrowser } from './shared-browser.js';
 import { sharedPasskeys } from './shared-passkeys.js';
 import { bodyLimit } from 'hono/body-limit';
 /** Shared-model sign-in links. Trusted issuers name an existing member token;
@@ -9,43 +9,51 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import { sessions, signinLinks } from '../data/schema.js';
-import { AGENT_SESSION_MS, PERSON_SESSION_MS, credentialFingerprint as fingerprint, currentSession, freshProof, isAgentBrowser, presentedCookie, presentedCredential } from '../data/authentication.js';
+import { credentialFingerprint as fingerprint, currentSession, freshProof, presentedCookie, presentedCredential } from '../data/authentication.js';
 import type { Authentication } from '../live/index.js';
 import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 import { sameRequestOrigin } from '../data/origin.js';
+import { LINK_MS } from './link-lifetime.js';
 
-const secret = () => randomBytes(32).toString('hex');
-const LINK_MS = 5 * 60_000;
-function browserDevice(ua: string): { device: string; isAgent: boolean } {
-  const isAgent = isAgentBrowser(ua);
-  const browser = isAgent ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
-  return { device: system ? `${browser} on ${system}` : browser, isAgent };
-}
+/** What a link carries beyond its row: the browser that made it, and whether whoever made it said it is
+ * for an automated browser. These are kept in this program's memory, by database, because signin_links has
+ * no columns for them yet. So that a link can never be redeemed without them, a link does not outlive the
+ * program: forgetSigninLinks drops every link when the program starts. */
+type LinkFacts = Readonly<{ from?: string; agent?: boolean; expires: number }>;
+const linkFacts = new WeakMap<DataDatabase, Map<string, LinkFacts>>();
+const factsOf = (db: DataDatabase) => { let found = linkFacts.get(db); if (!found) linkFacts.set(db, found = new Map()); return found; };
+/** At start: no link made by an earlier run of the program can be used. */
+export function forgetSigninLinks(db: DataDatabase) { db.delete(signinLinks).run(); linkFacts.delete(db); }
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
   const token = (id: string) => activeMemberToken(db,clock,id);
   return {
-    /** A link lasts five minutes at most; a trusted issuer may ask for less, and name what it is for. */
-    makeLink(id: string, options: { label?: string; ttlMs?: number } = {}) {
-      const current = token(id), code = secret();
-      const expiresAt = new Date(Math.min(clock.now() + Math.min(LINK_MS, options.ttlMs ?? LINK_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity)).toISOString();
+    /** A link lasts LINK_MS at most; a trusted issuer may ask for less, and name what it is for. `from` is
+     * the browser session making the link, when a browser makes it; `agent` says the link is for an
+     * automated browser. Links that have run out are dropped here, so unused ones do not pile up. */
+    makeLink(id: string, options: { label?: string; ttlMs?: number; from?: string; agent?: boolean } = {}) {
+      const current = token(id), code = randomBytes(32).toString('hex'), facts = factsOf(db), now = clock.now();
+      for (const old of db.select({ id: signinLinks.id, expiresAt: signinLinks.expiresAt }).from(signinLinks).all()) if (Date.parse(old.expiresAt) <= now) db.delete(signinLinks).where(eq(signinLinks.id, old.id)).run();
+      for (const [key, old] of facts) if (old.expires <= now) facts.delete(key);
+      const expiresAt = new Date(Math.min(now + Math.min(LINK_MS, options.ttlMs ?? LINK_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity)).toISOString();
       db.insert(signinLinks).values({ id: fingerprint(code), token: id, label: options.label ?? current.label, expiresAt }).run();
+      // Kept until the link runs out, used or not: a redemption that is rolled back must find them again.
+      if (options.from !== undefined || options.agent) facts.set(fingerprint(code), Object.freeze({ ...(options.from === undefined ? {} : { from: options.from }), ...(options.agent ? { agent: true } : {}), expires: Date.parse(expiresAt) }));
       return { path: `/login/${code}`, expiresAt };
     },
-    redeem(code: string, userAgent: string, isAgent = false) {
+    redeem(code: string, userAgent: string) {
       if (!/^[0-9a-f]{64}$/.test(code)) throw new Error('Sign-in refused');
       return db.transaction(() => {
-        const link = db.select().from(signinLinks).where(eq(signinLinks.id, fingerprint(code))).get();
-        if (!link || Date.parse(link.expiresAt) <= clock.now()) throw new Error('Sign-in refused');
-        const current = token(link.token), cookie = secret(), at = new Date(clock.now()).toISOString();
-        const browser = browserDevice(userAgent), agent = isAgent || browser.isAgent;
+        const link = db.select().from(signinLinks).where(eq(signinLinks.id, fingerprint(code))).get(), now = clock.now();
+        if (!link || Date.parse(link.expiresAt) <= now) throw new Error('Sign-in refused');
+        const current = token(link.token), facts = factsOf(db).get(link.id);
+        // A link made by a browser is that browser's proof carried to another device. It is good only while
+        // that browser is still signed in, and it gives the new one nothing the first did not have.
+        const from = facts?.from === undefined ? undefined : currentSession(db, facts.from, now);
+        if (facts?.from !== undefined && from?.token.fingerprint !== current.fingerprint) throw new Error('Sign-in refused');
         db.delete(signinLinks).where(eq(signinLinks.id, link.id)).run();
-        db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: browser.device,
-          via: 'link', isAgent: agent, issuedAt: at, seenAt: at, provedAt: at }).run();
-        const expires = Math.min(clock.now() + (agent ? AGENT_SESSION_MS : PERSON_SESSION_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity);
-        return { cookie, maxAge: Math.floor((expires - clock.now()) / 1000) };
+        return startBrowser(db, now, { token: current, userAgent, via: 'link', agent: facts?.agent, from: from?.session });
       });
     },
   };
@@ -64,6 +72,7 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
  * handed and open. It is good once, for five minutes at most, the page that shows it sends no referrer
  * with the code, and redeeming is a POST from that page. */
 export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; issueProgram?(input:unknown):{token:string;fingerprint:string}; authenticate(request:Request):Authentication|undefined }) {
+  forgetSigninLinks(options.db);
   const signin = sharedSigninLinks(options.db, options.clock);
   const authenticate = options.authenticate;
   const routes = new Hono();
@@ -86,10 +95,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     for (const error of committed.notificationErrors) { try { options.reportError(error); } catch { /* preserve committed sign-in */ } }
     return committed.value;
   };
-  const cookieHeader = (cookie: string, maxAge: number, url: string) => {
-    const secure = (options.publicOrigin ?? new URL(url).origin).startsWith('https:');
-    return `loom_ui=${cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
-  };
+  const cookieHeader = (cookie: string, maxAge: number, url: string) => browserCookie(cookie, maxAge, (options.publicOrigin ?? new URL(url).origin).startsWith('https:'));
   const issueForOwner=async(c:Context,issue:(input:unknown)=>{token:string;fingerprint:string})=>{
     const input=await c.req.json().catch(()=>null),auth=authenticate(c.req.raw);
     if(!auth?.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
@@ -121,7 +127,8 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const token = presented.bearer !== undefined ? fingerprint(presented.bearer) : options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,session!)).get()?.token;
     if(!token)return c.json({error:'Member authentication required'},401);
     // A browser cookie is not a new proof of identity. It must not turn an
-    // aged or automated session into a fresh passkey-enrollment session.
+    // aged or automated session into a fresh passkey-enrollment session: only a freshly proved browser
+    // may make a link, and the browser the link signs in inherits that proof (see redeem).
     const freshBrowser = () => {
       if (!session) return true;
       const found = currentSession(options.db, session, options.clock.now());
@@ -129,7 +136,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     };
     if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
     // Request input cannot choose a token/member or impersonate an agent.
-    const value=write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token); });
+    const value=write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token, session === undefined ? {} : { from: session }); });
     // Publication hooks can end this caller after the transaction committed.
     if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
     if(!auth.valid())return c.json({error:'Member authentication required'},401);

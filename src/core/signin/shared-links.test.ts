@@ -154,11 +154,51 @@ it.each(['code', 'token'])('stores a recognized device name rather than a raw cr
   expect(stored).not.toContain(code); expect(stored).not.toContain(credential);
 });
 
-it('lets trusted callers explicitly create an agent session with a six-hour lifetime', () => {
+it('takes the link maker\'s word that a link is for an automated browser, whatever the browser calls itself', async () => {
   const f = fixture(), signin = sharedSigninLinks(f.db, f.clock);
-  const path = f.root.writes.run(() => signin.makeLink(hash(credential))).value.path;
-  const result = f.root.writes.run(() => signin.redeem(path.split('/').at(-1)!, 'Agent browser', true)).value;
-  expect(result.maxAge).toBe(21600); expect(f.db.select().from(sessions).get()?.isAgent).toBe(true);
+  const path = f.root.writes.run(() => signin.makeLink(hash(credential), { agent: true })).value.path;
+  // The link is made by one service and spent at the door: an ordinary User-Agent changes nothing.
+  const signed = await f.redeem(path, { 'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/140.0 Safari/537.36' }), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(signed.headers.get('set-cookie')).toContain('Max-Age=21600'); expect(f.db.select().from(sessions).get()).toMatchObject({ isAgent: true, device: 'Chrome on Mac' });
+  // An automated browser makes no link, so it cannot pass itself on as a person's.
+  expect((await f.mint({ cookie })).status).toBe(403);
+});
+
+it('carries a browser\'s proof to the device its link signs in, and gives that device no new proof and no new thirty days', async () => {
+  const f = fixture(), first = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
+  f.root.services.runtime.close();
+  const original = f.db.select().from(sessions).get()!;
+  f.clock.advance(5 * 60_000);
+  const minted = await f.mint({ cookie: first }); expect(minted.status).toBe(200);
+  const path = (await minted.json() as { value: { path: string } }).value.path;
+  const signed = await f.redeem(path), second = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(signed.headers.get('set-cookie')).toContain('Max-Age=' + (2592000 - 300));
+  expect(f.db.select().from(sessions).where(eq(sessions.id, hash(second.slice(8)))).get()).toMatchObject({ issuedAt: original.issuedAt, provedAt: original.provedAt, isAgent: false, via: 'link' });
+  // Ten minutes after the one real proof, neither browser can make a link: passing the cookie on renewed nothing.
+  f.clock.advance(5 * 60_000);
+  expect((await f.mint({ cookie: second })).status).toBe(403); expect((await f.mint({ cookie: first })).status).toBe(403);
+  // And both end thirty days after that proof.
+  f.clock.advance(30 * 86400_000 - 10 * 60_000 - 1); expect((await f.read(second)).status).toBe(200);
+  f.clock.advance(1); expect((await f.read(second)).status).toBe(401);
+});
+
+it('ends a browser\'s unused link with that browser, and every link when the program starts again', async () => {
+  const f = fixture(), cookie = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
+  const path = (await (await f.mint({ cookie })).json() as { value: { path: string } }).value.path;
+  expect((await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } })).status).toBe(200);
+  expect((await f.redeem(path)).status).toBe(401); expect(f.db.select().from(sessions).all()).toEqual([]);
+  // A link from the earlier run: what it carried was in that program's memory, so it is not kept.
+  const kept = await f.link(); await f.root.close();
+  const again = sharedRoot({ db: f.db, clock: f.clock, originAllowed: () => true, reportError: () => {} }); cleanup.push(() => again.close());
+  expect(f.db.select().from(signinLinks).all()).toEqual([]);
+  expect((await again.http.request('http://loom' + kept, { method: 'POST' })).status).toBe(401);
+});
+
+it('drops links that ran out when the next one is made', async () => {
+  const f = fixture(); await f.link(); await f.link();
+  expect(f.db.select().from(signinLinks).all()).toHaveLength(2);
+  f.clock.advance(5 * 60_000); await f.link();
+  expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
 });
 
 it.each([false, true])('keeps one committed session and reports notification failure without retry, even if reporter throws=%s', async throws => {

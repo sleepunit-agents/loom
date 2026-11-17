@@ -4,10 +4,14 @@ import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { assertHomeReady } from '../home-state.js';
-/** `member` may be left out: the issuer then uses the member it was configured with for local sign-in. */
+import { LINK_MS } from './link-lifetime.js';
+/** `member` may be left out: the issuer then uses the member it was configured with for local sign-in.
+ * `ttl` is in seconds, at most a link's own lifetime. `agent` says the link is for an automated browser,
+ * which gets the short session and may not make links or add passkeys, whatever it calls itself. */
 export const operatorRequest = z.strictObject({
   request: z.literal('link'), member: z.string().min(1).max(200).optional(),
-  label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(900).default(300),
+  label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(LINK_MS / 1000).default(LINK_MS / 1000),
+  agent: z.boolean().default(false),
 });
 const LIMIT = 4096;
 function owned(path: string, mode: number | undefined, directory: boolean) {

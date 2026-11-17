@@ -242,7 +242,8 @@ it('makes no credential at start, and keeps one token row per member for every l
  expect(rows()).toEqual({links:2,sessions:2,tokens:[
   {label:'Local sign-in: owner',kind:'owner',member:'owner',expiresAt:null,revokedAt:null},
   {label:'Local sign-in: peer',kind:'owner',member:'peer',expiresAt:null,revokedAt:null}]});
- // A link asked for less than five minutes lasts that long; one asked for more lasts five minutes.
+ // No link lasts longer than a link's own lifetime, and the operator cannot ask for more.
+ await expect(requestLocalLink(f.home,{request:'link',ttl:301})).rejects.toThrow();
  const writable=()=>{const client=new Database(f.program.database);client.function('loom_now',()=>new Date().toISOString());return client;};
  const client=writable();
  try{
@@ -259,6 +260,16 @@ it('makes no credential at start, and keeps one token row per member for every l
  const demote=writable();demote.prepare("UPDATE members SET role='member' WHERE id='owner'").run();demote.close();
  await expect(requestLocalLink(f.home,{request:'link'})).rejects.toThrow('Local sign-in refused');
  await signedIn(f.home,app.url,'owner');
+});
+it('signs an automated browser in for hours when the operator says the link is for one, whatever it calls itself',async()=>{
+ const f=await fixture(),app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});cleanups.push(()=>app.close());
+ const link=await requestLocalLink(f.home,{request:'link',agent:true});
+ const login=await fetch(app.url+link.path,{method:'POST',redirect:'manual',headers:{origin:app.url,'user-agent':'Mozilla/5.0 (X11; Linux x86_64) Chrome/140.0 Safari/537.36'}});
+ expect(login.status).toBe(303);expect(login.headers.get('set-cookie')).toContain('Max-Age=21600');
+ const cookie=login.headers.get('set-cookie')!.split(';',1)[0];
+ // It is that member's browser, and it can make no link of its own.
+ expect(await(await fetch(app.url+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'owner'}});
+ expect((await fetch(app.url+'/api/signin/link',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:'{}'})).status).toBe(403);
 });
 it('tells the operator plainly when there is no running program to ask for a sign-in link',async()=>{
  const home=mkdtempSync(join(tmpdir(),'loom-nothing-running-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));chmodSync(home,0o700);

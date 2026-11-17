@@ -4,9 +4,10 @@
  *
  *   loom serve --home <dir> [--host <address>] [--port <number>] [--program <file>]
  *       Run the household's program. Environment: LOOM_HOME, LOOM_HTTP_HOST, LOOM_HTTP_PORT.
- *   loom signin --home <dir> [--member <id>]
- *       Print a one-time sign-in link, good for five minutes, from the running program. Only the OS user
- *       who owns the data folder can ask. Environment: LOOM_HOME.
+ *   loom signin --home <dir> [--member <id>] [--agent]
+ *       Print a one-time sign-in link, good for a few minutes, from the running program. Only the OS user
+ *       who owns the data folder can ask. With --agent the link is for an automated browser: it gets a
+ *       session of hours and may not make links or add passkeys. Environment: LOOM_HOME.
  *   loom mcp --url <origin> --token-file <file> [--agent <id>]
  *       A stdio MCP session that proxies the running program's door. It never
  *       opens the household's stores itself. Environment: LOOM_URL, LOOM_TOKEN_FILE.
@@ -24,7 +25,7 @@ import { createSharedStdioServer } from './shared-mcp-stdio.js';
 
 const USAGE = `Usage:
   loom serve --home <dir> [--host <address>] [--port <number>] [--program <file>]
-  loom signin --home <dir> [--member <id>]
+  loom signin --home <dir> [--member <id>] [--agent]
   loom mcp --url <origin> --token-file <file> [--agent <id>]
   loom --version
 `;
@@ -75,13 +76,13 @@ export async function serve(args: string[], io: ServeIo = processIo): Promise<nu
 /** The operator's way in without a browser session: ask the running program, over the socket only the
  * data folder's OS owner can reach, for a sign-in link, and print it to this terminal and nowhere else. */
 export async function signin(args: string[], io: ServeIo = processIo): Promise<number> {
-  let values: { home?: string; member?: string };
-  try { ({ values } = parseArgs({ args, strict: true, allowPositionals: false, options: { home: { type: 'string' }, member: { type: 'string' } } })); }
+  let values: { home?: string; member?: string; agent?: boolean };
+  try { ({ values } = parseArgs({ args, strict: true, allowPositionals: false, options: { home: { type: 'string' }, member: { type: 'string' }, agent: { type: 'boolean' } } })); }
   catch (error) { io.stderr(`${error instanceof Error ? error.message : 'Bad arguments'}\n${USAGE}`); return 2; }
   const home = homeOf(values.home);
   const { requestLocalLink } = await import('./core/signin/operator.js');
   try {
-    const link = await requestLocalLink(home, { request: 'link', label: 'Local sign-in', ...(values.member ? { member: values.member } : {}) });
+    const link = await requestLocalLink(home, { request: 'link', label: 'Local sign-in', ...(values.member ? { member: values.member } : {}), ...(values.agent ? { agent: true } : {}) });
     io.stdout(new URL(link.path, link.url).href + '\n');
     return 0;
   } catch { io.stderr('No sign-in link. Is loom running on this data folder, as this OS user, and is that member in the household?\n'); return 1; }

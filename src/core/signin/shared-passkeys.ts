@@ -1,16 +1,24 @@
 import { activeMemberToken } from './shared-tokens.js';
 import { credentialKey } from './credential-key.js';
 /** WebAuthn ceremonies at the shared identity door. Challenges are short-lived,
- * bounded, and single use; registration is bound to a freshly proved browser. */
+ * bounded, and single use; registration is bound to a freshly proved browser.
+ *
+ * Challenges are kept in memory, in two sets. Anyone may ask for a sign-in challenge, so that set never
+ * refuses: when it is full the oldest one is dropped. Somebody flooding it can no longer shut everyone out
+ * for five minutes; they would have to push a thousand requests into the seconds one person's sign-in
+ * takes. Challenges for adding a passkey come only from a freshly proved browser and have their own set,
+ * which a stranger cannot touch. */
 import { randomBytes } from 'node:crypto';
-import { AGENT_SESSION_MS, PERSON_SESSION_MS, credentialFingerprint as hash, currentSession, freshProof, isAgentBrowser } from '../data/authentication.js';
+import { credentialFingerprint as hash, currentSession, freshProof } from '../data/authentication.js';
+import { startBrowser } from './shared-browser.js';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
-import { tokens, sessions, passkeys } from '../data/schema.js';
+import { tokens, passkeys } from '../data/schema.js';
 import { verifyRegistration, verifyAssertion, ALGS } from './webauthn.js';
 export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpId:string}) {
-  const challenges=new Map<string,{expires:number;session?:string;token?:string}>();
+  type Issued={expires:number;session?:string;token?:string};
+  const CAP=1024,signIns=new Map<string,Issued>(),additions=new Map<string,Issued>();
   const currentToken=(id:string)=>activeMemberToken(db,clock,id);
   const fresh=(cookie:string)=>{
     const found=currentSession(db,hash(cookie),clock.now());
@@ -18,11 +26,13 @@ export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpI
     return {session:found.session,token:found.token};
   };
   const challenge=(binding:{session?:string;token?:string}={})=>{
-    for(const [key,value]of challenges)if(value.expires<=clock.now())challenges.delete(key);
-    if(challenges.size>=1024)throw Error('Try again shortly');
-    const value=randomBytes(32).toString('base64url');challenges.set(value,{expires:clock.now()+300000,...binding});return value;
+    const set=binding.session?additions:signIns;
+    for(const [key,value]of set)if(value.expires<=clock.now())set.delete(key);
+    // A Map keeps the order things were added in, so its first key is the oldest challenge.
+    while(set.size>=CAP)set.delete(set.keys().next().value!);
+    const value=randomBytes(32).toString('base64url');set.set(value,{expires:clock.now()+300000,...binding});return value;
   };
-  const spend=(value:string)=>{const found=challenges.get(value);challenges.delete(value);if(!found||found.expires<=clock.now())throw Error('Challenge expired');return found;};
+  const spend=(value:string)=>{const found=signIns.get(value)??additions.get(value);signIns.delete(value);additions.delete(value);if(!found||found.expires<=clock.now())throw Error('Challenge expired');return found;};
   return {
     loginOptions(){return {challenge:challenge(),rpId:rp.rpId,timeout:300000,userVerification:'required'};},
     registrationOptions(cookie:string){
@@ -42,13 +52,13 @@ export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpI
       if(typeof body.id!=='string')throw Error('Passkey required');
       const key=db.select().from(passkeys).where(eq(passkeys.id,body.id)).get();if(!key)throw Error('Passkey unknown');
       const token=currentToken(key.token), verified=verifyAssertion(body,JSON.parse(key.publicKey),rp), issued=spend(verified.challenge);
-      if(issued.session||issued.token||verified.id!==key.id||verified.counter<=key.counter)throw Error('Passkey sign-in refused');
-      const cookie=randomBytes(32).toString('hex'),at=new Date(clock.now()).toISOString(),isAgent=isAgentBrowser(userAgent);
-      db.update(passkeys).set({counter:verified.counter,lastUsedAt:at}).where(eq(passkeys.id,key.id)).run();
-      db.insert(sessions).values({id:hash(cookie),token:token.fingerprint,device:isAgent?'HeadlessChrome':'Browser',via:'passkey',passkey:key.id,isAgent,issuedAt:at,seenAt:at,provedAt:at}).run();
-      const maxAge=Math.floor((Math.min(clock.now()+(isAgent?AGENT_SESSION_MS:PERSON_SESSION_MS),token.expiresAt?Date.parse(token.expiresAt):Infinity)-clock.now())/1000);
-      return {cookie,maxAge};
+      if(issued.session||issued.token||verified.id!==key.id)throw Error('Passkey sign-in refused');
+      // A counter that went back or stood still means a copied authenticator. One that is always 0 is an
+      // authenticator that keeps none, which is what a synced passkey reports: there is nothing to compare.
+      if((verified.counter!==0||key.counter!==0)&&verified.counter<=key.counter)throw Error('Passkey sign-in refused');
+      db.update(passkeys).set({counter:verified.counter,lastUsedAt:new Date(clock.now()).toISOString()}).where(eq(passkeys.id,key.id)).run();
+      return startBrowser(db,clock.now(),{token,userAgent,via:'passkey',passkey:key.id});
     },
-    close(){challenges.clear();},
+    close(){signIns.clear();additions.clear();},
   };
 }

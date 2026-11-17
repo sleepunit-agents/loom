@@ -1,8 +1,38 @@
-/** A browser at the door: the cleanup when one ends. Which origins a door takes is core/data/origin.ts. */
-import {createHash} from 'node:crypto';
+/** A browser at the door: how its session starts, and the cleanup when one ends. Every session row is made
+ * here, whichever way the browser proved who it is. Which origins a door takes is core/data/origin.ts. */
+import {createHash,randomBytes} from 'node:crypto';
 import {eq,inArray} from 'drizzle-orm';
 import type {DataDatabase} from '../data/database.js';
-import {notificationQueue,notificationDevices,sessions} from '../data/schema.js';
+import {credentialFingerprint,isAgentBrowser,sessionEnds} from '../data/authentication.js';
+import {notificationQueue,notificationDevices,sessions,tokens} from '../data/schema.js';
+/** What a browser is called in Setup, from its own name for itself. */
+function browserDevice(ua: string): string {
+  const browser = isAgentBrowser(ua) ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
+  return system ? `${browser} on ${system}` : browser;
+}
+type Session = typeof sessions.$inferSelect;
+/** Sign a browser in on a member's current token, inside the caller's write transaction. Returns the
+ * cookie, which is stored only as its fingerprint, and how long the browser should keep it.
+ *
+ * `agent` is the link maker's word that the browser is automated; a browser that names itself as one is
+ * too. `from` is the browser that made the link this one came in by: the new session is that same proof
+ * carried to another device, not a new one, so it is proved when that one was, ends when that one would,
+ * and is automated if that one is. Without `from` this is a new proof, now. */
+export function startBrowser(db: DataDatabase, now: number, input: { token: Pick<typeof tokens.$inferSelect, 'fingerprint' | 'expiresAt'>; userAgent: string;
+  via: 'link' | 'passkey'; passkey?: string; agent?: boolean; from?: Pick<Session, 'issuedAt' | 'provedAt' | 'isAgent'> }): { cookie: string; maxAge: number } {
+  const cookie = randomBytes(32).toString('hex'), at = new Date(now).toISOString();
+  const row = { id: credentialFingerprint(cookie), token: input.token.fingerprint, device: browserDevice(input.userAgent), via: input.via, passkey: input.passkey ?? null,
+    isAgent: !!input.agent || isAgentBrowser(input.userAgent) || !!input.from?.isAgent, issuedAt: input.from?.issuedAt ?? at, seenAt: at, provedAt: input.from?.provedAt ?? at };
+  const ends = Math.min(sessionEnds(row), input.token.expiresAt ? Date.parse(input.token.expiresAt) : Infinity);
+  if (!(ends > now)) throw Error('Sign-in refused');
+  db.insert(sessions).values(row).run();
+  return { cookie, maxAge: Math.floor((ends - now) / 1000) };
+}
+/** The cookie header that goes with startBrowser's answer, or, with no cookie, that clears it. */
+export function browserCookie(cookie: string, maxAge: number, secure: boolean): string {
+  return `loom_ui=${cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+}
 export const browserRef=(id:string)=>createHash('sha256').update('session:'+id).digest('hex');
 /** Trusted browser cleanup inside the caller's shared write transaction. */
 export function endBrowser(db:DataDatabase,id:string){
