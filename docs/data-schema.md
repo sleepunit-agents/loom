@@ -30,11 +30,16 @@ entry in `upgrades` (`src/core/data/database.ts`) is the next number. A fresh
 database is created whole and marked with every number.
 
 At every start `upgradeDataSchema` first recognises the database without writing to
-it: the schema alone is copied into memory, the pending steps are run there, and the
-result must be exactly a fresh database's shape (columns, defaults, keys, foreign
-keys and their actions, CHECKs, and each index and trigger as written). Only then
-are the steps run on the real file. A foreign, interim, hand-altered or newer
-database is refused untouched; moving older data in is the separate real-data move.
+it. The database as it is must have exactly the shape the program at its number
+installed (columns, defaults, keys, foreign keys and their actions, CHECKs, and each
+index and trigger as written): the pinned installation SQL of that number in
+`src/core/data/shipped-shapes/`, which ships with the program for this. That
+comparison comes before any step, because a step that rebuilds or drops a table
+would erase a change made to it by hand and then pass. When steps are pending, the
+schema alone is then copied into memory, the steps are run there, and the result
+must be exactly a fresh database's shape. Only then are the steps run on the real
+file. A foreign, interim, hand-altered or newer database is refused untouched;
+moving older data in is the separate real-data move.
 
 To change the schema:
 
@@ -61,7 +66,10 @@ file's own shape is compared with a fresh database's.
 
 `src/core/data/upgrade.test.ts` upgrades the installation SQL of every shipped number
 and compares each table with a fresh database in full. It fails if the newest pinned
-shape is not today's `schema.sql`, so a schema change with no step cannot pass.
+shape is not today's `schema.sql`, so a schema change with no step cannot pass. It
+also stops the steps at every number on the way and compares with that number's
+pinned shape, so a household that reached a number by upgrading is recognised there
+like one installed at it.
 
 Two things the comparison leaves out on purpose: the order of a table's columns and
 a constraint's name, because a column added by a step lands last and unnamed. So an

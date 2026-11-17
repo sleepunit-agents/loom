@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDataSchema, dataSchemaNumber, dataSchemaShape, recogniseDataSchema, upgradeDataSchema } from './database.js';
+import { applyUpgrades, createDataSchema, dataSchemaNumber, dataSchemaShape, recogniseDataSchema, upgradeDataSchema } from './database.js';
 
 // The installation SQL exactly as each schema number shipped it, recovered from history and never edited.
 // Adding upgrade step N+1 means checking today's assets/data/schema.sql in here as N+1.sql.
@@ -174,6 +174,36 @@ describe('upgrading a household database', () => {
     expect(() => upgradeDataSchema(client)).toThrow('separate move');
     expect(everything(client)).toEqual(before);
     expect(client.prepare('SELECT * FROM migrations ORDER BY number').all()).toEqual(marks);
+  });
+
+  // Steps 6 and 7 rebuild or drop these tables, so a change made to one by hand is gone from the rehearsed
+  // result. Only the database as it is, held against the pinned shape of its number, shows it.
+  it.each<[string, number, string]>([
+    ['an extra column on jobs, which step 7 rebuilds', 6, 'ALTER TABLE jobs ADD COLUMN precious text'],
+    ['an extra column on conversations, which step 6 rebuilds', 5, 'ALTER TABLE conversations ADD COLUMN precious text'],
+    ['an extra index on jobs', 6, 'CREATE INDEX jobs_by_hand ON jobs (title)'],
+    ['an extra column on a table step 6 drops', 5, 'ALTER TABLE outside_effects ADD COLUMN precious text'],
+    ['an extra column on a table step 6 drops and makes again', 4, 'ALTER TABLE bridge_resume ADD COLUMN precious text'],
+    ['a trigger on a table step 7 rebuilds', 3, "CREATE TRIGGER jobs_by_hand BEFORE DELETE ON jobs BEGIN SELECT RAISE(ABORT, 'kept'); END"],
+  ])('refuses an older household with %s, before any step, and changes nothing in it', (_, number, alter) => {
+    const old = household(number); old.exec(alter);
+    const before = everything(old), marks = old.prepare('SELECT * FROM migrations ORDER BY number').all();
+    expect(() => recogniseDataSchema(old)).toThrow('separate move');
+    expect(() => upgradeDataSchema(old)).toThrow('separate move');
+    expect(everything(old)).toEqual(before);
+    expect(old.prepare('SELECT * FROM migrations ORDER BY number').all()).toEqual(marks);
+  });
+
+  it('gives a household that reached a number by steps exactly the pinned shape of that number', () => {
+    // Recognition holds a database to the pinned shape of its own number. A household installed earlier and
+    // upgraded since got there by the steps, so every step from every start must land on the pinned shape.
+    for (const from of numbers) for (const to of numbers.filter(number => number > from)) {
+      const old = household(from);
+      old.pragma('foreign_keys = OFF'); applyUpgrades(old, from, () => at, to);
+      const pinned = open(); pinned.exec(shipped(to));
+      expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(dataSchemaShape(pinned));
+      if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
+    }
   });
 
   it('recognises a readable household without opening it for writing', () => {
