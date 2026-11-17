@@ -3,7 +3,7 @@ import {readPersonalAccount} from '../data/personal-account-read.js';
 import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
-import { sessionEnds, tokenLive as live } from '../data/authentication.js';
+import { currentSession, currentToken } from '../data/authentication.js';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
@@ -21,8 +21,8 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
     read(member: string) {
       const rows = readPersonalAccount(db,member);
       return {member,
-        passkeys:rows.passkeys.map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(rows.tokens.get(k.token)!,clock.now())})),
-        sessions:rows.sessions.map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(rows.tokens.get(s.token)!,clock.now())||sessionEnds(s)<=clock.now()})),
+        passkeys:rows.passkeys.map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!currentToken(db,k.token,clock.now())})),
+        sessions:rows.sessions.map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!currentSession(db,s.id,clock.now())})),
       };
     },
     removePasskey(member: string, reference: string) {

@@ -8,7 +8,7 @@ import {eq} from 'drizzle-orm';
 import type {DataDatabase} from './core/data/database.js';
 import type {Clock} from './core/clock.js';
 import {tokens} from './core/data/schema.js';
-import {tokenLive} from './core/data/authentication.js';
+import {currentToken} from './core/data/authentication.js';
 import {OperationError} from './core/operations/index.js';
 import {sharedTokens,sharedTokenInput,currentMemberToken} from './core/signin/shared-tokens.js';
 import {isReservedProgramOperation,normalizeProgramGrants,programSnapshot,sameProgramGrants,type ProgramGrantStore,type ProgramGrants} from './shared-program-access.js';
@@ -42,7 +42,7 @@ export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGran
     return rows.flatMap(token=>{
      const input=grants.get(token.fingerprint);if(!input)return[];
      const value=normalizeProgramGrants(input);
-     return[{...token,ended:!tokenLive(token,clock.now()),...value}];
+     return[{...token,ended:!currentToken(db,token.fingerprint,clock.now()),...value}];
     });
    });
   },

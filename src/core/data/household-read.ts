@@ -15,10 +15,13 @@ export function readHouseholdSetup(db: DataDatabase, now: string) {
   const { defaultAgent, ...settings } = householdSettings(db);
   const recipients = db.query.backupRecipients.findMany({ orderBy: f => asc(f.recipient) }).sync().map(row => row.recipient);
   const at = Date.parse(now);
+  const present = new Set(members.filter(member => !member.removedAt).map(member => member.id));
   const sessions = db.query.sessions.findMany().sync().map(row => {
     const token = byToken.get(row.token);
     return { ref: browserRef(row.id), device: row.device, issuedAt: row.issuedAt, seenAt: row.seenAt, isAgent: row.isAgent,
-      ended: sessionEnds(row) <= at || !(token && tokenLive(token, at)),
+      // Ended means what the door means: one it would refuse now (currentSession in authentication.ts). It is
+      // worked out from the rows this read already has, and household-read.test.ts holds the two together.
+      ended: sessionEnds(row) <= at || !(token && tokenLive(token, at)) || !present.has(token.member ?? ''),
       member: token?.member ?? null, tokenLabel: token?.label ?? null };
   });
   return { members, agents, defaultAgent,
