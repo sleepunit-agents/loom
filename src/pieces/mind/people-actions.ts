@@ -1,4 +1,4 @@
-/** Create-only form, with resumable receipts in each existing source. */
+/** Create-only form: one person saved as two cards in two files, both or neither. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
@@ -25,8 +25,8 @@ export function installMindPeopleActions(operations:Operations,options:{director
   const recover=(ctx:Context)=>{
     if(!ctx.receipt) return;
     const receipts=sources.map(db=>prior(db,ctx));
-    // A directory half can be committed before the relationship half. It reserves
-    // this id globally but is not a successful operation until both halves exist.
+    // After a crash one half can be committed without the other. Its receipt reserves
+    // this id but is not a successful operation until both halves exist.
     if(sources.length===2 && receipts.every(Boolean)) {
       const result=JSON.parse(receipts[0]!.result) as {slug:string;slugs:string[]};
       ctx.changed('person',`commons:${result.slug}`);ctx.changed('person',`${options.agent}:${result.slug}`);
@@ -43,13 +43,22 @@ export function installMindPeopleActions(operations:Operations,options:{director
       if(!slug) throw new OperationError('invalid','A person needs a name that makes an address');
       const person={...input,slug,actor:ctx.viewer.id}, receipt=ctx.receipt!,result={slug,slugs:[slug]};
       const expires=Math.min(receipt.expires,...sources.flatMap(db=>{const old=prior(db,ctx);return old?[old.expires]:[];}));
-      if(!prior(sources[0],ctx) && sources[1].prepare('SELECT 1 FROM people WHERE slug=?').get(slug)) throw new OperationError('conflict','A relationship card already exists for that name');
-      for(const [index,db] of sources.entries()) db.transaction(()=>{
-        db.prepare('DELETE FROM mind_operation_receipts WHERE expires<=?').run(ctx.now);
-        if(prior(db,ctx)) return;
-        options.create(db,person,ctx.now,index===0?'directory':'relationship');
-        db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),expires);
-      }).immediate();
+      // The two halves live in two files. The relationship half is saved and committed inside the
+      // directory half's open transaction, so a refusal or a busy file on either side saves neither.
+      // Only a crash between the two commits can leave the relationship half alone; the receipt it
+      // carries lets a retry with the same operation id finish the directory half.
+      const save=(index:number):void=>{
+        const db=sources[index];
+        db.transaction(()=>{
+          db.prepare('DELETE FROM mind_operation_receipts WHERE expires<=?').run(ctx.now);
+          if(!prior(db,ctx)) {
+            options.create(db,person,ctx.now,index===0?'directory':'relationship');
+            db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),expires);
+          }
+          if(index+1<sources.length) save(index+1);
+        }).immediate();
+      };
+      save(0);
       ctx.changed('person',`commons:${slug}`);ctx.changed('person',`${options.agent}:${slug}`);
       return new RecoveredWrite(result,expires);
     },
