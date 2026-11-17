@@ -8,7 +8,7 @@ import { CommsQueries, commsQueryFields } from '../conversations/comms-query.js'
 import { CommsMessages } from '../conversations/messages.js';
 import { homeCommsQuery } from '../../../web/src/pieces/attention/home-comms-data.js';
 
-it('keeps the actual Home selection at three statements for two and ten owned agents', async () => {
+it('keeps the actual Home selection at the same few statements for two and ten owned agents', async () => {
   const statements:string[]=[],client=new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s))statements.push(s);}});
   try {
     const at='2026-11-15T00:00:00.000Z',db=createDataSchema(client,()=>at);
@@ -36,7 +36,8 @@ it('keeps the actual Home selection at three statements for two and ten owned ag
       if(n===1){const result=await read();expect(result.data.agents).toHaveLength(2);small=result.count;}
     }
     const large=await read();
-    expect(large.count).toBe(small);expect(large.count).toBe(3);
+    // Six for the household's sharing, which policy.ts is asked about, then the agents and the threads.
+    expect(large.count).toBe(small);expect(large.count).toBe(8);
     expect(large.data.summaries).toHaveLength(10);
     for(const row of large.data.summaries)expect(row).toMatchObject({unread:1,last:{thread:'th:visible-'+row.agent.split('-')[1]}});
     expect(JSON.stringify(large.data)).not.toContain('Forbidden');
