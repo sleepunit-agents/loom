@@ -10,13 +10,14 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { bodyCommandClient } from './body-command-client.js';
+import { plainFileName } from '../pieces/bridges/file-name.js';
 
 /** The most files written for one run, across every message it took. */
 export const BODY_ATTACHMENTS = 10;
 /** The most bytes written for one run. */
 export const BODY_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 const listed = z.object({ files: z.array(z.object({ file: z.string(), name: z.string(), bytes: z.number().int().nonnegative(), fetchedAt: z.string(), contents: z.string().optional() }).strict()) }).strict();
-const safe = (name: string) => name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80).replace(/^[._]+/, '') || 'file';
+const safe = plainFileName;
 
 /** Returns the words to add to the body's input, or null when nothing was written. */
 export async function saveBodyAttachments(client: Pick<ReturnType<typeof bodyCommandClient>, 'command'>, incoming: readonly string[], scratch: string | undefined,

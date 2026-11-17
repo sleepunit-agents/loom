@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import type { IncomingMessage } from './incoming.js';
 import { slackThread } from './place.js';
+import { discordFileLink } from './discord-link.js';
 
 const id = z.string().min(1).max(256);
 const timestamp = z.string().regex(/^\d{1,12}\.\d{6}$/);
@@ -75,7 +76,7 @@ const ATTACHMENT_NAME = 200, ATTACHMENT_TYPE = 100;
 function discordWords(content: string, attachments: readonly { filename: string; size: number; content_type?: string | null; url: string }[]): string {
   const plain = (value: string, max: number) => value.replace(/[\u0000-\u001f\u007f[\]]+/g, '_').slice(0, max);
   const lines = attachments.slice(0, DISCORD_ATTACHMENTS).map(file => {
-    const link = /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\/[^\s\u0000-\u001f\u007f[\]]{1,2000}$/.test(file.url) ? ` ${file.url}` : '';
+    const link = discordFileLink(file.url) ? ` ${file.url}` : '';
     return `[attachment: ${plain(file.filename, ATTACHMENT_NAME) || 'file'} (${plain(file.content_type ?? '', ATTACHMENT_TYPE) || 'unknown type'}, ${file.size} bytes)${link}]`;
   });
   return [...(content ? [content] : []), ...lines].join('\n');

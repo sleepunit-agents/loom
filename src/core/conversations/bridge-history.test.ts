@@ -4,8 +4,8 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeIncoming, bridgeSends, household, inbox } from '../data/schema.js';
 import { BridgeIncoming } from '../../pieces/bridges/incoming.js';
-import { HISTORY_LINES, prepareBridgeHistory } from './bridge-history.js';
-import { HISTORY_BYTES } from './history-limit.js';
+import { prepareBridgeHistory } from './bridge-history.js';
+import { HISTORY_BYTES, HISTORY_LINES } from './history-limit.js';
 import { Conversations } from './index.js';
 
 const clients: Database.Database[] = [];

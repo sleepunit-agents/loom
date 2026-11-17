@@ -10,6 +10,8 @@ import { z } from 'zod';
 import { isDiscordId } from './discord-id.js';
 import { HANDED_FILE_BYTES } from './files.js';
 import { SLACK_FILES_PER_MESSAGE } from './slack-files.js';
+import { discordFileLink } from './discord-link.js';
+import { plainFileName } from './file-name.js';
 
 /** As many of a message's attachments as are kept: the same count as a Slack message's. */
 export const DISCORD_FILES_PER_MESSAGE = SLACK_FILES_PER_MESSAGE;
@@ -17,8 +19,6 @@ const FETCH_MS = 15_000;
 const descriptor = z.object({ id: z.string(), filename: z.string().max(4096), size: z.number().int().nonnegative(), url: z.string().max(8192) }).passthrough();
 export interface DiscordFile { id: string; name: string; url: string }
 export interface FetchedDiscordFile { id: string; name: string; bytes: Buffer }
-const safeName = (value: string) => value.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80).replace(/^[._]+/, '') || 'file';
-export const discordFileUrl = (value: string): boolean => /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\/[^\s\u0000-\u001f\u007f[\]\\]{1,2000}$/.test(value);
 
 /** The attachments of a MESSAGE_CREATE frame that are worth fetching: the first few, each with a Discord
  * id, a link on Discord's hosts and a stated size a body can be handed. Anything else is only a link. */
@@ -27,8 +27,8 @@ export function discordFiles(data: unknown): DiscordFile[] {
   if (!list.success) return [];
   return (list.data.attachments ?? []).slice(0, DISCORD_FILES_PER_MESSAGE).flatMap(raw => {
     const file = descriptor.safeParse(raw);
-    return file.success && isDiscordId(file.data.id) && file.data.size <= HANDED_FILE_BYTES && discordFileUrl(file.data.url)
-      ? [{ id: file.data.id, name: safeName(file.data.filename), url: file.data.url }] : [];
+    return file.success && isDiscordId(file.data.id) && file.data.size <= HANDED_FILE_BYTES && discordFileLink(file.data.url)
+      ? [{ id: file.data.id, name: plainFileName(file.data.filename), url: file.data.url }] : [];
   });
 }
 
@@ -36,7 +36,7 @@ export async function fetchDiscordFiles(files: readonly DiscordFile[], current: 
   const fetched: FetchedDiscordFile[] = [];
   for (const file of files.slice(0, DISCORD_FILES_PER_MESSAGE)) {
     if (!current()) break;
-    if (!discordFileUrl(file.url)) continue;
+    if (!discordFileLink(file.url)) continue;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     const chunks: Buffer[] = [];
     try {

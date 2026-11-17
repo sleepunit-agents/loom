@@ -18,12 +18,10 @@ import { and, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSends, conversations, inbox, inboxRefs } from '../data/schema.js';
 import { commsKeepDays } from '../data/comms-days.js';
-import { HISTORY_BYTES } from './history-limit.js';
+import { HISTORY_BYTES, HISTORY_LINES } from './history-limit.js';
 import type { HistoryLine } from './history-context.js';
 import { keepUntilFor } from './retention.js';
 
-/** The most lines handed over, whatever their size: what the receiving body accepts (conversation-client.ts). */
-export const HISTORY_LINES = 100;
 
 export function prepareBridgeHistory(db: DataDatabase, now: () => string, conversation: string): () => HistoryLine[] {
   const cv = db.select().from(conversations).where(eq(conversations.id, conversation)).get();

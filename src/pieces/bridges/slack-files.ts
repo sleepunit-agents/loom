@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import type { SecretUse } from '../secrets/role.js';
 import { venueSchema, type Venue } from './model.js';
+import { plainFileName } from './file-name.js';
 
 export const SLACK_FILE_BYTES = 25 * 1024 * 1024;
 export const SLACK_FILES_PER_MESSAGE = 5;
@@ -38,7 +39,7 @@ function fileUrl(value:string) {
   if(u.origin!=='https://files.slack.com'||u.username||u.password||u.hash)throw held();
   return u.href;
 }
-const safeName=(value:string)=>value.replace(/[^A-Za-z0-9._-]+/g,'_').slice(0,80).replace(/^[._]+/,'')||'file';
+const safeName=plainFileName;
 
 /** One batch (first five attachments), no retry or cache. Returned bytes belong
  * only to this proof's delivery; the caller must persist them privately and

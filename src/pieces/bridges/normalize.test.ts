@@ -51,6 +51,8 @@ describe('authenticated Discord message normalisation', () => {
     expect(words({ content: '', attachments: [{ filename: 'a]\n[attachment: b', size: 1, content_type: 'text/plain', url: 'https://evil.example/cdn.discordapp.com/x' }] }))
       .toBe('[attachment: a_attachment: b (text/plain, 1 bytes)]');
     expect(words({ content: '', attachments: [{ ...cat, filename: 'n'.repeat(500) }] })).toContain(`[attachment: ${'n'.repeat(200)} (`);
+    // A link is listed exactly when it is one loom would fetch (discord-link.ts): not one with a backslash in it.
+    expect(words({ content: '', attachments: [{ ...cat, url: 'https://cdn.discordapp.com/attachments/1/2/..\\cat.png' }] })).toBe('[attachment: cat.png (image/png, 2048 bytes)]');
     // No more are listed than one Discord message can carry.
     expect(words({ content: '', attachments: Array(12).fill(cat) })?.split('\n')).toHaveLength(10);
     expect(words({ content: 'plain' })).toBe('plain');
