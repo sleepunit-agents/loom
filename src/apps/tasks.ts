@@ -4,6 +4,7 @@ import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { tasks, taskComments, taskLinks } from '../core/data/schema.js';
+import { taskId } from '../slug.js';
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
 export type TaskActor = z.infer<typeof person>;
@@ -112,7 +113,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       return db.transaction(() => {
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
         const n = db.select({ n: sql<number>`coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0) + 1` }).from(tasks).get()!.n;
-        const at = now(), id = `t-${n}`;
+        const at = now(), id = taskId(n);
         if (value.spec && db.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.specItem, value.spec.item), eq(tasks.criterion, value.spec.criterion))).get()) throw new Error('A task already implements that line of the spec');
         db.insert(tasks).values({ id, title: value.title, goal: value.goal, why: value.why, doneWhen: value.doneWhen,
           description: value.description, priority: value.priority, type: value.type, project: value.project,

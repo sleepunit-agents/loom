@@ -33,3 +33,13 @@ export const STORE_ID = /^[a-f0-9-]{36}$/;
 export const scopedStoreId = (kind?: string) => new RegExp(`^[^:]+:${kind ? `(?:${kind}):` : ''}${STORE_ID.source.slice(1, -1)}$`);
 /** A memory's id as the doors give it. */
 export const SCOPED_MEMORY_ID = scopedStoreId();
+
+/** A task's id: `t-` and its number, counted up by the Tasks app (`taskId`, used where a task is made).
+ * This is source text for building a larger pattern, like SLUG_WITHIN; every place that finds a task
+ * id in words builds on it, so none can disagree about how long a number may be. */
+export const TASK_ID = 't-[0-9]+';
+export const taskId = (n: number | string) => `t-${n}`;
+/** A conversation's id: `cv-` and a UUID (`conversationId`, used where a conversation is opened), or the
+ * twelve hex digits an earlier program gave, which an older home's episodes still name. Source text. */
+export const CONVERSATION_ID = 'cv-(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{12})';
+export const conversationId = (uuid: string) => `cv-${uuid}`;
