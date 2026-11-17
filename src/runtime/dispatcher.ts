@@ -88,9 +88,10 @@ export class Dispatcher {
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
-      // A Comms Stop ends the job here whatever it is doing; the worker then kills what it started.
-      if (this.jobs.takeStop(job.id)) return { active: false, stopped: true as const };
       if (state === 'starting') {
+        // Nothing is running yet, so a Comms Stop ends the job here. Once a body runs, the Stop is the body's
+        // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.
+        if (this.jobs.takeStop(job.id)) return { active: false, stopped: true as const };
         const thread = this.currentThread(job);
         if (thread) new Threads(this.db, this.now).working(thread.id, true);
       }

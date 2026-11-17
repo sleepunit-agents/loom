@@ -7,6 +7,9 @@
 export const BODY_EXIT = {
   /** Unexpected failure before the body knew what it was asked to do. */
   input: 1,
+  /** Not a failure: the body saw a Comms Stop, dropped its work and left. loom records the job as stopped
+   * when a Stop really is waiting for it (Jobs.finish); the body does not take the Stop itself. */
+  stopped: 10,
   startup: 11, mail: 12, identity: 13, harness: 14, record: 15,
   /** The machine's body file could not be read or is not valid. */
   config: 16,

@@ -274,15 +274,21 @@ it('places a lane\'s work on what its trigger wants, read when the job is placed
   expect(f.runtime.next('first')).toMatchObject({ id: lane.id, model: 'clever', harness: 'claude', venue: 'wake' });
 });
 
-it.each(['starting', 'running'] as const)('ends a %s job as stopped when a Comms Stop is waiting at its heartbeat', state => {
-  const f = fixture(); f.runtime.next('first');
-  if (state === 'running') f.runtime.started('first', f.job.id, 'image');
-  f.db.insert(threads).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
-  expect(f.runtime.heartbeat('first', f.job.id, state)).toEqual({ active: false, stopped: true });
+it('ends a job it is still preparing when a Comms Stop is waiting at its heartbeat, and leaves a running body\'s Stop to the body', () => {
+  const stop = (f: ReturnType<typeof fixture>) => f.db.insert(threads).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
+  const f = fixture(); f.runtime.next('first'); stop(f);
+  expect(f.runtime.heartbeat('first', f.job.id, 'starting')).toEqual({ active: false, stopped: true });
   expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
   expect(f.db.select().from(threads).get()).toMatchObject({ stopRequested: false, working: false });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: f.job.id });
   expect(f.runtime.jobs.admit(f.conversation.id)).toBeUndefined();
+  const running = fixture(); running.runtime.next('first'); running.runtime.started('first', running.job.id, 'image'); stop(running);
+  expect(running.runtime.heartbeat('first', running.job.id, 'running')).toEqual({ active: true });
+  expect(running.runtime.jobs.get(running.job.id).state).toBe('running');
+  expect(running.db.select().from(threads).get()?.stopRequested).toBe(true);
+  // The body notices, leaves with the stopped exit, and the worker's report ends the job the same way.
+  expect(running.runtime.finish('first', running.job.id, 10, '').job).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
+  expect(running.db.select().from(threads).get()?.stopRequested).toBe(false);
 });
 it('takes the facts a worker reports with its poll, keeps them when a poll names none, and clears them on an empty list', () => {
   const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'reset'); f.tick(1000);

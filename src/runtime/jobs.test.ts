@@ -5,6 +5,7 @@ import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
 import { Jobs } from './jobs.js';
+import { BODY_EXIT } from './job-exit.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
@@ -121,24 +122,42 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   expect(f.db.select().from(conversations).get()?.job).toBe(retry.id);
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
 });
-it('records a Comms Stop the same way whether a heartbeat, the body\'s own exit or silence brings the news', () => {
-  for (const how of ['heartbeat', 'finish', 'sweep'] as const) {
+it('records a Comms Stop the same way whether the worker\'s heartbeat or the body\'s own exit brings the news', () => {
+  for (const how of ['heartbeat while starting', 'body exit'] as const) {
     const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
-    f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
-    f.comms.take(f.conversation.id, job.id);
+    f.runtime.claim(job.id, 'worker');
+    if (how === 'body exit') { f.runtime.started(job.id, 'worker', 'image'); f.comms.take(f.conversation.id, job.id); }
     f.db.insert(threadRows).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
-    if (how === 'heartbeat') expect(f.runtime.takeStop(job.id)?.state).toBe('stopped');
-    // The body saw the Stop on its own status report and left with exit 0 before confirming its mail.
-    else if (how === 'finish') expect(f.runtime.finish(job.id, 'worker', 0)).toMatchObject({ job: { state: 'stopped' } });
-    else { f.tick(120_001); expect(f.runtime.sweep().map(row => row.state)).toEqual(['stopped']); }
+    if (how === 'heartbeat while starting') expect(f.runtime.takeStop(job.id)?.state).toBe('stopped');
+    else {
+      // A running body is the one to notice the Stop: the worker's heartbeat leaves it alone.
+      expect(f.runtime.takeStop(job.id)).toBeUndefined();
+      // The body saw the Stop on its own report and left before confirming its mail.
+      expect(f.runtime.finish(job.id, 'worker', BODY_EXIT.stopped)).toMatchObject({ job: { state: 'stopped', exitCode: BODY_EXIT.stopped } });
+    }
     expect(f.runtime.get(job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off', endedAt: f.now() });
     expect(f.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
     // The stopped work is not run again: its mail stays with the stopped job until fresh mail arrives.
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: job.id });
     expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
     expect(f.db.select().from(jobs).all()).toHaveLength(1);
-    expect(f.runtime.takeStop(job.id)).toBeUndefined();
   }
+});
+it('believes a body that says it left for a Stop only while that Stop is waiting, and leaves an unnoticed Stop on the thread', () => {
+  const start = (stopRequested: boolean) => {
+    const f = fixture('loom'), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
+    f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+    f.db.insert(threadRows).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested }).run();
+    return { ...f, mail, job };
+  };
+  // No Stop is waiting, so the exit is an ordinary failure, tried again like any other.
+  const claimed = start(false);
+  expect(claimed.runtime.finish(claimed.job.id, 'worker', BODY_EXIT.stopped)).toMatchObject({ job: { state: 'failed', endedBy: null }, retry: { state: 'queued' } });
+  // The body finished its work without noticing the Stop: the work is done, and the Stop is still the thread's.
+  const unnoticed = start(true);
+  unnoticed.comms.take(unnoticed.conversation.id, unnoticed.job.id); unnoticed.comms.confirm(unnoticed.mail.id, unnoticed.job.id);
+  expect(unnoticed.runtime.finish(unnoticed.job.id, 'worker', 0).job).toMatchObject({ state: 'done', endedBy: null });
+  expect(unnoticed.db.select().from(threadRows).get()).toMatchObject({ stopRequested: true, working: false });
 });
 it('admits new mail during failure and in the same clock tick after termination', () => {
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
@@ -274,15 +293,4 @@ it('preserves full multiline public mail in the same admission with a dim item',
   f.db.update(inbox).set({ words: 'Full first\nFull second' }).where(eq(inbox.id, full.id)).run();
   f.db.update(inbox).set({ volume: 'dim', words: 'Dim first\nDim second' }).where(eq(inbox.id, dim.id)).run();
   expect(f.runtime.admit(f.conversation.id)?.brief).toBe('Full first\nFull second\n\nDim first');
-});
-it('takes a waiting Comms Stop with the job when the owner ends it by hand, so it cannot stop the next one', () => {
-  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
-  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
-  f.db.insert(threadRows).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
-  expect(f.runtime.stop(job.id, 'owner', 'reset')).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'reset' });
-  expect(f.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
-  f.send(); const next = f.runtime.admit(f.conversation.id)!;
-  f.runtime.claim(next.id, 'worker'); f.runtime.started(next.id, 'worker', 'image');
-  expect(f.runtime.takeStop(next.id)).toBeUndefined();
-  expect(f.runtime.finish(next.id, 'worker', 0).job.state).toBe('done');
 });

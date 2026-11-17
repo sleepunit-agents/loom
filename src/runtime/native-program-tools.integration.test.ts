@@ -122,7 +122,7 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
    await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
   }finally{releaseHeartbeat();}
  }
- expect(await running).toBe(failed?14:0);await actorFinished;if(failure)throw failure;
+ expect(await running).toBe(failed?14:stop?10:0);await actorFinished;if(failure)throw failure;
  expect(errors).toHaveBeenCalledTimes(failed?1:0);expect(cancel).toHaveBeenCalledOnce();
  expect(fixture.bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(fixture.sourceBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  expect(fixture.source).toHaveBeenCalledTimes(mode==='overlapping-waits'?2:1);

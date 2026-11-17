@@ -41,7 +41,7 @@ it('runs startup inside the receiving child before any mail acceptance', async (
   } })).toBe(0); expect(bytes!.every(byte => byte === 0)).toBe(true);
 });
 it('does not invoke the native model after a Stop', async () => {
-  const f = fixture(); f.stop(); expect(await bodyProgram(f.options)).toBe(0); expect(f.native).not.toHaveBeenCalled();
+  const f = fixture(); f.stop(); expect(await bodyProgram(f.options)).toBe(BODY_EXIT.stopped); expect(f.native).not.toHaveBeenCalled();
   expect(f.calls.at(-1)?.body.input).toEqual({ state: 'idle', work: '' });
 });
 it.each(['token', 'job', 'origin', 'harness', 'conversation', 'thread', 'malformed', 'large', 'pre-abort'] as const)('refuses %s before native execution and erases input', async mode => {
@@ -75,7 +75,7 @@ it('never reports private native diagnostics as a body error',async()=>{
 
 it('honors a Stop arriving after mail acceptance and before native startup',async()=>{
  const f=fixture(),fetcher=f.options.fetch;
- expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(String(url).endsWith('/confirm'))f.stop();return response;}})).toBe(0);
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(String(url).endsWith('/confirm'))f.stop();return response;}})).toBe(BODY_EXIT.stopped);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
 });
 it('keeps native work reported, serializes beats, and erases bootstrap before stopped native work settles',async()=>{
@@ -85,7 +85,7 @@ it('keeps native work reported, serializes beats, and erases bootstrap before st
  const pending=bodyProgram({...f.options,startup:async(_job,bootstrap,signal)=>{owned=bootstrap.token;startupSignal=signal;},
   schedule:{every:(ms,callback)=>{expect(ms).toBe(15_000);tick=callback;return cancel;}}});
  await started;f.stop();tick();tick();await cancelled;expect(owned!.every(byte=>byte===0)).toBe(true);expect(startupSignal!.aborted).toBe(true);close();
- expect(await pending).toBe(0);expect(cancel).toHaveBeenCalledOnce();
+ expect(await pending).toBe(BODY_EXIT.stopped);expect(cancel).toHaveBeenCalledOnce();
  expect(f.calls.filter(row=>row.path==='status'&&(row.body.input as {state:string}).state==='working')).toHaveLength(3);
  expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});expect(f.calls.some(row=>row.path==='message')).toBe(false);
 });
@@ -103,7 +103,7 @@ it('refuses mail arriving after Stop was observed during an outstanding take',as
  const running=bodyProgram({...f.options,startup:async(_job,_bootstrap,signal)=>{signal.addEventListener('abort',cancelled,{once:true});},schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
   const response=await fetcher(url,init);if(String(url).endsWith('/take')){entered();await held;}return response;
  }});
- await taking;f.stop();tick();await stopped;release();expect(await running).toBe(0);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
+ await taking;f.stop();tick();await stopped;release();expect(await running).toBe(BODY_EXIT.stopped);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
 });
 it('waits for an outstanding serialized status beat before publishing or releasing its client',async()=>{
  const f=fixture(),fetcher=f.options.fetch,cancel=vi.fn();let tick!:()=>void,entered!:()=>void,finish!:()=>void,beatEntered!:()=>void,release!:()=>void,statuses=0,settled=false,execution:AbortSignal|undefined;
@@ -157,7 +157,7 @@ it('retires a Stop seen in the accepted batch before a held heartbeat drains',as
   expect(await Promise.race([aborted.then(()=>true),running.then(()=>false)])).toBe(true);expect(bootstrapBytes!.every(byte=>byte===0)).toBe(true);expect(f.native).not.toHaveBeenCalled();
   let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);
  }finally{release();}
- expect(await running).toBe(0);expect(f.calls.at(-1)).toMatchObject({path:'status',body:{input:{state:'idle',work:''}}});
+ expect(await running).toBe(BODY_EXIT.stopped);expect(f.calls.at(-1)).toMatchObject({path:'status',body:{input:{state:'idle',work:''}}});
 });
 
 it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, recording words only in a bounded digest',async venue=>{
@@ -188,8 +188,8 @@ it('keeps supplementary response words out of completion metadata',async()=>{
  expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Completed this stretch of work.',ifAbsent:true});
 });
 
-it('never takes a Stop itself: loom takes it when the job is next reported, so the body only says idle',async()=>{
- const f=fixture();f.stop();expect(await bodyProgram(f.options)).toBe(0);
+it('never takes a Stop itself: it says idle and leaves with the stopped exit, and loom takes the Stop when the worker reports it',async()=>{
+ const f=fixture();f.stop();expect(await bodyProgram(f.options)).toBe(BODY_EXIT.stopped);
  expect(f.calls.some(row=>'seenStop' in (row.body.input as object))).toBe(false);
 });
 

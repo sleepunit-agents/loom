@@ -40,7 +40,7 @@ it('uses default startup delivery before the actual native constructor and remov
  const f=fixture();expect(await bodyProgram(f.options)).toBe(0);expect(spawn).toHaveBeenCalledOnce();expect(f.words()).toBe('ACCEPTED_MAIL');expect(f.words()).not.toContain(privateValue);expect(f.env).toEqual({PATH:'/bin',ACCOUNT_PROFILE:'/account'});expect(f.errors).not.toHaveBeenCalled();expect(f.bytes.every(b=>b===0)).toBe(true);expect(f.cancel).toHaveBeenCalledOnce();
 });
 it('observes Stop while default startup consent is pending, without launching a model or injecting late values',async()=>{
- const f=fixture();f.pending();const running=bodyProgram(f.options);await f.planned;f.stop();expect(await running).toBe(0);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.calls).not.toContain('take');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.errors).not.toHaveBeenCalled();expect(f.cancel).toHaveBeenCalledOnce();
+ const f=fixture();f.pending();const running=bodyProgram(f.options);await f.planned;f.stop();expect(await running).toBe(10);expect(spawn).not.toHaveBeenCalled();expect(f.calls).not.toContain('read');expect(f.calls).not.toContain('take');expect(f.env.GITHUB_TOKEN).toBeUndefined();expect(f.errors).not.toHaveBeenCalled();expect(f.cancel).toHaveBeenCalledOnce();
 });
 
 it.each(['abort','status failure'])('cancels pending default startup on %s without a native launch',async mode=>{

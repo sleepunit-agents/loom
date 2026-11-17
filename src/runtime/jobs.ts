@@ -8,6 +8,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { Threads } from '../core/conversations/threads.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
+import { BODY_EXIT } from './job-exit.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
@@ -116,19 +117,23 @@ export class Jobs {
   }
 
   /** A Comms Stop asked for on this job's thread and not yet taken. Only the job its conversation
-   * currently points at can be meant; a thread nobody opened has no one to record as having ended it. */
-  private stopAsked(job: Pick<Job, 'id' | 'conversation'>): { thread: string; member: string } | undefined {
+   * currently points at, for the agent it still belongs to, can be meant; a thread nobody opened has no
+   * one to record as having ended it. */
+  private stopAsked(job: Pick<Job, 'id' | 'agent' | 'conversation'>): { thread: string; member: string } | undefined {
     if (!job.conversation) return undefined;
     const row = this.db.select({ thread: threads.id, stop: threads.stopRequested, member: conversations.member }).from(threads)
       .innerJoin(conversations, eq(conversations.id, threads.conversation))
-      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id), eq(conversations.venue, 'loom'))).get();
+      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id), eq(conversations.agent, job.agent), eq(conversations.venue, 'loom'))).get();
     return row?.stop && row.member ? { thread: row.thread, member: row.member } : undefined;
   }
 
-  /** The one place a Comms Stop ends a job. The body may learn of the Stop first and leave by itself, the
-   * worker may hear of it on a heartbeat, or the job may simply go silent: every report about the job
-   * (heartbeat, finish, the silence sweep) comes through here first, so the record is the same each time:
-   * stopped, by the thread's member, as a write-off. Its unconfirmed mail stays with it and is not run again. */
+  /** The one place a Comms Stop ends a job: stopped, by the thread's member, as a write-off, and the Stop
+   * is taken with it. Its unconfirmed mail stays with it and is not run again. A Stop belongs to whoever
+   * is in charge of the job when it is noticed, and both come here:
+   *  - before a body is running, the worker's heartbeat notices it (takeStop);
+   *  - once a body is running, the body notices it on its own report, stops its work and leaves with
+   *    BODY_EXIT.stopped; finish() checks that a Stop really is waiting and ends the job here.
+   * A Stop nobody noticed before the job ended some other way stays on the thread. */
   private endIfStopAsked(job: Job, values: Partial<Job> = {}): Job | undefined {
     const asked = this.stopAsked(job);
     if (!asked) return undefined;
@@ -136,11 +141,11 @@ export class Jobs {
     return this.end(job, 'stopped', { ...values, endedBy: asked.member, endedReason: 'write-off', endedAt: this.now() });
   }
 
-  /** For the worker's heartbeat: ends the job as stopped when a Comms Stop is waiting for it. */
+  /** For the worker's heartbeat while it prepares a job: ends the job as stopped when a Comms Stop is waiting for it. */
   takeStop(id: string): Job | undefined {
     return this.db.transaction(() => {
       const job = this.get(id);
-      return active.includes(job.state as typeof active[number]) ? this.endIfStopAsked(job) : undefined;
+      return job.state === 'starting' ? this.endIfStopAsked(job) : undefined;
     });
   }
 
@@ -151,7 +156,8 @@ export class Jobs {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
       const at = this.now();
-      const stopped = this.endIfStopAsked(before, { exitCode });
+      // A body that says it left for a Stop is believed only while that Stop is still waiting for this job.
+      const stopped = exitCode === BODY_EXIT.stopped ? this.endIfStopAsked(before, { exitCode }) : undefined;
       if (stopped) return { job: stopped };
       // A runner's stdout/stderr can contain the private prompt or reply.
       const failed = before.state === 'starting' || exitCode !== 0;
@@ -190,9 +196,6 @@ export class Jobs {
     return this.db.transaction(() => {
       const job = this.get(id);
       if (!active.includes(job.state as typeof active[number])) throw new Error('Job has ended');
-      // A Comms Stop still waiting for this job has nothing left to stop. Left set, it would stop the next job in the thread.
-      const asked = this.stopAsked(job);
-      if (asked) new Threads(this.db, this.now).takeStop(asked.thread);
       return this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
     });
   }
@@ -207,8 +210,6 @@ export class Jobs {
       return this.db.select().from(jobs).where(inArray(jobs.state, ['starting', 'running', 'waiting'])).all()
         .filter(job => Date.parse(at) - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
         .map(job => {
-          const stopped = this.endIfStopAsked(job);
-          if (stopped) return stopped;
           const lost = this.end(job, 'lost', { endedAt: at, logTail: `Lost while ${job.state}: its worker stopped reporting` });
           this.retry(job, at);
           return lost;
@@ -229,8 +230,7 @@ export class Jobs {
       const detached=this.db.update(conversations).set({job:null})
         .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();
       // This exact body has ended. Clear its working indicator in the same
-      // transaction; the last reported agent state stays. (A Stop asked of this job
-      // was taken before it ended: see endIfStopAsked and stop.)
+      // transaction; an unobserved Stop and the last reported agent state stay.
       if(detached)this.db.update(threads).set({working:false,workingSince:null,workingBeat:null})
         .where(eq(threads.conversation,detached.id)).run();
     }
