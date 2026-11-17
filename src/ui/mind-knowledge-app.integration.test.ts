@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { chromium, type Route } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
-import { SqliteKnowledgeBackend } from '../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import Database from 'better-sqlite3';
 import {migrateMindReceipts} from '../pieces/mind/receipt-schema.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
@@ -15,7 +15,7 @@ if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new
 it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
   const home=mkdtempSync(join(tmpdir(),'knowledge-app-'));
 
-  const source=new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
+  const source=new KnowledgePages({dbPath:join(home,'commons/knowledge.db')});
   await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});

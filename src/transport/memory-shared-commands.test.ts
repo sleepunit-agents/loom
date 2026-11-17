@@ -14,7 +14,7 @@ import {DataWrites} from '../core/data/writes.js';
 import {OperationResults,type ReceiptPersistence} from '../core/data/operation-results.js';
 import {Operations} from '../core/operations/index.js';
 import {nextData} from '../next-data.js';
-import {SqliteKnowledgeBackend} from '../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from '../backends/people.js';
 import {verifyKnowledgePages} from '../backends/knowledge-verification.js';
 import {createPersonHalf} from '../backends/people-creation.js';
@@ -31,10 +31,10 @@ async function fixture(){
  closes.push(()=>client.close());db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();
  db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(tokens).values({fingerprint:createHash('sha256').update(raw).digest('hex'),label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
- const sharing=()=>({members:{owner:{owner:db.select().from(members).where(eq(members.id,'owner')).get()?.role==='owner',agents:[]}},projects:{},services:{}});
+ const sharing=()=>({members:{owner:{owner:db.select().from(members).where(eq(members.id,'owner')).get()?.role==='owner',agents:[]}},projects:{}});
  const tables=()=>client.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all(),initialTables=tables();
  const path=join(home,'knowledge.db'),directory=join(home,'people.db'),relationship=join(home,'memories.db');
- const source=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>source.close());await source.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional pump words'});
+ const source=new KnowledgePages({dbPath:path});closes.push(()=>source.close());await source.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional pump words'});
  for(const dbPath of [directory,relationship])new PeopleStore({dbPath}).close();
  for(const dbPath of [path,directory,relationship]){const prepared=new Database(dbPath);try{migrateMindReceipts(prepared);}finally{prepared.close();}}
  const knowledge=knowledgeQueryFields({path,sharing,now:()=>clock.now()}),people=peopleQueryFields({directory,agents:[{agent:'fiction',directory:home,memories:relationship}],sharing,now:()=>clock.now(),projectHref:(_agent,slug)=>'/project/'+slug});

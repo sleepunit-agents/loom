@@ -1,7 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import {eq} from 'drizzle-orm';
-import {registerBuiltinService} from './core/services.js';
 import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});

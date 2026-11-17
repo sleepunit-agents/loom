@@ -13,9 +13,8 @@
  *
  * Storage is the memory database (memories.db), opened raw like
  * proposals.ts — no embedder. Every mutation is one BEGIN IMMEDIATE
- * transaction (read, merge, validate, snapshot, write, prune), the pattern of
- * SqliteKnowledgeBackend.writePage: loom's one-writer rule is about *who*
- * writes, so the transaction is what serializes concurrent bodies.
+ * transaction (read, merge, validate, snapshot, write, prune): loom's
+ * one-writer rule is about *who* writes, so the transaction is what serializes concurrent bodies.
  */
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { refuseNewerStore, runMigrationSteps } from './migrations.js';

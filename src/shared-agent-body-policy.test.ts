@@ -9,7 +9,6 @@ import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, boxAgents, agentHousePorts, secrets, agentPeople, agentDeniedTools, bridgeConnections } from './core/data/schema.js';
-import { registerBuiltinService } from './core/services.js';
 import { mayAct } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { sharedRoot } from './shared-root.js';

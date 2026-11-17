@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../../test/fixtures/knowledge-pages.js';
 import { knowledgeView } from './knowledge.js';
 
 it('reads the whole knowledge page, all its sources and all its referring pages', async () => {
   const home = mkdtempSync(join(tmpdir(), 'knowledge-complete-'));
   const path = join(home, 'knowledge.db');
-  const store = new SqliteKnowledgeBackend({ dbPath: path });
+  const store = new KnowledgePages({ dbPath: path });
   let reader: Database.Database | undefined;
   try {
     const body = `${'Long factual text. '.repeat(1500)}The final fact.`;

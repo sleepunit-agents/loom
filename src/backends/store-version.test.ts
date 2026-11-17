@@ -8,7 +8,7 @@ import { MIGRATIONS, runMigrations } from './migrations.js';
 import { Notes, notesDbPath } from '../notes.js';
 import { PeopleStore } from './people.js';
 import { ProjectsStore } from './projects.js';
-import { SqliteKnowledgeBackend } from './sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import { SqliteVecBackend } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
 
@@ -63,18 +63,18 @@ it('marks a notes store, and refuses one from a newer program without altering i
 
 it('refuses a knowledge store from a newer program, and a file that is not a knowledge store, without altering either', () => {
   const path = join(directory, 'knowledge.db');
-  new SqliteKnowledgeBackend({ dbPath: path }).close();
+  new KnowledgePages({ dbPath: path }).close();
   expect(version(path)).toBe(1);
   raw(path, db => { db.pragma('user_version = 2'); });
   const before = everything(path);
-  expect(() => new SqliteKnowledgeBackend({ dbPath: path })).toThrow('newer program');
+  expect(() => new KnowledgePages({ dbPath: path })).toThrow('newer program');
   expect(everything(path)).toEqual(before);
   expect(version(path)).toBe(2);
 
   const foreign = join(directory, 'other.db');
   raw(foreign, db => { db.exec("CREATE TABLE precious (words TEXT); INSERT INTO precious VALUES ('keep me')"); });
   const untouched = everything(foreign);
-  expect(() => new SqliteKnowledgeBackend({ dbPath: foreign })).toThrow('not a knowledge store');
+  expect(() => new KnowledgePages({ dbPath: foreign })).toThrow('not a knowledge store');
   expect(everything(foreign)).toEqual(untouched);
   expect(version(foreign)).toBe(0);
 });

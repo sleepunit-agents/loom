@@ -1126,7 +1126,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
   /**
    * Insert a content snapshot into memory_revisions and prune beyond the per-memory
-   * cap. Mirrors the knowledge wing's snapshotRevision() in sqlite-knowledge.ts.
+   * cap, as snapshotKnowledgeRevision (knowledge-revisions.ts) does for a knowledge page.
    */
   private snapshotRevision(
     memoryId: number,

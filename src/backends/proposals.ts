@@ -65,10 +65,10 @@ export class UnknownProposalError extends Error {
 // ─── Queue operations ─────────────────────────────────────────────────────────
 
 /**
- * Stage a pending proposal. A draft can be rough, so this does NOT run the
- * full validateMemoryInput gate — but it DOES require a non-empty
- * title + content + category so the row is at least shaped like a memory.
- * Hard validation is deferred to ratify.
+ * Stage a pending proposal. A draft can be rough, so it is not held to the
+ * `remember` shape a memory is, but it does need a non-empty title, content
+ * and category so the row is at least shaped like a memory. Ratifying it
+ * holds it to the full shape.
  */
 function validateProposal(input:ProposalInput){
   if (typeof input.title !== 'string' || input.title.trim() === '') {

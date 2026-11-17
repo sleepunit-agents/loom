@@ -12,7 +12,7 @@ import {createDataSchema} from '../core/data/database.js';
 import {members,agents,tokens,memberAgents,tasks,conversations as conversationRows,digests} from '../core/data/schema.js';
 import {Conversations} from '../core/conversations/index.js';
 import {nextData} from '../next-data.js';
-import {SqliteKnowledgeBackend} from '../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from '../backends/people.js';
 import {ProjectsStore} from '../backends/projects.js';
 import {peopleReader} from '../pieces/mind/people.js';
@@ -26,12 +26,12 @@ it('serves all four Memory projections without legacy tables and rereads current
  db.insert(tokens).values({fingerprint:createHash('sha256').update(raw).digest('hex'),label:'Fictional bearer',kind:'owner',member:'owner',createdAt:at}).run();
  db.insert(tasks).values({id:'work',title:'Fictional task',ownerKind:'household',createdByKind:'member',createdBy:'owner',createdAt:at,changedAt:at}).run();
  const commons=join(home,'commons'),directory=join(home,'agents/fiction'),memories=join(directory,'memories.db');mkdirSync(commons,{recursive:true});mkdirSync(directory,{recursive:true});
- const knowledge=new SqliteKnowledgeBackend({dbPath:join(commons,'knowledge.db')});await knowledge.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional knowledge'});
+ const knowledge=new KnowledgePages({dbPath:join(commons,'knowledge.db')});await knowledge.writePage({slug:'pump',title:'Fictional pump',domain:'fiction',body:'Fictional knowledge'});
  const peopleStore=new PeopleStore({dbPath:memories,actor:'fiction'});peopleStore.write({slug:'friend',name:'Private fictional friend',where:{pond:{value:'Fictional relationship'}}});peopleStore.close();
  const projectsStore=new ProjectsStore({dbPath:memories});projectsStore.write({slug:'pond',name:'Private fictional pond'});projectsStore.close();
  // This callback is the root's required current-facts seam, not a mirrored
  // legacy fixture. Demotion and revocation below mutate only shared columns.
- const sharing=():Sharing=>({members:Object.fromEntries(db.select().from(members).all().map(m=>[m.id,{owner:m.role==='owner',agents:db.select().from(memberAgents).where(eq(memberAgents.member,m.id)).all().map(a=>a.agent)}])),projects:{},services:{}});
+ const sharing=():Sharing=>({members:Object.fromEntries(db.select().from(members).all().map(m=>[m.id,{owner:m.role==='owner',agents:db.select().from(memberAgents).where(eq(memberAgents.member,m.id)).all().map(a=>a.agent)}])),projects:{}});
  const sources={commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory,memories}]};
  const tables=()=>client.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all(),before=tables();
  const people=peopleReader({...sources.commons,directory:sources.commons.people,agents:sources.agents,sharing,now:()=>clock.now()});

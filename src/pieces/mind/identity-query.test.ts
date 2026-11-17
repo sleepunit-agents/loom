@@ -12,7 +12,7 @@ const close:Array<()=>void>=[];afterEach(()=>{for(const stop of close.splice(0).
 it('uses current Memory visibility and closes its independent reader admission',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'memory-identity-fiction-'));close.push(()=>rmSync(directory,{recursive:true,force:true}));writeFileSync(join(directory,'IDENTITY.md'),'PRIVATE_IDENTITY');
  const deadlines=new QueryDeadlines(()=>0);close.push(()=>deadlines.close());
- const reader=memoryIdentityFields({sources:{commons:{directory,knowledge:join(directory,'knowledge.db'),people:join(directory,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'missing.db')}]},now:()=>0,timezone:()=> 'UTC',sharing:()=>({members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{},services:{}})},deadlines);close.push(reader.close);
+ const reader=memoryIdentityFields({sources:{commons:{directory,knowledge:join(directory,'knowledge.db'),people:join(directory,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'missing.db')}]},now:()=>0,timezone:()=> 'UTC',sharing:()=>({members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{}})},deadlines);close.push(reader.close);
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:reader.fields})}),query='{memoryIdentity(agent:"art"){creed}}';
  expect(await graphql({schema,source:query,contextValue:{viewer:{kind:'member',id:'owner'}}})).toMatchObject({data:{memoryIdentity:{creed:'PRIVATE_IDENTITY'}}});
  expect(await graphql({schema,source:query,contextValue:{viewer:{kind:'member',id:'peer'}}})).toMatchObject({data:{memoryIdentity:null}});
@@ -31,7 +31,7 @@ it('puts the conversation digests it is given on the tape in time order, and rer
  store.exec('CREATE TABLE memories(title TEXT,category TEXT,content TEXT,salience REAL,sourcing TEXT,created TEXT,updated TEXT,archived INTEGER,expires_at TEXT,project TEXT,metadata TEXT)');
  store.prepare("INSERT INTO memories VALUES('Fictional episode','episode','EPISODE_BODY',1,NULL,'2026-11-14T16:00:00.000Z',NULL,0,NULL,NULL,'{}')").run();store.close();
  const deadlines=new QueryDeadlines(()=>now);close.push(()=>deadlines.close());const asked:unknown[]=[];
- const reader=memoryIdentityFields({sources:{commons:{directory,knowledge:join(directory,'knowledge.db'),people:join(directory,'people.db')},agents:[{agent:'art',directory,memories}]},now:()=>now,timezone:()=>'UTC',sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{},services:{}}),
+ const reader=memoryIdentityFields({sources:{commons:{directory,knowledge:join(directory,'knowledge.db'),people:join(directory,'people.db')},agents:[{agent:'art',directory,memories}]},now:()=>now,timezone:()=>'UTC',sharing:()=>({members:{owner:{owner:true,agents:[]}},projects:{}}),
   digests:(viewer,agent,window)=>{asked.push({viewer,agent,window});return [{at:'2026-11-14T17:00:00.000Z',venue:'discord',label:null,place:'pond',summary:'LATER_DIGEST'},{at:'2026-11-14T15:00:00.000Z',venue:'wake',label:'Morning',place:'x',summary:'EARLIER_DIGEST'}];}},deadlines);close.push(reader.close);
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:reader.fields})}),viewer={kind:'member',id:'owner'};
  const result=await graphql({schema,source:'{memoryIdentity(agent:"art"){recent}}',contextValue:{viewer}}),recent=String((result.data as {memoryIdentity:{recent:string}}).memoryIdentity.recent);

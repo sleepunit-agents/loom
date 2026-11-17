@@ -14,7 +14,7 @@ import { FakeClock } from './core/index.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, tokens, sessions, tasks, conversationPeople, conversations, household } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
-import { SqliteKnowledgeBackend } from './backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../test/fixtures/knowledge-pages.js';
 import { PeopleStore } from './backends/people.js';
 import { ProjectsStore } from './backends/projects.js';
 
@@ -43,7 +43,7 @@ async function setup(now=Date.parse('2026-11-14T18:00:00Z')) {
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
   db.insert(household).values({defaultAgent:'fiction',timezone:'UTC'}).run();
   mkdirSync(join(home,'commons'),{recursive:true}); mkdirSync(join(home,'agents/fiction'),{recursive:true});
-  const knowledge = new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
+  const knowledge = new KnowledgePages({dbPath:join(home,'commons/knowledge.db')});
   await knowledge.writePage({slug:'pump',title:'Earlier pump',domain:'pond',body:'Earlier fictional words'});
   await knowledge.writePage({slug:'pump',title:'Fictional pump',domain:'pond',body:'Fictional hose'});
   const people = new PeopleStore({dbPath:join(home,'agents/fiction/memories.db'),actor:'fiction'});

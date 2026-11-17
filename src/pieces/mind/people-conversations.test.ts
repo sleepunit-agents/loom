@@ -13,7 +13,7 @@ function fixture(){
  db.insert(agents).values({id:'fiction',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
  db.insert(members).values(['owner','alice','bob','peer'].map(id=>({id,role:id==='owner'?'owner' as const:'member' as const,joinedAt:'2026-11-14T18:00:00Z'}))).run();
  db.insert(projects).values({id:'team',name:'Team'}).run();
- let sharing:Sharing={members:{owner:{owner:true,agents:[]},alice:{owner:false,agents:['fiction']},bob:{owner:false,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:[]}},services:{}};
+ let sharing:Sharing={members:{owner:{owner:true,agents:[]},alice:{owner:false,agents:['fiction']},bob:{owner:false,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:[]}}};
  const service=new Conversations(db,()=> '2026-11-14T18:00:00Z');
  const add=(place:string,scope:{member?:string;project?:string}={},kind:'person'|'agent'='person')=>{
   const c=service.open({agent:'fiction',venue:'discord',place,label:place,...scope});

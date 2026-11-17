@@ -3,7 +3,6 @@ import { eq, isNull } from 'drizzle-orm';
 import { holds, isHouseholdOwner, maySee, rules, type Sharing, type Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, members, memberAgents, projects, projectMembers, projectAgents, conversations } from './core/data/schema.js';
-import { builtinServices } from './core/services.js';
 
 /** Removed members are left out, so every rule treats them as nobody; removed agents are left out of `agents`. */
 export function sharedSharing(db: DataDatabase): Sharing {
@@ -16,7 +15,6 @@ export function sharedSharing(db: DataDatabase): Sharing {
       members: people.filter(row => row.project === project.id).map(row => row.member),
       agents: bodies.filter(row => row.project === project.id).map(row => row.agent),
     }])),
-    services: builtinServices(db.$client),
     agents: db.select({ id: agents.id }).from(agents).where(isNull(agents.removedAt)).all().map(agent => agent.id),
   };
 }

@@ -2,7 +2,6 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-body.js';
-import {registerBuiltinService} from './core/services.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 async function fixture(){
@@ -31,8 +30,8 @@ it('discovers newly registered HTTP commands with their structural input hints, 
 it('lists commands for a current member, and refuses a runner',async()=>{
  const f=await fixture();expect((await f.post({},raw.member)).status).toBe(200);expect((await f.post({},raw.runner)).status).toBe(403);
 });
-it('does not turn a plain agent label or installed service into a body proof',async()=>{
- const f=await fixture(),service=registerBuiltinService(f.root.operations,'body-catalogue',['runtime.commandCatalog'],'runtime');
+it('does not turn a plain agent label or a service label into a body proof',async()=>{
+ const f=await fixture(),service={kind:'service' as const,id:'runtime'};
  for(const viewer of[{kind:'agent' as const,id:'art'},service])expect(f.root.operations.call('http',viewer,'runtime.commandCatalog',{})).toMatchObject({ok:false,code:'denied'});
 });
 it.each(['ended','revoked-machine','ownership','current-job','current-agent']as const)('denies a catalogue request after %s withdrawal',async change=>{

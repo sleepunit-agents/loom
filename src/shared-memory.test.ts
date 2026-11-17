@@ -15,7 +15,7 @@ import {createDataSchema} from './core/data/database.js';
 import {members,tokens,agents,household,memberAgents,inbox,triggers,projects as projectRows,changes,taskLinks} from './core/data/schema.js';
 import {serveShared} from './shared-serve.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
-import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import {KnowledgePages} from '../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 const cleanup:Array<()=>unknown>=[];
@@ -81,7 +81,7 @@ it('signs in on the actual shared listener and converges Memory writes, changed 
 });
 it('leaves existing declared content files byte-for-byte unchanged during preparation',async()=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
- const knowledge=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'Precious fictional words'});knowledge.close();
+ const knowledge=new KnowledgePages({dbPath:f.sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'Precious fictional words'});knowledge.close();
  const paths=[f.sources.commons.knowledge,f.sources.commons.people,f.sources.agents[0].memories],before=paths.map(path=>readFileSync(path));
  await prepareSharedMemorySources(memory);expect(paths.map(path=>readFileSync(path))).toEqual(before);
 });
@@ -95,7 +95,7 @@ it('uses the current household timezone for Activity days and metadata after a c
 });
 it('registers Knowledge before the one shared Tempo starts and preserves a stopped daily sweep across restart',async()=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
- const source=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});await source.writePage({slug:'due-pump',title:'Fictional due pump',domain:'fiction',body:'Due fictional fact',verified_at:'2020-01-01T00:00:00Z'});source.close();
+ const source=new KnowledgePages({dbPath:f.sources.commons.knowledge});await source.writePage({slug:'due-pump',title:'Fictional due pump',domain:'fiction',body:'Due fictional fact',verified_at:'2020-01-01T00:00:00Z'});source.close();
  f.clock.advance(Date.parse('2026-11-14T13:16:59Z')-f.clock.now());
  const options={db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}};
  const app=await serveShared(options);cleanup.push(()=>app.close());expect(f.db.select().from(inbox).all()).toEqual([]);
@@ -141,7 +141,7 @@ it('rejects an unconfigured checking recipient before creating source files',asy
 });
 it('refreshes Knowledge and Activity together at the shared root deadline without a write',async()=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'},now=f.clock.now();await prepareSharedMemorySources(memory);
- const knowledge=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});
+ const knowledge=new KnowledgePages({dbPath:f.sources.commons.knowledge});
  try{for(const slug of ['recent','aging','due'])await knowledge.writePage({slug,title:slug,domain:'fiction',body:'Fictional fact'});}finally{knowledge.close();}
  const facts=new Database(f.sources.commons.knowledge);
  try{for(const [slug,days] of [['recent',7],['aging',20],['due',30]] as const)facts.prepare('UPDATE pages SET verified_at=? WHERE slug=?').run(new Date(now-days*86400000+1000).toISOString(),slug);}finally{facts.close();}

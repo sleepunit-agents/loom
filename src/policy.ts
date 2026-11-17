@@ -37,7 +37,6 @@ export interface RecordScope extends Scope { type?: string; direct?: boolean }
 export interface Sharing {
   members: Record<string, { owner: boolean; agents: string[] }>;
   projects: Record<string, { members: string[]; agents: string[] }>;
-  services: Record<string, { types: string[]; operations: string[] }>;
   /** Agents that are not removed. A snapshot built without it knows no current agent. */
   agents?: readonly string[];
 }
@@ -364,7 +363,9 @@ export function directsAgent(v: Viewer, agent: string, s: Sharing): boolean {
 
 export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   if (isInternalCaller(v)) return true;
-  if (v.kind === 'service') return r.member === undefined && !!r.type && !!entry(s.services, v.id)?.types.includes(r.type);
+  // One of loom's own parts is known by the object it was handed (core/internal.ts), never by a name: a
+  // caller that only says it is a service reads nothing.
+  if (v.kind === 'service') return false;
   // A worker is given its jobs by Runtime, on proof of assignment checked at that door; it reads no record here.
   if (v.kind === 'runner') return false;
   // A task is labelled by its owner, not by member and agent columns; it answers to the tasks rule.
@@ -379,7 +380,6 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
 export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act', operation?: string): boolean {
   if (isInternalCaller(v)) return true;
   if (!maySee(v, r, s)) return false;
-  if (v.kind === 'service') return action === 'act' && !!operation && !!entry(s.services, v.id)?.operations.includes(operation);
   if (action === 'household') return isHouseholdOwner(v, s);
   // Giving an agent work and changing its setup belong to the members who own it.
   if (action === 'give-work' || action === 'agent-setup') return v.kind === 'member' && !!r.agent && directsAgent(v, r.agent, s);

@@ -5,7 +5,6 @@ import { and, eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { sharedRoot } from './shared-root.js';
-import { registerBuiltinService } from './core/services.js';
 import * as s from './core/data/schema.js';
 const privateCalls=vi.hoisted(()=>{
  const fail=()=>{throw new Error('Provider execution forbidden in metadata commands');};
@@ -120,8 +119,8 @@ it('lets a current household owner remove another member account association',as
  expect((await f.post('accountSignedOut',{account,box:'one'},'admin')).status).toBe(200);
  expect(f.db.select().from(s.modelAccountBoxes).all()).toEqual([]);
 });
-it('refuses an installed service even when its namespace and record types match the account commands',async()=>{
- const f=fixture(),account=await f.create(),service=registerBuiltinService(f.root.operations,'owner-looking-service',['runtime.model-account','runtime.box'],'runtime');
+it('refuses a caller that only says it is a service for every account command',async()=>{
+ const f=fixture(),account=await f.create(),service={kind:'service' as const,id:'runtime'};
  for(const [name,input]of [
   ['accountCreate',{provider:'provider',label:'Service account'}],
   ['accountRename',{account,label:'Service edit'}],

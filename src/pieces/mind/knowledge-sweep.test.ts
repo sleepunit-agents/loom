@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FakeClock } from '../../core/clock.js';
 import { Sweep, type SweepDelivery } from '../../core/tempo/sweep.js';
-import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../../../test/fixtures/knowledge-pages.js';
 import { knowledgeSweep } from './knowledge-sweep.js';
 
 const cleanup: Array<() => void> = [];
@@ -14,7 +14,7 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'fictional-knowledge-sweep-'));
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'knowledge.db');
-  const store = new SqliteKnowledgeBackend({ dbPath: path }); cleanup.push(() => store.close());
+  const store = new KnowledgePages({ dbPath: path }); cleanup.push(() => store.close());
   const db = new BetterSqlite3(path); cleanup.push(() => db.close());
   const reader = new BetterSqlite3(path, { readonly: true }); cleanup.push(() => reader.close());
   const clock = new FakeClock(Date.UTC(2026, 10, 14));
