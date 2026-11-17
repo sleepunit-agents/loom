@@ -9,7 +9,7 @@ import {eq} from 'drizzle-orm';
 import {FakeClock} from '../core/clock.js';
 import type {Sharing} from '../policy.js';
 import {createDataSchema} from '../core/data/database.js';
-import {members,agents,tokens,memberAgents,tasks} from '../core/data/schema.js';
+import {members,agents,tokens,memberAgents,tasks,conversations as conversationRows,digests} from '../core/data/schema.js';
 import {Conversations} from '../core/conversations/index.js';
 import {nextData} from '../next-data.js';
 import {SqliteKnowledgeBackend} from '../backends/sqlite-knowledge.js';
@@ -45,6 +45,10 @@ it('serves all four Memory projections without legacy tables and rereads current
   const read=async()=>{const response=await data.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
   expect(await read()).toMatchObject({tasks:[{title:'Fictional task'}],memoryKnowledge:{pages:[{title:'Fictional pump'}]},memoryPerson:{name:'Private fictional friend'},memoryProject:{name:'Private fictional pond',sections:expect.arrayContaining([{key:'people',available:true,items:[{title:'Private fictional friend'}]}])},memoryActivity:{entries:[{title:'Private fictional session'}]}});
   expect(tables()).toEqual(before);
+  // The tape carries the conversation's digest from the shared database, beside any episodes.
+  db.insert(digests).values({id:'dg-1',conversation:db.select().from(conversationRows).get()!.id,run:'r-1',revision:1,at,summary:'Fictional digest words'}).run();data.changed();
+  const tape=await data.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryIdentity(agent:"fiction") { recent } }'})});
+  expect((await tape.json()).data.memoryIdentity.recent).toContain('digest · wake Private fictional session: Fictional digest words');
   db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();data.changed();
   expect(await read()).toEqual({tasks:[],memoryKnowledge:null,memoryPerson:null,memoryProject:null,memoryActivity:null});
   db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();data.changed();

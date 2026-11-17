@@ -13,19 +13,20 @@
  * view surfaces what the last body *searched for*, not what last *happened*.
  * The tape is the wrong place for cleverness — it is just the tape.
  *
- * Conversation digests (docs/specs/conversations.md) are on the tape too: a
- * body in a conversation writes a digest instead of an episode, and its digests
- * from the window interleave with the episodes by time. A digest isn't a
- * memory, so recall never finds it (`conversations` does).
+ * Conversation digests are on the tape too: a body in a conversation writes a
+ * digest instead of an episode, and its digests from the window interleave with
+ * the episodes by time. A digest isn't a memory, so recall never finds it. Digests
+ * live in the household database, so the caller reads them (with the viewer's
+ * access) and hands them to assembleTape; this module reads only episodes.
  *
- * Like salience, this opens memories.db directly (plain SQL, no embedder) so
+ * Like salience, the episode read is plain SQL on memories.db (no embedder) so
  * identity load stays cheap.
  */
-import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
+import type { Database } from 'better-sqlite3';
 import { EPISODE_CATEGORY } from '../categories.js';
-import { tapeDigests, type TapeDigest } from './conversations.js';
+
+/** One conversation digest as the tape shows it: when, where, and the body's own summary. */
+export interface TapeDigest { at: string; venue: string; label: string | null; place: string; summary: string }
 
 export interface EpisodeRow {
   title: string;
@@ -36,8 +37,6 @@ export interface EpisodeRow {
 }
 
 export interface TapeOptions {
-  /** Trusted private-store selection; omitted keeps the legacy override. */
-  memorySelection?: MemorySelection;
   /** Canonical snapshots exclude future episodes; legacy wrapper defaults remain unchanged. */
   excludeFuture?:boolean;
   /** Look-back window in hours (default 24). */
@@ -50,21 +49,6 @@ export interface TapeOptions {
   timeZone?: string;
   /** "now" override for tests. */
   nowMs?: number;
-  /**
-   * Whose digests: undefined, every conversation's (loom's machine); a conversation id, that one's only; null, none.
-   * A house reads only the conversation it holds (t-2118, server.ts bodyHouseConversation).
-   */
-  onlyConversation?: string | null;
-}
-
-/**
- * The conversation a house's call holds, as the server said in LOOM_HOUSE_HELD (t-2118): undefined when it said
- * nothing (no house: loom's machine), null for "-" or anything that isn't a conversation id (holds none).
- */
-export function heldFromEnv(env: NodeJS.ProcessEnv): string | null | undefined {
-  const v = env.LOOM_HOUSE_HELD;
-  if (v === undefined) return undefined;
-  return /^cv-[0-9a-f]{12}$/.test(v) ? v : null;
 }
 
 export const DEFAULT_HOURS = 24;
@@ -149,42 +133,6 @@ export function assembleTape(rows: EpisodeRow[], opts: TapeOptions = {}, digests
   const dropped = lines.length - kept.length;
   const head = dropped > 0 ? `_(${dropped} older ${digests.length ? 'line' : 'episode'}${dropped === 1 ? '' : 's'} omitted for budget)_\n` : '';
   return head + kept.join('\n');
-}
-
-function openMemoriesDb(contextDir: string, selection?: MemorySelection): Database | null {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(dbPath)) return null;
-  const db = new BetterSqlite3(dbPath, { readonly: true });
-  db.pragma('busy_timeout = 5000');
-  return db;
-}
-
-/** Raw episode rows in the window, oldest first. Empty when there is no store. */
-export function episodeRows(contextDir: string, opts: TapeOptions = {}): EpisodeRow[] {
-  const db = openMemoriesDb(contextDir, opts.memorySelection);
-  if (!db) return [];
-  try {
-    return episodesOnConnection(db,opts);
-  } finally {
-    db.close();
-  }
-}
-
-/**
- * The boot tape for a context: "what happened across all of me in the last
- * N hours", time-ordered. Null when nothing happened (or no store) — the
- * identity block is simply omitted then.
- */
-export function tapeForContext(contextDir: string, opts: TapeOptions = {}): string | null {
-  return assembleTape(episodeRows(contextDir, opts), opts, digestRows(contextDir, opts));
-}
-
-/** Conversation digests written in the tape's window, oldest first. Empty when there are none (or no store). */
-export function digestRows(contextDir: string, opts: TapeOptions = {}): TapeDigest[] {
-  const now = opts.nowMs ?? Date.now();
-  const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
-  if (opts.onlyConversation === null) return [];
-  return tapeDigests(contextDir, since, new Date(now).toISOString(), opts.onlyConversation, opts.memorySelection);
 }
 
 /** Read-only episodes from the caller's declared private source; no discovery. */
