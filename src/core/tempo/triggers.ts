@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { laneFile } from './repository.js';
 import { and, eq, max } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
@@ -28,7 +29,6 @@ export const triggerEdit = z.object({
   times: text.optional(), days: text.nullable().optional(), note: text.optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
 export type TriggerEdit = z.input<typeof triggerEdit>;
-const relativeFile = (file: string) => !/^(?:\/|[A-Za-z]:)/.test(file) && !file.split(/[\\/]/).includes('..');
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
@@ -116,7 +116,7 @@ export class TriggerEngine {
     if (v.targetKind === 'operation' && !v.target) throw new Error('Operation target needs a name');
     if (v.targetKind === 'operation' && this.effects.knows && !this.effects.knows(v.target!)) throw new Error('Unknown operation');
     if (v.sourceKind !== 'time' && !v.watches) throw new Error('Event trigger needs what it watches');
-    if (v.file && !relativeFile(v.file)) throw new Error('Instructions must be a relative repository file');
+    if (v.file && !laneFile(v.file)) throw new Error('Instructions must be a relative repository file');
     if (v.file && v.instructions) throw new Error('Give instructions or a file');
     const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
@@ -155,7 +155,7 @@ export class TriggerEngine {
       if (c.instructions != null && c.file === undefined) c.file = null;
       if (c.file != null && c.instructions === undefined) c.instructions = null;
       if (c.file && c.instructions) throw new Error('Give instructions or a file');
-      if (c.file && !relativeFile(c.file)) throw new Error('Instructions must be a relative repository file');
+      if (c.file && !laneFile(c.file)) throw new Error('Instructions must be a relative repository file');
       if ((c.times !== undefined || c.days !== undefined) && t.sourceKind !== 'time') throw new Error('Only a time trigger has times');
       const before: Record<string, string | null> = {};
       for (const key of ['instructions', 'file', 'times', 'days', 'note', 'wantsModel'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];

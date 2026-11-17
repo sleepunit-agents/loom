@@ -4,12 +4,18 @@
 import fs, { constants as F } from 'node:fs';
 
 export const MAX_LANE_FILE_BYTES = 1_048_576;
+/** Which files of the checkout a lane may name: a relative path of plain names. No `.` or `..`, no empty
+ * part, no backslash, and no hidden file or directory (`.git`, `.env`): a lane's words are routine files,
+ * and whoever may set a trigger must not be able to read the checkout's settings through one. The one rule,
+ * asked when a trigger is set and again when its file is read. */
+export const laneFile = (file: string): boolean =>
+  !!file && !file.includes('\\') && file.split('/').every(part => !!part && !part.startsWith('.') && !part.includes('\0'));
 export function repositoryInstructions(repository: string): (file: string) => string {
   return file => {
     const roots = repository.split('/'), parts = file.split('/');
     if (process.platform !== 'linux' || roots.shift() !== '' || !roots.length ||
       roots.some(p => !p || p === '.' || p === '..') ||
-      !file || file.includes('\\') || parts.some(p => !p || p === '.' || p === '..' || p.includes('\0')))
+      !laneFile(file))
       throw new Error('Lane instructions need a relative file in the configured repository');
     const opened: number[] = [];
     try {

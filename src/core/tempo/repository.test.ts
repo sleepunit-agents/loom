@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
-import { repositoryInstructions, MAX_LANE_FILE_BYTES } from './repository.js';
+import { laneFile, repositoryInstructions, MAX_LANE_FILE_BYTES } from './repository.js';
 const roots:string[]=[];
 const temp=()=>{const root=fs.mkdtempSync(join(tmpdir(),'tempo-repository-'));roots.push(root);return root;};
 afterEach(()=>{vi.restoreAllMocks();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
@@ -75,4 +75,14 @@ it.each(['mtimeNs','ctimeNs'] as const)('detects a same-size change through %s m
   return result;
  }) as typeof fs.fstatSync);
  expect(()=>repositoryInstructions(root)('lane')).toThrow('unavailable or unsafe');expect(calls).toBe(2);
+});
+it('reads no hidden file or directory of the checkout, so a lane cannot be pointed at its git settings',()=>{
+ const root=temp();fs.mkdirSync(join(root,'.git'));fs.writeFileSync(join(root,'.git/config'),'[remote "origin"]\n url = https://token@example.invalid/house.git\n');
+ fs.writeFileSync(join(root,'.env'),'SECRET=1\n');fs.mkdirSync(join(root,'routines/.private'),{recursive:true});fs.writeFileSync(join(root,'routines/.private/notes.md'),'hidden');fs.writeFileSync(join(root,'routines/plan.md'),'Plan the day.');
+ const read=repositoryInstructions(root);
+ for(const file of ['.git/config','.env','routines/.private/notes.md'])expect(()=>read(file),file).toThrow('Lane instructions need a relative file in the configured repository');
+ expect(read('routines/plan.md')).toBe('Plan the day.');
+ // The same rule says so when the trigger is set, not only when it fires.
+ for(const file of ['.git/config','.env','routines/.private/notes.md','../x','/etc/passwd','a\\b'])expect(laneFile(file),file).toBe(false);
+ expect(laneFile('routines/plan.md')).toBe(true);
 });
