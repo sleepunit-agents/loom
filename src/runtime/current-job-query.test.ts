@@ -44,7 +44,9 @@ function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
 }
 it('mounts current jobs through the real root with canonical private-member precedence', async () => {
   const f = fixture();
-  for (const [who, ids] of [['alice', ['owned', 'private-alice']], ['bob', ['private-bob']], ['house', ['owned', 'private-alice', 'private-bob', 'private-house']], ['guest', []], ['art', ['owned']]] as const) {
+  // A member's private conversation is that member's alone: the household owner sees the job of their own
+  // private thread and not Alice's or Bob's.
+  for (const [who, ids] of [['alice', ['owned', 'private-alice']], ['bob', ['private-bob']], ['house', ['owned', 'private-house']], ['guest', []], ['art', ['owned']]] as const) {
     const response = await f.post(who); expect(response.status).toBe(200);
     const body = await response.json(); expect(body.errors).toBeUndefined(); expect(body.data.currentJobs.map((row: { id: string }) => row.id)).toEqual(ids);
     expect(JSON.stringify(body)).not.toMatch(/Never query|private repo|Housefile/);
