@@ -1,6 +1,5 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
-import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import type { DataDatabase } from './core/data/database.js';
 import type { Clock } from './core/clock.js';
 import type { DataWrites } from './core/data/writes.js';
@@ -43,13 +42,9 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // The shipped program runs only the sweep. A composition that adds operations vouches for their names.
       knows: options.operation ? undefined : () => false,
     },
-    commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => {
-      // Chat is the control surface. A current body may carry out its recorded
-      // member's ordinary mailbox preference, without becoming that member.
-      const person = access.action === 'volume' ? options.chatMember?.(viewer) : undefined;
-      const delegated = !!person && access.action === 'volume' && access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).sourceAllowsItem({kind:'member',id:person},access.item.id);
-      return tempoCommandAllowed(db, viewer, access) || delegated;
-    },
-    },
+    // Chat is the control surface: a current body may carry out its member's ordinary mailbox preference
+    // without becoming that member. When is the volume rule in policy.ts, asked by tempoCommandAllowed;
+    // chatMember is this door's proof that the caller is the current body of that member's chat.
+    commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember) },
   });
 }

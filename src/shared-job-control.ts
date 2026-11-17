@@ -1,10 +1,11 @@
-/** Ending a job by hand. A household owner, or a member who owns the job's
- * agent, ends work that is stuck (reset) or gives up on it (write-off). The
- * job records who ended it and why. */
+/** Ending a job by hand: work that is stuck (reset) or given up on (write-off). Who may is the stopJob
+ * rule in policy.ts, which is wider than who may read the job, on purpose and for the reason given there.
+ * So this door says nothing of a job but that it stopped, or that it had already ended. The job records
+ * who ended it and why. */
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { directsAgent, type Viewer } from './policy.js';
-import { householdOwner, sharedSharing } from './shared-sharing.js';
+import { holds, rules, type Viewer } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
@@ -12,11 +13,8 @@ import { Jobs } from './runtime/jobs.js';
 export function registerSharedJobControl(operations: Operations, db: DataDatabase, options: { now(): string; jobEnded(job: string): void }) {
   const store = new Jobs(db, options.now);
   const may = (viewer: Viewer, id: string) => {
-    if (viewer.kind !== 'member') return false;
     const job = db.select({ agent: jobs.agent }).from(jobs).where(eq(jobs.id, id)).get();
-    if (!job) return false;
-    // Any household owner may end stuck work; otherwise the job's agent must be on the member's own list.
-    return householdOwner(db, viewer) || directsAgent(viewer, job.agent, sharedSharing(db));
+    return !!job && holds(rules.stopJob, viewer, job, sharedSharing(db));
   };
   operations.register({ name: 'runtime.jobStop', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ job: z.string().min(1).max(200), reason: z.enum(['reset', 'write-off']) }).strict(),
