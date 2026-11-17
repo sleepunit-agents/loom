@@ -48,6 +48,29 @@ filed under. Moving a task to another of those, merging two of them, and splitti
 then move the chosen tasks into it) are in [owners.md](owners.md), "Moving a task, and merging or splitting
 projects". None of them touches a card.
 
+### Asking to work on a project
+
+*Added 2026-11-17. The owner: "I go hey mark work on pond and he goes, uh I don't do that, but ok can I work on
+pond? card shows up, I hit yes, he goes oh ok and grinds."*
+
+An agent that is told to work on a household project it is not on asks to be let onto it: `propose` with
+`change: "projectJoin"` and `{ "project": "<id>", "agent": "<its own id>" }`, and the reason.
+
+- **Who may ask.** The agent itself, for itself, from a terminal session or a body. A household owner may file
+  the same card for any agent. Nobody else: not another agent, not a member who is not a household owner. The
+  rule is `asksToJoin` in `src/policy.ts`.
+- **The card** says who wants onto which project ("Let mark work on project pond?") and the reason given. It
+  is a setting, answered by a household owner like any other.
+- **Allowing it** adds that one agent to that one project. The project's name, people, other agents and
+  repositories are as they were.
+- **Refused.** An agent that asks to join a project it is already on is told so, and no card is filed. A
+  project or agent that is removed or not there is refused to the owner when they look at the card and when
+  they allow it; an agent is not told which, since it may not read a project it is not on. An owner who
+  files the card is told at once.
+- **The answer** goes to the agent as mail in the conversation it asked from, as every card's answer does, so
+  its next body there reads "Allow" or "Deny" and carries on.
+- Taking an agent off a project is the `project` change, as before.
+
 ## Vocabulary (to be added to CONTEXT.md)
 
 **Project**:

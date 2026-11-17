@@ -191,7 +191,8 @@ the household needs the tools to put right what lands in the wrong place.*
 A task belongs to a project, and everyone on that project sees it. A task with no project is its owner's
 alone. Three things change where work is filed.
 
-- **Move a task** (`tasks.command`, action `move`, with `ids` and `project`; the named tool `task_move`).
+- **Move a task** (`tasks.command`, action `moveToProject`, with `ids` and `project`; the named tool
+  `task_move_to_project`).
   Up to 500 tasks go to another project, or with `project: null` out of every project.
   - *Who may.* The mover must be able to act on each task where it is now, and must be someone who could
     have filed a task where it is going: a member or agent on that project, or a household owner. Out of
@@ -206,9 +207,12 @@ alone. Three things change where work is filed.
   - *What stays.* Links stay: a parent and its children may be in different projects. Comments stay.
   - *The record.* One comment on each moved task, by the mover, saying from where to where. A task already
     in the project is left alone and gets no comment.
-  - The same action name with one `id` and `before` still places a task in the hand-kept order.
+  - *One way.* An `edit` that names another project is this same move for one task: the same rule, the
+    same mail, the same comment. Before 2026-11-17 such an edit left no comment and left the task's mail
+    under the old project. `move` still means only a task's place in the hand-kept order.
 - **Merge two projects** (a household change, `projectMerge`, with `from` and `into`). An agent proposes it
-  and a household owner allows the card, as for every household change. In one write:
+  and a household owner allows the card. A merge cannot be undone, so the card is a dangerous one: the owner
+  must also confirm, and no standing rule for settings answers it. In one write:
   - every record filed under `from` is filed under `into`: its tasks, conversations, inbox items, approval
     cards, triggers, jobs and pull requests. `projectLabelled` in `src/shared-projects.ts` lists every table
     that names a project and what the merge does with it, and a test fails when a table is missing from it;
@@ -220,11 +224,13 @@ alone. Three things change where work is filed.
   It is refused for a project merged into itself, for one that is removed or not there, and when a
   repository would be left with two projects. The card is the record: who asked, who allowed it, and the
   two projects. Tasks get no comment. A merge is not undone by restoring `from`, which puts back an empty
-  project. A standing approval rule whose scope is `project:<from>` is not carried over: it stays an
-  owner's word about that one project.
+  project. A standing approval rule whose scope is `project:<from>` is not carried over. It was an owner's
+  word about that one project; carried over, it would answer for every card of the project merged into.
 - **Split a project.** There is no command for it. It is two steps that already exist:
   1. make the new project (a household owner in the app, or an agent with `propose` and `change: "project"`);
-  2. `move` the chosen tasks into it.
+  2. move the chosen tasks into it (`moveToProject`).
+- **Ask to be let onto a project** (a household change, `projectJoin`): see [projects.md](projects.md),
+  "Asking to work on a project".
 
 ## What the tests must pin
 
