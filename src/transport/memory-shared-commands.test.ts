@@ -101,3 +101,17 @@ it('adds a person through the card store, so its rules for a summary and for a m
  expect(f.call('mind.personAdd',{name:'Old friend',summary:'',channel:'',handle:''},'merged')).toMatchObject({code:'conflict'});
  expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
 });
+it('finishes a person whose relationship half alone survived a crash, on a later add under a new operation id',async()=>{
+ const f=await fixture(),input={name:'Fictional friend',summary:'Private relationship',channel:'email',handle:'fiction@example.invalid'};
+ expect(f.call('mind.personAdd',input,'person')).toMatchObject({ok:true});
+ // As a crash between the two commits leaves it, found after the first attempt's receipt is gone.
+ for(const [path,sql] of [[f.directory,'DELETE FROM people;DELETE FROM mind_operation_receipts'],[f.relationship,'DELETE FROM mind_operation_receipts']]){const db=new Database(path);try{db.exec(sql);}finally{db.close();}}
+ f.client.exec('DELETE FROM operation_results');
+ // Other words for the half that is kept would be lost without a word, so that is refused and saves nothing.
+ expect(f.call('mind.personAdd',{...input,summary:'Other words'},'other')).toMatchObject({code:'conflict'});
+ expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['fiction:fictional-friend']);
+ expect(f.call('mind.personAdd',input,'later')).toMatchObject({ok:true,value:{slug:'fictional-friend'}});
+ expect(await f.read('{ memoryPeople { id card { summary where { key } } } }')).toMatchObject({memoryPeople:[{id:'commons:fictional-friend',card:{where:[{key:'email'}]}},{id:'fiction:fictional-friend',card:{summary:'Private relationship'}}]});
+ const relationship=new Database(f.relationship);
+ try{expect(relationship.prepare("SELECT count(*) AS n FROM person_revisions").get()).toEqual({n:0});}finally{relationship.close();}
+});
