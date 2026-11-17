@@ -49,7 +49,7 @@ async function fixture(){
  closes.push(()=>knowledgeActions.close(),()=>peopleActions.close(),()=>operations.close(),()=>data.close());
  const call=(name:string,input:unknown,id:string)=>operations.call('http',{kind:'member',id:'owner'},name,input,id);
  const read=async(query:string)=>{const response=await data.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
- return {client,db,source,operations,published,changes,call,read,tables,initialTables,directory,failReceipt(v:boolean){failReceipt=v;},failRelationship(v:boolean){failRelationship=v;}};
+ return {client,db,source,operations,published,changes,call,read,tables,initialTables,directory,relationship,failReceipt(v:boolean){failReceipt=v;},failRelationship(v:boolean){failRelationship=v;}};
 }
 it('recovers a committed Knowledge source effect after shared receipt failure without duplicate notes',async()=>{
  const f=await fixture(),before=f.initialTables;f.failReceipt(true);
@@ -87,4 +87,17 @@ it('finishes a person whose relationship half alone survived a crash, on a retry
  expect(f.call('mind.personAdd',input,'person')).toMatchObject({ok:true,value:{slug:'fictional-friend'}});
  expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
  expect(f.call('mind.personAdd',input,'another')).toMatchObject({code:'conflict'});
+});
+it('adds a person through the card store, so its rules for a summary and for a merged address hold',async()=>{
+ const f=await fixture();
+ expect(f.call('mind.personAdd',{name:'Fictional friend',summary:'Private relationship',channel:'',handle:''},'person')).toMatchObject({ok:true});
+ const relationship=new Database(f.relationship);
+ try{
+  // A card written with a summary records when that summary was written.
+  expect(relationship.prepare("SELECT synthesized_at IS NOT NULL AS dated FROM people WHERE slug='fictional-friend'").get()).toEqual({dated:1});
+  // An address that was merged into another card leads there; a new card behind it would never be read.
+  relationship.prepare("INSERT INTO person_merges (from_slug,into_slug,merged_at,merged_by,counts_json) VALUES ('old-friend','fictional-friend','2026-11-15T00:00:00.000Z',NULL,'{}')").run();
+ }finally{relationship.close();}
+ expect(f.call('mind.personAdd',{name:'Old friend',summary:'',channel:'',handle:''},'merged')).toMatchObject({code:'conflict'});
+ expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
 });
