@@ -469,6 +469,8 @@ it('lists live memories newest first by category and project with sourcing, forg
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query('{memoryList(agent:"art"){id title}}',raw.member)).toEqual({memoryList:null});
  // Nor does the body working for her: it reaches what is the agent's only while she has the agent.
  expect(await f.query('{memoryList(agent:"art"){id}}')).toEqual({memoryList:null});
+ // And it changes none of it either: the commands answer a body by the same rule as the read.
+ expect((await f.call('forget',{id:all[0].id},'lost-forget')).status).toBe(403);expect((await f.call('remember',{...input,title:'After she lost the agent'},'lost-remember')).status).toBe(403);
  f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run());
  const forgotten=await f.call('forget',{id:all[0].id},'list-forget');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([ids[3]]);
  expect((await f.query('{memoryList(agent:"art"){id}}')).memoryList).toEqual([{id:ids[2]},{id:ids[1]},{id:ids[0]}]);

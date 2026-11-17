@@ -4,6 +4,7 @@ import { threadTitle } from './title.js';
 import { randomUUID } from 'node:crypto';
 import { and, count, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
+import { unendedJobStates } from '../data/job-states.js';
 import { conversations, deletedThreads, jobs, messages, threads } from '../data/schema.js';
 import { Conversations } from './index.js';
 
@@ -54,7 +55,7 @@ export class Threads {
       // copied when it was queued. This is the one place a title changes, so all three change here.
       // A finished job keeps the title it ran under.
       this.db.update(conversations).set({ label: title }).where(eq(conversations.id, thread.conversation)).run();
-      this.db.update(jobs).set({ title }).where(and(eq(jobs.conversation, thread.conversation), inArray(jobs.state, ['queued', 'starting', 'running', 'waiting']))).run();
+      this.db.update(jobs).set({ title }).where(and(eq(jobs.conversation, thread.conversation), inArray(jobs.state, unendedJobStates))).run();
       return this.db.update(threads).set({ title, titledBy: by }).where(eq(threads.id, id)).returning().get()!;
     });
   }

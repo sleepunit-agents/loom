@@ -47,17 +47,6 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A record of one member's private work becoming readable through any of
   the four. Then that table needs a member label and a rule that reads it.
 
-### A body is told which member it works for at the outside door, not where its token is resolved
-- **What.** `bodyWorkingFor` (`src/shared-sharing.ts`) writes the member onto the viewer inside
-  `authenticateOutside` in `src/shared-root.ts`, after `sharedCredentials.authenticate`. The token itself is
-  resolved in `src/core/data/authentication.ts` (`currentToken`), which returns the bare agent.
-- **Why accepted.** Every outside door (the command door, `/graphql`, the live socket, `/mcp`) authenticates
-  through `authenticateOutside`, so no door sees a body without it. A composition that calls
-  `dataAuthentication` on its own (tests, `dataHttp`'s default) gets the bare agent, which is today's
-  behaviour for a program with no bodies.
-- **What would change the answer.** A second outside composition that serves bodies. Then the member should
-  be read in `currentToken`, where the job row is already loaded.
-
 ### A household owner may end a job they cannot read
 - **What.** `runtime.jobStop` is allowed to any household owner, and to a member who has the job's agent on
   their own list, by job id. The jobs read rule hides a job of another member's private thread from both.

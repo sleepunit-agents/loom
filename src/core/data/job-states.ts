@@ -13,4 +13,6 @@ export const claimedJobStates = ['starting', 'running', 'waiting'] as const sati
 /** Not ended: waiting for a machine, or claimed by one. A conversation has at most one such job. */
 export const unendedJobStates = ['queued', ...claimedJobStates] as const satisfies readonly JobState[];
 export const endedJobStates = ['done', 'failed', 'stopped', 'lost'] as const satisfies readonly JobState[];
+/** Is this job some machine's now? A body's own credential is good only while its job is. */
+export const jobClaimed = (state: JobState): boolean => (claimedJobStates as readonly JobState[]).includes(state);
 export const jobUnended = (state: JobState): boolean => (unendedJobStates as readonly JobState[]).includes(state);

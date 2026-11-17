@@ -116,6 +116,23 @@ it('ends a body\'s token with the machine token it was enrolled from: revoked or
   db.update(tokens).set({ revokedAt: null, expiresAt: '2026-11-14T01:00:00.000Z' }).where(eq(tokens.fingerprint, hash(runner))).run();
   expect(asBody()).toBeDefined(); tick(3600_000); expect(asBody()).toBeUndefined();
 });
+it('says on a body\'s viewer which member its job is for, with no door around it, and ends the credential when that changes', () => {
+  const { db, authenticate, request } = fixture(), body = 'd'.repeat(64), other = 'e'.repeat(64);
+  db.insert(members).values({ id: 'lee', role: 'member', joinedAt: at }).run();
+  db.insert(agents).values({ id: 'bot', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(boxes).values({ id: 'box', owner: 'sam', name: 'box', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  const job = { agent: 'bot', box: 'box', title: '', state: 'running' as const, brief: '', model: 'm', startedByKind: 'agent', startedBy: 'bot', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: at };
+  db.insert(jobs).values([{ ...job, id: 'private', member: 'sam' }, { ...job, id: 'room' }]).run();
+  db.insert(tokens).values([{ fingerprint: hash(body), label: 'body', kind: 'agent', agent: 'bot', job: 'private', createdAt: at }, { fingerprint: hash(other), label: 'room', kind: 'agent', agent: 'bot', job: 'room', createdAt: at }]).run();
+  const held = authenticate(request({ authorization: 'Bearer ' + body }))!;
+  expect(held.viewer).toEqual({ kind: 'agent', id: 'bot', workingFor: 'sam' });
+  // Work that is for no member is the agent alone.
+  expect(authenticate(request({ authorization: 'Bearer ' + other }))!.viewer).toEqual({ kind: 'agent', id: 'bot' });
+  // What was admitted as working for one member is not carried on as working for another.
+  db.update(jobs).set({ member: 'lee' }).where(eq(jobs.id, 'private')).run();
+  expect(held.valid()).toBe(false);
+  expect(authenticate(request({ authorization: 'Bearer ' + body }))!.viewer).toEqual({ kind: 'agent', id: 'bot', workingFor: 'lee' });
+});
 it('names the one credential a request presents, and which token and session it resolved', () => {
   const { authenticate, request } = fixture();
   expect(presentedCredential(request({ authorization: 'Bearer ' + raw, cookie: 'loom_ui=' + cookie }))).toEqual({ bearer: raw });

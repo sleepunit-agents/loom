@@ -14,9 +14,9 @@ import { isInternalCaller } from './core/internal.js';
  * no further than the member does: see `workingFor`. */
 export type Viewer =
   | { kind: 'member'; id: string }
-  /** `workingFor` is the member whose private work this agent's body is doing. The door sets it once, from
-   * the job the body's credential is bound to (bodyWorkingFor in shared-sharing.ts), never from request
-   * input. A terminal session, and a body whose job is for no member, has none and is the agent alone.
+  /** `workingFor` is the member whose private work this agent's body is doing. It is set where the credential is
+   * resolved, from the job the body's token is bound to (currentToken in core/data/authentication.ts),
+   * never from request input. A terminal session, and a body whose job is for no member, has none and is the agent alone.
    *
    * With it, each way the agent reaches a record counts only while that member has the same reach:
    *  - a project (inProject, sharesProjectWithAgent): the member is in it too, or is a household owner;

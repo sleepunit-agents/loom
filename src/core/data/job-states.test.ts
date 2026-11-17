@@ -1,7 +1,6 @@
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { createDataSchema } from './database.js';
-import { activeJobStates } from './authentication.js';
 import { claimedJobStates, endedJobStates, unendedJobStates } from './job-states.js';
 import { jobs } from './schema.js';
 
@@ -17,8 +16,4 @@ it('agrees with the index that allows a conversation one unended job', () => {
     const listed = [...index.sql.slice(index.sql.toLowerCase().lastIndexOf('where')).matchAll(/'([a-z]+)'/g)].map(match => match[1]);
     expect(listed.sort()).toEqual([...unendedJobStates].sort());
   } finally { client.close(); }
-});
-// The body-credential rule keeps its own list until it imports this one; meanwhile this holds the two equal.
-it('agrees with the states in which a body credential is good', () => {
-  expect([...activeJobStates].sort()).toEqual([...claimedJobStates].sort());
 });

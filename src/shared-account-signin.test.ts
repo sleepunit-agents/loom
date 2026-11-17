@@ -193,13 +193,19 @@ it('lets an agent ask only with the authority of the member its current work is 
   const work = new WeakMap<Viewer, string>();
   registerSharedAccountSignIn(operations, db, now, () => undefined, viewer => { const found = work.get(viewer); return found ? { job: found } : undefined; });
   let n = 0;
-  const ask = (on?: string) => { const viewer: Viewer = { kind: 'agent', id: 'bot' }; if (on) work.set(viewer, on); return operations.call('http', viewer, 'runtime.accountSignIn', { account: 'account', box: 'box' }, 'ask-' + ++n); };
+  // The viewer is what the credential resolves to: a body's names the member its job is for (currentToken).
+  const body = (on?: string): Viewer => {
+    const member = on ? db.select({ member: jobs.member }).from(jobs).where(eq(jobs.id, on)).get()?.member : null;
+    const viewer: Viewer = { kind: 'agent', id: 'bot', ...(member ? { workingFor: member } : {}) }; if (on) work.set(viewer, on);
+    return viewer;
+  };
+  const ask = (on?: string) => operations.call('http', body(on), 'runtime.accountSignIn', { account: 'account', box: 'box' }, 'ask-' + ++n);
   expect(ask('for-guest')).toMatchObject({ ok: false, code: 'denied' });
   expect(ask('for-nobody')).toMatchObject({ ok: false, code: 'denied' });
   expect(ask()).toMatchObject({ ok: false, code: 'denied' });
   const asked = ask('for-owner'); expect(asked).toMatchObject({ ok: true });
   const id = (asked as { value: { id: string } }).value.id;
   expect(db.select().from(accountSignins).where(eq(accountSignins.id, id)).get()).toMatchObject({ askedByKind: 'agent', askedBy: 'bot' });
-  const status = (on: string) => { const viewer: Viewer = { kind: 'agent', id: 'bot' }; work.set(viewer, on); return operations.call('http', viewer, 'runtime.accountSignInStatus', { id }); };
+  const status = (on: string) => operations.call('http', body(on), 'runtime.accountSignInStatus', { id });
   expect(status('for-owner')).toMatchObject({ ok: true }); expect(status('for-guest')).toMatchObject({ ok: false, code: 'denied' });
 });

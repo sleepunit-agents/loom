@@ -3,10 +3,11 @@
  * Issuance is deliberately not retryable: a lost response requires a new label.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
-import { activeJobStates, credentialFingerprint, currentToken } from '../data/authentication.js';
+import { credentialFingerprint, currentToken } from '../data/authentication.js';
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
+import { jobClaimed } from '../data/job-states.js';
 import type { Viewer } from '../../policy.js';
 import { householdOwner } from '../../shared-sharing.js';
 import type { Clock } from '../clock.js';
@@ -42,7 +43,7 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
       if (!db.select().from(agents).where(eq(agents.id, value.agent)).get()) throw new OperationError('invalid', 'Choose an existing agent');
       if (value.job) {
         const job = db.select().from(jobs).where(eq(jobs.id, value.job)).get();
-        if (!job || job.agent !== value.agent || !job.box || !activeJobStates.includes(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
+        if (!job || job.agent !== value.agent || !job.box || !jobClaimed(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
       }
     }
     if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');

@@ -5,8 +5,9 @@ import { eq } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
 import type { DataDatabase } from './core/data/database.js';
-import { activeJobStates, credentialFingerprint, dataAuthentication, presentedCredential } from './core/data/authentication.js';
+import { credentialFingerprint, dataAuthentication, presentedCredential } from './core/data/authentication.js';
 import { tokens, sessions, jobs } from './core/data/schema.js';
+import { jobClaimed } from './core/data/job-states.js';
 import type { Authentication } from './core/live/index.js';
 
 export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void, programs: ProgramGrantReader = () => undefined) {
@@ -22,7 +23,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
   const bodyJob = (token: Token, bound?: BoundJob) => {
     if (token.kind !== 'agent' || !token.job || !token.agent) return;
     const job = db.select({ id: jobs.id, agent: jobs.agent, box: jobs.box, conversation: jobs.conversation, member: jobs.member, project: jobs.project, state: jobs.state }).from(jobs).where(eq(jobs.id, token.job)).get();
-    if (!job || job.agent !== token.agent || !activeJobStates.includes(job.state) || !job.box) return;
+    if (!job || job.agent !== token.agent || !jobClaimed(job.state) || !job.box) return;
     if (bound && (['agent', 'box', 'conversation', 'member', 'project'] as const).some(key => job[key] !== bound[key])) return;
     return job;
   };

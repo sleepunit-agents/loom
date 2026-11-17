@@ -11,6 +11,8 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
 import type { DataDatabase } from './database.js';
 import { tokens, sessions, members, agents, boxes, jobs, programTokens } from './schema.js';
+import { jobClaimed } from './job-states.js';
+import type { Viewer } from '../../policy.js';
 
 /** What is stored and looked up for a token, a cookie or a sign-in code: its SHA-256. The secrets are 256
  * random bits, so finding a row by this digest tells a caller nothing through timing. This is the only
@@ -36,8 +38,6 @@ export const sessionEnds = (session: Pick<typeof sessions.$inferSelect, 'issuedA
 /** A token row that is neither revoked nor expired. Whether its holder is still current is currentToken's. */
 export const tokenLive = (token: Pick<typeof tokens.$inferSelect, 'revokedAt' | 'expiresAt'>, now: number) =>
   !token.revokedAt && (token.expiresAt === null || Date.parse(token.expiresAt) > now);
-/** The states in which a job is current work; a body's token is good only while its job is in one. */
-export const activeJobStates: readonly string[] = ['starting', 'running', 'waiting'];
 
 /** The browser cookie alone, whatever else the request carries. */
 export function presentedCookie(request: Request): string | undefined {
@@ -61,7 +61,7 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
  * that job is this agent's current work on a machine that has not been revoked. A token enrolled from
  * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
  * ends the bodies it started. */
-export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: { kind: 'member' | 'agent' | 'runner'; id: string }; job?: string } | undefined {
+export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
   const token = db.select().from(tokens).where(eq(tokens.fingerprint, id)).get();
   if (!token || !tokenLive(token, now)) return;
   // One step, never a chain: only a machine's own token enrols another (shared-body-enrollment.ts).
@@ -73,9 +73,12 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
   if (token.kind === 'agent' && token.agent) {
     if (!db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, token.agent), isNull(agents.removedAt))).get()) return;
     if (token.job) {
-      const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state }).from(jobs).where(eq(jobs.id, token.job)).get();
-      if (!job || job.agent !== token.agent || !job.box || !activeJobStates.includes(job.state)) return;
+      const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state, member: jobs.member }).from(jobs).where(eq(jobs.id, token.job)).get();
+      if (!job || job.agent !== token.agent || !job.box || !jobClaimed(job.state)) return;
       if (!db.select({ id: boxes.id }).from(boxes).where(and(eq(boxes.id, job.box), isNull(boxes.revokedAt))).get()) return;
+      // A body is its agent narrowed to the member its job is for (policy.ts, Viewer.workingFor). It is said
+      // here, where the job row is read, so no door can meet a body's token as the whole agent.
+      if (job.member) return { token, viewer: { kind: 'agent' as const, id: token.agent, workingFor: job.member }, job: token.job };
     }
     return { token, viewer: { kind: 'agent' as const, id: token.agent }, job: token.job ?? undefined };
   }
@@ -121,7 +124,8 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
     if (!admitted) return;
     return { ...admitted, window: !!sessionId, credential: Object.freeze({ token: tokenId, session: sessionId }), valid() {
       const live = current();
-      return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job;
+      return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job
+        && (live.viewer.kind === 'agent' ? live.viewer.workingFor : undefined) === (admitted.viewer.kind === 'agent' ? admitted.viewer.workingFor : undefined);
     } };
   };
 }

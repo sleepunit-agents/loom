@@ -74,8 +74,8 @@ import { sameRequestOrigin } from './core/data/origin.js';
 import { DOOR_REQUEST_BYTES } from './core/data/http.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
-import { mayRunPrivateWork } from './policy.js';
-import { bodyWorkingFor, currentMember, sharedSharing } from './shared-sharing.js';
+import { holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
+import { currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
@@ -157,9 +157,9 @@ export function sharedRoot(options: {
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
-  // Every outside door authenticates here. A body's viewer is told which member its work is for before any
-  // door sees it, so no rule can be asked about a body as though it were the whole agent.
-  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);if(auth)bodyWorkingFor(db,auth.viewer,credentials.body(auth.viewer));return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
+  // Every outside door authenticates here. A body's viewer already says which member its work is for:
+  // currentToken writes it where it reads the job (core/data/authentication.ts).
+  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
@@ -182,7 +182,11 @@ export function sharedRoot(options: {
   programOperations=()=>operations.offered('http').map(operation=>operation.name);
   if(programSetup)registerProgramSetup(operations,db,programSetup);
   pushes=sharedNotifications({db,clock,writes:data.writes,config:options.notifications,browser:credentials.browser,visible:conversationQuestionPolicy(db).visibility,reportError:options.reportError});pushes.install(operations);startupCleanups.push(()=>{void pushes?.close();});
-  memory.register(operations,options.commsKey?{body:viewer=>credentials.body(viewer)??credentials.agentSession(viewer),hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
+  // Whose memory a command works on is the caller's own agent's, on proof of its credential. A body working
+  // for a member is that agent only while the member has the agent (rules.agentItself), the same answer
+  // the memory reads give it.
+  const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
+  memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
   // The list of commands is no secret: any current member or agent may read it. Each command still checks its own caller.

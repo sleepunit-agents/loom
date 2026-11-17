@@ -23,7 +23,7 @@ import { mayAct, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { liveWorker } from './shared-worker.js';
 import type { DataDatabase } from './core/data/database.js';
-import { accountSignins, boxes, inbox, jobs, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
+import { accountSignins, boxes, inbox, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { accountObservationCommitted } from './runtime/account-completion.js';
@@ -54,13 +54,10 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   };
   // An agent asks with the authority of the one member its current work is for, and of nobody else: not of
   // its other owners, and not of the household's owners. Work that is for no member can ask for nothing.
-  const workingFor = (viewer: Viewer) => {
-    const work = acting(viewer);
-    return work && db.select({ member: jobs.member }).from(jobs).where(and(eq(jobs.id, work.job), eq(jobs.agent, viewer.id))).get()?.member || undefined;
-  };
   const mayAsk = (viewer: Viewer, input: { account: string; box: string }) => {
     if (viewer.kind === 'member') return memberMay(viewer.id, input);
-    const member = viewer.kind === 'agent' ? workingFor(viewer) : undefined;
+    // Which member that is comes from the body's credential (Viewer.workingFor), with proof that it is one.
+    const member = viewer.kind === 'agent' && acting(viewer) ? viewer.workingFor : undefined;
     return !!member && memberMay(member, input);
   };
   const machine = (viewer: Viewer) => !!liveWorker(db, viewer, runner(viewer));
