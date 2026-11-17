@@ -99,11 +99,21 @@ lifespans and the length of its path (`src/notes.ts`), how long a secret grant m
 what an agent sends to ask for one (`src/pieces/secrets/input.ts`), a secret's standing
 answers and the writer of the household's default (`src/pieces/secrets/requests.ts`),
 Tempo's timing ranges (`src/core/tempo/volume.ts`), the shape of a SHA-256 digest in hex
-and of a sign-in link's path (`src/core/sha256-hex.ts`), and a calendar day
-(`src/core/day.ts`). A choice the database also checks is read from its column in
-`src/core/data/schema.ts`. `src/single-home.contract.test.ts` and
-`src/stored-data.contract.test.ts` fail when one of these is copied again in the files
-they name.
+and of a sign-in link's path (`src/core/sha256-hex.ts`), a calendar day
+(`src/core/day.ts`), the size of a secret's value and the ways one is written
+(`src/pieces/secrets/input.ts`), the length of a job's log (`src/runtime/log-tail.ts`),
+the most words one message carries (`src/core/conversations/words.ts`), a one-line name
+and a machine's name (`src/core/line-name.ts`), the most a memory holds
+(`src/backends/types.ts`), and the days that decide a Knowledge page's freshness
+(`src/pieces/mind/knowledge.ts`). Two times that must agree are one constant, or one is
+worked out from the other in code: how long an unread bridge event and a held message
+are kept (`src/pieces/bridges/events.ts`), and how long loom and a worker each give a
+relayed sign-in (`src/runtime/account-signin-time.ts`). A choice the database also checks
+is read from its column in `src/core/data/schema.ts`. `src/single-home.contract.test.ts`
+and `src/stored-data.contract.test.ts` fail when one of these is copied again in the files
+they name. The first also reads every number written in the program and the app: the
+number of a named limit, written in any file but that limit's home, fails it until the
+file either takes the name or is listed there with what its own number means.
 
 Choices that were made on purpose and look like oversights are listed, with why, in
 `docs/accepted-tradeoffs.md`.
