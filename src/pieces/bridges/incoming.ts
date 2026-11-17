@@ -67,7 +67,8 @@ export class BridgeIncoming {
       // Who the message is addressed to: whoever it mentions, the author of the message it explicitly
       // replies to, and the bot whose own message its thread hangs under. Nothing looser counts: a bot
       // that has merely spoken in the thread, or spoke last in the room, is not addressed. A thread's root
-      // is known as a bot's only if loom posted it, and a reply posted in parts records its last part.
+      // is known as a bot's only if loom posted it, and a reply posted in parts records its last part
+      // (docs/accepted-tradeoffs.md, "Only the last part of a long reply is a known thread root").
       const addressed = new Set(message.mentions);
       if (message.repliesTo) addressed.add(message.repliesTo);
       if (message.thread) {

@@ -167,28 +167,60 @@ describe('approved bridge reply queue', () => {
     expect(f.read().state).toBe('sent');
   });
 
-  it('hands a reply no request can be built for to a person, and keeps a half-sent one uncertain', async () => {
+  it('hands a reply no request can be built for to a person', async () => {
     const f = fixture();
     f.post.mockRejectedValueOnce(new BridgeReplyNotSent(false));
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello back' });
     await f.sends.flush();
     expect(f.read().state).toBe('held');
-    // The first part is out; the second never left. The reply as a whole is not unsent.
-    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
-    f.sends.queue({ id: 'long', incoming: 'in', text: 'x'.repeat(2001) });
-    await f.sends.flush();
-    expect(f.read('long').state).toBe('uncertain');
   });
 
-  it('uses existing chunking and records uncertainty after a partial reply', async () => {
+  it('finishes a reply whose later part never left, from the part it stopped at', async () => {
+    const f = fixture(), text = 'a'.repeat(2000) + 'b'.repeat(2000) + 'c'.repeat(500);
+    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
+    f.sends.queue({ id: 'reply', incoming: 'in', text });
+    await f.sends.flush();
+    // What the platform confirmed is sent and is not sent again. The remainder is a reply of its own, still to go.
+    expect(f.read()).toMatchObject({ state: 'sent', text: 'a'.repeat(2000), postedId: 'first' });
+    expect(f.read('reply/rest')).toMatchObject({ state: 'pending', text: 'b'.repeat(2000) + 'c'.repeat(500), postedId: null, incoming: 'in', channel: 'channel', thread: 'thread' });
+    // A retry of the same reply is still the same reply; another text under its id is not.
+    expect(f.sends.queue({ id: 'reply', incoming: 'in', text }).id).toBe('reply');
+    expect(() => f.sends.queue({ id: 'reply', incoming: 'in', text: 'a'.repeat(2000) })).toThrow('reused');
+    await f.sends.flush();
+    expect(f.post).toHaveBeenCalledTimes(2);
+    for (let second = 0; second < 5; second++) f.advance();
+    f.post.mockResolvedValueOnce({ id: 'second' }).mockResolvedValueOnce({ id: 'third' });
+    await f.sends.flush();
+    expect(f.read('reply/rest')).toMatchObject({ state: 'sent', postedId: 'third' });
+    // The outside reader has every character once, in order.
+    expect((f.post.mock.calls as unknown as [unknown, unknown, string][]).map(call => call[2]).filter((_, index) => index !== 1).join('')).toBe(text);
+    expect(f.db.select().from(bridgeSends).all()).toHaveLength(2);
+  });
+
+  it('calls a partly posted reply uncertain as a whole when its remainder cannot have a row', async () => {
     const f = fixture();
-    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new Error('timeout'));
+    f.sends.queue({ id: 'reply/rest', incoming: 'in', text: 'Somebody chose this id', held: true });
+    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'x'.repeat(2001) });
     await f.sends.flush();
-    expect(f.post).toHaveBeenCalledTimes(2);
-    expect(f.read().state).toBe('uncertain');
+    expect(f.read()).toMatchObject({ state: 'uncertain', text: 'x'.repeat(2001), postedId: 'first' });
+    expect(f.read('reply/rest')).toMatchObject({ state: 'held', text: 'Somebody chose this id' });
+  });
+
+  it('marks only the unconfirmed remainder of a partly posted reply uncertain', async () => {
+    const f = fixture();
+    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new Error('timeout'));
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'x'.repeat(2000) + 'y' });
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(2);
+    expect(f.read()).toMatchObject({ state: 'sent', text: 'x'.repeat(2000), postedId: 'first' });
+    // The platform may have the second part: a person sees exactly which words are in doubt, and it is never sent again.
+    expect(f.read('reply/rest')).toMatchObject({ state: 'uncertain', text: 'y', postedId: null });
+    await f.sends.flush();
+    expect(f.post).toHaveBeenCalledTimes(2);
+    expect(() => reviewReply(f.db, 'reply/rest', 'release')).toThrow('not awaiting');
+    reviewReply(f.db, 'reply/rest', 'dismiss');
+    expect(f.read('reply/rest').state).toBe('dismissed');
   });
 });
 it('processes a second committed send queued while an earlier flush is awaiting HTTP',async()=>{

@@ -33,3 +33,6 @@ export function parseInboxSourceId(value: string | null): { workspace: string; c
 /** How an outside user is named where no household member stands for them:
  * the `person` of an agent's tier for someone on a platform. */
 export const outsidePersonKey = (platform: 'discord' | 'slack', workspace: string, user: string): string => JSON.stringify([platform, workspace, user]);
+
+/** `bridge_sends.id` of what is left of a reply that was only partly posted (sends.ts). */
+export const restOfReply = (reply: string): string => `${reply}/rest`;

@@ -94,7 +94,9 @@ it('refuses the next part when connection identity changes during its fresh cred
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;let reads=0;
  f.source.read.mockImplementation(async()=>{const bytes=Buffer.from('synthetic:TOKEN');f.buffers.push(bytes);if(++reads===2)f.writes.run(()=>f.db.update(bridgeConnections).set({botUser:'UREPLACED'}).run());return bytes;});
  f.request.mockImplementation(async()=>Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}));
- f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);expect(f.db.select().from(bridgeSends).get()?.state).toBe('uncertain');expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+ // The first part is out and stays sent. The second was refused before any request, so it has not left and waits; it is not in doubt.
+ expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state,row.text.length])).toEqual([['reply','sent',3900],['reply/rest','pending',100]]);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });
 it('flushes a preexisting pending send on the connected-state callback without a caller flush',async()=>{
  const f=fixture();f.db.insert(bridgeIncoming).values({id:'in',connection:'connection',channel:'CROOM',isDm:false,user:'UUSER',text:'Hi',postedAt:new Date(f.clock.now()).toISOString(),receivedAt:new Date(f.clock.now()).toISOString(),state:'delivered'}).run();f.daemon.sends.queue({id:'reply',incoming:'in',text:'Reply'});
