@@ -131,7 +131,7 @@ it('reads who has the agent again on every raise: someone who lost it is settled
  // Nobody who still has the agent had it waiting, so to them it is new; and bob's phone is told.
  expect(again.body.value).toEqual({item:'disk:host-1',raised:true,pushed:true});
  // alice's is settled as it stood: the new words are not written into the Inbox of someone who no longer has the agent.
- expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,alices.id)).get()).toMatchObject({to:'alice',state:'resolved',words:'Disk is 96% full',resolution:'alice no longer has art'});
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,alices.id)).get()).toMatchObject({to:'alice',state:'resolved',words:'Disk is 96% full',resolution:'Settled by loom: art is no longer one of yours'});
  expect(f.notices().filter(row=>row.state==='waiting')).toMatchObject([{to:'bob',member:'bob',words:'Disk is 99% full'}]);
  // alice gets art back: the next raise is a repeat for bob (his words are updated, no push) and new for alice.
  f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run());
@@ -140,7 +140,17 @@ it('reads who has the agent again on every raise: someone who lost it is settled
  expect((await f.call('raise',{key:'disk:host-1',title:'Disk is full'})).body.value).toEqual({item:'disk:host-1',raised:false,pushed:true});
  expect(f.notices().filter(row=>row.state==='waiting').map(row=>[row.to,row.words]).sort()).toEqual([['alice','Disk is full'],['bob','Disk is full']]);
  expect(f.queued()).toBe(queued+1);
- // Cleared for everyone who has it waiting.
- expect((await f.call('clear',{key:'disk:host-1',why:'Rotated'})).body.value).toEqual({cleared:true});
+ // bob loses art while his notice waits, and the agent clears the key with words of its own choosing. alice,
+ // who has art, reads them. bob's is settled with loom's own line: nothing the agent wrote reaches him.
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'bob')).run());
+ expect((await f.call('clear',{key:'disk:host-1',why:'AGENT WORDS'})).body.value).toEqual({cleared:true});
  expect(f.notices().filter(row=>row.state==='waiting')).toEqual([]);
+ const settled=Object.fromEntries(f.notices().filter(row=>row.words==='Disk is full').map(row=>[row.to,row.resolution]));
+ expect(settled).toEqual({alice:'AGENT WORDS',bob:'Settled by loom: art is no longer one of yours'});
+ expect(JSON.stringify(f.db.select().from(s.inbox).where(eq(s.inbox.to,'bob')).all())).not.toContain('AGENT WORDS');
+ // Clearing when nobody who has the agent had it waiting is not a clear.
+ await f.call('raise',{key:'only-bobs',title:'For whoever has art'});
+ f.root.writes.run(()=>{f.db.delete(s.memberAgents).run();f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();});
+ expect((await f.call('clear',{key:'only-bobs',why:'AGENT WORDS'})).body.value).toEqual({cleared:false});
+ expect(f.notices().find(row=>row.words==='For whoever has art')).toMatchObject({to:'alice',state:'resolved',resolution:'Settled by loom: art is no longer one of yours'});
 });

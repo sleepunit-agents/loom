@@ -258,13 +258,16 @@ when something is wrong.*
   - a room on Discord or Slack, and a handoff for no member, are nobody's and always ask: people outside the
     household talk to an agent in a room.
 
-  The rule is `workPrincipal` and `rulesPerson` in `src/policy.ts`. A household change proposed with no
-  member behind it still always asks; the agent's own account is for merges and commands.
+  The rule is `workPrincipal` and `rulesPerson` in `src/policy.ts`. The agent's own account is for merges
+  and commands: for any other kind of card it reads no rule, from a terminal and from a lane alike, and a
+  household change proposed with no member behind it always asks.
 - **Asking, filing and spending from a terminal.** `approvals.rule`, `approvals.request`, `approvals.use`,
   `approvals.report` and `approvals.withdraw` take an agent's terminal credential as well as a body's. A
   terminal credential acts on its own agent's merge and command cards that were filed from no conversation.
   Nothing lists the rule table for an agent: it asks about one kind and one target.
-- **A merge target.** `github:<owner>/<repo>#<n>@<commit>` names one pull request at one exact commit. For
+- **A merge target.** `github:<owner>/<repo>#<n>@<commit>` names one pull request at one exact commit. A
+  repository has one spelling in it: lower case, with no trailing `.git`. Another spelling of the same
+  repository is refused, so it is never taken for a repository loom does not read. For
   a repository loom reads, the target must be the agent's own open change at that commit, and a card carries
   that change's project; a rule read is held to the same target, so a wrong commit, another agent's change
   or a closed one is refused and never answered on its words. For a repository loom does not read, loom has nothing to hold it to: the rule is
@@ -280,7 +283,9 @@ when something is wrong.*
     whose notice of that key was settled within the last ten minutes. An alert that flaps must not buzz a
     phone each time. Such a notice is in the Inbox like any other; it is not dimmed, so no quiet time runs
     out and pushes it later.
-  - `notices.clear` resolves the waiting notices of a key with a reason.
+  - `notices.clear` resolves the waiting notices of a key with a reason. It reads who has the agent too: the
+    agent's reason is written only for the people who have it now, and a notice still waiting for anyone
+    else is settled with a line of loom's own.
   - Only the agent's own credential raises or clears one, for itself. The agent may learn whether its own
     notice is still waiting, which it needs so as not to raise it twice. It is told its own key, whether the
     notice was news, and whether any push was queued. It is told nothing else of anyone's Inbox: not who has

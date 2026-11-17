@@ -1,5 +1,6 @@
 /** One owner intent grants a standing project rule and answers this exact head.
  * The agent still performs any forge action through its own current checks. */
+import {isNobody} from './policy.js';
 import {COMMIT,mergeTargetFor} from './apps/merge-target.js';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
@@ -21,7 +22,7 @@ export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,s
   const card=request(input.approval),row=change(input.change);
   if(!card||!row||card.kind!=='merge'||card.operation!==null||!row.agent||card.agent!==row.agent
    ||card.target!==mergeTargetFor(row.id,input.head)||row.headCommit!==input.head||card.project!==input.project||row.project!==input.project
-   ||!card.actingFor||['unknown','?'].includes(card.actingFor))throw new OperationError('conflict','The merge request changed. Open it again.');
+   ||isNobody(card.actingFor))throw new OperationError('conflict','The merge request changed. Open it again.');
   if(rules.personFor(card.actingFor)!==input.person)throw new OperationError('conflict','The person for this request changed. Open it again.');
   return {card,row};
  };

@@ -43,6 +43,17 @@ it('answers an agent’s terminal credential from the household’s own rules on
  f.rules.set({kind:'merge',scope:'github:acme/*',tier:'do'},'pat');
  f.db.insert(s.changes).values({id:'github:acme/app#7',repository:'acme/app',number:7,title:'Marks',body:'',url:'',state:'open',draft:false,authorLogin:'mark',agent:'mark',project:'pond',branch:'m',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:f.at,updatedAt:f.at}).run();
  f.db.insert(s.changes).values({id:'github:acme/app#8',repository:'acme/app',number:8,title:'Closed',body:'',url:'',state:'closed',draft:false,authorLogin:'art',agent:'art',project:'pond',branch:'c',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:f.at,updatedAt:f.at}).run();
+ // One repository has one spelling. Another spelling of a repository loom reads is not "a repository loom does
+ // not read": it is refused, for a rule read and for a card, and never answered on its words.
+ for(const alias of ['github:acme/app.git#1@'+head,'github:acme/app.GIT#7@'+head,'github:Acme/App#1@'+head,'github:ACME/app#8@'+head,'github:acme/app.git.git#1@'+head,'github:acme/.#1@'+head,'github:../app#1@'+head]){
+  expect((await f.call('rule',{kind:'merge',target:alias})).status,alias).toBe(409);
+  expect((await f.call('request',{kind:'merge',target:alias,...words})).status,alias).toBe(403);
+ }
+ // The same holds when what loom has stored is itself spelled with .git: the canonical target is a read repository.
+ f.db.insert(s.projectRepositories).values({project:'other',repository:'github:Stored/Repo.git'}).run();
+ f.rules.set({kind:'merge',scope:'github:stored/*',tier:'do'},'pat');
+ expect((await f.call('rule',{kind:'merge',target:'github:stored/repo#3@'+head})).status).toBe(409);
+ expect(f.cards()).toEqual([]);
  for(const wrong of ['github:acme/app#1@'+'f'.repeat(40),'github:acme/app#7@'+head,'github:acme/app#8@'+head,'github:acme/app#99@'+head]){
   expect((await f.call('rule',{kind:'merge',target:wrong})).status,wrong).toBe(409);
   expect((await f.call('request',{kind:'merge',target:wrong,...words})).status,wrong).toBe(403);
@@ -97,13 +108,22 @@ it('never answers work done for a member who is not a household owner from the h
  const lane=f.root.writes.run(()=>f.root.services.conversations.open({agent:'art',venue:'wake',place:'lane',label:'Lane',project:'pond'})).value;
  f.root.writes.run(()=>f.db.update(s.jobs).set({member:null,conversation:lane.id}).run());
  expect(await f.rule('merge',held,raw.body)).toEqual({tier:'do',scope:'*',person:''});
+ // The agent's own account is for merges and commands, by any door: a lane reads no rule for a household change.
+ for(const kind of ['setting','dangerous'] as const){f.rules.set({kind,scope:'*',tier:'do'},'pat');expect(await f.rule(kind,'household:settings',raw.body),kind).toEqual(ask);}
+ f.rules.set({kind:'command',scope:'deploy:*',tier:'tell'},'pat');
+ expect(await f.rule('command','deploy:site',raw.body)).toEqual({tier:'tell',scope:'deploy:*',person:''});
+ // And a household change proposed from the lane still has nobody behind it: it waits, whatever the rule.
+ const proposed=await f.root.http.request('/api/household/propose',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.body},body:JSON.stringify({input:{change:'settings',input:{commsDays:9},why:'Tidy'},id:randomUUID()})});
+ expect((await proposed.json() as {value:{state:string}}).value.state).toBe('pending');
+ expect(f.cards().at(-1)).toMatchObject({kind:'setting',actingFor:'unknown',state:'pending'});
+ f.root.writes.run(()=>f.root.services.approvals.deny(f.cards().at(-1)!.id,'pat'));
  // In a lane too, a repository loom does not read is answered on the target's words, and its card carries no project.
  expect(await f.rule('merge',unread,raw.body)).toEqual({tier:'do',scope:'*',person:''});
  f.rules.set({kind:'merge',scope:'project:pond',tier:'tell'},'pat');
  expect(await f.rule('merge',unread,raw.body)).toEqual({tier:'do',scope:'*',person:''});
  const laneCard=await f.call('request',{kind:'merge',target:unread,...words},raw.body);
  expect(laneCard.body.value).toMatchObject({state:'allowed'});
- expect(f.cards()).toMatchObject([{actingFor:'agent:art',conversation:lane.id,project:null,target:unread}]);
+ expect(f.cards().at(-1)).toMatchObject({actingFor:'agent:art',conversation:lane.id,project:null,target:unread});
  expect((await f.call('use',{id:laneCard.body.value!.id,kind:'merge',target:unread},raw.body)).body.value).toMatchObject({used:true});
  // A room on a bridge, for no member: nobody's. People outside the household talk there.
  const room=f.root.writes.run(()=>f.root.services.conversations.open({agent:'art',venue:'discord',place:'room',label:'Room',project:'pond'})).value;

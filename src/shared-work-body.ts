@@ -6,7 +6,7 @@ import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
 import {approvals,changes} from './core/data/schema.js';
-import {bodyOperationDefaults,requireBodyScope,type conversationBodyScope} from './core/conversations/body-scope.js';
+import {bodyOperationDefaults,type conversationBodyScope} from './core/conversations/body-scope.js';
 import {operation,OperationError,type Operations} from './core/operations/index.js';
 import {ASKED_FROM_TERMINAL,type approvalService} from './apps/approvals.js';
 import {approvalRuleKind,approvalTier,type approvalRulesService} from './apps/approval-rules.js';
@@ -71,11 +71,10 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  }));
  operations.register(operation({...common,write:false,name:'approvals.rule',input:target,
   output:z.object({tier:approvalTier,scope:z.string().nullable(),person:z.string().nullable()}).strict(),
-  // A read: nothing is filed. A project's rule is read with the project `merge` gives the target. The agent's own work is its account for merges and
-  // commands only: a household change with no member behind it always asks (shared-household-proposals.ts).
+  // A read: nothing is filed. A project's rule is read with the project `merge` gives the target. For which
+  // kinds the agent's own work reads a rule at all is policy's (`rulesPerson`), asked by the rule service.
   run(ctx,input){
    const context=source(ctx.viewer);
-   if(context.own&&input.kind!=='merge'&&input.kind!=='command')return {tier:'ask' as const,scope:null,person:null};
    // Held to the same target a card would be: for a repository loom reads, a wrong head, another agent's
    // change or a closed one is refused here as it is at filing, never answered on its words.
    const project=merge(context,input.kind,input.target,true).project;

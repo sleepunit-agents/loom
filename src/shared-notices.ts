@@ -45,6 +45,8 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
  // One raising of a key for one person is one source id: the agent, the key and a fresh id, under one of
  // two beginnings. The quiet one is the mark that the item is never pushed (core/data/inbox-push.ts).
  const LOUD='agent-notice:';
+ // loom's own words for a notice that waits for someone the agent's notices no longer go to. Never the agent's.
+ const settledByLoom=(name:string)=>'Settled by loom: '+name+' is no longer one of yours';
  const prefix=(name:string,k:string,quiet:boolean)=>(quiet?QUIET_SOURCE:LOUD)+JSON.stringify([name,k])+':';
  const keyOf=(sourceId:string)=>sourceId.slice(sourceId.startsWith(QUIET_SOURCE)?QUIET_SOURCE.length:LOUD.length,sourceId.lastIndexOf(':'));
  const ofKey=(name:string,k:string)=>{const starts=[prefix(name,k,false),prefix(name,k,true)];
@@ -58,7 +60,7 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
    const mail=new Conversations(db,now),all=ofKey(name,input.key),people=agentsPeople(name,sharedSharing(db));
    // Who has the agent is read again on every raise. A notice waiting for someone who no longer has it is
    // settled as it stands: the new words are for the people who have the agent now.
-   for(const row of all.filter(row=>row.state==='waiting'&&!people.includes(row.to))){mail.resolveItem(row.id,row.to+' no longer has '+name);ctx.changed('inbox',row.id);}
+   for(const row of all.filter(row=>row.state==='waiting'&&!people.includes(row.to))){mail.resolveItem(row.id,settledByLoom(name));ctx.changed('inbox',row.id);}
    const waiting=new Map(all.filter(row=>row.state==='waiting'&&people.includes(row.to)).map(row=>[row.to,row]));
    if(!waiting.size){
     const open=new Set(db.select({sourceId:inbox.sourceId}).from(inbox).where(and(eq(inbox.source,'notice'),eq(inbox.fromKind,'agent'),eq(inbox.fromId,name),eq(inbox.state,'waiting'))).all().map(row=>keyOf(row.sourceId!)));
@@ -85,9 +87,12 @@ export function registerSharedNotices(operations:Operations,db:DataDatabase,cloc
   input:z.object({key,why:line(NOTICE_WHY_MAX)}).strict(),output:z.object({cleared:z.boolean()}).strict(),
   run(ctx,input){
    const name=agent(ctx.viewer);if(!name)throw new OperationError('denied','An agent\'s own credential is required');
-   const mail=new Conversations(db,now),waiting=ofKey(name,input.key).filter(row=>row.state==='waiting');
-   for(const row of waiting){mail.resolveItem(row.id,input.why);ctx.changed('inbox',row.id);}
-   return{cleared:waiting.length>0};
+   // Who has the agent is read again, as on a raise. The agent's reason is written only for the people who
+   // have it now. A notice still waiting for someone else is settled with loom's own line: nothing the agent
+   // writes reaches the Inbox of a person it is no longer for. `cleared` is about the people who have it.
+   const mail=new Conversations(db,now),people=agentsPeople(name,sharedSharing(db)),waiting=ofKey(name,input.key).filter(row=>row.state==='waiting');
+   for(const row of waiting){mail.resolveItem(row.id,people.includes(row.to)?input.why:settledByLoom(name));ctx.changed('inbox',row.id);}
+   return{cleared:waiting.some(row=>people.includes(row.to))};
   },
  });
 }

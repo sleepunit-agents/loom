@@ -77,8 +77,9 @@ An agent's own credential, a terminal session included, also has the approval op
 notices, through `loom_command` or the command door (`POST /api/<piece>/<operation>`):
 
 - `approvals.rule {kind, target}` answers `{tier, scope, person}`: `do`, `tell` or `ask`, with the scope and
-  person of the rule that matched, or `ask` with both null. From a terminal the kinds are `merge` and
-  `command`; any other kind answers `ask`. A merge target in a repository loom reads that is not the
+  person of the rule that matched, or `ask` with both null. For the agent's own work (a terminal, or a
+  lane for no member) the kinds are `merge` and `command`; any other kind answers `ask`. The repository in
+  a merge target is written lower case with no `.git`; another spelling is refused. A merge target in a repository loom reads that is not the
   agent's own open change at that commit is refused (`conflict`), as a card for it would be.
 - `approvals.request {kind: "merge"|"command", target, what, why, ask, ifYes, ifNo, minutes?, details?}`
   answers `{id, state}`; `approvals.use {id, kind, target}` answers `{id, used}`;
@@ -87,7 +88,8 @@ notices, through `loom_command` or the command door (`POST /api/<piece>/<operati
   tool or query.
 - `notices.raise {key, title, detail?, quiet?}` answers `{item, raised, pushed}`: the key, whether the
   notice was news to the people who have the agent, and whether any push was queued. Nothing is pushed for
-  a repeat, for `quiet`, or for a key settled within the last ten minutes.
+  `quiet`, for a key settled within the last ten minutes, or to a person who already has the notice
+  waiting; a person who has gained the agent since is told. A 51st waiting key is refused (`conflict`).
   `notices.clear {key, why}` answers `{cleared}`.
 
 Whose rules answer, what a merge target is held to and who a notice reaches are in

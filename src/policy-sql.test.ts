@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { createDataSchema, type DataDatabase } from './core/data/database.js';
 import * as s from './core/data/schema.js';
-import { agentsPeople, holds, mayBeAskedAbout, rules, rulesPerson, tableRules, workPrincipal, type ParentLookup, type Row, type Rule, type Viewer } from './policy.js';
+import { agentsPeople, holds, householdChangePrincipal, isNobody, mayBeAskedAbout, NOBODY, rules, rulesPerson, tableRules, workPrincipal, type ParentLookup, type Row, type Rule, type Viewer } from './policy.js';
 import { sqlRule } from './policy-sql.js';
 import { sharedSharing } from './shared-sharing.js';
 import { sharedQueryTables } from './next-data.js';
@@ -377,7 +377,7 @@ describe('whose standing rules answer for a piece of an agent\'s work', () => {
     for (const venue of ['discord', 'slack', 'handoff', 'loom']) expect(workPrincipal('art', { member: null, venue }), venue).toBe('unknown');
   });
   it('reads the household\'s own rules for a household owner and for the agent\'s own work while a household owner has it, and for nobody else', () => {
-    const person = (principal: string) => rulesPerson(principal, sharedSharing(db));
+    const person = (principal: string) => rulesPerson(principal, 'merge', sharedSharing(db));
     // owner has the role; full is an owner with every agent; sam has art; lee has mark; exowner and gone are removed.
     expect([person('owner'), person('full'), person('sam'), person('lee')]).toEqual(['', '', 'sam', 'lee']);
     expect([person('exowner'), person('gone'), person('ghost'), person('unknown'), person('?')]).toEqual([undefined, undefined, undefined, undefined, undefined]);
@@ -398,10 +398,26 @@ describe('whose standing rules answer for a piece of an agent\'s work', () => {
   it('gives an agent that only members who are not owners have nothing from the household\'s rules', () => {
     const sharing = sharedSharing(db), without = { ...sharing, members: Object.fromEntries(Object.entries(sharing.members).filter(([id]) => id !== 'full')) };
     // Without the full owner: sam has art, lee has mark, and neither is a household owner.
-    expect([rulesPerson('agent:art', without), rulesPerson('agent:mark', without)]).toEqual([undefined, undefined]);
+    expect([rulesPerson('agent:art', 'merge', without), rulesPerson('agent:mark', 'merge', without)]).toEqual([undefined, undefined]);
     // The owner role alone is not having the agent.
     expect(without.members.owner).toMatchObject({ owner: true, agents: [] });
-    expect(rulesPerson('sam', without)).toBe('sam');
+    expect(rulesPerson('sam', 'merge', without)).toBe('sam');
+  });
+  it('reads standing rules for the agent\'s own work for merges and commands only', () => {
+    const sharing = sharedSharing(db);
+    // full, a household owner, has art. Its own account is not for household changes, by any door.
+    expect((['merge', 'command', 'setting', 'dangerous'] as const).map(kind => rulesPerson('agent:art', kind, sharing))).toEqual(['', '', undefined, undefined]);
+    // A member's work reads their rules for every kind, as before.
+    for (const kind of ['merge', 'command', 'setting', 'dangerous'] as const) expect([rulesPerson('owner', kind, sharing), rulesPerson('sam', kind, sharing)]).toEqual(['', 'sam']);
+  });
+  it('gives a household change a member behind it or nobody: never the agent\'s own account', () => {
+    expect(householdChangePrincipal('sam', undefined)).toBe('sam');
+    expect(householdChangePrincipal(null, 'owner')).toBe('owner');
+    expect(householdChangePrincipal(undefined, undefined)).toBe(NOBODY);
+    expect([NOBODY, isNobody(NOBODY), isNobody('?'), isNobody(''), isNobody('sam'), isNobody('agent:art')]).toEqual(['unknown', true, true, true, false, false]);
+    // Nobody reads no rule; and a room is nobody's.
+    expect(rulesPerson(NOBODY, 'merge', sharedSharing(db))).toBeUndefined();
+    expect(workPrincipal('art', { member: null, venue: 'slack' })).toBe(NOBODY);
   });
 });
 
