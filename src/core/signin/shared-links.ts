@@ -51,7 +51,17 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
 }
 
 /** Public identity door, using the same connection and committed notifications
- * as queries/commands. No session cookie or raw link enters retry receipts. */
+ * as queries/commands. No session cookie or raw link enters retry receipts.
+ *
+ * These routes are deliberately not registered operations. Each one answers with a credential (a token, a
+ * sign-in link, a cookie), and a registered write's answer is kept as a retry receipt for thirty days. So
+ * each carries its own gate here, on the same authentication as every other door, with program tokens
+ * refused outright: owner for a token or a program token, the member's own bearer or freshly proved
+ * browser for a link or a passkey, the cookie itself for logout, the one-time code for redeeming.
+ *
+ * The one-time code travels in the link's path. That is what a sign-in link is: something a person can be
+ * handed and open. It is good once, for five minutes at most, the page that shows it sends no referrer
+ * with the code, and redeeming is a POST from that page. */
 export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; issueProgram?(input:unknown):{token:string;fingerprint:string}; authenticate(request:Request):Authentication|undefined }) {
   const signin = sharedSigninLinks(options.db, options.clock);
   const authenticate = options.authenticate;

@@ -25,6 +25,9 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
     removePasskey(member: string, reference: string) {
       const own = new Set(ownTokens(member).map(t=>t.fingerprint)), key = db.select().from(passkeys).all().find(k=>ref('passkey',k.id)===reference&&own.has(k.token));
       if(!key)throw new OperationError('not-found','Passkey not found');
+      // This stops new sign-ins with the passkey. Browsers it already signed in stay signed in until they
+      // are revoked or run out: a session does not record which passkey made it, so they cannot be told
+      // apart from the member's other passkey sign-ins. A lost passkey needs its browsers revoked as well.
       db.delete(passkeys).where(eq(passkeys.id,key.id)).run();
       return {removed:true as const};
     },

@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from './database.js';
 import { currentSession, dataAuthentication, presentedCredential, sessionEnds } from './authentication.js';
 import { dataHttp } from './http.js';
-import { agents, boxes, jobs, members, tokens, sessions } from './schema.js';
+import { agents, boxes, jobs, members, programTokens, tokens, sessions } from './schema.js';
 import { readHouseholdSetup } from './household-read.js';
 const clients: Database.Database[] = [];
 afterEach(() => clients.splice(0).forEach(c => c.close()));
@@ -117,4 +117,15 @@ it('shows Setup a browser as ended at the same instant the door stops accepting 
   expect(authenticate(request({ cookie: 'loom_ui=' + cookie }))).toBeDefined(); expect(shown(ends - 1)).toBe(false);
   tick(1);
   expect(authenticate(request({ cookie: 'loom_ui=' + cookie }))).toBeUndefined(); expect(shown(ends)).toBe(true);
+});
+it('never takes a program token for a whole member unless the door that applies its grants asks for it', async () => {
+  const { db, authenticate, request } = fixture(), held = authenticate(request({ authorization: 'Bearer ' + raw }))!;
+  db.insert(programTokens).values({ token: hash(raw) }).run();
+  expect(held.valid()).toBe(false);
+  expect(authenticate(request({ authorization: 'Bearer ' + raw }))).toBeUndefined();
+  expect(authenticate(request({ cookie: 'loom_ui=' + cookie }))).toBeUndefined();
+  // The door composed with no authenticator of its own refuses it too.
+  const read = await dataHttp(db).request('http://loom/graphql', { method: 'POST', headers: { authorization: 'Bearer ' + raw, 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ tasks { id } }' }) });
+  expect(read.status).toBe(401);
+  expect(dataAuthentication(db, () => Date.parse(at), { programs: 'admit' })(request({ authorization: 'Bearer ' + raw }))?.viewer).toEqual({ kind: 'member', id: 'sam' });
 });

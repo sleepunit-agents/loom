@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
 import type { DataDatabase } from './database.js';
-import { tokens, sessions, members, agents, boxes, jobs } from './schema.js';
+import { tokens, sessions, members, agents, boxes, jobs, programTokens } from './schema.js';
 
 /** What is stored and looked up for a token, a cookie or a sign-in code: its SHA-256. The secrets are 256
  * random bits, so finding a row by this digest tells a caller nothing through timing. */
@@ -89,7 +89,11 @@ export function currentSession(db: DataDatabase, id: string, now: number) {
 /** What a door learns about a request beyond who it is: the fingerprints of the token it rides on and,
  * for a browser, of its session. A door that keeps its own proof reads these; it never parses the request. */
 export type DataAuthentication = Authentication & { readonly job?: string; readonly credential: Readonly<{ token: string; session?: string }> };
-export function dataAuthentication(db: DataDatabase, now: () => number = Date.now) {
+/** A program token is a member's token cut down to the records and operations it was granted. Applying
+ * those grants is the outside door's work (sharedCredentials), which says `programs: 'admit'`. Everyone
+ * else gets the safe answer: a marked program token is no credential here, never a whole member. */
+export function dataAuthentication(db: DataDatabase, now: () => number = Date.now, options: { programs?: 'admit' } = {}) {
+  const restricted = (token: string) => options.programs !== 'admit' && !!db.select({ token: programTokens.token }).from(programTokens).where(eq(programTokens.token, token)).get();
   return (request: Request): DataAuthentication | undefined => {
     const presented = presentedCredential(request);
     if (!presented) return;
@@ -98,6 +102,7 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
     if (!tokenId) return;
     const current = () => {
       const time = now();
+      if (restricted(tokenId)) return;
       if (sessionId) {
         const found = currentSession(db, sessionId, time);
         return found && found.token.fingerprint === tokenId ? { viewer: found.viewer, job: found.job, expiresAt: found.ends } : undefined;

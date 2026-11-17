@@ -10,7 +10,7 @@ import { tokens, sessions, jobs } from './core/data/schema.js';
 import type { Authentication } from './core/live/index.js';
 
 export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => boolean) => void, programs: ProgramGrantReader = () => undefined) {
-  const resolve = dataAuthentication(db, () => clock.now());
+  const resolve = dataAuthentication(db, () => clock.now(), { programs: 'admit' });
   const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
   type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;
   type Proof = { token: Token; session?: string; bearer: boolean; grants?:Readonly<ProgramGrants>; valid(): boolean; box?: string };
