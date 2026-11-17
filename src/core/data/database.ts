@@ -175,15 +175,20 @@ let freshShape: string | undefined;
  * database has. Anything else throws, so a foreign, interim or hand-altered database is never altered. */
 export function recogniseDataSchema(client: Database.Database): number {
   const number = numberOf(client);
+  if (!freshShape) {
+    const fresh = new Database(':memory:');
+    try { createDataSchema(fresh); freshShape = JSON.stringify(dataSchemaShape(fresh)); } finally { fresh.close(); }
+  }
+  // The usual start: nothing is pending, so there is nothing to rehearse and the file's own shape is read.
+  if (number === dataSchemaNumber) {
+    if (JSON.stringify(dataSchemaShape(client)) !== freshShape) throw new Error(unknown);
+    return number;
+  }
   const rehearsal = new Database(':memory:');
   try {
     // In the order they were made, so each index and trigger finds its table.
     for (const { sql } of client.prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY rowid").all() as { sql: string }[]) rehearsal.exec(sql);
     applyUpgrades(rehearsal, number, () => new Date().toISOString());
-    if (!freshShape) {
-      const fresh = new Database(':memory:');
-      try { createDataSchema(fresh); freshShape = JSON.stringify(dataSchemaShape(fresh)); } finally { fresh.close(); }
-    }
     if (JSON.stringify(dataSchemaShape(rehearsal)) !== freshShape) throw new Error(unknown);
   } catch (error) {
     // A schema SQLite cannot rebuild or a step that does not apply is as unknown as a wrong shape.

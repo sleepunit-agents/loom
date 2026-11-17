@@ -83,7 +83,8 @@ it('refuses an old SQLite store before preparing Memory files and preserves its 
 });
 it('upgrades a household installed at an earlier schema number, and refuses an interim one at that number with its exact bytes',async()=>{
  const first=readFileSync(new URL('./core/data/shipped-shapes/1.sql',import.meta.url),'utf8'),at='2026-11-15T12:00:00.000Z';
- const earlier=(file:string,extra='')=>{const client=new Database(file);client.exec(first+extra);client.prepare('INSERT INTO migrations (number,applied_at) VALUES (1,?)').run(at);
+ // One transaction: the installation SQL is some 1,300 statements, and committing each to disk on its own took most of this test's time.
+ const earlier=(file:string,extra='')=>{const client=new Database(file);client.exec('BEGIN;'+first+extra+';COMMIT');client.prepare('INSERT INTO migrations (number,applied_at) VALUES (1,?)').run(at);
   client.prepare("INSERT INTO members (id,role,joined_at) VALUES ('owner','owner',?)").run(at);
   client.exec("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('fiction','','','','pebble','dot');INSERT INTO member_agents (member,agent) VALUES ('owner','fiction');INSERT INTO household (default_agent,timezone) VALUES ('fiction','Asia/Tokyo')");client.close();};
  const f=await fixture(),interim=join(f.home,'interim.db');earlier(interim,'CREATE TABLE interim_notes (words text);');
