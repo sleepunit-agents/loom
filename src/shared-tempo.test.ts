@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { members, agents, memberAgents, tokens, inbox, changes, projects, projectMembers, agentModels, agentRunSettings, jobs, measuringSettings, timingDays, triggers, triggerLog, conversations, boxes } from './core/data/schema.js';
@@ -214,6 +214,12 @@ it('fires a trigger a member who is not a household owner set for an agent, or h
  expect((await f.as(f.raw.body)('tempo.set',{...f.work,id:'by-body',times:f.now()},'by-body')).status).toBe(200);
  f.clock.advance(5000);
  for(const id of ['by-sam','by-body'])expect([id,f.fired(id)]).toEqual([id,{owner:['member','sam'],mail:['sam'],place:id+':for:sam',conversation:'sam',jobs:['sam']}]);
+ // Whom the work is for is stored with the trigger when it is set, apart from who set it.
+ const worksFor=(id:string)=>f.db.select({member:triggers.member}).from(triggers).where(eq(triggers.id,id)).get()?.member;
+ expect([worksFor('by-sam'),worksFor('by-body')]).toEqual(['sam','sam']);
+ // A firing reads that, and not the owner: a trigger the agent is recorded as having set, for sam's work, is sam's private work.
+ f.root.writes.run(()=>f.db.insert(triggers).values({id:'for-sam',ownerKind:'agent',owner:'art',member:'sam',sourceKind:'time',times:f.now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'x',note:'F',enabled:true,state:'standing',nextDueAt:f.now(),createdAt:f.now(),changedAt:f.now()}).run());
+ f.clock.advance(5000);expect(f.fired('for-sam')).toEqual({owner:['agent','art'],mail:['sam'],place:'for-sam:for:sam',conversation:'sam',jobs:['sam']});
  // Neither may schedule an operation for the agent, or reword a trigger that is the agent's own.
  expect((await f.as(f.raw.sam)('tempo.set',{...f.work,id:'sweep',times:f.now(),targetKind:'operation',target:'tempo.sweep',instructions:undefined},'sweep')).status).toBe(403);
  expect((await f.call('tempo.set',{...f.work,id:'own',times:new Date(f.clock.now()+3600000).toISOString()},'own')).status).toBe(200);
@@ -226,7 +232,7 @@ it('fires a trigger a member who is not a household owner set for an agent, or h
  expect(f.db.select().from(triggerLog).where(eq(triggerLog.trigger,'later')).all().map(row=>row.event+' '+row.note).slice(-2)).toEqual([expect.stringMatching(/^failed /),'failure inbox: The member this was set for no longer has the agent, or is not in its project']);
  // Made a household owner, sam directs the whole agent: the same stored trigger fires as the agent's own.
  f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'sam',agent:'art'}).run();f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
-  f.db.insert(triggers).values({id:'promoted',ownerKind:'member',owner:'sam',sourceKind:'time',times:f.now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'x',note:'P',enabled:true,state:'standing',nextDueAt:f.now(),createdAt:f.now(),changedAt:f.now()}).run();});
+  f.db.insert(triggers).values({id:'promoted',ownerKind:'member',owner:'sam',member:'sam',sourceKind:'time',times:f.now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'x',note:'P',enabled:true,state:'standing',nextDueAt:f.now(),createdAt:f.now(),changedAt:f.now()}).run();});
  f.clock.advance(5000);expect(f.fired('promoted')).toEqual({owner:['member','sam'],mail:[null],place:'promoted',conversation:null,jobs:[null]});
 });
 it('keeps a trigger an agent set for itself, and one an owner set, the whole agent\'s: twenty standing triggers fire as they always have',async()=>{
@@ -238,6 +244,9 @@ it('keeps a trigger an agent set for itself, and one an owner set, the whole age
  // Set through the door now: by the agent in a terminal session, and by an owner in the agent's name.
  expect((await f.as(f.raw.art)('tempo.set',{...f.work,id:'new-own',times:at},'new-own')).status).toBe(200);
  expect((await f.call('tempo.set',{...f.work,id:'new-owner',times:at},'new-owner')).status).toBe(200);
+ // Neither is for a member, and a caller cannot say one is: who the work is for is never taken from the request.
+ await f.call('tempo.set',{...f.work,id:'claimed',times:new Date(f.clock.now()+3600000).toISOString(),member:'sam'},'claimed');
+ expect(f.db.select({id:triggers.id,member:triggers.member}).from(triggers).where(inArray(triggers.id,['new-own','new-owner','claimed'])).orderBy(triggers.id).all()).toEqual([{id:'claimed',member:null},{id:'new-own',member:null},{id:'new-owner',member:null}]);
  f.clock.advance(5000);
  for(const t of stored.filter(t=>t.targetKind==='inbox'))expect([t.id,f.fired(t.id)]).toEqual([t.id,{owner:['agent','art'],mail:[null],place:t.id,conversation:null,jobs:[null]}]);
  expect(f.fired('owners')).toEqual({owner:['member','owner'],mail:[null],place:'owners',conversation:null,jobs:[null]});

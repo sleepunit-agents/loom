@@ -57,8 +57,15 @@ describe('worker work plane', () => {
     f.spawned.resolve(); await flush(); expect(f.control.started).toHaveBeenCalledWith('j', 'image:sha');
     f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'running');
     f.exited.resolve({ exitCode: 17, logTail: 'x'.repeat(20_000) });
-    expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 17, 'x'.repeat(16_384));
+    expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 17, 'x'.repeat(16_384), 'runner');
     expect(f.body.stop).toHaveBeenCalled(); expect(f.disposed).toHaveBeenCalledOnce();
+  });
+  it.each([[{ signalled: true }, 'worker'], [{}, 'runner']] as const)('says whose exit code it reports: a signal\'s is its own word, the program\'s own is the program\'s (%j)', async (how, by) => {
+    const f = fixture(), run = f.run(); await flush();
+    f.built.resolve('image'); await flush(); f.spawned.resolve(); await flush();
+    // The same number either way: the worker's word for a body a signal ended, or what a machine's own runner chose to exit with.
+    f.exited.resolve({ exitCode: WORKER_EXIT.killed, logTail: '', ...how });
+    expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.killed, '', by);
   });
   it('leaves retries to the server when a start fails, and says which stage failed', async () => {
     for (const phase of ['input', 'build', 'launch', 'enroll'] as const) {
@@ -69,7 +76,7 @@ describe('worker work plane', () => {
       if (phase === 'build') f.built.reject(new Error('bad build'));
       else if (phase !== 'input') { f.built.resolve('image'); await flush(); if (phase === 'launch') f.spawned.reject(new Error('cannot spawn')); else f.spawned.resolve(); }
       expect(await run).toBe('finished');
-      expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT[phase], `Worker could not start the body: ${phase} failed`);
+      expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT[phase], `Worker could not start the body: ${phase} failed`, 'worker');
       expect(f.control.started).not.toHaveBeenCalled(); expect(f.control.next).toHaveBeenCalledOnce();
       if (phase === 'input') expect(f.executor.build).not.toHaveBeenCalled(); else expect(f.executor.build).toHaveBeenCalledOnce();
       if (phase === 'launch' || phase === 'enroll') expect(f.body.stop).toHaveBeenCalled();
@@ -149,7 +156,7 @@ describe('worker work plane', () => {
     const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
     expect(f.control.finish).not.toHaveBeenCalled();
     reaped.resolve(); expect(await run).toBe('finished');
-    expect(f.control.finish).toHaveBeenCalledWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed');
+    expect(f.control.finish).toHaveBeenCalledWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed', 'worker');
   });
   it('reports the code a body ended with by itself before its input could be handed over, not the worker\'s', async () => {
     const f = fixture();
@@ -158,7 +165,7 @@ describe('worker work plane', () => {
     vi.mocked(f.body.stop).mockImplementation(async () => { f.exited.resolve({ exitCode: 16, logTail: 'cannot read body file', own: true }); });
     const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve();
     expect(await run).toBe('finished');
-    expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', 16, 'cannot read body file');
+    expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', 16, 'cannot read body file', 'runner');
   });
   it('keeps its own release code when the body it could not feed ended cleanly or only when killed', async () => {
     for (const ended of [{ exitCode: 0, logTail: '', own: true }, { exitCode: 137, logTail: '', own: false }]) {
@@ -167,7 +174,7 @@ describe('worker work plane', () => {
       vi.mocked(f.body.stop).mockImplementation(async () => { f.exited.resolve(ended); });
       const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve();
       expect(await run).toBe('finished');
-      expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed');
+      expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed', 'worker');
     }
   });
   it('names the runner stage when this worker has no command it can run the job on', async () => {
@@ -175,7 +182,7 @@ describe('worker work plane', () => {
     f.executor.build.mockImplementation(() => { throw new NoRunnerError('Several accounts need a runner each'); });
     expect(await f.run()).toBe('finished');
     expect(f.executor.start).not.toHaveBeenCalled();
-    expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.runner, 'Worker could not start the body: runner failed');
+    expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.runner, 'Worker could not start the body: runner failed', 'worker');
   });
   it('cancels a build on shutdown, without fabricating a failure', async () => {
     const f = fixture(), run = f.run(); await flush(); f.abort.abort();
@@ -198,7 +205,7 @@ it('enrolls only after build/spawn and hands the private token only after runnin
   expect(f.control.enrollBody).toHaveBeenCalledExactlyOnceWith('j', expect.any(AbortSignal)); f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'starting');
   enrolled.resolve({ origin: 'https://loom.example', job: 'j', token }); await flush(); expect(f.control.started).toHaveBeenCalledOnce(); expect(f.body.release).not.toHaveBeenCalled(); expect(token[0]).not.toBe(0);
   ack.resolve(); await flush(); expect(f.body.release).toHaveBeenCalledOnce(); expect(token.every(byte => byte === 0)).toBe(true);
-  f.exited.resolve({ exitCode: 0, logTail: 'body_'+'a'.repeat(64) }); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 0, '');
+  f.exited.resolve({ exitCode: 0, logTail: 'body_'+'a'.repeat(64) }); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 0, '', 'body');
   expect(JSON.stringify([job, vi.mocked(f.control.started).mock.calls, vi.mocked(f.control.finish).mock.calls])).not.toContain('body_');
 });
 for (const phase of ['enroll', 'ack']) it(`does not release a late credential after cancellation during ${phase}`, async () => {
@@ -227,14 +234,14 @@ it('waits for reaping after uncertain enrollment before reporting a failed start
   const f = fixture(), reaped = deferred<void>(); f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(async () => { throw Error('private uncertain enrollment'); }); vi.mocked(f.body.stop).mockReturnValue(reaped.promise);
   const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
   expect(f.body.stop).toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled(); expect(f.executor.start).toHaveBeenCalledOnce(); expect(f.control.enrollBody).toHaveBeenCalledOnce();
-  reaped.resolve(); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.enroll, 'Worker could not start the body: enroll failed');
+  reaped.resolve(); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.enroll, 'Worker could not start the body: enroll failed', 'worker');
   expect(f.control.next).toHaveBeenCalledOnce(); expect(f.body.release).not.toHaveBeenCalled(); expect(f.control.started).not.toHaveBeenCalled();
 });
 it('erases private bytes after stdin failure before any terminal report', async () => {
   const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)); f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(async () => ({ origin: 'https://loom.example', job: 'j', token }));
   vi.mocked(f.body.release).mockRejectedValue(Error('private input failure')); vi.mocked(f.control.finish).mockImplementation(async () => { expect(token.every(byte => byte === 0)).toBe(true); });
   const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); expect(await run).toBe('finished');
-  expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed'); expect(f.body.stop).toHaveBeenCalled();
+  expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed', 'worker'); expect(f.body.stop).toHaveBeenCalled();
 });
 
 it('keeps bytes intact until pending private stdin acceptance and then erases the owned token', async () => {

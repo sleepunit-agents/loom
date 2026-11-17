@@ -154,7 +154,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   expect(nativeEndpoint).toBeDefined();await expect(fetch(nativeEndpoint!)).rejects.toThrow();
  }
  const job=f.db.select().from(s.jobs).get()!;
- expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
+ expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'','body');expect(owned?.every(byte=>byte===0)).toBe(true);
  // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
 expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({turnCount:2+nativeActions});expect(f.db.select({id:s.jobs.id}).from(s.jobs).where(and(eq(s.jobs.conversation,f.thread.conversation),inArray(s.jobs.state,['queued','starting','running']))).all()).toEqual([]);

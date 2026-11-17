@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
+import { RELAY_MS, SIGNIN_MS } from './account-signin-time.js';
 import { expect, it } from 'vitest';
-import { relaySignIn, type SignInRemote } from './account-signin-relay.js';
+import {relaySignIn, type SignInRemote } from './account-signin-relay.js';
 const request = { id: 'signin-1', account: 'account', owner: 'member', provider: 'provider' };
 /** A stand-in for a provider's sign-in program, speaking the same files. Its last argument is the directory. */
 const program = (body: string) => ({ command: process.execPath, args: ['-e', `const fs=require('fs'),dir=process.argv.at(-1),at=n=>dir+'/'+n;${body}`], cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' } });
@@ -68,4 +69,8 @@ it('carries none of the program\'s own words: a reason outside the list is the p
   const proto = `fs.writeFileSync(at('link'),'https://provider.example/oauth');setTimeout(()=>{fs.writeFileSync(at('why'),'constructor');process.exit(1);},50);`;
   const p = remote(); await relaySignIn(program(proto), request, p.value, options());
   expect(p.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: false, why: 'unsaid' }]);
+});
+
+it('gives up before loom closes the request, so the worker says why and loom does not time it out unsaid', () => {
+  expect(RELAY_MS).toBeLessThan(SIGNIN_MS);
 });

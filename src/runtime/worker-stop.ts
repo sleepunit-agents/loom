@@ -8,7 +8,7 @@
 export const WORKER_STOP = {
   /** A failure in none of the stages below: a defect in the worker. */
   unexpected: [1, 'an unexpected failure'],
-  /** Not started as `loom-worker <configuration-file>` or as one of the two account commands. */
+  /** Not started as `loom-worker <configuration-file>` or as `loom-worker --account-usage <file>`. */
   usage: [40, 'expected the path of one configuration file'],
   config: [41, 'the configuration file could not be read or is not valid'],
   token: [42, 'the token file could not be read'],
@@ -23,8 +23,11 @@ export const WORKER_STOP = {
   /** Thrown out of the job slot. A report loom did not answer never does that; a body that could not be
    * ended does, and the worker must not take work beside it. */
   slot: [49, 'a body it started could not be ended, so it takes no more work'],
-  /** `--account-signin` or `--account-usage`: the command failed, was interrupted, or loom did not take its report. */
+  /** `--account-usage`: the command failed, was interrupted, or loom did not take its report. */
   account: [50, 'the account command did not complete'],
+  /** `--account-signin`, which this program no longer has. The one way to sign an account in on a machine
+   * is the relay (account-signin-relay.ts). */
+  signin: [51, '--account-signin was removed; sign the account in from loom (runtime.accountSignIn), which runs the provider\'s program listed under accountSignIn.programs in this worker\'s configuration'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */

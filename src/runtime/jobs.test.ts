@@ -56,7 +56,8 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   const receipt = f.comms.confirm(mail.id, job.id);
   f.tick(100);
   expect(f.runtime.heartbeat(job.id, 'worker', 'running')).toMatchObject({ state: 'running', heardAt: f.now() });
-  expect(f.runtime.finish(job.id, 'worker', 0, 'complete').job).toMatchObject({ state: 'done', exitCode: 0, logTail: 'complete', build: 'image' });
+  // The row keeps whose code the worker says it is.
+  expect(f.runtime.finish(job.id, 'worker', 0, 'complete', 'body').job).toMatchObject({ state: 'done', exitCode: 0, exitBy: 'body', logTail: 'complete', build: 'image' });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'done', job: job.id, doneAt: receipt.doneAt });
   expect(working(f)).toEqual([]);
   expect(() => f.runtime.heartbeat(job.id, 'worker', 'running')).toThrow();
@@ -149,7 +150,9 @@ it('does not run a body again when it failed after confirming its mail', () => {
   const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
   f.comms.take(f.conversation.id, job.id); f.comms.confirm(mail.id, job.id);
-  expect(f.runtime.finish(job.id, 'worker', 14).retry).toBeUndefined();
+  // A worker from before it was asked whose code this is says nothing, and the row guesses nothing.
+  const unsaid = f.runtime.finish(job.id, 'worker', 14);
+  expect(unsaid.retry).toBeUndefined(); expect(unsaid.job.exitBy).toBeNull(); expect(exitStage(unsaid.job.exitCode, unsaid.job.exitBy)).toBeUndefined();
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
 });
 it('tries a job lost while starting again, with its mail, and says in which state it went silent', () => {
@@ -367,7 +370,7 @@ it('ends a job no machine took within the queue deadline, with a record of why, 
   const [ended] = f.runtime.sweep();
   expect(ended).toMatchObject({ id: job.id, state: 'failed', exitCode: LOOM_EXIT.unplaced, endedAt: f.now(), box: null });
   expect(ended.endedNote).toMatch(/^Never started: no machine took it within 24 hours/); expect(ended.logTail).toBeNull();
-  expect(exitStage(ended.exitCode)).toBe('loom unplaced');
+  expect(ended.exitBy).toBe('loom'); expect(exitStage(ended.exitCode, ended.exitBy)).toBe('loom unplaced');
   expect(working(f)).toEqual([]);
   // No next attempt: it would only wait as long again. The mail stays with the ended job until fresh mail arrives.
   expect(f.db.select().from(jobs).all()).toHaveLength(1);

@@ -15,10 +15,10 @@ describe('worker operation client', () => {
     expect(await control.next()).toEqual(assignment);
     await control.started('j1', 'image');
     expect(await control.heartbeat('j1', 'running')).toBe(false);
-    await control.finish('j1', 0, 'done');
+    await control.finish('j1', 0, 'done', 'body');
     const requests = fetcher.mock.calls.map(([url, init]) => ({ url: String(url), ...init, data: JSON.parse(String(init?.body)) }));
     expect(requests.map(r => r.url)).toEqual(['next', 'started', 'heartbeat', 'finish'].map(n => `https://loom.example/api/runtime/${n}`));
-    expect(requests.map(r => r.data.input)).toEqual([{}, { job: 'j1', build: 'image' }, { job: 'j1', state: 'running' }, { job: 'j1', exitCode: 0, logTail: 'done' }]);
+    expect(requests.map(r => r.data.input)).toEqual([{}, { job: 'j1', build: 'image' }, { job: 'j1', state: 'running' }, { job: 'j1', exitCode: 0, logTail: 'done', exitBy: 'body' }]);
     expect(new Set(requests.map(r => r.data.id)).size).toBe(4);
     expect(requests.every(r => r.redirect === 'error' && r.signal && (r.headers as Record<string,string>).authorization === 'Bearer private-token')).toBe(true);
   });
@@ -37,15 +37,15 @@ describe('worker operation client', () => {
   it('sends a finish again under the same operation id after a dropped reply, and gives up after three tries', async () => {
     const pauses: number[] = [], pause = async (ms: number) => { pauses.push(ms); };
     const dropped = vi.fn<typeof fetch>().mockRejectedValueOnce(new Error('reset')).mockResolvedValueOnce(response({ ok: true }));
-    await httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: dropped, signal: new AbortController().signal, pause }).finish('j1', 0, 'done');
+    await httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: dropped, signal: new AbortController().signal, pause }).finish('j1', 0, 'done', 'body');
     const sent = dropped.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
     expect(sent).toHaveLength(2); expect(sent[1]).toEqual(sent[0]); expect(pauses).toEqual([2_000]);
     const down = vi.fn<typeof fetch>().mockRejectedValue(new Error('down'));
-    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: down, signal: new AbortController().signal, pause }).finish('j1', 0, 'done'))
+    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: down, signal: new AbortController().signal, pause }).finish('j1', 0, 'done', 'body'))
       .rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
     expect(down).toHaveBeenCalledTimes(3);
     const abort = new AbortController(), stopped = vi.fn<typeof fetch>().mockImplementation(async () => { abort.abort(); throw new Error('down'); });
-    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: stopped, signal: abort.signal, pause }).finish('j1', 0, 'done')).rejects.toThrow();
+    await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: stopped, signal: abort.signal, pause }).finish('j1', 0, 'done', 'body')).rejects.toThrow();
     expect(stopped).toHaveBeenCalledTimes(1);
   });
   it('keeps every try of a finish report inside the budget the silence interval leaves, whatever the request deadline', async () => {
@@ -54,7 +54,7 @@ describe('worker operation client', () => {
       const began = performance.now(), gaveUp: number[] = [];
       // loom never answers: each request ends only when its own deadline aborts it.
       const silent = vi.fn<typeof fetch>((_url, init) => new Promise((_, reject) => init!.signal!.addEventListener('abort', () => { gaveUp.push(performance.now() - began); reject(new Error('aborted')); })));
-      const finished = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: silent, signal: new AbortController().signal, timeoutMs: 60_000, pause: async () => {} }).finish('j1', 0, 'done');
+      const finished = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: silent, signal: new AbortController().signal, timeoutMs: 60_000, pause: async () => {} }).finish('j1', 0, 'done', 'body');
       const refused = expect(finished).rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
       await vi.advanceTimersByTimeAsync(300_000); await refused;
       expect(gaveUp.length).toBeGreaterThan(0);

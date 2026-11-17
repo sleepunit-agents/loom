@@ -2,6 +2,7 @@ import { it, expect, vi } from 'vitest';
 import { workerProgram } from './worker-program.js';
 import { defaultWorkerState } from './worker-left.js';
 import { WORKER_STOP, WorkerStop } from './worker-stop.js';
+import { RELAY_MS } from './account-signin-relay.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT } from './job-exit.js';
 const plan = { command: '/builder', args: [], cwd: '/work', env: { PATH: '/bin' } };
 const config = { url: 'https://loom.example', box: 'b', tokenFile: '/token', build: plan, runners: { claude: plan } };
@@ -110,17 +111,9 @@ it('rejects malformed configuration before reading a token or launching', async 
 const account = { account: 'subscription', owner: 'member', provider: 'provider' };
 function accountFixture(mode: string, config: unknown) {
   const f = fixture(); f.args = [mode, '/account-command']; f.read.mockResolvedValue(JSON.stringify(config));
-  return { ...f, output: vi.fn(), signIn: vi.fn().mockResolvedValue(undefined),
+  return { ...f, output: vi.fn(),
     usage: vi.fn().mockReturnValue(vi.fn().mockResolvedValue([])) };
 }
-it('runs a configured private sign-in on the worker and emits identity-only acknowledgement', async () => {
-  const f = accountFixture('--account-signin', { command: plan, account, box: 'worker', timeoutMs: 123 });
-  expect(await workerProgram(f)).toBe(0);
-  expect(f.read).toHaveBeenCalledExactlyOnceWith('/account-command');
-  expect(f.signIn).toHaveBeenCalledExactlyOnceWith(plan, { ...account, box: 'worker' }, { signal: expect.any(AbortSignal), timeoutMs: 123 });
-  expect(f.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ...account, box: 'worker', signedIn: true }) + '\n');
-  expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
-});
 it('runs the private quota reader with account identity and returns only structured observations', async () => {
   const f = accountFixture('--account-usage', { command: plan, account, timeoutMs: 123 });
   const windows = [{ name: 'week', usage: 0.5, readAt: '2026-11-14T20:00:00Z', resetsAt: '2026-11-15T20:00:00Z', durationMs: 7 * 86400_000 }];
@@ -131,22 +124,17 @@ it('runs the private quota reader with account identity and returns only structu
   expect(f.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ...account, windows }) + '\n');
   expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
 });
-for (const mode of ['--account-signin', '--account-usage']) {
+for (const mode of ['--account-usage']) {
   it(`hides private failures from ${mode}`, async () => {
-    const f = accountFixture(mode, { command: plan, account, ...(mode === '--account-signin' ? { box: 'b' } : {}) });
-    f.signIn.mockRejectedValue(new Error('private credential'));
+    const f = accountFixture(mode, { command: plan, account });
     f.usage.mockReturnValue(vi.fn().mockRejectedValue(new Error('private credential')));
     expect(await workerProgram(f)).toBe(50); expect(f.output).not.toHaveBeenCalled();
-    if (mode === '--account-signin') expect(f.signIn).toHaveBeenCalledOnce();
-    else { expect(f.usage).toHaveBeenCalledOnce(); expect(f.usage.mock.results[0].value).toHaveBeenCalledOnce(); }
+    expect(f.usage).toHaveBeenCalledOnce(); expect(f.usage.mock.results[0].value).toHaveBeenCalledOnce();
     expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the account command did not complete\n');
     expect(f.handlers.size).toBe(0);
   });
   it(`cancels ${mode} and refuses a late successful observation`, async () => {
-    const f = accountFixture(mode, { command: plan, account, ...(mode === '--account-signin' ? { box: 'b' } : {}) });
-    f.signIn.mockImplementation(async (_plan, _identity, options) => {
-      f.handlers.get('SIGTERM')!(); expect(options.signal.aborted).toBe(true);
-    });
+    const f = accountFixture(mode, { command: plan, account });
     f.usage.mockImplementation((_plan, options) => async () => {
       f.handlers.get('SIGTERM')!(); expect(options.signal.aborted).toBe(true); return [];
     });
@@ -154,9 +142,9 @@ for (const mode of ['--account-signin', '--account-usage']) {
     expect(f.handlers.size).toBe(0);
   });
   it(`rejects unrecognized config in ${mode} before any private command or token read`, async () => {
-    const f = accountFixture(mode, { command: plan, account, ...(mode === '--account-signin' ? { box: 'b' } : {}), tokenFile: '/private-token' });
+    const f = accountFixture(mode, { command: plan, account, tokenFile: '/private-token' });
     expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledTimes(1);
-    expect(f.signIn).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled(); expect(f.output).not.toHaveBeenCalled();
+    expect(f.usage).not.toHaveBeenCalled(); expect(f.output).not.toHaveBeenCalled();
   });
 }
 
@@ -242,7 +230,15 @@ it('refuses a private bootstrap flag on a builder before reading its token', asy
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, build: { ...plan, bodyBootstrap: true } }));
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
 });
-for (const mode of ['--account-signin', '--account-usage']) it(`refuses private bootstrap on the ${mode} command before private execution`, async () => {
-  const f = accountFixture(mode, { command: { ...plan, bodyBootstrap: true }, account, ...(mode === '--account-signin' ? { box: 'box' } : {}) });
-  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.signIn).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled(); expect(f.read).toHaveBeenCalledOnce();
+for (const mode of ['--account-usage']) it(`refuses private bootstrap on the ${mode} command before private execution`, async () => {
+  const f = accountFixture(mode, { command: { ...plan, bodyBootstrap: true }, account });
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.usage).not.toHaveBeenCalled(); expect(f.read).toHaveBeenCalledOnce();
+});
+
+it('takes a sign-in deadline up to the relay\'s own and no longer', async () => {
+  const signIn = (timeoutMs: number) => ({ ...config, accountSignIn: { programs: [{ provider: 'p', command: plan }], timeoutMs } });
+  const f = fixture(); f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(signIn(RELAY_MS)) : 'private-token');
+  expect(await workerProgram({ ...f, signInRemote: () => ({ next: async () => undefined }) as never, pause: async () => { throw new Error('stop'); } })).toBe(0);
+  const over = fixture(); over.read.mockImplementation(async path => path === '/config' ? JSON.stringify(signIn(RELAY_MS + 1)) : 'private-token');
+  expect(await workerProgram(over)).toBe(WORKER_STOP.config[0]); expect(over.run).not.toHaveBeenCalled();
 });

@@ -204,6 +204,37 @@ const upgrades: readonly (readonly string[])[] = [
     // outside the steps (src/shared-account-signin.ts), until this step.
     "DELETE FROM operation_results WHERE operation = 'runtime.signInCode'",
   ],
+  // 9: three changes.
+  [
+    // bridge_files loses `incoming`. Which messages carried a file is bridge_file_messages alone; the column
+    // named the first of them and went stale when that message stopped listing the file. Nothing is copied
+    // out of it: step 8 linked every file to it, and a link removed since was removed on purpose. The column
+    // carries a foreign key, so the table is rebuilt (see step 6). It has no index or trigger of its own.
+    `CREATE TABLE bridge_files_rebuilt (
+	connection text NOT NULL,
+	file text NOT NULL,
+	name text NOT NULL,
+	contents blob NOT NULL,
+	fetched_at text NOT NULL,
+	PRIMARY KEY (connection, file),
+	FOREIGN KEY (connection) REFERENCES bridge_connections(id) ON UPDATE no action ON DELETE no action,
+	CHECK (fetched_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', fetched_at) = fetched_at or strftime('%Y-%m-%dT%H:%M:%fZ', fetched_at) = fetched_at, 0))
+)`,
+    'INSERT INTO bridge_files_rebuilt (connection, file, name, contents, fetched_at) SELECT connection, file, name, contents, fetched_at FROM bridge_files',
+    'DROP TABLE bridge_files',
+    'ALTER TABLE bridge_files_rebuilt RENAME TO bridge_files',
+    // Who chose a job's exit code, so a stage is named only for a code one of loom's own programs chose
+    // (runtime/job-exit.ts). An ended job from before the step does not say, and stays unsaid: its code
+    // may be a machine's own runner's. The one kind that is certain is a job no machine took, which only
+    // loom ends, with its own code and its own line (the same recognition as step 7).
+    "ALTER TABLE jobs ADD COLUMN exit_by text CHECK (exit_by in ('body', 'worker', 'loom', 'runner'))",
+    "UPDATE jobs SET exit_by = 'loom' WHERE exit_code = 31 AND claimed_at IS NULL AND ended_note LIKE 'Never started: no machine took it within % hours'",
+    // The member a trigger's work is for, apart from who set it. Until this step a firing read it from the
+    // owner: a trigger a member owns that puts an agent to work. That is copied as it stands. Whether the
+    // member is narrowed is still judged when it fires (src/shared-tempo.ts).
+    'ALTER TABLE triggers ADD COLUMN member text REFERENCES members(id)',
+    "UPDATE triggers SET member = owner WHERE owner_kind = 'member' AND to_kind = 'agent' AND owner IN (SELECT id FROM members)",
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;

@@ -11,6 +11,7 @@ import { Dispatcher } from './runtime/dispatcher.js';
 import { harnessCannotRun } from './runtime/body-harnesses.js';
 import type { ModelRole } from './runtime/placement.js';
 import { liveWorker } from './shared-worker.js';
+import { WORKER_EXIT_BY } from './runtime/job-exit.js';
 import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
 import { claimedJobStates } from './core/data/job-states.js';
@@ -77,7 +78,8 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     after(input){if(stopped.delete(input))options.jobEnded(input.job);},
   });
   operations.register({ name: 'runtime.finish', write: true, recheckPolicy: true, doors: ['http'],
-    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX) }).strict(), output: ack,
+    // exitBy: whose code it is, as the worker says. A worker from before it was asked leaves it out, and the row then says nobody's.
+    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX), exitBy: z.enum(WORKER_EXIT_BY).optional() }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
@@ -88,10 +90,10 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
       const privateOutput = job?.conversation !== null && job?.conversation !== undefined
         && !keepJobText(conversation);
       return createHash('sha256').update(privateOutput
-        ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '' }) : canonical).digest('hex');
+        ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '', exitBy: input.exitBy ?? null }) : canonical).digest('hex');
     },
     run(ctx, input) {
-      dispatcher.finish(runner(ctx.viewer), input.job, input.exitCode, input.logTail);
+      dispatcher.finish(runner(ctx.viewer), input.job, input.exitCode, input.logTail, input.exitBy);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return { ok: true as const };
     },
     after: input => options.jobEnded(input.job),

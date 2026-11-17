@@ -88,7 +88,7 @@ it('states each card limit, the kept-versions count and the knowledge check inte
   const versions = sources('src').filter(file => /_revisions\b[^;`]*\bLIMIT \d+/.test(text(file)) || /MAX_REVISIONS\w* = \d/.test(text(file)));
   expect(versions).toEqual(['src/backends/cards.ts']);
   // The page calls a check due after the same number of days as the sweep raises it.
-  expect(text('src/pieces/mind/knowledge-sweep.ts')).toMatch(/CHECK_INTERVAL = CHECK_DAYS \* 86_400_000/);
+  expect(text('src/pieces/mind/knowledge-sweep.ts')).toMatch(/CHECK_INTERVAL = CHECK_DAYS \* DAY_MS/);
 });
 
 it('declares what the dispatcher asks of a receipt store once', () => {

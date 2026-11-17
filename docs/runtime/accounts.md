@@ -180,7 +180,7 @@ these records, and a token label is never ownership.
 
 `runtime.accountSignIn {account, box}` asks the worker on that machine to run
 the provider's sign-in program (`accountSignIn.programs` in the worker's config,
-one per provider). The program is started in a private directory and talks to
+one per provider). This is the one way a worker signs an account in. The program is started in a private directory and talks to
 the worker through files there: it writes `link` (the page to open) and, for a
 device flow, `user-code`; for a paste-code flow the worker writes `code`. Exit 0
 means the provider's own program says the account is signed in.
@@ -211,7 +211,18 @@ program's memory under that take; only the same take can read it
 reader gets it. If loom restarts between the take and the read the code is
 gone: the sign-in fails and is asked for again. The code is forgotten when the
 sign-in ends, however it ends. A request nobody finishes ends after 20 minutes;
-the program's periodic sweep closes it even when no worker is polling.
+the program's periodic sweep closes it even when no worker is polling. The
+worker gives up first, after 15 minutes (`RELAY_MS`; `accountSignIn.timeoutMs`
+can shorten it, not lengthen it), so loom is told why.
+
+There was a second way, `loom-worker --account-signin <file>`, which ran a
+program of a different protocol (the account's identity on stdin,
+`{"signedIn":true}` on stdout) at the machine and told loom nothing. It is
+removed: the worker now refuses that argument with exit code 51 and a line
+naming this section. A program written for it has to be rewritten to the
+files above. Someone at the machine who wants no request through loom runs the
+provider's own sign-in by hand and then records it with
+`runtime.accountSignedIn {account, box}`.
 
 The separate private program performs the actual provider sign-in/out. These
 commands record its result, without accepting credentials or invoking it inside

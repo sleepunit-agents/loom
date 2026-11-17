@@ -67,7 +67,7 @@ it('keeps a file shared in a second message once and lists it under both, withou
 
 it('sweeps expired files on startup, including timestamps with whole seconds', () => {
   const f = fixture();
-  f.db.insert(bridgeFiles).values({ ...f.input, fetchedAt: f.now().replace('.000Z', 'Z') }).run();
+  f.db.insert(bridgeFiles).values({ connection: 'slack', file: 'F1', name: 'report.txt', contents: f.input.contents, fetchedAt: f.now().replace('.000Z', 'Z') }).run();
   f.db.insert(bridgeFileMessages).values({ connection: 'slack', file: 'F1', incoming: 'slack' }).run();
   f.clock.advance(14 * DAY);
   const files = new BridgeFiles(f.db, f.clock);

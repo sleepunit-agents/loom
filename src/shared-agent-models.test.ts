@@ -10,10 +10,9 @@ import { setupCall } from '../test/fixtures/setup-call.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 const privateCalls=vi.hoisted(()=>{
  const fail=()=>{throw new Error('Provider execution forbidden in metadata commands');};
- return{spawn:vi.fn(fail),spawnSync:vi.fn(fail),exec:vi.fn(fail),execSync:vi.fn(fail),execFile:vi.fn(fail),execFileSync:vi.fn(fail),fork:vi.fn(fail),signIn:vi.fn(fail)};
+ return{spawn:vi.fn(fail),spawnSync:vi.fn(fail),exec:vi.fn(fail),execSync:vi.fn(fail),execFile:vi.fn(fail),execFileSync:vi.fn(fail),fork:vi.fn(fail)};
 });
 vi.mock('node:child_process',async original=>{const api={...await original<typeof import('node:child_process')>(),...privateCalls};return{...api,default:api};});
-vi.mock('./runtime/account-signin.js',()=>({signInAccount:privateCalls.signIn}));
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close();vi.unstubAllGlobals(); });
 const credential = 'a'.repeat(64), otherCredential = 'b'.repeat(64), ownerCredential = 'c'.repeat(64), agentCredential = 'd'.repeat(64);

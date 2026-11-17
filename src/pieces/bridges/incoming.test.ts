@@ -314,7 +314,7 @@ it('removes a private DM\'s files with its words, and keeps a file another messa
   const bare = f.ingress.receive({ ...f.message, id: 'bare', channel: 'direct', isDm: true, text: '' });
   const room = f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' });
   const keep = (file: string, first: string, ...also: string[]) => {
-    f.db.insert(bridgeFiles).values({ connection: 'c', file, incoming: first, name: file, contents: Buffer.from(file), fetchedAt: f.now() }).run();
+    f.db.insert(bridgeFiles).values({ connection: 'c', file, name: file, contents: Buffer.from(file), fetchedAt: f.now() }).run();
     for (const incoming of [first, ...also]) f.db.insert(bridgeFileMessages).values({ connection: 'c', file, incoming }).run();
   };
   keep('PRIVATE', dm.id); keep('BARE', bare.id); keep('SHARED', dm.id, room.id); keep('ROOM', room.id);

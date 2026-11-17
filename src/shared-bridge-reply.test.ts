@@ -10,6 +10,8 @@ import * as s from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import {BridgeIncoming} from './pieces/bridges/incoming.js';
 import {wordsKey} from './pieces/comms/crypto.js';
+import {BridgeFiles} from './pieces/bridges/files.js';
+import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const owner='a'.repeat(64),member='b'.repeat(64),other='c'.repeat(64),plainAgent='d'.repeat(64);
@@ -40,7 +42,7 @@ function fixture(){
  const call=async(name:'reply'|'file',input:unknown,bearer:string)=>{const res=await root.http.request('http://loom/api/bridges/'+name,{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});return {status:res.status,body:await res.json()};};
  const reply=(incomingId:string,bearer:string)=>call('reply',{id:randomUUID(),incoming:incomingId,text:'Synthetic reply',model:'m'},bearer);
  const mail=(incomingId:string)=>db.select({item:s.inbox}).from(s.inboxRefs).innerJoin(s.inbox,eq(s.inbox.id,s.inboxRefs.item)).where(eq(s.inboxRefs.ref,incomingId)).get()!.item;
- return {db,root,now,receive,body,call,reply,mail};
+ return {db,root,clock,now,receive,body,call,reply,mail};
 }
 it('settles everything the body took with its one reply, and leaves mail that arrived afterwards waiting',async()=>{
  const f=fixture(),one=f.receive(true),two=f.receive(true);expect(two.conversation).toBe(one.conversation);
@@ -66,7 +68,7 @@ it('lets a body answer only mail it took, and settles that mail with the reply',
 });
 it('reads attachments under the rule of the message they hang off',async()=>{
  const f=fixture(),dm=f.receive(true),room=f.receive(false);
- f.root.writes.run(()=>{for(const [file,message] of [['FDM',dm],['FROOM',room]] as const){f.db.insert(s.bridgeFiles).values({connection:'slack',file,incoming:message.id,name:file+'.txt',contents:Buffer.from(file),fetchedAt:f.now()}).run();f.db.insert(s.bridgeFileMessages).values({connection:'slack',file,incoming:message.id}).run();}});
+ f.root.writes.run(()=>{for(const [file,message] of [['FDM',dm],['FROOM',room]] as const){f.db.insert(s.bridgeFiles).values({connection:'slack',file,name:file+'.txt',contents:Buffer.from(file),fetchedAt:f.now()}).run();f.db.insert(s.bridgeFileMessages).values({connection:'slack',file,incoming:message.id}).run();}});
  expect(f.db.select().from(s.conversations).where(eq(s.conversations.id,dm.conversation!)).get()?.member).toBe('member');
  const status=async(message:{id:string},bearer:string)=>(await f.call('file',{incoming:message.id},bearer)).status;
  // Members: whoever may read the message row. The private DM is its member's alone; not even a household owner's.
@@ -85,4 +87,23 @@ it('reads attachments under the rule of the message they hang off',async()=>{
  expect((await f.call('file',{incoming:again.id},other)).body.value.files.map((file:{file:string})=>file.file)).toEqual(['FROOM']);
  expect((await f.call('file',{incoming:room.id},other)).body.value.files.map((file:{file:string})=>file.file)).toEqual(['FROOM']);
  expect(f.db.select().from(s.bridgeFiles).all()).toHaveLength(2);
+});
+it('serves a file under the message that still lists it, and names no message that has stopped',async()=>{
+ const f=fixture(),dm=f.receive(true),room=f.receive(false),files=new BridgeFiles(f.db,f.clock);clean.push(()=>files.close());
+ // Fetched for the private direct message first; the room message that carried it next is listed, not fetched for.
+ f.root.writes.run(()=>{files.store({connection:'slack',file:'FSHARED',incoming:dm.id,name:'shared.txt',contents:Buffer.from('SHARED')});
+  expect(files.carry({connection:'slack',incoming:room.id,files:['FSHARED']})).toEqual([]);});
+ expect((await f.call('file',{incoming:dm.id},member)).body.value.files.map((file:{file:string})=>file.file)).toEqual(['FSHARED']);
+ // The direct message's words expire, and with them its listing of the file.
+ f.root.writes.run(()=>expirePrivateBridgeWords(f.db,f.now()));
+ expect(f.db.select().from(s.bridgeFileMessages).all()).toEqual([{connection:'slack',file:'FSHARED',incoming:room.id}]);
+ // The room still has it, whole.
+ const kept=await f.call('file',{incoming:room.id,file:'FSHARED'},other);
+ expect(kept.status).toBe(200);expect(Buffer.from(kept.body.value.files[0].contents,'base64').toString()).toBe('SHARED');
+ // The direct message has not: asked through it, there is no such file.
+ expect((await f.call('file',{incoming:dm.id},member)).body.value.files).toEqual([]);
+ expect((await f.call('file',{incoming:dm.id,file:'FSHARED'},member)).body).toMatchObject({code:'not-found'});
+ // Nothing kept or served about the file names the message that no longer lists it.
+ expect(JSON.stringify(kept.body)).not.toContain(dm.id);
+ for(const row of f.db.select().from(s.bridgeFiles).all())expect(Object.values(row)).not.toContain(dm.id);
 });

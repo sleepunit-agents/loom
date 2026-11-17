@@ -1,5 +1,5 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
-import { WORKER_EXIT } from './job-exit.js';
+import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
 import { REPORT_MS, SILENCE_MS } from './silence.js';
 import { logTail } from './log-tail.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
@@ -44,8 +44,9 @@ export interface WorkerBody {
   /** Resolves only after the child has actually spawned, rejects on launch failure. */
   spawned: Promise<void>;
   /** `own` is true when the body ended by itself with this code, and not because it was killed. An
-   * executor that cannot tell leaves it out. */
-  exited: Promise<{ exitCode: number; logTail: string; own?: boolean }>;
+   * executor that cannot tell leaves it out. `signalled` is true when a signal ended it, so the code is
+   * the executor's word for that (WORKER_EXIT.killed) and not the body's. */
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean; signalled?: boolean }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
@@ -75,7 +76,8 @@ export interface WorkerControl {
   started(id: string, build: string): Promise<void>;
   /** false means revoked/stopped/lost: cease execution without a finish report. */
   heartbeat(id: string, state: 'starting' | 'running'): Promise<boolean>;
-  finish(id: string, exitCode: number, logTail: string): Promise<void>;
+  /** `by` says whose code it is (job-exit.ts): this worker's own, or the program it ran. */
+  finish(id: string, exitCode: number, logTail: string, by: WorkerExitBy): Promise<void>;
 }
 export interface WorkerSchedule {
   every(ms: number, callback: () => void): () => void;
@@ -131,8 +133,8 @@ export async function workOnce(input: {
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
   // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
   // The job goes silent and the sweep ends it; this worker goes on to its next poll.
-  const report = async (exitCode: number, logTail: string): Promise<WorkerResult> => {
-    try { await control.finish(assignment.id, exitCode, logTail); return 'finished'; }
+  const report = async (exitCode: number, logTail: string, by: WorkerExitBy): Promise<WorkerResult> => {
+    try { await control.finish(assignment.id, exitCode, logTail, by); return 'finished'; }
     catch { return 'abandoned'; }
   };
   try {
@@ -167,7 +169,7 @@ export async function workOnce(input: {
       await heartbeat;
       if (abandoned || abort.signal.aborted) return 'abandoned';
       // The stage is named twice: the code survives where a private conversation's log tail is dropped.
-      return await report(WORKER_EXIT[stage], `Worker could not start the body: ${stage} failed`);
+      return await report(WORKER_EXIT[stage], `Worker could not start the body: ${stage} failed`, 'worker');
     }
     if (abort.signal.aborted) return 'abandoned';
     reporting = true;
@@ -183,7 +185,7 @@ export async function workOnce(input: {
     if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
-    let result: { exitCode: number; logTail: string }, failed: 'release' | 'reap' | undefined = 'release';
+    let result: { exitCode: number; logTail: string; signalled?: boolean }, failed: 'release' | 'reap' | undefined = 'release';
     try {
       try { if (bootstrap) await body.release(bootstrap); else await body.release(); }
       finally { eraseBootstrap(bootstrap); }
@@ -208,7 +210,10 @@ export async function workOnce(input: {
     await heartbeat;
     if (abort.signal.aborted) return 'abandoned';
     // A private body's output is never reported; the worker's own words about a failure are not the body's.
-    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail));
+    // Whose code it is: the worker's own when it lost the body or a signal ended it. Otherwise the program's:
+    // loom's body program is the one given a body's credential, anything else is the machine's own runner.
+    const by = failed || result.signalled ? 'worker' : bootstrap ? 'body' : 'runner';
+    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail), by);
   } finally {
     eraseBootstrap(bootstrap);
     dispose();

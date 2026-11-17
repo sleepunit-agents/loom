@@ -11,7 +11,7 @@ const RETENTION = 14 * DAY_MS;
  * One owner schedules exact expiry, including for files present at startup.
  *
  * A file's bytes are kept once, by connection and Slack file id. Which messages carried it is
- * `bridge_file_messages`: the same file shared in a second message is linked to that message too (carry)
+ * `bridge_file_messages` and nowhere else (the file's own row names no message): the same file shared in a second message is linked to that message too (carry)
  * and is not fetched again. A message's files are read through its links (bridges.file), so the links say
  * who may read a file. A file is removed with its links after fourteen days from its first fetch; the files
  * of a private direct message go earlier, with its words (core/conversations/private-bridge-words.ts).
@@ -36,7 +36,7 @@ export class BridgeFiles {
     this.db.transaction(tx => {
       this.belongs(tx, input);
       // A duplicate fetch must not reset the fourteen-day retention clock, or replace what is kept.
-      tx.insert(bridgeFiles).values({ ...input, fetchedAt: new Date(this.clock.now()).toISOString() }).onConflictDoNothing().run();
+      tx.insert(bridgeFiles).values({ connection: input.connection, file: input.file, name: input.name, contents: input.contents, fetchedAt: new Date(this.clock.now()).toISOString() }).onConflictDoNothing().run();
       tx.insert(bridgeFileMessages).values({ connection: input.connection, file: input.file, incoming: input.incoming }).onConflictDoNothing().run();
     });
     this.sweep();

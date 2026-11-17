@@ -1,3 +1,5 @@
+import type { jobs } from '../core/data/schema.js';
+
 /** How a failed job says where it failed, with no private words: the exit code on its row.
  *
  * A job's log tail is dropped for a private conversation, and what a harness prints may hold the
@@ -6,9 +8,15 @@
  * LOOM_EXIT for a job it ended without any worker having run it. Any other code is the runner's own (a
  * builder, a custom runner), and 0 is success.
  *
- * The row keeps the number and not who chose it, so a custom runner that exits by itself with one of the
- * numbers below is shown with that number's stage (docs/accepted-tradeoffs.md, "A custom runner's exit
- * code can read as one of loom's"). */
+ * The same number can be a machine's own runner's, meaning something of its own. So the row also keeps who
+ * chose it (`jobs.exit_by`, ExitBy), and a stage is named only for a code one of loom's programs chose. */
+/** Who chose a job's exit code. `body`: loom's body program, which the worker knows by having given it a
+ * body's credential. `worker`: the worker, for a body it could not get running or that a signal ended.
+ * `loom`: loom itself, for a job no worker ran. `runner`: a machine's own runner, given no credential. */
+export type ExitBy = NonNullable<(typeof jobs.$inferSelect)['exitBy']>;
+/** What a worker may report: `loom` is not a worker's to say. */
+export const WORKER_EXIT_BY = ['body', 'worker', 'runner'] as const satisfies readonly ExitBy[];
+export type WorkerExitBy = typeof WORKER_EXIT_BY[number];
 export const BODY_EXIT = {
   /** Unexpected failure before the body knew what it was asked to do. */
   input: 1,
@@ -57,14 +65,16 @@ export const LOOM_EXIT = {
   unplaced: 31,
 } as const;
 
-const stages = new Map<number, string>([
-  ...Object.entries(BODY_EXIT).map(([stage, code]): [number, string] => [code, `body ${stage}`]),
-  ...Object.entries(WORKER_EXIT).map(([stage, code]): [number, string] => [code, `worker ${stage}`]),
-  ...Object.entries(LOOM_EXIT).map(([stage, code]): [number, string] => [code, `loom ${stage}`]),
-  // The worker says it, about the body.
-  [WORKER_EXIT.killed, 'body killed'],
-]);
-/** The stage a job's exit code names, for showing beside the number; undefined for 0 and for a runner's own code. */
-export function exitStage(code: number | null | undefined): string | undefined {
-  return code == null ? undefined : stages.get(code);
+const named = (who: string, codes: Record<string, number>) => new Map(Object.entries(codes).map(([stage, code]): [number, string] => [code, `${who} ${stage}`]));
+const stages: Record<Exclude<ExitBy, 'runner'>, Map<number, string>> = {
+  body: named('body', BODY_EXIT),
+  // The worker says `killed`, about the body.
+  worker: named('worker', WORKER_EXIT).set(WORKER_EXIT.killed, 'body killed'),
+  loom: named('loom', LOOM_EXIT),
+};
+/** The stage a job's exit code names, for showing beside the number. Undefined for 0, for a runner's own
+ * code, and for a code nobody said whose it is (a job ended before `exit_by` was kept): the same number
+ * from a machine's own runner means something else, and a guessed stage would mislead. */
+export function exitStage(code: number | null | undefined, by: ExitBy | null | undefined): string | undefined {
+  return code == null || by == null || by === 'runner' ? undefined : stages[by].get(code);
 }

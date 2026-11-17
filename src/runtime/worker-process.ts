@@ -101,11 +101,11 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   let spawned = false, closed = false, stopRequested = false;
   const retained = commandOutput();
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
-  let exitResolve!: (result: { exitCode: number; logTail: string; own: boolean }) => void;
+  let exitResolve!: (result: { exitCode: number; logTail: string; own: boolean; signalled: boolean }) => void;
   let exitReject!: (error: Error) => void;
   const ready = new Promise<void>((yes, no) => { spawnResolve = yes; spawnReject = no; });
   void ready.catch(() => {});
-  const exited = new Promise<{ exitCode: number; logTail: string; own: boolean }>((yes, no) => { exitResolve = yes; exitReject = no; });
+  const exited = new Promise<{ exitCode: number; logTail: string; own: boolean; signalled: boolean }>((yes, no) => { exitResolve = yes; exitReject = no; });
   void exited.catch(() => {});
   let killed = false;
   let cleanupError: Error | undefined;
@@ -149,7 +149,7 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     retained.stdout(outDecoder.end(), 0); retained.stderr(errorDecoder.end());
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
-    exitResolve({ exitCode: leaderExit ?? code ?? WORKER_EXIT.killed, logTail: retained.tail(), own });
+    exitResolve({ exitCode: leaderExit ?? code ?? WORKER_EXIT.killed, logTail: retained.tail(), own, signalled: leaderExit === undefined ? code === null : !own });
   });
   // Covers cancellation during the injected spawn operation/listener setup.
   if (signal.aborted) kill();

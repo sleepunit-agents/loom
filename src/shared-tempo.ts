@@ -12,7 +12,7 @@ import type { Recipient } from './core/tempo/volume.js';
 import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
 import { tempoCommandAllowed, recordedTrigger } from './shared-tempo-access.js';
-import { mayRunPrivateWork, triggerWorksFor } from './policy.js';
+import { isHouseholdOwner, mayRunPrivateWork } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { Jobs, agentMailAdmission } from './runtime/jobs.js';
 import { repositoryInstructions } from './core/tempo/repository.js';
@@ -37,8 +37,12 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
   return installTempoComposition({ db, clock, writes, operations,
     contributors: options.contributors,beforeStart:options.beforeStart,
     delivery: { conversations, changed,
+      // Whom the work is for is on the trigger (`member`, set with it). How far that reaches is judged now:
+      // a household owner's work is the whole agent's, anyone else's is narrowed to them, and for a member
+      // who has left, lost the agent or left the trigger's project the firing fails.
       worksFor(trigger) {
-        const sharing = sharedSharing(db), member = triggerWorksFor(trigger, sharing);
+        if (trigger.member === null || trigger.toKind !== 'agent') return undefined;
+        const sharing = sharedSharing(db), member = isHouseholdOwner({ kind: 'member', id: trigger.member }, sharing) ? undefined : trigger.member;
         if (member !== undefined && !mayRunPrivateWork({ agent: trigger.to!, member, project: trigger.project ?? undefined }, sharing))
           throw new Error('The member this was set for no longer has the agent, or is not in its project');
         return member;

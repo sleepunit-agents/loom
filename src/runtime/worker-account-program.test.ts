@@ -20,7 +20,7 @@ function fixture(mode: '--account-signin' | '--account-usage', timeoutMs?: numbe
   vi.mocked(spawn).mockReset().mockReturnValue(child);
   const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
   const handlers = new Map<string, () => void>();
-  const config = { command, account: identity, ...(mode === '--account-signin' ? { box: 'worker' } : {}), ...(timeoutMs === undefined ? {} : { timeoutMs }) };
+  const config = { command, account: identity, ...(timeoutMs === undefined ? {} : { timeoutMs }) };
   const input = { usageBasis: vi.fn(async () => ({ basis: '00000000-0000-4000-8000-000000000001' })), usageUnavailable: vi.fn(async () => ({ recorded: true })), args: [mode, '/config'], read: vi.fn<(path: string) => Promise<string>>(async path => { if (path !== '/config') throw Error('Unexpected local read'); return JSON.stringify(config); }), output: vi.fn(), error: vi.fn(),
     on: (name: string, callback: () => void) => { handlers.set(name, callback); },
     off: (name: string) => { handlers.delete(name); }, control: vi.fn(), run: vi.fn() };
@@ -41,16 +41,15 @@ async function spawned(f: ReturnType<typeof fixture>) {
   });
   f.child.emit('spawn'); await f.sent; await flush();
 }
-for (const mode of ['--account-signin', '--account-usage'] as const) {
+for (const mode of ['--account-usage'] as const) {
   it(`runs ${mode} through the real adapter without exposing private diagnostics`, async () => {
     const f = fixture(mode), result = workerProgram(f.input); await spawned(f);
-    expect(JSON.parse(f.stdin())).toEqual({ ...identity, ...(mode === '--account-signin' ? { box: 'worker' } : {}) });
+    expect(JSON.parse(f.stdin())).toEqual(identity);
     f.child.stderr.emit('data', 'credential-secret');
-    f.child.stdout.emit('data', JSON.stringify(mode === '--account-signin' ? { signedIn: true } : windows));
+    f.child.stdout.emit('data', JSON.stringify(windows));
     f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
     expect(await result).toBe(0);
-    expect(f.input.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify(mode === '--account-signin'
-      ? { ...identity, box: 'worker', signedIn: true } : { ...identity, windows }) + '\n');
+    expect(f.input.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ...identity, windows }) + '\n');
     expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
     expect(f.input.error).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled(); expect(f.input.control).not.toHaveBeenCalled();
     expect(f.kill).toHaveBeenCalledExactlyOnceWith(-123, 'SIGKILL');
@@ -59,7 +58,7 @@ for (const mode of ['--account-signin', '--account-usage'] as const) {
   for (const timeoutMs of [undefined, 20]) it(`bounds ${mode} with ${timeoutMs ?? 'default'} deadline even if the process never closes`, async () => {
     const f = fixture(mode, timeoutMs), result = workerProgram(f.input); await spawned(f);
     let settled = false; void result.then(() => { settled = true; });
-    const deadline = timeoutMs ?? (mode === '--account-signin' ? 300_000 : 30_000);
+    const deadline = timeoutMs ?? 30_000;
     await vi.advanceTimersByTimeAsync(deadline - 1);
     expect(settled).toBe(false); expect(f.kill).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -71,7 +70,7 @@ for (const mode of ['--account-signin', '--account-usage'] as const) {
     const f = fixture(mode), result = workerProgram(f.input); await spawned(f);
     f.handlers.get('SIGTERM')!();
     expect(f.kill).toHaveBeenCalledExactlyOnceWith(-123, 'SIGKILL');
-    f.child.stdout.emit('data', JSON.stringify(mode === '--account-signin' ? { signedIn: true } : windows));
+    f.child.stdout.emit('data', JSON.stringify(windows));
     f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
     expect(await result).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0); expect(vi.getTimerCount()).toBe(0);
@@ -86,7 +85,7 @@ for (const output of ['not-json', JSON.stringify([{ ...windows[0], token: 'crede
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
   });
 }
-for (const mode of ['--account-signin', '--account-usage'] as const) {
+for (const mode of ['--account-usage'] as const) {
 for (const patch of [
   { account: { ...identity, token: 'credential-secret' } },
   { account: { account: 'subscription', owner: 'member' } },
@@ -100,15 +99,14 @@ for (const patch of [
 
 }
 
-for (const [output, code] of [['{"signedIn":false}', 0], ['not-json', 0], ['{"signedIn":true}', 7], ['{"signedIn":true,"token":"credential-secret"}', 0]] as const) {
-  it('never acknowledges unsuccessful or invalid private sign-in through the executable program', async () => {
-    const f = fixture('--account-signin'), result = workerProgram(f.input); await spawned(f);
-    f.child.stdout.emit('data', output); f.child.emit('close', code, null); await vi.advanceTimersByTimeAsync(0);
-    expect(await result).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled();
-    expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('account'));
-    expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
-  });
-}
+it('refuses the removed --account-signin command with a line that says what replaced it, before reading its file or running anything', async () => {
+  const f = fixture('--account-signin');
+  expect(await workerProgram(f.input)).toBe(WORKER_STOP.signin[0]);
+  expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('signin'));
+  expect(workerStopLine('signin')).toMatch(/--account-signin was removed.*runtime\.accountSignIn.*accountSignIn\.programs/);
+  expect(f.input.read).not.toHaveBeenCalled(); expect(spawn).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
+  expect(f.handlers.size).toBe(0);
+});
 
 it('rejects valid quota output when the private command exits unsuccessfully', async () => {
   const f = fixture('--account-usage'), result = workerProgram(f.input); await spawned(f);

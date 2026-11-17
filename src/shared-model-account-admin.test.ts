@@ -8,10 +8,9 @@ import { sharedRoot } from './shared-root.js';
 import * as s from './core/data/schema.js';
 const privateCalls=vi.hoisted(()=>{
  const fail=()=>{throw new Error('Provider execution forbidden in metadata commands');};
- return{spawn:vi.fn(fail),spawnSync:vi.fn(fail),exec:vi.fn(fail),execSync:vi.fn(fail),execFile:vi.fn(fail),execFileSync:vi.fn(fail),fork:vi.fn(fail),signIn:vi.fn(fail)};
+ return{spawn:vi.fn(fail),spawnSync:vi.fn(fail),exec:vi.fn(fail),execSync:vi.fn(fail),execFile:vi.fn(fail),execFileSync:vi.fn(fail),fork:vi.fn(fail)};
 });
 vi.mock('node:child_process',async original=>{const api={...await original<typeof import('node:child_process')>(),...privateCalls};return{...api,default:api};});
-vi.mock('./runtime/account-signin.js',()=>({signInAccount:privateCalls.signIn}));
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.unstubAllGlobals();});
 const raw={alice:'a'.repeat(64),bob:'b'.repeat(64),admin:'h'.repeat(64),runner:'r'.repeat(64),agent:'g'.repeat(64),runnerTwo:'t'.repeat(64)};

@@ -63,6 +63,9 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
 
 /** A new trigger as `tempo.set` records it for this caller (policy.ts, triggerAsSet): work a member who is
  * not a household owner schedules for an agent, themselves or through their body, is recorded as theirs. */
-export function recordedTrigger<T extends NewTrigger>(db: DataDatabase, viewer: Viewer, trigger: T): T {
-  return triggerAsSet(viewer, trigger, sharedSharing(db));
+export function recordedTrigger<T extends NewTrigger>(db: DataDatabase, viewer: Viewer, trigger: T): { trigger: T; member?: string } {
+  const recorded = triggerAsSet(viewer, trigger, sharedSharing(db));
+  // The member its work is for (`triggers.member`): a trigger a member owns that puts an agent to work is
+  // that member's direction, whoever typed it. Stored once here; a firing reads it (shared-tempo.ts).
+  return recorded.toKind === 'agent' && recorded.ownerKind === 'member' && recorded.owner ? { trigger: recorded, member: recorded.owner } : { trigger: recorded };
 }

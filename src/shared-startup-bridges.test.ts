@@ -90,7 +90,7 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  const followup=JSON.parse(raw.toString('utf8'));followup.payload.event_id='thread-followup';followup.payload.event.ts='1794765600.000002';followup.payload.event.thread_ts='1794765600.000001';delete followup.payload.event.files;
  await transport!.receive({},Buffer.from(JSON.stringify(followup)));clock.advance(0);await daemon.idle();
  expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(2);expect(new Set(db.select().from(s.bridgeIncoming).all().map(row=>row.conversation))).toEqual(new Set([incoming.conversation]));
- const attachment=db.select().from(s.bridgeFiles).get()!;expect(attachment).toMatchObject({connection:'slack-example',incoming:incoming.id,file:'FGARDEN',contents:Buffer.from('FICTITIOUS_ATTACHMENT')});
+ const attachment=db.select().from(s.bridgeFiles).get()!;expect(attachment).toMatchObject({connection:'slack-example',file:'FGARDEN',contents:Buffer.from('FICTITIOUS_ATTACHMENT')});
  daemon.sends.queue({id:'reply',incoming:incoming.id,text:'A fictitious garden reply'});daemon.changed();await daemon.idle();
  expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'reply')).get()).toMatchObject({state:'sent'});expect(db.select().from(s.bridgeSendParts).where(eq(s.bridgeSendParts.send,'reply')).all()).toMatchObject([{part:0,postedId:'1794765600.000009'}]);
  const old=transport!;botToken='FICTITIOUS_REPLACEMENT_TOKEN';
