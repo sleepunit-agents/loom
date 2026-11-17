@@ -66,6 +66,9 @@ function houseAddress(repository: unknown, protocols: readonly string[]): URL | 
   if (url.protocol === 'https:' ? !url.hostname || !repository.toLowerCase().startsWith(`https://${url.host}`) : url.hostname !== '' || !repository.startsWith('file:///')) return undefined;
   return url;
 }
+/** Whether this is an address a worker fetches a house from: `https`, with no user, password, query or
+ * fragment in it. Such an address holds no credential and can be told to a body. */
+export const houseRepository = (repository: unknown): repository is string => houseAddress(repository, ['https']) !== undefined;
 /** The header git sends for a repository secret: `user:password` when the secret has a colon, otherwise a
  * token as the password of `x-access-token`. */
 function authorization(credential: Uint8Array): string {
@@ -112,6 +115,9 @@ export interface HouseSource {
    * stream fails when git does or the context is not one the worker writes, so a cut-off context is
    * never taken for a whole one. `added` is one file of the worker's own, written after the commit's. */
   context(house: House, commit: string, signal: AbortSignal, added?: ContextFile): Readable;
+  /** Whether this source fetches from such an address. One that it does holds no credential. A source
+   * that does not say is taken to fetch what a worker does (houseRepository). */
+  fetches?(repository: string): boolean;
 }
 export function houseSource(options: {
   /** The worker's own directory for mirrors: under its state directory, which is private to its user. */
@@ -197,6 +203,7 @@ export function houseSource(options: {
       void next.catch(() => {}).finally(() => { if (busy.get(mirror) === next) busy.delete(mirror); });
       return next;
     },
+    fetches: repository => houseAddress(repository, protocols) !== undefined,
     context(house, commit, signal, added) {
       if (!houseAddress(house.repository, protocols) || !COMMIT.test(commit)) return Readable.from((async function* (): AsyncGenerator<Buffer> { throw new HouseSourceError('House is not one this worker fetches'); })());
       const mirror = mirrorOf(house.repository), env = environment(options.directory, protocols);

@@ -6,10 +6,12 @@ import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
 import { containerWorkerExecutor } from './worker-container.js';
 import { BuildTimeError, workOnce, type WorkerAssignment } from './worker.js';
-import { coreImage, houseImage } from './house-image.js';
+import { coreImage, houseCommit, houseImage } from './house-image.js';
 import { coreDefinition, coreWeek, NO_HOUSEFILE } from './house-core.js';
 import { turnsOf, workerTurns } from './worker-turns.js';
 import { DAY_MS } from '../core/day.js';
+import { houseRepository, houseSource } from './house-source.js';
+import { HOUSE_ENV } from './house-layout.js';
 import type { DockerEngine } from './docker-engine.js';
 import { WorkerStop } from './worker-stop.js';
 const deferred = <T>() => { let resolve!: (value: T) => void, reject!: (error: Error) => void;
@@ -75,7 +77,7 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   // The image by the id it was inspected under; its node, the worker's body program, the harness's body
   // file, the image's working directory. No environment but where scratch files go: the rest is the image's.
   expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
-    Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent'], Tty: false, ExposedPorts: {},
+    Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`], Tty: false, ExposedPorts: {},
     Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
     HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [programAsked()], DeviceRequests: [] } });
   ack.resolve(); await flush(); expect(JSON.parse(f.writes[0])).toEqual({ job, build: built, bootstrap: handed });
@@ -202,7 +204,7 @@ it('does not copy ambient worker credentials into container environment override
     const body = f.start(); await body.spawned;
     // Docker can retain baked image values; this list contains only configured
     // overrides and never copies worker process.env or the loom bearer token.
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent'] }); await body.stop();
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent', 'LOOM_HOUSE_REPOSITORY=https://example.com/org/house.git', 'LOOM_HOUSE_BRANCH=next', `LOOM_HOUSE_COMMIT=${commit}`] }); await body.stop();
   } finally { vi.unstubAllEnvs(); }
 });
 it('keeps running without a body timeout after both setup and cleanup intervals', async () => {
@@ -1081,5 +1083,48 @@ it('is not made when the directory it is installed in has no definition of the c
   expect(() => containerWorkerExecutor(f.config, { engine: f.deps.engine, source: f.deps.source, program: withCore })).not.toThrow();
   expect(coreDefinition(join(withCore, 'house', 'core')).digest).toMatch(/^[0-9a-f]{64}$/);
   expect(f.engine.images).not.toHaveBeenCalled();
+});
+
+// What a body is told of its house.
+const envOf = (f: ReturnType<typeof fixture>, call = 0) => Object.fromEntries(((f.engine.json.mock.calls.filter(made => made[1].startsWith('/containers/create'))[call][2] as { Env: string[] }).Env).map(entry => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]));
+it('tells every body the repository, the branch and the exact commit its house was built from, whatever the image says', async () => {
+  expect(HOUSE_ENV).toEqual({ repository: 'LOOM_HOUSE_REPOSITORY', branch: 'LOOM_HOUSE_BRANCH', commit: 'LOOM_HOUSE_COMMIT' });
+  const f = fixture(), there = f.engine.images.getMockImplementation()!;
+  // An image whose own ENV names the same three: an engine gives a container's own variables over an image's.
+  f.engine.images.mockImplementation(async (method, path, body, signal) => method === 'GET' && !path.startsWith('/images/json')
+    ? { Id: imageId, Config: { Labels: houseLabels, Env: ['LOOM_HOUSE_COMMIT=' + 'f'.repeat(40), 'LOOM_HOUSE_BRANCH=of-the-image', 'LOOM_HOUSE_REPOSITORY=https://example.com/elsewhere.git', 'HOME=/root'] } } : there(method, path, body, signal));
+  const body = f.start(); await body.spawned;
+  expect(envOf(f)).toEqual({ LOOM_BODY_SCRATCH: '/tmp', HOME: '/home/agent', LOOM_HOUSE_REPOSITORY: 'https://example.com/org/house.git', LOOM_HOUSE_BRANCH: 'next', LOOM_HOUSE_COMMIT: commit });
+  // Each once, and set by the worker on the container: nothing of the image's is copied into what it asks for.
+  const asked = (f.engine.json.mock.calls[0][2] as { Env: string[] }).Env;
+  expect(asked.filter(entry => entry.startsWith('LOOM_HOUSE_'))).toHaveLength(3); expect(asked.join()).not.toContain('of-the-image');
+  await body.stop();
+});
+it('tells a body the commit of the image it runs in, not where the branch is now', async () => {
+  const f = fixture(), older = houseImage(job.house, 'a'.repeat(40), core);
+  // The image name carries the commit it was built from, and that is all the worker goes by.
+  expect(houseCommit(older)).toBe('a'.repeat(40)); expect(houseCommit(built)).toBe(commit);
+  expect(() => houseCommit('localhost/loom-core:' + 'e'.repeat(16) + '-2026w47')).toThrow('Invalid house image');
+  // The job was given an image built when its branch was at an older commit; the branch has moved on since.
+  f.source.fetch.mockResolvedValue('d'.repeat(40));
+  const body = f.executor.start(job, older, f.abort.signal); await body.spawned;
+  expect(envOf(f)).toMatchObject({ LOOM_HOUSE_COMMIT: 'a'.repeat(40), LOOM_HOUSE_BRANCH: 'next' });
+  expect(f.source.fetch).not.toHaveBeenCalled(); await body.stop();
+});
+it('tells a body in a house with no Housefile the same three', async () => {
+  const f = fixture(), plain = { ...job, id: 'plain', house: { repository: 'https://example.com/mark/house.git', file: '', branch: 'main' } };
+  const image = await f.executor.build(plain, f.abort.signal), body = f.executor.start(plain, image, f.abort.signal); await body.spawned;
+  expect(envOf(f)).toMatchObject({ LOOM_HOUSE_REPOSITORY: 'https://example.com/mark/house.git', LOOM_HOUSE_BRANCH: 'main', LOOM_HOUSE_COMMIT: commit });
+  await body.stop();
+});
+it.each(['https://user:secret-token@example.com/org/house.git', 'https://token@example.com/org/house.git', 'https://example.com/org/house.git?token=secret', 'ssh://git@example.com/org/house.git', '/srv/house.git', 'https://example.com/a\nLOOM_HOUSE_COMMIT=x'])
+('never tells a body an address that could hold a credential, and starts no container for it (%s)', async repository => {
+  const f = fixture(), strange = { ...job, house: { ...job.house, repository } };
+  expect(houseRepository(repository)).toBe(false);
+  expect(() => f.executor.start(strange, built, f.abort.signal)).toThrow('Invalid house repository');
+  expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.images).not.toHaveBeenCalled();
+  // A source says what it fetches; the worker's own fetches https and nothing else.
+  expect(houseSource({ directory: join(houseRoot, 'unused-mirrors') }).fetches!(repository)).toBe(false);
+  expect(houseSource({ directory: join(houseRoot, 'unused-mirrors') }).fetches!('https://example.com/org/house.git')).toBe(true);
 });
 

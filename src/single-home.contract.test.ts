@@ -626,6 +626,8 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(CORE_DIRECTORY).toBe('house/core');
   expect(sources('src').filter(file => /localhost\/loom-core/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
   expect(sources('src').filter(file => /['"`]LOOM_CORE['"`]/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
+  // The names of what a body is told of its house are written once.
+  expect(sources('src').filter(file => /LOOM_HOUSE_(REPOSITORY|BRANCH|COMMIT)/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
   // A machine's configuration says where a sign-in directory is on the machine, and nothing of where it appears.
   expect(text('src/runtime/worker-mounts.ts')).toContain('target: houseLogin(harness), readOnly: false');
   // The image contract's labels: written in the one file that reads them.

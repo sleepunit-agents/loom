@@ -62,7 +62,7 @@ writeFileSync(join(standIn, 'Housefile'), `FROM ${image}
 COPY check-node /usr/local/bin/node
 COPY body /etc/loom/body
 LABEL loom.house="2" loom.house.harnesses="true echo sleep readonly"
-ENV PROBE=from-the-core HOME=/somewhere/else
+ENV PROBE=from-the-core HOME=/somewhere/else LOOM_HOUSE_COMMIT=set-by-the-image
 WORKDIR /tmp
 `);
 // Started as: node /opt/loom/dist/body.js /etc/loom/body/<harness>.json, with the job on stdin.
@@ -73,7 +73,7 @@ case "$2" in
   */readonly.json) cat >/dev/null; touch $HOME/read-only/x 2>/dev/null && exit 9; ls $HOME/read-only >/dev/null && exit 7; exit 8 ;;
 esac
 { echo "program: $1 $(test -f "$1" && echo present || echo MISSING)"; echo "body file: $2"; echo "PROBE=$PROBE HOUSE=$HOUSE HOME=$HOME scratch=$LOOM_BODY_SCRATCH cwd=$(pwd)"
-  echo "repository: $(ls | tr '\\n' ' ')"; echo "sign-in: $(touch /run/loom/login/$(basename "$2" .json)/written-by-the-body 2>&1 && echo writable)"
+  echo "built from: $LOOM_HOUSE_REPOSITORY $LOOM_HOUSE_BRANCH $LOOM_HOUSE_COMMIT"; echo "repository: $(ls | tr '\\n' ' ')"; echo "sign-in: $(touch /run/loom/login/$(basename "$2" .json)/written-by-the-body 2>&1 && echo writable)"
   echo "uid $(id -u); the mount belongs to uid $(stat -c %u $HOME/written) in here"; echo "stdin: $(cat | head -c 60)"; } > "$out" 2>&1
 case "$2" in */sleep.json) exec sleep 300 ;; */echo.json) exit 7 ;; esac
 exit 0
@@ -102,6 +102,7 @@ const version = name => tried(() => execFileSync(name, ['--version'], { encoding
 const found = { node: process.version, 'node is': process.execPath, argv: process.argv.slice(1), HOME: process.env.HOME, cwd: process.cwd(), uid: process.getuid(),
   repository: tried(() => fs.readdirSync('.').sort()), 'body file': tried(() => JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))),
   'the program the body file names is there': tried(() => fs.existsSync(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')).command)),
+  'built from': [process.env.LOOM_HOUSE_REPOSITORY, process.env.LOOM_HOUSE_BRANCH, process.env.LOOM_HOUSE_COMMIT],
   claude: version('claude'), codex: version('codex'), git: version('git'),
   'Claude Code keeps its sign-in in': process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR, 'Codex auth.json is a link to': tried(() => fs.readlinkSync(process.env.HOME + '/.codex/auth.json')),
   'the mounted sign-in directory can be written': tried(() => { fs.writeFileSync('/run/loom/login/claude/written-by-the-body', ''); return true; }) };

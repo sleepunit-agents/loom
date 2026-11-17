@@ -603,8 +603,16 @@ LABEL loom.house="2" \
 The body's command is
 `/usr/local/bin/node /opt/loom/dist/body.js /etc/loom/body/<harness>.json`, started
 in `/home/agent/repo` with the image's `ENV` and as the image's `USER`. The
-worker sets two variables whatever the image says: `HOME=/home/agent` and
-`LOOM_BODY_SCRATCH=/tmp`. The image's `WORKDIR` is not read. `/opt/loom` is
+worker sets these variables whatever the image says (an image's `ENV` of the
+same name does not hold): `HOME=/home/agent`, `LOOM_BODY_SCRATCH=/tmp`, and what
+the house was built from: `LOOM_HOUSE_REPOSITORY` (the `https` address as it
+was fetched, which never holds a credential), `LOOM_HOUSE_BRANCH` (the branch
+in the job's settings) and `LOOM_HOUSE_COMMIT` (the full id of the commit the
+image was built from, taken from the image's own name: for an image found
+already built, that is the commit it was built at, not where the branch is
+now). A house with no Housefile is told the same three. With them a repository
+can make the copy of itself at `/home/agent/repo` a checkout of exactly that
+commit. The image's `WORKDIR` is not read. `/opt/loom` is
 the directory the worker itself is installed in, mounted read-only: every body
 runs the body program of the loom that is running the worker, and no image
 carries one. The body program is JavaScript only, so any node that loom supports

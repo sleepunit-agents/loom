@@ -17,12 +17,12 @@ import { dockerEngine, DockerResponseError, type DockerEngine } from './docker-e
 import { BODY_SCRATCH } from './body-harness.js';
 import { BuildTimeError, UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 import { defaultWorkerState, workerLeft } from './worker-left.js';
-import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
-import { buildCore, buildHouse, coreImage, coreImageName, houseBuilt, houseCore, houseImage, houseImageName, houseStart, pruneHouses, type HouseGuard, type HouseStart } from './house-image.js';
+import { gitAvailable, houseRepository, houseSource, type HouseSource } from './house-source.js';
+import { buildCore, buildHouse, coreImage, coreImageName, houseBuilt, houseCommit, houseCore, houseImage, houseImageName, houseStart, pruneHouses, type HouseGuard, type HouseStart } from './house-image.js';
 import { CORE_DIRECTORY, coreDefinition, coreWeek, noHousefile, NO_HOUSEFILE, type CoreDefinition } from './house-core.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
-import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile } from './house-layout.js';
+import { HOUSE_ENV, HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile } from './house-layout.js';
 import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
@@ -75,12 +75,15 @@ function portBindings(job: WorkerAssignment) {
 }
 /** One body's container. Where things are in it is the layout, the same in every house (house-layout.ts):
  * node, the harness's body file, the tenant's home and its repository, where the body starts. The program
- * is the worker's own, mounted. The rest of the environment is the image's: the worker adds the home and
- * where the body may keep scratch files, which is the container's own temporary directory, private to the
- * body because the container is and removed with it. */
-function createSpec(job: WorkerAssignment, house: HouseStart, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
+ * is the worker's own, mounted. The rest of the environment is the image's: the worker adds the home,
+ * where the body may keep scratch files (the container's own temporary directory, private to the body
+ * because the container is and removed with it), and what the house was built from. A variable the
+ * worker sets holds over an image's `ENV` of the same name.
+ * @param built What the image was built from: the repository as fetched, the job's branch, and the
+ * commit in the image's own name, which is the commit built and not wherever the branch is now. */
+function createSpec(job: WorkerAssignment, house: HouseStart, built: { repository: string; branch: string; commit: string }, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
   return { Image: house.id, Entrypoint: [HOUSE_NODE], Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)], WorkingDir: HOUSE_REPOSITORY,
-    Env: [`${BODY_SCRATCH}=/tmp`, `HOME=${HOUSE_HOME}`],
+    Env: [`${BODY_SCRATCH}=/tmp`, `HOME=${HOUSE_HOME}`, `${HOUSE_ENV.repository}=${built.repository}`, `${HOUSE_ENV.branch}=${built.branch}`, `${HOUSE_ENV.commit}=${built.commit}`],
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },
@@ -369,6 +372,8 @@ export function containerWorkerExecutor(config: {
         if (signal.aborted) throw new Error('Container cancelled');
         serves(assignment);
         if (!houseImageName(image)) throw new Error('Invalid container image');
+        // Told to the body as it is: only an address the worker fetches, which holds no credential.
+        if (!(source.fetches ?? houseRepository)(assignment.house.repository)) throw new Error('Invalid house repository');
         mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
@@ -386,7 +391,8 @@ export function containerWorkerExecutor(config: {
       const setup = (async () => {
         try {
           // The image says how a body starts in it; one that does not fails this job (UnmetHouseError).
-          const spec = createSpec(assignment, await houseStart(engine, image, assignment.harness, abort.signal), fixed.container, mounts, bindings);
+          const spec = createSpec(assignment, await houseStart(engine, image, assignment.harness, abort.signal),
+            { repository: assignment.house.repository, branch: assignment.house.branch, commit: houseCommit(image) }, fixed.container, mounts, bindings);
           if (abort.signal.aborted) throw new Error('Container cancelled');
           let created: unknown; createAsked = true;
           try { created = await engine.json('POST', `/containers/create?name=${encodeURIComponent(name)}`, spec, abort.signal); }

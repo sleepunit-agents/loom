@@ -21,3 +21,8 @@ export const houseBodyFile = (harness: string): string => `/etc/loom/body/${harn
 export const houseLogin = (harness: string): string => `/run/loom/login/${harness}`;
 /** Where an agent's mounted directory lands: under the home, at the path the machine's configuration gives. */
 export const houseMount = (relative: string): string => `${HOUSE_HOME}/${relative}`;
+/** What a body is told of the house it is in, as variables the worker sets on its container: the
+ * repository's address as it was fetched, the branch the job's settings name, and the commit the image was
+ * built from. The worker sets them, so an image's own `ENV` of these names does not hold. With them a
+ * repository can turn the copy of itself at HOUSE_REPOSITORY into a checkout of exactly that commit. */
+export const HOUSE_ENV = { repository: 'LOOM_HOUSE_REPOSITORY', branch: 'LOOM_HOUSE_BRANCH', commit: 'LOOM_HOUSE_COMMIT' } as const;

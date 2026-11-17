@@ -63,6 +63,12 @@ export const houseImageName = (image: unknown): image is string => {
   const cut = tag.indexOf('-');
   return cut > 0 && COMMIT.test(tag.slice(0, cut)) && CORE_TAG.test(tag.slice(cut + 1));
 };
+/** The commit a house image was built from, by its name: the one thing that says so, whatever the
+ * job's branch has moved to since. */
+export const houseCommit = (image: string): string => {
+  if (!houseImageName(image)) throw new Error('Invalid house image');
+  return image.slice(image.indexOf(':') + 1, image.indexOf(':') + 1 + image.slice(image.indexOf(':') + 1).indexOf('-'));
+};
 /** The core house a house image was built on, by its name. */
 export const houseCore = (image: string): string => {
   if (!houseImageName(image)) throw new Error('Invalid house image');
