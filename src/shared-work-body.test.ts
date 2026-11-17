@@ -105,7 +105,7 @@ it('audits a stale-head refusal instead of replaying a cached successful spend',
 it('offers all four body Work operations only through HTTP, including for a valid proved body',async()=>{
  const f=await fixture(),id=await f.ask();expect((await f.call('answer',{id,answer:'allow'},randomUUID(),f.owner)).status).toBe(200);
  const auth=f.root.credentials.authenticate(new Request('http://loom/graphql',{headers:{authorization:'Bearer '+raw.body}}));expect(auth?.valid()).toBe(true);if(!auth)throw Error('No fixture body proof');
- const before=f.snapshot();for(const door of ['socket','mcp','direct'] as const)for(const [name,input] of [['request',request],['rule',target],['use',{id,...target}],['withdraw',{id}]] as const){expect(f.root.operations.offered(door).some(row=>row.name==='approvals.'+name)).toBe(false);expect(f.root.operations.call(door,auth.viewer,'approvals.'+name,input,randomUUID())).toMatchObject({ok:false,code:'denied'});}
+ const before=f.snapshot();for(const door of ['socket','direct'] as const)for(const [name,input] of [['request',request],['rule',target],['use',{id,...target}],['withdraw',{id}]] as const){expect(f.root.operations.offered(door).some(row=>row.name==='approvals.'+name)).toBe(false);expect(f.root.operations.call(door,auth.viewer,'approvals.'+name,input,randomUUID())).toMatchObject({ok:false,code:'denied'});}
  expect(f.snapshot()).toEqual(before);
 });
 it.each(['member','project','job'] as const)('binds receipts against a valid same-conversation %s reassignment',async field=>{

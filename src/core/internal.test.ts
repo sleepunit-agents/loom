@@ -33,7 +33,7 @@ it('does not trust names, copies, JSON, other registries, external doors or ende
     expect(app.operations.call('direct', viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
     expect(maySee(viewer, {member:'sam'}, sharing)).toBe(false);
   }
-  for (const door of ['http', 'socket', 'mcp'] as const) {
+  for (const door of ['http', 'socket'] as const) {
     expect(app.operations.call(door, module.viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
     expect(await app.operations.callAsync(door, module.viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
   }

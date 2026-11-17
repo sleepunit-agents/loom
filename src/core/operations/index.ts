@@ -9,7 +9,8 @@ import { migrate } from '../db/index.js';
 import type { Clock } from '../clock.js';
 import type { Viewer } from '../../policy.js';
 import type { Measuring, TimingTarget } from '../measuring/index.js';
-export type Door = 'http' | 'socket' | 'mcp' | 'direct';
+/** How a call arrived. The /mcp route is not a door of its own: it maps tool names onto 'http' calls (src/shared-mcp.ts). */
+export type Door = 'http' | 'socket' | 'direct';
 /** A transport supplies this capability only after authenticating its session. */
 const signedInWindow = (door: Door, viewer: Viewer, window: boolean) => window && viewer.kind === 'member' && (door === 'socket' || door === 'http');
 export type Code = 'denied' | 'not-found' | 'invalid' | 'conflict' | 'unavailable';
@@ -243,10 +244,6 @@ export class Operations {
   }
   measureWith(measuring: Pick<Measuring, 'run' | 'runAsync'> | undefined): void { this.measuring = measuring; }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
-  /** MCP registration is a hook; it dispatches exactly like the other doors. */
-  registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
-    for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
-  }
   callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
     if (!this.measuring || !this.ops.has(name)) return this.dispatchAsync(door, viewer, name, input, id, window, valid);
     return this.measuring.runAsync('operation', name, () => this.dispatchAsync(door, viewer, name, input, id, window, valid));

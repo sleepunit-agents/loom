@@ -101,7 +101,7 @@ it('never accepts an internal-looking caller name as installed authority', () =>
   const builtIn = f.operations.internal('tempo');
   expect(builtIn.call('tempo.pause', input, 'real')).toMatchObject({ ok: true });
   // A proved handle still cannot be presented on an outside transport.
-  expect(f.operations.call('mcp', builtIn.viewer, 'tempo.resume', input, 'outside')).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.operations.call('http', builtIn.viewer, 'tempo.resume', input, 'outside')).toMatchObject({ ok: false, code: 'denied' });
 });
 
 
