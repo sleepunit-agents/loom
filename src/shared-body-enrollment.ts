@@ -8,6 +8,7 @@ import type {DataDatabase} from './core/data/database.js';
 import {jobs,tokens} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
+import {tokenLive} from './core/data/authentication.js';
 import type {Viewer} from './policy.js';
 import {liveWorker} from './shared-worker.js';
 const input=z.object({job:z.string().min(1).max(200),fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
@@ -23,7 +24,7 @@ export function registerSharedBodyEnrollment(operations:Operations,db:DataDataba
   const old=db.select().from(tokens).where(eq(tokens.fingerprint,value.fingerprint)).get();
   const at=Date.parse(options.now());
   if(old&&(old.kind!=='agent'||old.agent!==job.agent||old.job!==job.id||old.member!==null||old.box!==null
-   ||old.revokedAt!==null||!(Date.parse(old.createdAt)<=at)||old.expiresAt!==null&&!(at<Date.parse(old.expiresAt))))return;
+   ||!tokenLive(old,at)||!(Date.parse(old.createdAt)<=at)))return;
   return {job,proof,old};
  };
  operations.register({name:'runtime.enrollBody',doors:['http'],write:true,recheckPolicy:true,input,
