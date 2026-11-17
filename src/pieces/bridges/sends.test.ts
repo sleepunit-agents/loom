@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSends } from '../../core/data/schema.js';
+import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import { BridgeSends, reviewReply } from './sends.js';
 import { BridgeReplyNotSent } from './outbound.js';
 
@@ -22,7 +22,8 @@ function fixture(platform: 'discord' | 'slack' = 'discord') {
   const changed = vi.fn();
   const sends = new BridgeSends(db, { post }, now, changed);
   const read = (id = 'reply') => db.select().from(bridgeSends).where(eq(bridgeSends.id, id)).get()!;
-  return { db, client, sends, post, changed, read, now, advance: () => { time += 1000; } };
+  const parts = (id = 'reply') => db.select({ part: bridgeSendParts.part, postedId: bridgeSendParts.postedId }).from(bridgeSendParts).where(eq(bridgeSendParts.send, id)).orderBy(asc(bridgeSendParts.part)).all();
+  return { db, client, sends, post, changed, read, parts, now, advance: () => { time += 1000; } };
 }
 
 describe('approved bridge reply queue', () => {
@@ -32,7 +33,7 @@ describe('approved bridge reply queue', () => {
     expect(f.read()).toMatchObject({ state: 'pending', channel: 'channel', thread: 'thread', createdAt: f.now() });
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledWith(expect.objectContaining({ platform }), { channel: 'channel', thread: 'thread' }, 'Hello back');
-    expect(f.read()).toMatchObject({ state: 'sent', postedId: 'posted' });
+    expect(f.read().state).toBe('sent'); expect(f.parts()).toEqual([{ part: 0, postedId: 'posted' }]);
     await f.sends.flush();
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello back' });
     expect(f.post).toHaveBeenCalledTimes(1);
@@ -77,7 +78,7 @@ describe('approved bridge reply queue', () => {
     f.post.mockRejectedValueOnce(new Error('a credential must not be persisted'));
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello' });
     await f.sends.flush();
-    expect(f.read()).toMatchObject({ state: 'uncertain', postedId: null });
+    expect(f.read().state).toBe('uncertain'); expect(f.parts()).toEqual([]);
     expect(JSON.stringify(f.read())).not.toContain('credential');
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(1);
@@ -111,7 +112,7 @@ describe('approved bridge reply queue', () => {
     expect(closed).toBe(false);
     finish({ id: 'arrived' });
     await close;
-    expect(f.read()).toMatchObject({ state: 'sent', postedId: 'arrived' });
+    expect(f.read().state).toBe('sent'); expect(f.parts()).toEqual([{ part: 0, postedId: 'arrived' }]);
     expect(() => f.sends.queue({ id: 'later', incoming: 'in', text: 'Hello' })).toThrow('closed');
   });
 
@@ -145,13 +146,13 @@ describe('approved bridge reply queue', () => {
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello back' });
     await f.sends.flush();
     // Refused before any request: not uncertain, which could only be dismissed.
-    expect(f.read()).toMatchObject({ state: 'pending', postedId: null });
+    expect(f.read().state).toBe('pending'); expect(f.parts()).toEqual([]);
     // Its own write must not make it spin: the next attempt waits a little.
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(1);
     for (let second = 0; second < 5; second++) f.advance();
     await f.sends.flush();
-    expect(f.read()).toMatchObject({ state: 'sent', postedId: 'posted' });
+    expect(f.read().state).toBe('sent'); expect(f.parts()).toEqual([{ part: 0, postedId: 'posted' }]);
     expect(f.post).toHaveBeenCalledTimes(2);
   });
 
@@ -175,14 +176,14 @@ describe('approved bridge reply queue', () => {
     expect(f.read().state).toBe('held');
   });
 
-  it('finishes a reply whose later part never left, from the part it stopped at', async () => {
+  it('finishes a reply whose later part never left, from the part it stopped at, as the one row it always was', async () => {
     const f = fixture(), text = 'a'.repeat(2000) + 'b'.repeat(2000) + 'c'.repeat(500);
     f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
     f.sends.queue({ id: 'reply', incoming: 'in', text });
     await f.sends.flush();
-    // What the platform confirmed is sent and is not sent again. The remainder is a reply of its own, still to go.
-    expect(f.read()).toMatchObject({ state: 'sent', text: 'a'.repeat(2000), postedId: 'first' });
-    expect(f.read('reply/rest')).toMatchObject({ state: 'pending', text: 'b'.repeat(2000) + 'c'.repeat(500), postedId: null, incoming: 'in', channel: 'channel', thread: 'thread' });
+    // The reply is still one row with all its words, waiting; what the platform confirmed is recorded part by part.
+    expect(f.read()).toMatchObject({ state: 'pending', text });
+    expect(f.parts()).toEqual([{ part: 0, postedId: 'first' }]);
     // A retry of the same reply is still the same reply; another text under its id is not.
     expect(f.sends.queue({ id: 'reply', incoming: 'in', text }).id).toBe('reply');
     expect(() => f.sends.queue({ id: 'reply', incoming: 'in', text: 'a'.repeat(2000) })).toThrow('reused');
@@ -191,36 +192,50 @@ describe('approved bridge reply queue', () => {
     for (let second = 0; second < 5; second++) f.advance();
     f.post.mockResolvedValueOnce({ id: 'second' }).mockResolvedValueOnce({ id: 'third' });
     await f.sends.flush();
-    expect(f.read('reply/rest')).toMatchObject({ state: 'sent', postedId: 'third' });
+    expect(f.read()).toMatchObject({ state: 'sent', text });
+    expect(f.parts()).toEqual([{ part: 0, postedId: 'first' }, { part: 1, postedId: 'second' }, { part: 2, postedId: 'third' }]);
     // The outside reader has every character once, in order.
     expect((f.post.mock.calls as unknown as [unknown, unknown, string][]).map(call => call[2]).filter((_, index) => index !== 1).join('')).toBe(text);
-    expect(f.db.select().from(bridgeSends).all()).toHaveLength(2);
+    expect(f.db.select().from(bridgeSends).all()).toHaveLength(1);
   });
 
-  it('calls a partly posted reply uncertain as a whole when its remainder cannot have a row', async () => {
-    const f = fixture();
-    f.sends.queue({ id: 'reply/rest', incoming: 'in', text: 'Somebody chose this id', held: true });
+  it('finishes a partly posted reply after a restart, from the parts the earlier run recorded', async () => {
+    const f = fixture(), text = 'a'.repeat(2000) + 'b'.repeat(10);
     f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
-    f.sends.queue({ id: 'reply', incoming: 'in', text: 'x'.repeat(2001) });
-    await f.sends.flush();
-    expect(f.read()).toMatchObject({ state: 'uncertain', text: 'x'.repeat(2001), postedId: 'first' });
-    expect(f.read('reply/rest')).toMatchObject({ state: 'held', text: 'Somebody chose this id' });
+    f.sends.queue({ id: 'reply', incoming: 'in', text });
+    await f.sends.flush(); await f.sends.close();
+    const post = vi.fn(async () => ({ id: 'second' })), again = new BridgeSends(f.db, { post }, f.now);
+    await again.flush();
+    expect(post.mock.calls.map(call => (call as unknown as [unknown, unknown, string])[2])).toEqual(['b'.repeat(10)]);
+    expect(f.read().state).toBe('sent'); expect(f.parts()).toEqual([{ part: 0, postedId: 'first' }, { part: 1, postedId: 'second' }]);
   });
 
-  it('marks only the unconfirmed remainder of a partly posted reply uncertain', async () => {
+  it('calls a partly posted reply uncertain when a later part may have arrived, keeps what was confirmed, and never sends it again', async () => {
     const f = fixture();
     f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new Error('timeout'));
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'x'.repeat(2000) + 'y' });
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(2);
-    expect(f.read()).toMatchObject({ state: 'sent', text: 'x'.repeat(2000), postedId: 'first' });
-    // The platform may have the second part: a person sees exactly which words are in doubt, and it is never sent again.
-    expect(f.read('reply/rest')).toMatchObject({ state: 'uncertain', text: 'y', postedId: null });
+    expect(f.read()).toMatchObject({ state: 'uncertain', text: 'x'.repeat(2000) + 'y' });
+    // The first part is known to be out; the second is the one in doubt.
+    expect(f.parts()).toEqual([{ part: 0, postedId: 'first' }]);
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(2);
-    expect(() => reviewReply(f.db, 'reply/rest', 'release')).toThrow('not awaiting');
-    reviewReply(f.db, 'reply/rest', 'dismiss');
-    expect(f.read('reply/rest').state).toBe('dismissed');
+    expect(() => reviewReply(f.db, 'reply', 'release')).toThrow('not awaiting');
+    reviewReply(f.db, 'reply', 'dismiss');
+    expect(f.read().state).toBe('dismissed');
+  });
+
+  it('hands a partly posted reply to a person when its next part can never be built, and goes on from there when released', async () => {
+    const f = fixture();
+    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(false));
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'x'.repeat(2000) + 'y' });
+    await f.sends.flush();
+    expect(f.read().state).toBe('held');
+    reviewReply(f.db, 'reply', 'release'); f.post.mockResolvedValueOnce({ id: 'second' });
+    await f.sends.flush();
+    expect(f.read().state).toBe('sent');
+    expect((f.post.mock.calls as unknown as [unknown, unknown, string][]).map(call => call[2])).toEqual(['x'.repeat(2000), 'y', 'y']);
   });
 });
 it('processes a second committed send queued while an earlier flush is awaiting HTTP',async()=>{

@@ -67,7 +67,7 @@ it('submits the selected connection through the registered tile and never render
  }finally{vi.unstubAllGlobals();}
 });
 it('registered send review exposes no release for uncertain delivery and submits dismissal',async()=>{
- const initial=data();initial.bridgeSends=[{id:'send',incoming:'in',connection:'connection',channel:'room',thread:null,text:'Reply',state:'uncertain',postedId:null,createdAt:'2026-11-14T12:00:00.000Z'}];feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};
+ const initial=data();initial.bridgeSends=[{id:'send',incoming:'in',connection:'connection',channel:'room',thread:null,text:'Reply',state:'uncertain',createdAt:'2026-11-14T12:00:00.000Z'}];feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};
  const request=vi.fn(async(_url:RequestInfo|URL,_options?:RequestInit)=>new Response(JSON.stringify({ok:true,value:{saved:true}})));vi.stubGlobal('fetch',request);
  try{await draw('/p/bridges-preview/item/sends/send');expect(text()).not.toContain('Release send');const button=tree.root.findAllByType('button').find((b:any)=>b.children.includes('Dismiss send'));await act(async()=>button.props.onClick());expect(JSON.parse(String(request.mock.calls[0][1]?.body)).input).toEqual({action:'review',id:'send',decision:'dismiss'});}finally{vi.unstubAllGlobals();}
 });
@@ -89,7 +89,7 @@ it.each(['connections','channels','people'] as const)('creates %s through its re
  }finally{vi.unstubAllGlobals();}
 });
 it.each(['Disconnect','Remove channel rule','Remove person link','Release send','Dismiss send'])('registered control %s submits its intended owner decision',async label=>{
- const initial=data();initial.bridgeChannels=[{platform:'discord',workspace:'w',channel:'room',answers:'art',botsMayTalk:false}];initial.bridgePeople=[{platform:'discord',workspace:'w',user:'outside',member:'jonathan'}];initial.bridgeSends=[{id:'send',incoming:'in',connection:'connection',channel:'room',thread:null,text:'Reply',state:'held',postedId:null,createdAt:'2026-11-14T12:00:00.000Z'}];feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};
+ const initial=data();initial.bridgeChannels=[{platform:'discord',workspace:'w',channel:'room',answers:'art',botsMayTalk:false}];initial.bridgePeople=[{platform:'discord',workspace:'w',user:'outside',member:'jonathan'}];initial.bridgeSends=[{id:'send',incoming:'in',connection:'connection',channel:'room',thread:null,text:'Reply',state:'held',createdAt:'2026-11-14T12:00:00.000Z'}];feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};
  const request=vi.fn(async(_url:RequestInfo|URL,_options?:RequestInit)=>new Response(JSON.stringify({ok:true,value:{saved:true}})));vi.stubGlobal('fetch',request);
  try{
   const selected=label==='Disconnect'?'connections/connection':label==='Remove channel rule'?'channels/'+encodeURIComponent(JSON.stringify(['discord','w','room'])):label==='Remove person link'?'people/'+encodeURIComponent(JSON.stringify(['discord','w','outside'])):'sends/send';

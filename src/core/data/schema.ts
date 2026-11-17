@@ -205,6 +205,8 @@ export const sessions = sqliteTable('sessions', {
   seenAt: text('seen_at').notNull(),
   provedAt: text('proved_at').notNull(),
   passkey: text('passkey').references((): AnySQLiteColumn => passkeys.id),
+  // The browser whose sign-in link signed this one in. Ending that browser ends this one.
+  madeBy: text('made_by').references((): AnySQLiteColumn => sessions.id),
 }, t => [
   check('sessions_issued_at_utc', utc(t.issuedAt)),
   check('sessions_seen_at_utc', utc(t.seenAt)),
@@ -219,8 +221,13 @@ export const signinLinks = sqliteTable('signin_links', {
   token: text('token').notNull().references((): AnySQLiteColumn => tokens.fingerprint),
   label: text('label').notNull(),
   expiresAt: text('expires_at').notNull(),
+  // The browser that made the link, when a browser did. The link is good only while that browser is signed in.
+  session: text('session').references((): AnySQLiteColumn => sessions.id),
+  // Whoever made the link said it is for an automated browser.
+  isAgent: integer('is_agent', { mode: 'boolean' }).notNull().default(false),
 }, t => [
   check('signin_links_expires_at_utc', utc(t.expiresAt)),
+  check('signin_links_is_agent_boolean', sql`${t.isAgent} in (0, 1)`),
 ]);
 
 /** Passkeys people have registered. */
@@ -909,7 +916,7 @@ export const jobs = sqliteTable('jobs', {
   box: text('box').references((): AnySQLiteColumn => boxes.id),
   conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
   title: text('title').notNull(),
-  state: text('state', { enum: ["queued", "starting", "running", "waiting", "done", "failed", "stopped", "lost"] }).notNull(),
+  state: text('state', { enum: ["queued", "starting", "running", "done", "failed", "stopped", "lost"] }).notNull(),
   brief: text('brief').notNull(),
   model: text('model').notNull(),
   // Actual placement, absent until an account/harness has been selected.
@@ -926,7 +933,10 @@ export const jobs = sqliteTable('jobs', {
   exitCode: integer('exit_code'),
   logTail: text('log_tail'),
   endedBy: text('ended_by').references((): AnySQLiteColumn => members.id),
-  endedReason: text('ended_reason').$type<'reset' | 'write-off'>(),
+  // Why a person ended it: stuck work reset, work given up on, or Stop pressed in its conversation.
+  endedReason: text('ended_reason').$type<'reset' | 'write-off' | 'stop'>(),
+  // loom's own line on an ending it decided itself (lost, never placed). A runner's output is log_tail.
+  endedNote: text('ended_note'),
   queuedAt: text('queued_at').notNull(),
   claimedAt: text('claimed_at'),
   heardAt: text('heard_at'),
@@ -937,9 +947,9 @@ export const jobs = sqliteTable('jobs', {
   check('jobs_claimed_at_utc', utc(t.claimedAt)),
   check('jobs_heard_at_utc', utc(t.heardAt)),
   check('jobs_ended_at_utc', utc(t.endedAt)),
-  check('jobs_state_choice', sql`${t.state} in ('queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost')`),
-  check('jobs_ended_reason_choice', sql`${t.endedReason} in ('reset', 'write-off')`),
-  uniqueIndex('jobs_one_active_unique').on(t.conversation).where(sql`${t.state} in ('queued', 'starting', 'running', 'waiting')`),
+  check('jobs_state_choice', sql`${t.state} in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')`),
+  check('jobs_ended_reason_choice', sql`${t.endedReason} in ('reset', 'write-off', 'stop')`),
+  uniqueIndex('jobs_one_active_unique').on(t.conversation).where(sql`${t.state} in ('queued', 'starting', 'running')`),
   index('jobs_agent_state_idx').on(t.agent, t.state),
   index('jobs_box_state_idx').on(t.box, t.state),
 ]);
@@ -1185,7 +1195,6 @@ export const bridgeSends = sqliteTable('bridge_sends', {
   thread: text('thread'),
   text: text('text').notNull(),
   state: text('state', { enum: ["pending", "held", "sending", "sent", "uncertain", "dismissed"] }).notNull(),
-  postedId: text('posted_id'),
   createdAt: text('created_at').notNull(),
 }, t => [
   check('bridge_sends_created_at_utc', utc(t.createdAt)),
@@ -1442,11 +1451,15 @@ export const tokensRelations = relations(tokens, ({ one, many }) => ({
 
 export const sessionsRelations = relations(sessions, ({ one, many }) => ({
   tokenRow: one(tokens, { fields: [sessions.token], references: [tokens.fingerprint], relationName: 'sessions_token' }),
+  madeByRow: one(sessions, { fields: [sessions.madeBy], references: [sessions.id], relationName: 'sessions_made_by' }),
+  sessionsByMadeBy: many(sessions, { relationName: 'sessions_made_by' }),
+  signinLinksBySession: many(signinLinks, { relationName: 'signin_links_session' }),
   notificationDevicesBySession: many(notificationDevices, { relationName: 'notification_devices_session' }),
 }));
 
 export const signinLinksRelations = relations(signinLinks, ({ one }) => ({
   tokenRow: one(tokens, { fields: [signinLinks.token], references: [tokens.fingerprint], relationName: 'signin_links_token' }),
+  sessionRow: one(sessions, { fields: [signinLinks.session], references: [sessions.id], relationName: 'signin_links_session' }),
 }));
 
 export const passkeysRelations = relations(passkeys, ({ one }) => ({
@@ -1841,14 +1854,13 @@ export const notificationQueue = sqliteTable('notification_queue', {
   check('notificationQueue_queuedAt_utc', utc(t.queuedAt)),
   check('notificationQueue_sentAt_utc', utc(t.sentAt)),
 ]);
-export const signinChallenges = sqliteTable('signin_challenges', {
-  id: text('id').primaryKey().notNull(),
-  token: text('token').notNull().references(() => tokens.fingerprint),
-  challenge: text('challenge').notNull(),
-  expiresAt: text('expires_at').notNull(),
-}, t => [
-  check('signinChallenges_expiresAt_utc', utc(t.expiresAt)),
-]);
+/** Each part of a reply the platform confirmed, in order. A long reply is posted in parts; the rows say how
+ * far it got and which outside messages are the bot's, so a thread under any part addresses it. */
+export const bridgeSendParts = sqliteTable('bridge_send_parts', {
+  send: text('send').notNull().references(() => bridgeSends.id),
+  part: integer('part').notNull(),
+  postedId: text('posted_id').notNull(),
+}, t => [primaryKey({ columns: [t.send, t.part] }), index('bridge_send_parts_posted_id_idx').on(t.postedId)]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
   id: text('id').notNull(),
@@ -1886,7 +1898,7 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
 export const plumbing = {
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, bridgeRawEvents, bridgeResume, bridgeSendParts, secretWriteJournal };
 
 export const tables = {
   members,

@@ -89,7 +89,7 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(2);expect(new Set(db.select().from(s.bridgeIncoming).all().map(row=>row.conversation))).toEqual(new Set([incoming.conversation]));
  const attachment=db.select().from(s.bridgeFiles).get()!;expect(attachment).toMatchObject({connection:'slack-example',incoming:incoming.id,file:'FGARDEN',contents:Buffer.from('FICTITIOUS_ATTACHMENT')});
  daemon.sends.queue({id:'reply',incoming:incoming.id,text:'A fictitious garden reply'});daemon.changed();await daemon.idle();
- expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'reply')).get()).toMatchObject({state:'sent',postedId:'1794765600.000009'});
+ expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'reply')).get()).toMatchObject({state:'sent'});expect(db.select().from(s.bridgeSendParts).where(eq(s.bridgeSendParts.send,'reply')).all()).toMatchObject([{part:0,postedId:'1794765600.000009'}]);
  const old=transport!;botToken='FICTITIOUS_REPLACEMENT_TOKEN';
  await command('secrets/set',{id:randomUUID(),name:'TOKEN',value:botToken,mode:'replace'});
  expect(old.beforeConnect()).toBe(false);await expect(old.receive({},raw)).rejects.toThrow();await connected(2);
@@ -181,7 +181,7 @@ it('delivers Discord through normal startup and records confirmed, uncertain and
  const repeated=Buffer.from(JSON.stringify({op:0,t:'MESSAGE_CREATE',s:2,d:data}));
  await options.commit({type:'MESSAGE_CREATE',seq:2,data},{...checkpoint,seq:2},repeated);clock.advance(0);await daemon.idle();
  expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(1);expect(db.select().from(s.inbox).all().filter(row=>row.source==='discord')).toHaveLength(1);expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'discord')).all()).toHaveLength(1);
- daemon.sends.queue({id:'discord-confirmed',incoming:incoming.id,text:'A fictitious Discord reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-confirmed')).get()).toMatchObject({state:'sent',postedId:'623456789012345678'});
+ daemon.sends.queue({id:'discord-confirmed',incoming:incoming.id,text:'A fictitious Discord reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-confirmed')).get()).toMatchObject({state:'sent'});expect(db.select().from(s.bridgeSendParts).where(eq(s.bridgeSendParts.send,'discord-confirmed')).all()).toMatchObject([{part:0,postedId:'623456789012345678'}]);
  loseReply=true;daemon.sends.queue({id:'discord-uncertain',incoming:incoming.id,text:'A fictitious uncertain reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-uncertain')).get()?.state).toBe('uncertain');loseReply=false;
  daemon.changed();await daemon.idle();expect(posts).toBe(2);
  // A failed private credential use retires its lifetime; reconnect before

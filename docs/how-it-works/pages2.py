@@ -344,7 +344,7 @@ def machines():
     ])
     panels = [
         ("A job's life", "cyan", flow("queued", "claimed", "running", "ends", "done"),
-         "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be waiting, stopped or lost."),
+         "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be stopped or lost."),
         ("Retries", "pink", flow("job 1", "retry of", "job 2", "retry of", "job 3"),
          "A job that fails to start is tried again, up to three times. Each retry is a new job that points back at the one before."),
         ("Boxes", "violet", gate("Its owner says which agents may run there", "An agent can be lent a machine", "A box can report health and never run agents", "An always-on box raises an alert when it goes quiet"),

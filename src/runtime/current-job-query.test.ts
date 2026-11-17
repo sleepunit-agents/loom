@@ -10,7 +10,6 @@ import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { agents, jobs, members, memberAgents, projects, projectMembers, projectAgents, tokens, boxes, agentModels, agentBoxes, agentRunSettings, modelAccounts, modelAccountBoxes, modelAccountWindows } from '../core/data/schema.js';
 import { httpWorkerControl } from './worker-http.js';
-import { Jobs } from './jobs.js';
 import { sharedRoot } from '../shared-root.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -76,15 +75,14 @@ it('offers only Home summary columns and does not accept raw execution fields', 
   const invalid = await (await f.post('house', '{ currentJobs(agent:"art") { brief logTail account build } }')).json();
   expect(invalid.errors).toHaveLength(4); expect(invalid.data).toBeUndefined();
 });
-it('updates a real live selection as jobs run, wait and finish', async () => {
+it('updates a real live selection as jobs start, run and finish', async () => {
   const f = fixture(), ws = await openSocket(f, 'alice'); let next: ReturnType<typeof once>;
   next = once(ws, 'message'); ws.send(JSON.stringify({type:'subscribe',id:'jobs',payload:{query:`subscription { observe(query:${JSON.stringify('{ currentJobs(agent:"art") { id state } }')}) { revision patches { path value removed } } }`}}));
   expect(String((await next)[0])).toContain('owned');
-  for (const state of ['starting', 'running', 'waiting', 'done'] as const) {
+  for (const state of ['starting', 'running', 'done'] as const) {
     next = once(ws, 'message');
     if (state === 'starting') expect((await f.control.next())?.id).toBe('owned');
     else if (state === 'running') await f.control.started('owned', 'image');
-    else if (state === 'waiting') f.root.writes.run(() => new Jobs(f.db, f.now).heartbeat('owned', 'worker', 'waiting'));
     else await f.control.finish('owned', 0, '');
     const patches = JSON.parse(String((await next)[0])).payload.data.observe.patches;
     if (state === 'done') expect(patches).toEqual([

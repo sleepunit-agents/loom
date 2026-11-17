@@ -9,7 +9,7 @@ import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChanne
 import { Conversations } from '../../core/conversations/index.js';
 import { BridgeIncoming, type IncomingMessage } from './incoming.js';
 import { expirePrivateBridgeWords, oldestPrivateBridgeWords } from '../../core/conversations/private-bridge-words.js';
-import { bridgeSends } from '../../core/data/schema.js';
+import { bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import {normalizeSlack} from './normalize.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -84,10 +84,14 @@ describe('shared-schema bridge ingress', () => {
     expect(to({ repliesTo: 'someone' })).toEqual(['art']);
     // Mark posted a message through loom; a thread opened under that message is Mark's.
     f.ingress.receive({ ...f.message, id: 'asked', connection: 'peer', mentions: ['bot-mark'] });
-    f.db.insert(bridgeSends).values({ id: 'send', incoming: 'bi:["peer","asked"]', connection: 'peer', channel: 'room', thread: null, text: 'Here', state: 'sent', postedId: 'marks-message', createdAt: f.now() }).run();
+    f.db.insert(bridgeSends).values({ id: 'send', incoming: 'bi:["peer","asked"]', connection: 'peer', channel: 'room', thread: null, text: 'Here', state: 'sent', createdAt: f.now() }).run();
+    f.db.insert(bridgeSendParts).values([{ send: 'send', part: 0, postedId: 'marks-first-part' }, { send: 'send', part: 1, postedId: 'marks-message' }]).run();
     expect(to({ channel: 'marks-message', parent: 'room', thread: 'marks-message' })).toEqual(['mark']);
+    // A long reply goes out in parts, and a thread under any of them is under Mark's message, not only the last.
+    expect(to({ channel: 'marks-first-part', parent: 'room', thread: 'marks-first-part' })).toEqual(['mark']);
     // A thread Mark has only spoken in, under somebody else's message, is not: no continuing conversation is inferred.
-    f.db.insert(bridgeSends).values({ id: 'send2', incoming: 'bi:["peer","asked"]', connection: 'peer', channel: 'room', thread: 'their-thread', text: 'Here', state: 'sent', postedId: 'a-reply-inside', createdAt: f.now() }).run();
+    f.db.insert(bridgeSends).values({ id: 'send2', incoming: 'bi:["peer","asked"]', connection: 'peer', channel: 'room', thread: 'their-thread', text: 'Here', state: 'sent', createdAt: f.now() }).run();
+    f.db.insert(bridgeSendParts).values({ send: 'send2', part: 0, postedId: 'a-reply-inside' }).run();
     expect(to({ channel: 'their-thread', parent: 'room', thread: 'their-thread' })).toEqual(['art']);
   });
   it('labels every direct message conversation direct, and no other', () => {

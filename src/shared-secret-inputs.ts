@@ -36,13 +36,13 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  const target=(caller:ReturnType<typeof actor>,id?:string)=>{
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
-  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&(caller.body?job.agent===caller.body.agent&&['running','waiting'].includes(job.state):job.box===caller.runner?.box&&job.state==='starting');
+  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
   if(!valid())throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
    if(caller.signal.aborted||!caller.auth.valid()||!options.available())return false;
    const now=db.select().from(jobs).where(eq(jobs.id,job!.id)).get();
-   return !!now&&binding(now)===stamp&&(caller.body?['running','waiting'].includes(now.state):now.state==='starting'&&now.box===caller.runner?.box);
+   return !!now&&binding(now)===stamp&&(caller.body?now.state==='running':now.state==='starting'&&now.box===caller.runner?.box);
   }};
  };
  app.onError((error,c)=>{const code=error instanceof PrivateInputError?error.code:'unavailable';return c.json({ok:false,message:'Private secret input unavailable'},code==='denied'?403:code==='conflict'?409:503);});

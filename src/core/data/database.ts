@@ -38,6 +38,8 @@ function kindAndIdGuards(table: string, kind: string, id: string): string[] {
   for (const event of ['INSERT', 'UPDATE']) guards.push(`CREATE TRIGGER "${table}_${id}_pair_${event.toLowerCase()}" BEFORE ${event} ON "${table}" WHEN NOT coalesce(((NEW."${id}" IS NULL AND NEW."${kind}" IS NULL) OR (NEW."${id}" IS NOT NULL AND NEW."${kind}" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END`);
   return guards;
 }
+/** The two lines loom itself wrote into a job's log_tail before step 7 gave them a column of their own. */
+const loomsOwnLine = "((state = 'lost' AND log_tail LIKE 'Lost while %: its worker stopped reporting') OR (exit_code = 31 AND log_tail LIKE 'Never started: no machine took it within % hours'))";
 /** Changes to an existing household's database since its first shape, in order. Number 1 is the
  * first shape itself. A fresh database is created whole and marked as having them all. */
 const upgrades: readonly (readonly string[])[] = [
@@ -113,6 +115,82 @@ const upgrades: readonly (readonly string[])[] = [
     'CREATE INDEX `conversations_agent_last_at_idx` ON `conversations` (`agent`,`last_at`)',
     // Who edited a trigger and who asked for an account sign-in are a kind and an id, guarded like the others.
     ...kindAndIdGuards('trigger_edits', 'by_kind', 'by'), ...kindAndIdGuards('account_signins', 'asked_by_kind', 'asked_by'),
+  ],
+  // 7: one step for several changes. What it removes is in docs/accepted-tradeoffs.md.
+  [
+    // A browser remembers the browser whose sign-in link signed it in, so ending that one ends it too.
+    'ALTER TABLE sessions ADD COLUMN made_by text REFERENCES sessions(id)',
+    // A link remembers the browser that made it and whether its maker said it is for an automated browser.
+    // A link from before the step can say neither, and lives five minutes: none is kept.
+    'DELETE FROM signin_links',
+    'ALTER TABLE signin_links ADD COLUMN session text REFERENCES sessions(id)',
+    'ALTER TABLE signin_links ADD COLUMN is_agent integer DEFAULT false NOT NULL CHECK (is_agent in (0, 1))',
+    // Never written or read: passkey challenges are kept in memory.
+    'DROP TABLE signin_challenges',
+    // Every posted part of a reply, not only the last. A reply from before has the one id that was kept.
+    "CREATE TABLE `bridge_send_parts` (\n\t`send` text NOT NULL,\n\t`part` integer NOT NULL,\n\t`posted_id` text NOT NULL,\n\tPRIMARY KEY(`send`, `part`),\n\tFOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action\n)",
+    'CREATE INDEX `bridge_send_parts_posted_id_idx` ON `bridge_send_parts` (`posted_id`)',
+    'INSERT INTO bridge_send_parts (send, part, posted_id) SELECT id, 0, posted_id FROM bridge_sends WHERE posted_id IS NOT NULL',
+    'ALTER TABLE bridge_sends DROP COLUMN posted_id',
+    // jobs loses the `waiting` state, which no program ever wrote, gains `ended_note` for loom's own line on
+    // an ending it decided itself, and may say a job was ended by a Stop. A CHECK cannot be changed in
+    // place, so the table is rebuilt as conversations was in step 6. A row in `waiting` was running; the
+    // lines loom wrote into log_tail (a lost job, a job no machine took) move to ended_note.
+    `CREATE TABLE jobs_rebuilt (
+	id text PRIMARY KEY NOT NULL,
+	agent text NOT NULL,
+	project text,
+	member text,
+	box text,
+	conversation text,
+	title text NOT NULL,
+	state text NOT NULL,
+	brief text NOT NULL,
+	model text NOT NULL,
+	account text,
+	harness text,
+	started_by_kind text NOT NULL,
+	started_by text NOT NULL,
+	retry_of text,
+	retry_at text,
+	house_repository text NOT NULL,
+	house_file text NOT NULL,
+	house_branch text NOT NULL,
+	build text,
+	exit_code integer,
+	log_tail text,
+	ended_by text,
+	ended_reason text,
+	ended_note text,
+	queued_at text NOT NULL,
+	claimed_at text,
+	heard_at text,
+	ended_at text,
+	FOREIGN KEY (agent) REFERENCES agents(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (project) REFERENCES projects(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (member) REFERENCES members(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (box) REFERENCES boxes(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (conversation) REFERENCES conversations(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (account) REFERENCES model_accounts(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (retry_of) REFERENCES jobs(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (ended_by) REFERENCES members(id) ON UPDATE no action ON DELETE no action,
+	CHECK (retry_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', retry_at) = retry_at or strftime('%Y-%m-%dT%H:%M:%fZ', retry_at) = retry_at, 0)),
+	CHECK (queued_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', queued_at) = queued_at or strftime('%Y-%m-%dT%H:%M:%fZ', queued_at) = queued_at, 0)),
+	CHECK (claimed_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', claimed_at) = claimed_at or strftime('%Y-%m-%dT%H:%M:%fZ', claimed_at) = claimed_at, 0)),
+	CHECK (heard_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', heard_at) = heard_at or strftime('%Y-%m-%dT%H:%M:%fZ', heard_at) = heard_at, 0)),
+	CHECK (ended_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ended_at) = ended_at or strftime('%Y-%m-%dT%H:%M:%fZ', ended_at) = ended_at, 0)),
+	CHECK (state in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')),
+	CHECK (ended_reason in ('reset', 'write-off', 'stop'))
+)`,
+    `INSERT INTO jobs_rebuilt (id, agent, project, member, box, conversation, title, state, brief, model, account, harness, started_by_kind, started_by, retry_of, retry_at, house_repository, house_file, house_branch, build, exit_code, log_tail, ended_by, ended_reason, ended_note, queued_at, claimed_at, heard_at, ended_at)
+      SELECT id, agent, project, member, box, conversation, title, CASE state WHEN 'waiting' THEN 'running' ELSE state END, brief, model, account, harness, started_by_kind, started_by, retry_of, retry_at, house_repository, house_file, house_branch, build, exit_code,
+        CASE WHEN ${loomsOwnLine} THEN NULL ELSE log_tail END, ended_by, ended_reason, CASE WHEN ${loomsOwnLine} THEN log_tail END,
+        queued_at, claimed_at, heard_at, ended_at FROM jobs`,
+    'DROP TABLE jobs',
+    'ALTER TABLE jobs_rebuilt RENAME TO jobs',
+    "CREATE UNIQUE INDEX `jobs_one_active_unique` ON `jobs` (`conversation`) WHERE \"jobs\".\"state\" in ('queued', 'starting', 'running')",
+    'CREATE INDEX `jobs_agent_state_idx` ON `jobs` (`agent`,`state`)',
+    'CREATE INDEX `jobs_box_state_idx` ON `jobs` (`box`,`state`)',
   ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */

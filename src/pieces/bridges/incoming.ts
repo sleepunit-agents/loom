@@ -5,7 +5,7 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, parseIncomingId } from './keys.js';
 import { conversationPlace } from './place.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -67,13 +67,12 @@ export class BridgeIncoming {
       // Who the message is addressed to: whoever it mentions, the author of the message it explicitly
       // replies to, and the bot whose own message its thread hangs under. Nothing looser counts: a bot
       // that has merely spoken in the thread, or spoke last in the room, is not addressed. A thread's root
-      // is known as a bot's only if loom posted it, and a reply posted in parts records its last part
-      // (docs/accepted-tradeoffs.md, "Only the last part of a long reply is a known thread root").
+      // is known as a bot's only if loom posted it; every part of a long reply is on record as one.
       const addressed = new Set(message.mentions);
       if (message.repliesTo) addressed.add(message.repliesTo);
       if (message.thread) {
-        const root = this.db.select({ connection: bridgeSends.connection }).from(bridgeSends)
-          .where(and(inArray(bridgeSends.connection, peers.map(p => p.id)), eq(bridgeSends.channel, channel), eq(bridgeSends.postedId, message.thread))).get();
+        const root = this.db.select({ connection: bridgeSends.connection }).from(bridgeSendParts).innerJoin(bridgeSends, eq(bridgeSends.id, bridgeSendParts.send))
+          .where(and(inArray(bridgeSends.connection, peers.map(p => p.id)), eq(bridgeSends.channel, channel), eq(bridgeSendParts.postedId, message.thread))).get();
         const poster = root && peers.find(p => p.id === root.connection);
         if (poster) addressed.add(poster.botUser);
       }

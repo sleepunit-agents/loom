@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { sharedSigninLinks } from './shared-links.js';
+import { endBrowser } from './shared-browser.js';
 import { currentMemberToken } from './shared-tokens.js';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -98,7 +99,7 @@ it('refuses cross-origin requests or fingerprints as minting authority, admits m
   expect((await f.mint({ authorization: 'Bearer ' + hash(credential) })).status).toBe(401);
   const path = await f.link(), signed = await f.redeem(path), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
   expect((await f.mint({ cookie })).status).toBe(200);
-  f.root.writes.run(() => f.db.delete(sessions).run());
+  f.root.writes.run(() => endBrowser(f.db, hash(cookie.slice(8))));
   expect((await f.read(cookie)).status).toBe(401);
   const next = await f.link(); expect((await f.redeem(next, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
   await f.root.close(); expect((await f.redeem(next)).status).toBe(503);
@@ -182,16 +183,46 @@ it('carries a browser\'s proof to the device its link signs in, and gives that d
   f.clock.advance(1); expect((await f.read(second)).status).toBe(401);
 });
 
-it('ends a browser\'s unused link with that browser, and every link when the program starts again', async () => {
+it('ends a browser\'s unused link with that browser', async () => {
   const f = fixture(), cookie = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
   const path = (await (await f.mint({ cookie })).json() as { value: { path: string } }).value.path;
   expect((await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } })).status).toBe(200);
-  expect((await f.redeem(path)).status).toBe(401); expect(f.db.select().from(sessions).all()).toEqual([]);
-  // A link from the earlier run: what it carried was in that program's memory, so it is not kept.
-  const kept = await f.link(); await f.root.close();
-  const again = sharedRoot({ db: f.db, clock: f.clock, originAllowed: () => true, reportError: () => {} }); cleanup.push(() => again.close());
   expect(f.db.select().from(signinLinks).all()).toEqual([]);
-  expect((await again.http.request('http://loom' + kept, { method: 'POST' })).status).toBe(401);
+  expect((await f.redeem(path)).status).toBe(401); expect(f.db.select().from(sessions).all()).toEqual([]);
+});
+
+it('keeps a link, with the browser that made it and what its maker said, when the program starts again', async () => {
+  const f = fixture(), first = (await f.redeem(await f.link())).headers.get('set-cookie')!.split(';', 1)[0];
+  f.root.services.runtime.close();
+  const original = f.db.select().from(sessions).get()!;
+  const fromBrowser = (await (await f.mint({ cookie: first })).json() as { value: { path: string } }).value.path;
+  const forAgent = f.root.writes.run(() => sharedSigninLinks(f.db, f.clock).makeLink(hash(credential), { agent: true })).value.path;
+  await f.root.close();
+  const again = sharedRoot({ db: f.db, clock: f.clock, originAllowed: () => true, reportError: () => {} }); cleanup.push(() => again.close());
+  again.services.runtime.close();
+  f.clock.advance(60_000);
+  // The browser's link still carries that browser's proof, and no new one: the facts are in the row.
+  const signed = await again.http.request('http://loom' + fromBrowser, { method: 'POST' }); expect(signed.status).toBe(303);
+  const second = signed.headers.get('set-cookie')!.split(';', 1)[0];
+  expect(f.db.select().from(sessions).where(eq(sessions.id, hash(second.slice(8)))).get()).toMatchObject({ issuedAt: original.issuedAt, provedAt: original.provedAt, madeBy: original.id });
+  // The link made for an automated browser still signs one in for hours, whatever it calls itself.
+  const agent = await again.http.request('http://loom' + forAgent, { method: 'POST', headers: { 'user-agent': 'Mozilla/5.0 (Macintosh) Chrome/140.0 Safari/537.36' } });
+  expect(agent.headers.get('set-cookie')).toContain('Max-Age=21600');
+});
+
+it('ends, with a browser, every browser its links signed in, and the ones those signed in', async () => {
+  const f = fixture(), cookieOf = (response: Response) => response.headers.get('set-cookie')!.split(';', 1)[0];
+  const pass = async (cookie: string) => cookieOf(await f.redeem((await (await f.mint({ cookie })).json() as { value: { path: string } }).value.path));
+  const first = cookieOf(await f.redeem(await f.link())), unrelated = cookieOf(await f.redeem(await f.link()));
+  const second = await pass(first), third = await pass(second);
+  for (const cookie of [first, second, third, unrelated]) expect((await f.read(cookie)).status).toBe(200);
+  // The second browser's own unused link goes with it too.
+  const unused = (await (await f.mint({ cookie: second })).json() as { value: { path: string } }).value.path;
+  f.root.writes.run(() => endBrowser(f.db, hash(first.slice(8))));
+  for (const cookie of [first, second, third]) expect((await f.read(cookie)).status).toBe(401);
+  expect((await f.read(unrelated)).status).toBe(200);
+  expect((await f.redeem(unused)).status).toBe(401);
+  expect(f.db.select({ id: sessions.id }).from(sessions).all()).toEqual([{ id: hash(unrelated.slice(8)) }]);
 });
 
 it('drops links that ran out when the next one is made', async () => {
@@ -364,12 +395,13 @@ it.each(['ended','aged','agent'])('withholds a one-time link if post-commit publ
  const f=fixture(),signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];let observed=false,insideTransaction=true;
  const stop=f.root.writes.observe(()=>{
   if(observed||!f.db.select().from(signinLinks).get())return;observed=true;insideTransaction=f.client.inTransaction;
-  if(change==='ended')f.db.delete(sessions).where(eq(sessions.id,hash(cookie.slice(8)))).run();
+  if(change==='ended')f.client.transaction(()=>endBrowser(f.db,hash(cookie.slice(8))))();
   else f.db.update(sessions).set(change==='aged'?{provedAt:new Date(f.clock.now()-660000).toISOString()}:{isAgent:true}).where(eq(sessions.id,hash(cookie.slice(8)))).run();
  });cleanup.push(stop);
  const response=await f.mint({cookie});expect(observed).toBe(true);expect(insideTransaction).toBe(false);
  expect(response.status).toBe(change==='ended'?401:403);expect(await response.json()).toEqual({error:change==='ended'?'Member authentication required':'Sign in again before making a sign-in link'});
- expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+ // A browser that ended took its unused link with it; one that only aged keeps a link nobody was shown.
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(change==='ended'?0:1);
 });
 it('withholds a committed one-time link if publication starts shutdown',async()=>{
  const f=fixture();let stopped=false;

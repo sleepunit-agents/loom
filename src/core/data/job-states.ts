@@ -9,7 +9,7 @@ import type { jobs } from './schema.js';
 type JobState = typeof jobs.$inferSelect.state;
 /** Claimed by a machine and not ended: the worker is preparing the job, or its body is running. These are
  * the states a silent job is swept from and the states in which a body's own credential is good. */
-export const claimedJobStates = ['starting', 'running', 'waiting'] as const satisfies readonly JobState[];
+export const claimedJobStates = ['starting', 'running'] as const satisfies readonly JobState[];
 /** Not ended: waiting for a machine, or claimed by one. A conversation has at most one such job. */
 export const unendedJobStates = ['queued', ...claimedJobStates] as const satisfies readonly JobState[];
 export const endedJobStates = ['done', 'failed', 'stopped', 'lost'] as const satisfies readonly JobState[];

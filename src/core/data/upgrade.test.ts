@@ -80,6 +80,46 @@ describe('upgrading a household database', () => {
     expect(() => old.prepare("DELETE FROM conversations WHERE id = 'room'").run()).toThrow('FOREIGN KEY');
   });
 
+  it('rebuilds jobs in step 7 with every row kept, moves loom\'s own lines out of the log tail, and carries each posted reply to its parts', () => {
+    const old = household(6); old.function('loom_now', () => at);
+    const job = (id: string, state: string, rest = '') => `INSERT INTO jobs (id, agent, conversation, title, state, brief, model, started_by_kind, started_by, house_repository, house_file, house_branch, queued_at${rest ? ', ' + rest.split('=')[0] : ''}) VALUES ('${id}', 'art', ${id === 'waits' ? "'room'" : 'NULL'}, 't', '${state}', '', 'm', 'agent', 'art', 'r', 'f', 'b', '${at}'${rest ? ', ' + rest.split('=')[1] : ''})`;
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO conversations (id, agent, venue, place, label, started_at, last_at, turn_count) VALUES ('room', 'art', 'discord', 'r', 'room', '${at}', '${at}', 1);
+      ${job('waits', 'waiting')}; ${job('ran', 'failed', "log_tail='its own output'")}; ${job('gone', 'lost', "log_tail='Lost while running: its worker stopped reporting'")};
+      ${job('never', 'failed', "log_tail='Never started: no machine took it within 24 hours'")}; UPDATE jobs SET exit_code = 31 WHERE id = 'never';
+      ${job('again', 'queued', "retry_of='gone'")};
+      INSERT INTO job_needs (job, need) VALUES ('waits', 'gpu');
+      INSERT INTO tokens (fingerprint, label, kind, member, created_at) VALUES ('fp', 'sam', 'owner', 'sam', '${at}');
+      INSERT INTO sessions (id, token, device, via, is_agent, issued_at, seen_at, proved_at) VALUES ('browser', 'fp', 'Chrome', 'link', 0, '${at}', '${at}', '${at}');
+      INSERT INTO signin_links (id, token, label, expires_at) VALUES ('link', 'fp', 'sam', '${at}');
+      INSERT INTO secrets (name, description, changed_at, changed_by) VALUES ('s', '', '${at}', 'sam');
+      INSERT INTO bridge_connections (id, platform, agent, workspace, bot_user, token_secret, enabled, state, state_at) VALUES ('c', 'discord', 'art', 'w', 'bot', 's', 1, 'connected', '${at}');
+      INSERT INTO bridge_incoming (id, connection, channel, is_dm, user, text, posted_at, received_at, state, conversation) VALUES ('m', 'c', 'r', 0, 'u', 'hi', '${at}', '${at}', 'delivered', 'room');
+      INSERT INTO bridge_sends (id, incoming, connection, channel, text, state, posted_id, created_at) VALUES ('out', 'm', 'c', 'r', 'hello', 'sent', 'posted-1', '${at}'), ('queued', 'm', 'c', 'r', 'later', 'pending', NULL, '${at}')`);
+    upgradeDataSchema(old, () => '2026-11-16T00:00:00.000Z');
+    // No program ever wrote `waiting`; a row that has it was running. loom's own lines are no runner's output.
+    expect(old.prepare('SELECT id, state, log_tail, ended_note, retry_of FROM jobs ORDER BY id').all()).toEqual([
+      { id: 'again', state: 'queued', log_tail: null, ended_note: null, retry_of: 'gone' },
+      { id: 'gone', state: 'lost', log_tail: null, ended_note: 'Lost while running: its worker stopped reporting', retry_of: null },
+      { id: 'never', state: 'failed', log_tail: null, ended_note: 'Never started: no machine took it within 24 hours', retry_of: null },
+      { id: 'ran', state: 'failed', log_tail: 'its own output', ended_note: null, retry_of: null },
+      { id: 'waits', state: 'running', log_tail: null, ended_note: null, retry_of: null },
+    ]);
+    expect(() => old.prepare("UPDATE jobs SET state = 'waiting' WHERE id = 'waits'").run()).toThrow('CHECK');
+    expect(() => old.prepare("UPDATE jobs SET ended_reason = 'stop' WHERE id = 'ran'").run()).not.toThrow();
+    // Still one unended job to a conversation, and everything that points at a job still does.
+    expect(() => old.prepare("UPDATE jobs SET conversation = 'room' WHERE id = 'again'").run()).toThrow('UNIQUE');
+    expect(() => old.prepare("DELETE FROM jobs WHERE id = 'waits'").run()).toThrow('FOREIGN KEY');
+    expect(() => old.prepare("INSERT INTO job_needs (job, need) VALUES ('nowhere', 'gpu')").run()).toThrow('FOREIGN KEY');
+    // A reply posted before the step has the one id that was kept, as its first part.
+    expect(old.prepare('SELECT send, part, posted_id FROM bridge_send_parts').all()).toEqual([{ send: 'out', part: 0, posted_id: 'posted-1' }]);
+    expect(old.prepare("SELECT name FROM pragma_table_info('bridge_sends')").all()).not.toContainEqual({ name: 'posted_id' });
+    // A link from before cannot say which browser made it, so it is not kept; the browser is.
+    expect(old.prepare('SELECT count(*) AS n FROM signin_links').get()).toEqual({ n: 0 });
+    expect(old.prepare('SELECT id, made_by FROM sessions').all()).toEqual([{ id: 'browser', made_by: null }]);
+  });
+
   it('refuses to upgrade over a record whose member or agent is gone, and changes nothing', () => {
     // Step 6 puts guards on who edited a trigger. Before it nothing stopped that member's row being deleted,
     // and SQLite's own check does not see a kind-and-id reference.

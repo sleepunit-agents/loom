@@ -34,33 +34,34 @@ export class BridgeReplyNotSent extends Error {
   constructor(readonly again: boolean) { super('Bridge reply was not sent'); }
 }
 
-/** What one attempt achieved. `posted` is the text the platform confirmed, in order from the start, and
- * `id` its last confirmed post. `rest` is the text that is not confirmed; empty means the whole reply is
- * out. With a `rest`, `refused` is our own refusal when its first part provably never left this process;
+/** What one attempt achieved. `parts` is how many parts of the reply the platform has now confirmed,
+ * counted from its start and including those confirmed before this attempt. `done` says that is all of
+ * them. When it is not, `refused` is our own refusal when the next part provably never left this process;
  * without `refused` that part may have reached the platform. */
-export interface ReplyAttempt { posted: string; id?: string; rest: string; refused?: BridgeReplyNotSent }
+export interface ReplyAttempt { parts: number; done: boolean; refused?: BridgeReplyNotSent }
 
-/** One attempt for the engine's outbox row, never a retry loop.
+/** One attempt for the engine's outbox row, never a retry loop. It posts the reply's parts from part
+ * `from` on (the parts before it were confirmed by an earlier attempt), and tells the engine of each part
+ * the moment the platform confirms it, so that what is out is on record before the next part is tried.
  * The adapter's post callback MUST recheck authorization for every chunk, use
  * the bound address/thread and suppress platform-generated mentions. The engine
  * owns staging and durable uncertainty; this helper grants no right to send.
- * It stops at the first part that is not confirmed and says how far it got, so
- * the engine can keep what is out and deal with the remainder on its own.
+ * It stops at the first part that is not confirmed and says how far it got.
  * Nothing of an upstream error is returned: it can contain credentials or words.
  */
-export async function postReply(platform: Venue['platform'], text: string,
-  post: (text: string) => Promise<{ id: string }>): Promise<ReplyAttempt> {
+export async function postReply(platform: Venue['platform'], text: string, from: number,
+  post: (text: string) => Promise<{ id: string }>, confirmed: (part: number, id: string) => void): Promise<ReplyAttempt> {
+  // The parts are cut greedily from the start of a text that never changes, so they are the same parts every time.
   const parts = replyParts(platform, text);
-  let confirmed = 0, id: string | undefined, refused: BridgeReplyNotSent | undefined;
+  let next = Math.min(Math.max(from, 0), parts.length), refused: BridgeReplyNotSent | undefined;
   try {
-    for (const part of parts) {
-      const result = await post(part);
+    for (; next < parts.length; next++) {
+      const result = await post(parts[next]);
       if (!result || typeof result.id !== 'string' || !result.id.trim()) throw new Error();
-      id = result.id; confirmed++;
+      confirmed(next, result.id);
     }
   } catch (error) {
     if (error instanceof BridgeReplyNotSent) refused = error;
   }
-  // The parts are cut greedily from the start, so cutting the remainder again later gives the same parts.
-  return { posted: parts.slice(0, confirmed).join(''), ...(id === undefined ? {} : { id }), rest: parts.slice(confirmed).join(''), ...(refused ? { refused } : {}) };
+  return { parts: next, done: next === parts.length, ...(refused ? { refused } : {}) };
 }

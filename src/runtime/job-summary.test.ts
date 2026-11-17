@@ -29,12 +29,12 @@ function fixture() {
 it('returns every current state in queue order with stable ties and excludes terminal jobs and other agents in SQL', async () => {
   const f = fixture();
   f.add('z', 'queued'); f.add('a', 'running', { box: 'attic' }); f.add('b', 'starting');
-  f.add('old', 'waiting', { queuedAt: '2026-11-14T17:00:00.000Z' });
+  f.add('old', 'running', { queuedAt: '2026-11-14T17:00:00.000Z' });
   for (const state of ['done', 'failed', 'stopped', 'lost'] as const) f.add(state, state);
   f.add('mark-job', 'running', { agent: 'mark' });
   expect(f.summaries.current('art').map(j => j.id)).toEqual(['old', 'a', 'b', 'z']);
   expect(await f.read()).toEqual({ data: { currentJobs: [
-    { id: 'old', agent: 'art', title: 'old', state: 'waiting', box: null, queuedAt: '2026-11-14T17:00:00.000Z' },
+    { id: 'old', agent: 'art', title: 'old', state: 'running', box: null, queuedAt: '2026-11-14T17:00:00.000Z' },
     { id: 'a', agent: 'art', title: 'a', state: 'running', box: 'attic', queuedAt: f.at },
     { id: 'b', agent: 'art', title: 'b', state: 'starting', box: null, queuedAt: f.at },
     { id: 'z', agent: 'art', title: 'z', state: 'queued', box: null, queuedAt: f.at },
@@ -75,7 +75,7 @@ it('constrains the single SQL read before fetching rows and never reads machine 
     expect(statements).toHaveLength(1);
     expect(statements[0]).toMatch(/from "jobs" where \(.*"jobs"\."member" is null/);
     expect(statements[0]).toContain('"jobs"."agent" = ?');
-    expect(statements[0]).toContain('"jobs"."state" in (?, ?, ?, ?)');
+    expect(statements[0]).toContain('"jobs"."state" in (?, ?, ?)');
     expect(statements[0]).not.toMatch(/\b(?:join|boxes)\b/i);
     expect(statements[0]).not.toMatch(/"(?:brief|log_tail|account|house_repository|build)"/);
   } finally { prepared.mockRestore(); }

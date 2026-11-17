@@ -23,7 +23,7 @@ export type DigestInput = {
 };
 
 /** These live phases follow the running acknowledgement; queued/starting do not. */
-export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => state === 'running' || state === 'waiting';
+export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => state === 'running';
 
 /** All multi-row changes commit together, including source deduplication and
  * the question/answer round trip. now is injected for fake-clock execution. */

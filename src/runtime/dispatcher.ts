@@ -98,8 +98,7 @@ export class Dispatcher {
     return this.db.transaction(() => {
       this.liveMachine(box);
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
-      if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
-        return { active: false };
+      if (!job || job.box !== box || job.state !== state) return { active: false };
       if (state === 'starting') {
         // Nothing is running yet, so a Comms Stop ends the job here. Once a body runs, the Stop is the body's
         // to notice: it drops its work cleanly, and Jobs.finish records the stop when the worker reports.
@@ -107,10 +106,8 @@ export class Dispatcher {
         const thread = this.currentThread(job);
         if (thread) new Threads(this.db, this.now).working(thread.id, true);
       }
-      // The worker reports a live process, not what its body is doing, so its report never moves a job
-      // between running and waiting. (Nothing in the program sets `waiting` today: see
-      // docs/accepted-tradeoffs.md, "The waiting job state has no writer".)
-      this.jobs.heartbeat(id, box, job.state === 'waiting' ? 'waiting' : state);
+      // The worker reports a live process in the state the job is already in; its report moves no job.
+      this.jobs.heartbeat(id, box, state);
       return { active: true };
     }, { behavior: 'immediate' });
   }

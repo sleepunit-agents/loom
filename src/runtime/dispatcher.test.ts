@@ -219,7 +219,8 @@ it('reads tool and person policy within the same placement and claim transaction
     return prepare(sql);
   });
   expect(f.runtime.next('first')?.id).toBe(f.job.id);
-  expect(policyReads).toBeGreaterThanOrEqual(2);
+  // The tool list is always read; a tier is read only for mail from an outside account, and this mail has none.
+  expect(policyReads).toBeGreaterThanOrEqual(1);
 });
 
 it('never hands a legacy private brief to the worker while preserving the old record', () => {
@@ -241,17 +242,15 @@ it('passes unbound instructions through the worker assignment', () => {
   expect(f.runtime.next('first')).toMatchObject({ id: f.job.id, conversation: null, brief: 'Unbound instructions' });
 });
 
-it('keeps explicit body waiting status across worker liveness pulses until a body resumes it', () => {
+it('takes a running job\'s pulse only from the machine that holds it, and moves the job nowhere', () => {
   const f = fixture(); f.runtime.next('first'); f.runtime.started('first', f.job.id, 'image');
-  f.runtime.jobs.heartbeat(f.job.id, 'first', 'waiting'); f.tick(15_000);
+  f.tick(15_000);
   expect(f.runtime.heartbeat('first', f.job.id, 'running')).toEqual({ active: true });
-  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'waiting', heardAt: f.now() });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'running', heardAt: f.now() });
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
   expect(f.runtime.heartbeat('second', f.job.id, 'running')).toEqual({ active: false });
-  expect(f.runtime.jobs.get(f.job.id).state).toBe('waiting');
-  // A body status report, rather than the worker's process phase, resumes work.
-  f.runtime.jobs.heartbeat(f.job.id, 'first', 'running');
-  expect(f.runtime.heartbeat('first', f.job.id, 'running')).toEqual({ active: true });
+  // A pulse that names a state the job is not in is not this job's pulse.
+  expect(f.runtime.heartbeat('first', f.job.id, 'starting')).toEqual({ active: false });
   expect(f.runtime.jobs.get(f.job.id).state).toBe('running');
 });
 
@@ -279,7 +278,7 @@ it('ends a job it is still preparing when a Comms Stop is waiting at its heartbe
   const stop = (f: ReturnType<typeof fixture>) => f.db.insert(threads).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
   const f = fixture(); f.runtime.next('first'); stop(f);
   expect(f.runtime.heartbeat('first', f.job.id, 'starting')).toEqual({ active: false, stopped: true });
-  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop' });
   expect(f.db.select().from(threads).get()).toMatchObject({ stopRequested: false, working: false });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: f.job.id });
   expect(f.runtime.jobs.admit(f.conversation.id)).toBeUndefined();
@@ -288,7 +287,7 @@ it('ends a job it is still preparing when a Comms Stop is waiting at its heartbe
   expect(running.runtime.jobs.get(running.job.id).state).toBe('running');
   expect(running.db.select().from(threads).get()?.stopRequested).toBe(true);
   // The body notices, leaves with the stopped exit, and the worker's report ends the job the same way.
-  expect(running.runtime.finish('first', running.job.id, 10, '').job).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off' });
+  expect(running.runtime.finish('first', running.job.id, 10, '').job).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop' });
   expect(running.db.select().from(threads).get()?.stopRequested).toBe(false);
 });
 it('takes the facts a worker reports with its poll, keeps them when a poll names none, and clears them on an empty list', () => {

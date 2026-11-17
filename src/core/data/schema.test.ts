@@ -7,7 +7,7 @@ import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { referenceStatements } from './references.js';
-import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, modelAccountWindows, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
+import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, modelAccountWindows, digests, migrations, operationResults, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
 
 const opened: Database.Database[] = [];
 function fresh() {
@@ -232,8 +232,6 @@ describe('the approved data model', () => {
     const { db, at } = household();
     expect(() => db.insert(migrations).values({ number: 2, appliedAt: 'yesterday' }).run()).toThrow();
     expect(() => db.insert(operationResults).values({ caller: 'art', id: 'retry-1', operation: 'tasks.close', inputHash: 'fingerprint', result: Buffer.from('done'), expiresAt: '2026-11-14T00:00:00+01:00' }).run()).toThrow();
-    db.insert(tokens).values({ fingerprint: 'fp', label: 'browser', kind: 'owner', member: 'jonathan', createdAt: at }).run();
-    expect(() => db.insert(signinChallenges).values({ id: 'ch-1', token: 'fp', challenge: 'test', expiresAt: 'yesterday' }).run()).toThrow();
   });
 
   it('enforces household ranges, live token labels and secret rule choices', () => {

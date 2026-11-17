@@ -71,7 +71,7 @@ Entries are grouped by the part of the program they belong to.
 - **The checks these routes make, in order.** The program is not closing. The request authenticates
   (`sharedCredentials.authenticate`) and its credential is a body's (an agent token bound to a job) or a
   worker's. The body is JSON. A body may name no job: its job is the one on its credential, it must be that
-  agent's, and it must be running or waiting. A worker must name a job, that job must be starting on the
+  agent's, and it must be running. A worker must name a job, that job must be starting on the
   worker's own machine, and a worker may ask only for the repository secret. The job's binding (agent,
   machine, conversation, member, project, house repository, file and branch) is recorded and must be
   unchanged, with the credential still valid, when the bytes are handed over and when the use is confirmed.
@@ -241,17 +241,6 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** Recording why placement passed a job over. A job no harness can ever
   run could then fail at once, and one waiting for room could wait as long as the window.
 
-### The `waiting` job state has no writer
-
-- **What.** `jobs.state` allows `waiting`, every reader treats it like `running`, and nothing in the
-  program sets it. A body that is waiting for a person says so in the agent's status
-  (`conversation.status`), not on its job.
-- **Where.** `Jobs.heartbeat` in `src/runtime/jobs.ts` accepts it; `Dispatcher.heartbeat` keeps it.
-- **Why accepted for now.** Removing the state is a schema change, and whether a job should show
-  `waiting` is a product decision that has not been made.
-- **What would change the answer.** Deciding it. Either the body's status report sets the job to
-  `waiting` and back, or the state is dropped from the column.
-
 ### A body's credential and its tools bearer cannot be erased from memory
 
 - **What.** The body's loom credential is erased as bytes, but the same value exists as JavaScript
@@ -327,21 +316,22 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: a tier or a card being used to decide who somebody is. Only `bridge_people` may do that.
 
 ### A reply in doubt is never sent again
-- What: when a post fails after its request left, the reply (or, for a long reply, the part not confirmed)
-  is `uncertain`. A person can dismiss it. Nobody can resend it.
-- Where: `src/pieces/bridges/sends.ts` (`reviewReply`, and the split of a partly posted reply).
+- What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
+  can resend it, and that holds for a long reply whose earlier parts were confirmed.
+- Where: `src/pieces/bridges/sends.ts` (`reviewReply`, and the state a stopped attempt leaves).
 - Why: the platform may have it, and neither Discord nor Slack lets a post be made idempotent. A missing
   part is visible and a person can say it again; a doubled one cannot be taken back by loom.
 - Would change it: a platform nonce that makes a repeat safe (Discord's `enforce_nonce`), used on every post.
 
-### Only the last part of a long reply is a known thread root
-- What: a thread opened under a bot's message addresses that bot only if the thread hangs under the last
-  part of a reply that was posted in several parts (or the last part of each run, when it was split).
-- Where: `src/pieces/bridges/incoming.ts` (the `posted_id` lookup), `sends.ts`.
-- Why: `bridge_sends.posted_id` holds one id. A thread under an earlier part goes to the channel's primary
-  agent, as any unaddressed message does, so nothing is lost; it may reach a different agent in a room
-  with two.
-- Would change it: a table of every posted part's id (see the round-2 ledger, NEEDS SCHEMA).
+### The Bridges screen shows a partly posted reply whole
+- What: a long reply is one row with all its words whatever happens to it. When it stops part way and is
+  `held` or `uncertain`, the screen shows the whole text and the state; which parts the platform confirmed
+  is on record (`bridge_send_parts`) and is not shown.
+- Where: `src/pieces/bridges/sends.ts`; `web/src/pieces/bridges-view.tsx`.
+- Why: one row per reply means a reply has one id, one state and one review. A held reply that is released
+  goes on from the parts on record, so nothing confirmed is posted twice whatever the screen shows.
+- Would change it: owners dismissing replies in doubt without being able to tell what had arrived. Then
+  the screen reads the parts and marks the words that are out.
 
 ### An unread event is kept for a day
 - What: the raw frame of an event nothing could read yet is kept for a day, not the hour raw words are
@@ -418,6 +408,18 @@ Entries are grouped by the part of the program they belong to.
   the one row in `jobs` that has not ended, so the pointer repeated it.
 - **What would change the answer.** A step that removes data a household cannot get back. That needs the
   owner's say first, and a line printed at startup.
+
+### Upgrade step 7 removed four kinds of existing data
+- **What.** A household upgraded from schema 6 or earlier lost every unused sign-in link, the
+  `signin_challenges` table and the `waiting` job state (a job in it became `running`), and each posted
+  reply's one recorded id became the first row of its parts.
+- **Where.** Step 7 of `upgrades` in `src/core/data/database.ts`; `src/core/data/upgrade.test.ts` asserts it.
+- **Why accepted.** A sign-in link lives five minutes, and one made before the step cannot say which browser
+  made it, which is what the step added; ask for another. `signin_challenges` was never written or read.
+  No program ever set a job to `waiting`. A reply posted in several parts before the step had kept only its
+  last part's id, so a thread under an earlier part of an old reply is still not known as the bot's.
+- **What would change the answer.** As for step 6: a step that removes data a household cannot get back
+  needs the owner's say first.
 
 ### A new person is two commits, not one
 - **What.** `mind.personAdd` writes a person's card into two SQLite files (the directory's `people.db` and the

@@ -145,7 +145,7 @@ it('fences retained credential proof and new authentication before any SQL after
   expect(f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.body }))).toBeUndefined();
   expect(sql).not.toHaveBeenCalled();
 });
-it.each([['starting','running'], ['running','waiting'], ['waiting','running']] as const)('keeps the same scoped request admitted across normal %s to %s state changes', async (before, after) => {
+it.each([['starting','running']] as const)('keeps the same scoped request admitted across the normal %s to %s state change', async (before, after) => {
   let began!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
   const f = fixture(() => { began(); return held; });

@@ -17,29 +17,18 @@ import type { DataWrites } from '../data/writes.js';
 import { sameRequestOrigin } from '../data/origin.js';
 import { LINK_MS } from './link-lifetime.js';
 
-/** What a link carries beyond its row: the browser that made it, and whether whoever made it said it is
- * for an automated browser. These are kept in this program's memory, by database, because signin_links has
- * no columns for them yet. So that a link can never be redeemed without them, a link does not outlive the
- * program: forgetSigninLinks drops every link when the program starts. */
-type LinkFacts = Readonly<{ from?: string; agent?: boolean; expires: number }>;
-const linkFacts = new WeakMap<DataDatabase, Map<string, LinkFacts>>();
-const factsOf = (db: DataDatabase) => { let found = linkFacts.get(db); if (!found) linkFacts.set(db, found = new Map()); return found; };
-/** At start: no link made by an earlier run of the program can be used. */
-export function forgetSigninLinks(db: DataDatabase) { db.delete(signinLinks).run(); linkFacts.delete(db); }
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
   const token = (id: string) => activeMemberToken(db,clock,id);
   return {
     /** A link lasts LINK_MS at most; a trusted issuer may ask for less, and name what it is for. `from` is
      * the browser session making the link, when a browser makes it; `agent` says the link is for an
-     * automated browser. Links that have run out are dropped here, so unused ones do not pile up. */
+     * automated browser. Both are kept in the link's row, so a link is the same link after the program
+     * starts again. Links that have run out are dropped here, so unused ones do not pile up. */
     makeLink(id: string, options: { label?: string; ttlMs?: number; from?: string; agent?: boolean } = {}) {
-      const current = token(id), code = randomBytes(32).toString('hex'), facts = factsOf(db), now = clock.now();
+      const current = token(id), code = randomBytes(32).toString('hex'), now = clock.now();
       for (const old of db.select({ id: signinLinks.id, expiresAt: signinLinks.expiresAt }).from(signinLinks).all()) if (Date.parse(old.expiresAt) <= now) db.delete(signinLinks).where(eq(signinLinks.id, old.id)).run();
-      for (const [key, old] of facts) if (old.expires <= now) facts.delete(key);
       const expiresAt = new Date(Math.min(now + Math.min(LINK_MS, options.ttlMs ?? LINK_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity)).toISOString();
-      db.insert(signinLinks).values({ id: fingerprint(code), token: id, label: options.label ?? current.label, expiresAt }).run();
-      // Kept until the link runs out, used or not: a redemption that is rolled back must find them again.
-      if (options.from !== undefined || options.agent) facts.set(fingerprint(code), Object.freeze({ ...(options.from === undefined ? {} : { from: options.from }), ...(options.agent ? { agent: true } : {}), expires: Date.parse(expiresAt) }));
+      db.insert(signinLinks).values({ id: fingerprint(code), token: id, label: options.label ?? current.label, expiresAt, session: options.from ?? null, isAgent: !!options.agent }).run();
       return { path: `/login/${code}`, expiresAt };
     },
     redeem(code: string, userAgent: string) {
@@ -47,13 +36,13 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
       return db.transaction(() => {
         const link = db.select().from(signinLinks).where(eq(signinLinks.id, fingerprint(code))).get(), now = clock.now();
         if (!link || Date.parse(link.expiresAt) <= now) throw new Error('Sign-in refused');
-        const current = token(link.token), facts = factsOf(db).get(link.id);
+        const current = token(link.token);
         // A link made by a browser is that browser's proof carried to another device. It is good only while
         // that browser is still signed in, and it gives the new one nothing the first did not have.
-        const from = facts?.from === undefined ? undefined : currentSession(db, facts.from, now);
-        if (facts?.from !== undefined && from?.token.fingerprint !== current.fingerprint) throw new Error('Sign-in refused');
+        const from = link.session === null ? undefined : currentSession(db, link.session, now);
+        if (link.session !== null && from?.token.fingerprint !== current.fingerprint) throw new Error('Sign-in refused');
         db.delete(signinLinks).where(eq(signinLinks.id, link.id)).run();
-        return startBrowser(db, now, { token: current, userAgent, via: 'link', agent: facts?.agent, from: from?.session });
+        return startBrowser(db, now, { token: current, userAgent, via: 'link', agent: link.isAgent, from: from?.session });
       });
     },
   };
@@ -74,7 +63,6 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
  *
  * Both choices are recorded in docs/accepted-tradeoffs.md. */
 export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; issueProgram?(input:unknown):{token:string;fingerprint:string}; authenticate(request:Request):Authentication|undefined }) {
-  forgetSigninLinks(options.db);
   const signin = sharedSigninLinks(options.db, options.clock);
   const authenticate = options.authenticate;
   const routes = new Hono();

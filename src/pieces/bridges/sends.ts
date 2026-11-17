@@ -1,8 +1,7 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeSends } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, type ReplyAttempt } from './outbound.js';
-import { restOfReply } from './keys.js';
 
 export type BridgeSend = typeof bridgeSends.$inferSelect;
 /** How long an unsent reply waits before the next attempt. The daemon flushes at least this often. */
@@ -34,11 +33,12 @@ export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 
  * enter through their authenticated operation; this module owns no permissions.
  * One daemon owns a database. Construct once at startup, before draining sends.
  *
- * A long reply is posted in parts. If an attempt stops part way, the row keeps the
- * text the platform confirmed and is `sent`, and what is left becomes a row of its
- * own (restOfReply): `pending` when its first part provably never left, so a later
- * flush finishes the reply; `uncertain` when that part may have arrived, so a
- * person sees exactly which words are in doubt. Nothing confirmed is posted twice.
+ * A long reply is posted in parts, and each part the platform confirms is recorded
+ * as it is confirmed (bridge_send_parts). A reply is one row whatever happens to it.
+ * If an attempt stops part way, the row is `pending` when the next part provably
+ * never left, so a later flush goes on from the parts on record; `held` when no
+ * request can be built for it; `uncertain` when that part may have arrived. Nothing
+ * confirmed is posted twice, and nothing in doubt is posted again.
  */
 export class BridgeSends {
   private draining?: Promise<void>;
@@ -64,11 +64,7 @@ export class BridgeSends {
     const result = this.commit(()=>this.db.transaction(tx => {
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
-        // A reply that was partly posted is its confirmed text followed by its remainder rows.
-        let text = old.text;
-        for (let rest = tx.select().from(bridgeSends).where(eq(bridgeSends.id, restOfReply(old.id))).get(); rest;
-          rest = tx.select().from(bridgeSends).where(eq(bridgeSends.id, restOfReply(rest.id))).get()) text += rest.text;
-        if (old.incoming !== input.incoming || text !== input.text) throw new Error('Reply id reused');
+        if (old.incoming !== input.incoming || old.text !== input.text) throw new Error('Reply id reused');
         return old;
       }
       const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
@@ -117,39 +113,27 @@ export class BridgeSends {
         .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'pending'))).run());
       if (!claim.changes) continue;
       this.changed();
+      // Go on from the parts an earlier attempt, in this run or one before it, had confirmed.
+      const posted = this.db.select({ last: max(bridgeSendParts.part) }).from(bridgeSendParts).where(eq(bridgeSendParts.send, send.id)).get()?.last;
       let attempt: ReplyAttempt;
       try {
-        attempt = await postReply(connection.platform, send.text, async text => {
+        attempt = await postReply(connection.platform, send.text, posted === null || posted === undefined ? 0 : posted + 1, async text => {
           const current = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, connection.id)).get();
           if (this.closed || !current?.enabled || current.state !== 'connected'
             || current.platform !== connection.platform || current.workspace !== connection.workspace
             || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new BridgeReplyNotSent(true);
           return this.transport.post(current, { channel: send.channel, thread: send.thread }, text);
-        });
+        // On record before the next part is tried: a crash between two parts leaves exactly what is out.
+        }, (part, postedId) => { this.commit(() => this.db.insert(bridgeSendParts).values({ send: send.id, part, postedId }).run()); });
       } catch {
         // No part could be made of this text, so nothing was posted and waiting cannot help.
-        attempt = { posted: '', rest: send.text, refused: new BridgeReplyNotSent(false) };
+        attempt = { parts: 0, done: false, refused: new BridgeReplyNotSent(false) };
       }
-      // What is not confirmed goes back to wait for the connection when it never left, to a person when
-      // waiting cannot help, and is uncertain when the platform may already have it.
-      const left = !attempt.rest ? undefined : !attempt.refused ? 'uncertain' : attempt.refused.again ? 'pending' : 'held';
-      const split = !!attempt.rest && !!attempt.posted, rest = restOfReply(send.id), claimed = and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'));
-      if (left === 'pending') this.notBefore.set(split ? rest : send.id, Date.parse(this.now()) + RETRY_UNSENT);
-      const whole = () => this.commit(() => this.db.update(bridgeSends).set({ state: left ?? 'sent', postedId: attempt.id ?? null }).where(claimed).run());
-      if (!split) whole();
-      // Partly posted: this row is what is out, and the remainder is a reply of its own to the same place.
-      else try {
-        this.commit(() => this.db.transaction(tx => {
-          if (!tx.update(bridgeSends).set({ state: 'sent', text: attempt.posted, postedId: attempt.id ?? null }).where(claimed).run().changes) return;
-          tx.insert(bridgeSends).values({ id: rest, incoming: send.incoming, connection: send.connection, channel: send.channel, thread: send.thread,
-            text: attempt.rest, state: left!, createdAt: this.now() }).run();
-        }));
-      } catch {
-        // The remainder's id is taken by something else. The reply stays one row, and a partly posted row
-        // that is not split can only be called uncertain.
-        this.notBefore.delete(rest);
-        this.commit(() => this.db.update(bridgeSends).set({ state: 'uncertain', postedId: attempt.id ?? null }).where(claimed).run());
-      }
+      // What is not confirmed waits for the connection when it never left, goes to a person when waiting
+      // cannot help, and is uncertain when the platform may already have it.
+      const state = attempt.done ? 'sent' : !attempt.refused ? 'uncertain' : attempt.refused.again ? 'pending' : 'held';
+      if (state === 'pending') this.notBefore.set(send.id, Date.parse(this.now()) + RETRY_UNSENT);
+      this.commit(() => this.db.update(bridgeSends).set({ state }).where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run());
       this.changed();
     }
   }

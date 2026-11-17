@@ -171,9 +171,9 @@ export class Jobs {
     });
   }
 
-  heartbeat(id: string, box: string, state: 'starting' | 'running' | 'waiting'): Job {
+  heartbeat(id: string, box: string, state: 'starting' | 'running'): Job {
     return this.db.transaction(() => {
-      this.assigned(id, box, state === 'starting' ? ['starting'] : ['running', 'waiting']);
+      this.assigned(id, box, [state]);
       return this.db.update(jobs).set({ state, heardAt: this.now() }).where(eq(jobs.id, id)).returning().get()!;
     });
   }
@@ -190,7 +190,7 @@ export class Jobs {
     return row?.stop && row.member ? { thread: row.thread, member: row.member } : undefined;
   }
 
-  /** The one place a Comms Stop ends a job: stopped, by the thread's member, as a write-off, and the Stop
+  /** The one place a Comms Stop ends a job: stopped, by the thread's member, with the reason `stop`, and the Stop
    * is taken with it. Its unconfirmed mail stays with it and is not run again. A Stop belongs to whoever
    * is in charge of the job when it is noticed, and both come here:
    *  - before a body is running, the worker's heartbeat notices it (takeStop);
@@ -201,7 +201,7 @@ export class Jobs {
     const asked = this.stopAsked(job);
     if (!asked) return undefined;
     new Threads(this.db, this.now).takeStop(asked.thread);
-    return this.end(job, 'stopped', { ...values, endedBy: asked.member, endedReason: 'write-off', endedAt: this.now() });
+    return this.end(job, 'stopped', { ...values, endedBy: asked.member, endedReason: 'stop', endedAt: this.now() });
   }
 
   /** For the worker's heartbeat while it prepares a job: ends the job as stopped when a Comms Stop is waiting for it. */
@@ -246,7 +246,7 @@ export class Jobs {
     const { id: _id, ...snapshot } = before;
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
       retryOf: before.id, retryAt: new Date(Date.parse(at) + (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth]).toISOString(), queuedAt: at,
-      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
+      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null, endedNote: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
     this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(unconfirmed).run();
@@ -267,7 +267,7 @@ export class Jobs {
    *   tried again while it has attempts left (see finish).
    * - A queued job no machine has taken within the queue deadline is failed with LOOM_EXIT.unplaced and
    *   not tried again (see QUEUE_DEADLINE_MS).
-   * Either row says what happened in loom's own words, which are kept for a private conversation too.
+   * Either row says what happened in loom's own words (ended_note), which are kept for a private conversation too.
    * Silence is read from this server's clock, so the caller must not sweep across a jump of that clock
    * (createRuntime waits one interval after one); a stamp left later than now by a clock set back is
    * counted from now here. */
@@ -281,14 +281,14 @@ export class Jobs {
       const lost = this.db.select().from(jobs).where(inArray(jobs.state, claimedJobStates)).all()
         .filter(job => now - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
         .map(job => {
-          const ended = this.end(job, 'lost', { endedAt: at, logTail: `Lost while ${job.state}: its worker stopped reporting` });
+          const ended = this.end(job, 'lost', { endedAt: at, endedNote: `Lost while ${job.state}: its worker stopped reporting` });
           this.retry(job, at);
           return ended;
         });
       const unplaced = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).all()
         .filter(job => now - Math.max(Date.parse(job.queuedAt), job.retryAt ? Date.parse(job.retryAt) : 0) > queueMs)
         .map(job => this.end(job, 'failed', { endedAt: at, exitCode: LOOM_EXIT.unplaced,
-          logTail: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
+          endedNote: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
       return [...lost, ...unplaced];
     }, { behavior: 'immediate' });
   }

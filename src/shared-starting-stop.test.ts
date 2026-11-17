@@ -34,7 +34,7 @@ it('honors Stop during the real pre-body repository consent wait without buildin
   expect(f.db.select().from(s.threads).get()?.working).toBe(true);
   expect((await f.member('stop')).status).toBe(200);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(true);
   pulse();expect(await running).toBe('abandoned');
-  expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()).toMatchObject({state:'stopped',endedBy:'alice',endedReason:'write-off'});
+  expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,f.job.id)).get()).toMatchObject({state:'stopped',endedBy:'alice',endedReason:'stop'});
   expect(f.db.select().from(s.jobs).all()).toHaveLength(2);expect(working(f)).toEqual([]);
   expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,workingSince:null,workingBeat:null,stopRequested:false});
   expect(f.db.select().from(s.inbox).all().find(row=>row.toKind==='agent')).toMatchObject({state:'waiting',job:f.job.id});

@@ -172,8 +172,10 @@ CREATE TABLE `sessions` (
 	`seen_at` text NOT NULL,
 	`proved_at` text NOT NULL,
 	`passkey` text,
+	`made_by` text,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`passkey`) REFERENCES `passkeys`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`made_by`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "sessions_issued_at_utc" CHECK("sessions"."issued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."issued_at") = "sessions"."issued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."issued_at") = "sessions"."issued_at", 0)),
 	CONSTRAINT "sessions_seen_at_utc" CHECK("sessions"."seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."seen_at") = "sessions"."seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."seen_at") = "sessions"."seen_at", 0)),
 	CONSTRAINT "sessions_proved_at_utc" CHECK("sessions"."proved_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."proved_at") = "sessions"."proved_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."proved_at") = "sessions"."proved_at", 0)),
@@ -186,8 +188,12 @@ CREATE TABLE `signin_links` (
 	`token` text NOT NULL,
 	`label` text NOT NULL,
 	`expires_at` text NOT NULL,
+	`session` text,
+	`is_agent` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "signin_links_expires_at_utc" CHECK("signin_links"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_links"."expires_at") = "signin_links"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_links"."expires_at") = "signin_links"."expires_at", 0))
+	FOREIGN KEY (`session`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "signin_links_expires_at_utc" CHECK("signin_links"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_links"."expires_at") = "signin_links"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_links"."expires_at") = "signin_links"."expires_at", 0)),
+	CONSTRAINT "signin_links_is_agent_boolean" CHECK("signin_links"."is_agent" in (0, 1))
 );
 
 CREATE TABLE `passkeys` (
@@ -872,6 +878,7 @@ CREATE TABLE `jobs` (
 	`log_tail` text,
 	`ended_by` text,
 	`ended_reason` text,
+	`ended_note` text,
 	`queued_at` text NOT NULL,
 	`claimed_at` text,
 	`heard_at` text,
@@ -889,11 +896,11 @@ CREATE TABLE `jobs` (
 	CONSTRAINT "jobs_claimed_at_utc" CHECK("jobs"."claimed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."claimed_at") = "jobs"."claimed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."claimed_at") = "jobs"."claimed_at", 0)),
 	CONSTRAINT "jobs_heard_at_utc" CHECK("jobs"."heard_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."heard_at") = "jobs"."heard_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."heard_at") = "jobs"."heard_at", 0)),
 	CONSTRAINT "jobs_ended_at_utc" CHECK("jobs"."ended_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."ended_at") = "jobs"."ended_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."ended_at") = "jobs"."ended_at", 0)),
-	CONSTRAINT "jobs_state_choice" CHECK("jobs"."state" in ('queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost')),
-	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off'))
+	CONSTRAINT "jobs_state_choice" CHECK("jobs"."state" in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')),
+	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off', 'stop'))
 );
 
-CREATE UNIQUE INDEX `jobs_one_active_unique` ON `jobs` (`conversation`) WHERE "jobs"."state" in ('queued', 'starting', 'running', 'waiting');
+CREATE UNIQUE INDEX `jobs_one_active_unique` ON `jobs` (`conversation`) WHERE "jobs"."state" in ('queued', 'starting', 'running');
 CREATE INDEX `jobs_agent_state_idx` ON `jobs` (`agent`,`state`);
 CREATE INDEX `jobs_box_state_idx` ON `jobs` (`box`,`state`);
 CREATE TABLE `job_needs` (
@@ -1124,7 +1131,6 @@ CREATE TABLE `bridge_sends` (
 	`thread` text,
 	`text` text NOT NULL,
 	`state` text NOT NULL,
-	`posted_id` text,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
@@ -1315,15 +1321,6 @@ CREATE TABLE `notification_queue` (
 	CONSTRAINT "notificationQueue_sentAt_utc" CHECK("notification_queue"."sent_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."sent_at") = "notification_queue"."sent_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."sent_at") = "notification_queue"."sent_at", 0))
 );
 
-CREATE TABLE `signin_challenges` (
-	`id` text PRIMARY KEY NOT NULL,
-	`token` text NOT NULL,
-	`challenge` text NOT NULL,
-	`expires_at` text NOT NULL,
-	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "signinChallenges_expiresAt_utc" CHECK("signin_challenges"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_challenges"."expires_at") = "signin_challenges"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_challenges"."expires_at") = "signin_challenges"."expires_at", 0))
-);
-
 CREATE TABLE `bridge_raw_events` (
 	`connection` text NOT NULL,
 	`id` text NOT NULL,
@@ -1346,6 +1343,15 @@ CREATE TABLE `bridge_resume` (
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action
 );
 
+CREATE TABLE `bridge_send_parts` (
+	`send` text NOT NULL,
+	`part` integer NOT NULL,
+	`posted_id` text NOT NULL,
+	PRIMARY KEY(`send`, `part`),
+	FOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE INDEX `bridge_send_parts_posted_id_idx` ON `bridge_send_parts` (`posted_id`);
 CREATE TABLE `secret_write_journal` (
 	`id` text PRIMARY KEY NOT NULL,
 	`secret` text NOT NULL,

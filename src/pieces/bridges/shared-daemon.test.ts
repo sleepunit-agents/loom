@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -76,7 +76,7 @@ it('flushes the shared send queue through the current bot credential and confirm
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();
  const incoming=f.db.select().from(bridgeIncoming).get()!;f.request.mockImplementation(async(url)=>{expect(String(url)).toBe('https://slack.com/api/chat.postMessage');expect(f.client.inTransaction).toBe(false);expect(f.db.select().from(bridgeSends).get()?.state).toBe('sending');return Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'});});
  f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'Hi <@everyone>'});f.daemon.changed();await f.daemon.idle();
- expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',postedId:'1794432000.000009'});expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);
+ expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent'});expect(f.db.select().from(bridgeSendParts).all()).toEqual([{send:f.db.select().from(bridgeSends).get()!.id,part:0,postedId:'1794432000.000009'}]);expect(f.buffers.every(buffer=>buffer.every(byte=>byte===0))).toBe(true);
 });
 it('drains an in-flight post during close and records uncertainty without a second network attempt',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;
@@ -95,8 +95,8 @@ it('refuses the next part when connection identity changes during its fresh cred
  f.source.read.mockImplementation(async()=>{const bytes=Buffer.from('synthetic:TOKEN');f.buffers.push(bytes);if(++reads===2)f.writes.run(()=>f.db.update(bridgeConnections).set({botUser:'UREPLACED'}).run());return bytes;});
  f.request.mockImplementation(async()=>Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}));
  f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
- // The first part is out and stays sent. The second was refused before any request, so it has not left and waits; it is not in doubt.
- expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state,row.text.length])).toEqual([['reply','sent',3900],['reply/rest','pending',100]]);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ // The first part is out and on record. The second was refused before any request, so it has not left: the reply waits to go on from it, and is not in doubt.
+ expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state,row.text.length])).toEqual([['reply','pending',4000]]);expect(f.db.select().from(bridgeSendParts).all()).toEqual([{send:'reply',part:0,postedId:'1794432000.000009'}]);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });
 it('flushes a preexisting pending send on the connected-state callback without a caller flush',async()=>{
  const f=fixture();f.db.insert(bridgeIncoming).values({id:'in',connection:'connection',channel:'CROOM',isDm:false,user:'UUSER',text:'Hi',postedAt:new Date(f.clock.now()).toISOString(),receivedAt:new Date(f.clock.now()).toISOString(),state:'delivered'}).run();f.daemon.sends.queue({id:'reply',incoming:'in',text:'Reply'});

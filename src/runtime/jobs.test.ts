@@ -52,8 +52,6 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   expect(f.comms.take(f.conversation.id, job.id).map(row => row.id)).toEqual([mail.id]);
   const receipt = f.comms.confirm(mail.id, job.id);
   f.tick(100);
-  expect(f.runtime.heartbeat(job.id, 'worker', 'waiting')).toMatchObject({ state: 'waiting', heardAt: f.now() });
-  f.tick(100);
   expect(f.runtime.heartbeat(job.id, 'worker', 'running')).toMatchObject({ state: 'running', heardAt: f.now() });
   expect(f.runtime.finish(job.id, 'worker', 0, 'complete').job).toMatchObject({ state: 'done', exitCode: 0, logTail: 'complete', build: 'image' });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'done', job: job.id, doneAt: receipt.doneAt });
@@ -120,7 +118,8 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker');
   f.tick(120_001); expect(f.runtime.sweep().map(row => row.id)).toEqual([job.id]);
-  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', logTail: 'Lost while starting: its worker stopped reporting' });
+  // loom's own line on the ending is not in the column that holds a runner's output.
+  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', endedNote: 'Lost while starting: its worker stopped reporting', logTail: null });
   const retry = f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
   expect(retry).toMatchObject({ state: 'queued', box: null });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
@@ -140,7 +139,8 @@ it('records a Comms Stop the same way whether the worker\'s heartbeat or the bod
       // The body saw the Stop on its own report and left before confirming its mail.
       expect(f.runtime.finish(job.id, 'worker', BODY_EXIT.stopped)).toMatchObject({ job: { state: 'stopped', exitCode: BODY_EXIT.stopped } });
     }
-    expect(f.runtime.get(job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'write-off', endedAt: f.now() });
+    // A Stop pressed in the conversation is its own reason, told apart from an owner giving the work up.
+    expect(f.runtime.get(job.id)).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop', endedAt: f.now() });
     expect(f.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
     // The stopped work is not run again: its mail stays with the stopped job until fresh mail arrives.
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: job.id });
@@ -315,7 +315,7 @@ it('ends a job no machine took within the queue deadline, with a record of why, 
   f.tick(1);
   const [ended] = f.runtime.sweep();
   expect(ended).toMatchObject({ id: job.id, state: 'failed', exitCode: LOOM_EXIT.unplaced, endedAt: f.now(), box: null });
-  expect(ended.logTail).toMatch(/^Never started: no machine took it within 24 hours/);
+  expect(ended.endedNote).toMatch(/^Never started: no machine took it within 24 hours/); expect(ended.logTail).toBeNull();
   expect(exitStage(ended.exitCode)).toBe('loom unplaced');
   expect(working(f)).toEqual([]);
   // No next attempt: it would only wait as long again. The mail stays with the ended job until fresh mail arrives.

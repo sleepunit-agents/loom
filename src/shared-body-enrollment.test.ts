@@ -68,7 +68,7 @@ it('rejects other roles, foreign worker, cookie, forged labels and identity clai
  for(const extra of [{agent:'art'},{box:'worker'},{token:f.credential()},{member:'owner'}])expect((await f.call({...input,...extra})).status).toBe(400);
  expect(await f.root.operations.callAsync('http',{kind:'runner',id:'worker'},'runtime.enrollBody',input,randomUUID())).toMatchObject({ok:false,code:'denied'});expect(f.root.credentials.runnerEnrollment({kind:'runner',id:'worker'})).toBeUndefined();expect((await f.call({job:'other',fingerprint:input.fingerprint})).status).toBe(403);
 });
-it.each(['queued','running','waiting','done','failed','stopped','lost'] as const)('refuses enrollment/replay after job state becomes %s',async state=>{
+it.each(['queued','running','done','failed','stopped','lost'] as const)('refuses enrollment/replay after job state becomes %s',async state=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);f.root.writes.run(()=>f.db.update(jobs).set({state}).where(eq(jobs.id,'job')).run());expect((await f.call(input,raw.runner,id)).status).toBe(403);expect((await f.call({job:'job',fingerprint:hash(f.credential())})).status).toBe(403);
 });
 it.each(['owner','agent','runner','other-job','expired','future','revoked'] as const)('never repurposes a %s fingerprint and leaves the current body usable',async kind=>{

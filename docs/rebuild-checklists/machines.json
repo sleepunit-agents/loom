@@ -2,7 +2,7 @@
   "page": "machines",
   "title": "Machines and jobs",
   "ownerTask": "t-2241",
-  "sourceSha256": "199592d14cdbaaf0d1cdb8c3fe58011e37664737e5c54b8b5e6852f6a062a2ba",
+  "sourceSha256": "9f3cefd4f3d11ca8b2b6c95fdb05b75930227cb34097775ce3a6f7cdfbadc64b",
   "promises": [
     {
       "id": "machines-001",
@@ -56,7 +56,7 @@
     },
     {
       "id": "machines-011",
-      "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be waiting, stopped or lost.",
+      "promise": "A job is one run of an agent's body on a box. It is queued, picked up by a worker, runs, and ends done or failed. It can also be stopped or lost.",
       "source": "docs/how-it-works/site/machines.html#how-h"
     },
     {

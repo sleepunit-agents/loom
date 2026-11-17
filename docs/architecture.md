@@ -127,7 +127,7 @@ database it does not recognise without writing to it.
 | Area | Tables |
 |---|---|
 | Household | `members`, `agents`, `member_agents`, `projects`, `project_members`, `project_agents`, `project_repositories`, `agent_accounts`, `agent_sprites`, `household`, `backup_recipients`, `member_preferences` |
-| Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `signin_challenges`, `passkeys`, `notification_devices`, `notification_queue` |
+| Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `passkeys`, `notification_devices`, `notification_queue` |
 | Tasks | `tasks`, `task_links`, `task_comments` |
 | Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings` |
 | Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `thread_refs`, `deleted_threads` |
@@ -135,7 +135,7 @@ database it does not recognise without writing to it.
 | Tempo | `triggers`, `trigger_log`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync` |
 | Runtime | `boxes`, `box_agents`, `box_facts`, `jobs`, `job_needs`, `agent_run_settings`, `agent_boxes`, `agent_house_secrets`, `agent_house_ports`, `agent_people`, `agent_denied_tools`, `model_accounts`, `model_account_windows`, `model_account_boxes`, `agent_models`, `account_signins` |
-| Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_files`, `bridge_raw_events`, `bridge_resume` |
+| Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_send_parts`, `bridge_files`, `bridge_raw_events`, `bridge_resume` |
 | Secrets | `secrets`, `secret_grants`, `secret_requests`, `secret_rules`, `secret_rule_agents`, `secret_uses`, `secret_changes`, `secret_write_journal` |
 | Measuring | `timing_days`, `measuring_settings` |
 | Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts) |
