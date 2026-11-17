@@ -6,6 +6,7 @@ import {PassThrough} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
 import { agyBody, agyLeftovers } from './agy-body.js';
+import { bodyHarness } from './body-harnesses.js';
 import type { HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gemini-fictional', account: 'sub', harness: 'agy', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -32,7 +33,7 @@ function fixture(input: Partial<Parameters<typeof agyBody>[0]> = {}) {
     return child as unknown as ChildProcessWithoutNullStreams;
   }), abort = new AbortController();
   const config = Buffer.from(JSON.stringify({ mcpServers: { loom_secrets: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer } } } }));
-  const run = agyBody({ command: '/native/agy', cwd: '/house', env: { PATH: '/usr/bin', HOME: home }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
+  const run = bodyHarness('agy', { command: '/native/agy', cwd: '/house', env: { PATH: '/usr/bin', HOME: home }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
   config.fill(0);
   const finish = (rows: unknown[] | string, code = 0) => { child.stdout.end(typeof rows === 'string' ? rows : rows.map(value => JSON.stringify(value)).join('\n') + '\n'); child.stderr.end('PRIVATE DIAGNOSTIC'); setImmediate(() => { child.emit('exit', code); child.emit('close', code); }); };
   return { run, launch, abort, finish, words: () => words, child, seen, data, home };

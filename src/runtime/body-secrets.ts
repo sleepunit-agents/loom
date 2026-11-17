@@ -3,16 +3,16 @@ import type {Clock} from '../core/clock.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {bodyInput,type BodyBootstrap} from './body-bootstrap.js';
 import type {WorkerAssignment} from './worker.js';
-import {harnessTraits} from './harness-traits.js';
+import {harnessReservesEnv} from './body-harnesses.js';
 const unavailable=()=>new Error('Startup secret environment unavailable');
 // Names no startup secret may take, whatever the harness: how the body finds and runs programs, where it
 // connects, and what loom itself hands a body. The names that sign a harness in to its account are that harness's
-// to list (harness-traits.ts), and only the harness this job runs on is asked.
+// to list (in its adapter), and only the harness this job runs on is asked.
 const controls=new Set(['PATH','HOME','SHELL','ENV','BASH_ENV','XDG_CONFIG_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR','MAX_MCP_OUTPUT_TOKENS']);
 function reserved(name:string,env:NodeJS.ProcessEnv,harness:string){
  const key=name.toUpperCase();
  return controls.has(key)||/^(?:NODE_|MCP_|LD_|DYLD_|LOOM_BODY_)/.test(key)
-  ||Object.hasOwn(harnessTraits,harness)&&harnessTraits[harness].reservesEnv(key,env);
+  ||harnessReservesEnv(harness,key,env);
 }
 export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?:typeof fetch;clock?:Clock}={}){
  let closed=false,started=false,active:ReturnType<typeof privateSecretClient>|undefined,unlisten:(()=>void)|undefined;

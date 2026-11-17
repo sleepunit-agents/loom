@@ -22,8 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { BODY_SCRATCH, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness } from './body-harness.js';
-import { harnessCannotRun } from './harness-traits.js';
+import { BODY_SCRATCH, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const conversationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = z.object({ event: z.string() }).passthrough();
@@ -53,7 +52,7 @@ export const agyBody: BodyHarness = input => {
   let used = false;
   return async (job, words, signal) => {
     if (tools && used) throw harnessUnavailable(); used = true;
-    if (signal.aborted || job.harness !== 'agy' || !harnessModel.test(job.model) || harnessCannotRun('agy', job.run?.policy, input.reach ?? 'loom')
+    if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES) throw harnessUnavailable();
     let workspace: string | undefined, conversation: string | undefined;
     const scratch = input.env[BODY_SCRATCH];
@@ -100,3 +99,5 @@ export const agyBody: BodyHarness = input => {
     }
   };
 };
+export const agy: Harness = { needsFullReach: true, honoursDeniedTools: false, reservesEnv: name => /^(?:GEMINI_|GOOGLE_|GCLOUD_|ANTIGRAVITY_)/.test(name),
+  run: agyBody, leftovers: agyLeftovers };

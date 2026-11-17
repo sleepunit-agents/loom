@@ -3,17 +3,21 @@
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
 import { workerPolicy } from './body-policy.js';
-import { harnessCannotRun } from './harness-traits.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
+import type { WorkerRunPolicy } from './worker.js';
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
-  constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[]) {
+  /** `cannotRun` answers whether a harness would refuse a job with this room (harnessCannotRun in
+   * body-harnesses.ts). It is handed in because the harness adapters start processes, and nothing this
+   * file imports may. */
+  constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[],
+    private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
@@ -40,7 +44,7 @@ export class Dispatcher {
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
         const policy = workerPolicy(this.db, job);
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
-          cannotRun: harness => harnessCannotRun(harness, policy) });
+          cannotRun: harness => this.cannotRun(harness, policy) });
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;

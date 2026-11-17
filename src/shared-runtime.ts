@@ -8,6 +8,7 @@ import { jobs, conversations } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import { Dispatcher } from './runtime/dispatcher.js';
+import { harnessCannotRun } from './runtime/body-harnesses.js';
 import type { ModelRole } from './runtime/placement.js';
 import { liveWorker } from './shared-worker.js';
 import { machineFacts } from './runtime/machine-facts.js';
@@ -22,7 +23,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   /** Called after the effect AND receipt commit, including successful replay. */
   jobEnded(id: string): void;
 }) {
-  const dispatcher = new Dispatcher(db, options.now, options.roles);
+  const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun);
   const stopped=new WeakSet<object>();
   const machine = (viewer: Viewer) => !!liveWorker(db, viewer, options.runner(viewer));
   const assigned = (viewer: Viewer, id: string, states?: readonly string[]) => {

@@ -11,7 +11,7 @@
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type HarnessSpawn } from './body-harness.js';
+import { harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
 import { deniedTools } from './harness-traits.js';
 
 /** The spawn seam a test supplies; the same one every harness takes. */
@@ -26,7 +26,7 @@ export const claudeBody: BodyHarness = input => {
   if(control){env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS??='0';env.MAX_MCP_OUTPUT_TOKENS??='100000';env.MCP_TOOL_TIMEOUT??='86400000';env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT??='86400000';}
   return async (job, words, signal) => {
     if(control&&used)throw harnessUnavailable();used=true;
-    if (signal.aborted || job.harness !== 'claude' || !harnessModel.test(job.model)
+    if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES){control?.fill(0);throw harnessUnavailable();}
     const denied = deniedTools(job.run?.policy);
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw harnessUnavailable();}
@@ -66,3 +66,9 @@ export const claudeBody: BodyHarness = input => {
     finally { output.fill(0); }
   };
 };
+export const claude: Harness = { needsFullReach: false, honoursDeniedTools: true, run: claudeBody,
+  // Claude Code on a cloud provider signs in with that provider's own variables.
+  reservesEnv: (name, env) => /^(?:CLAUDE_|ANTHROPIC_)/.test(name)
+    || !!env.CLAUDE_CODE_USE_BEDROCK && /^AWS_/.test(name)
+    || !!env.CLAUDE_CODE_USE_VERTEX && /^(?:GOOGLE_|GCLOUD_)/.test(name)
+    || !!env.CLAUDE_CODE_USE_FOUNDRY && /^AZURE_/.test(name) };

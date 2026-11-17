@@ -6,6 +6,7 @@ import { Conversations } from '../core/conversations/index.js';
 import { agents, members, triggers, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations, inbox, threads } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
+import { harnessCannotRun } from './body-harnesses.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
 function fixture() {
@@ -25,7 +26,7 @@ function fixture() {
   db.insert(modelAccountWindows).values({ account: 'account', window: 'week', usage: 0.2, usageReadAt: at, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
   db.insert(modelAccountBoxes).values([{ account: 'account', box: 'first' }, { account: 'account', box: 'second' }]).run();
   const roles = [{ model: 'primary', provider: 'provider', harness: 'codex', series: 'series' }];
-  const runtime = new Dispatcher(db, now, () => roles), comms = new Conversations(db, now);
+  const runtime = new Dispatcher(db, now, () => roles, harnessCannotRun), comms = new Conversations(db, now);
   const conversation = comms.open({ agent: 'art', venue: 'loom', place: 'thread', label: 'Reply', member: 'owner' });
   const mail = comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private brief' });
   const job = runtime.jobs.admit(conversation.id)!;
@@ -109,7 +110,7 @@ it('refreshes health on every successful phase report', () => {
 });
 it('holds the same transaction across placement reads and claim', () => {
   const f = fixture();
-  const runtime = new Dispatcher(f.db, f.now, () => { expect(f.client.inTransaction).toBe(true); return f.roles; });
+  const runtime = new Dispatcher(f.db, f.now, () => { expect(f.client.inTransaction).toBe(true); return f.roles; }, harnessCannotRun);
   const claim = runtime.jobs.claim.bind(runtime.jobs);
   const observed = vi.spyOn(runtime.jobs, 'claim').mockImplementation((...args) => { expect(f.client.inTransaction).toBe(true); return claim(...args); });
   expect(runtime.next('first')?.id).toBe(f.job.id);

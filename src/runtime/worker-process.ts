@@ -5,7 +5,7 @@
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { bodyInput } from './body-bootstrap.js';
 import { BODY_SCRATCH } from './body-harness.js';
-import { bodyLeftovers } from './body-harnesses.js';
+import { harnessLeftovers } from './body-harnesses.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -205,7 +205,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       let removed = false;
       const remove = () => {
         if (removed) return; removed = true;
-        try { bodyLeftovers[job.harness]?.(scratch, plan.env); } catch { /* best effort, as in the harness itself */ }
+        try { harnessLeftovers(job.harness, scratch, plan.env); } catch { /* best effort, as in the harness itself */ }
         try { rmSync(scratch, { recursive: true, force: true }); } catch { /* nothing in it is live once the body is dead */ }
       };
       let attempt: ReturnType<typeof launch>;

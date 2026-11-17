@@ -1,11 +1,9 @@
-/** What each harness can and cannot do, and the rules about a job's room that every harness applies.
+/** What a harness has to say about itself, and the rules about a job's room that every harness applies.
  *
- * This file has no I/O, so both sides read it: loom's placement, which must not send a job to a harness
- * that will refuse it, and the body, which refuses before it accepts any mail. A harness's adapter
- * (claude-body.ts and its siblings) reads its own entry here rather than restating it.
- *
- * To add a harness, add its entry here and its adapter to body-harnesses.ts; a test holds the two lists equal.
- * A harness name with no entry is the machine's own runner: loom knows nothing about it and assumes it able. */
+ * This file has no I/O and knows no harness by name. Each adapter (claude-body.ts and its siblings)
+ * states its own traits as part of the one Harness it exports, and body-harnesses.ts lists the adapters;
+ * the questions asked by name (would this harness refuse the job, may a secret take this name) are
+ * answered there. */
 import type { WorkerRunPolicy } from './worker.js';
 
 export interface HarnessTraits {
@@ -18,16 +16,6 @@ export interface HarnessTraits {
    * runs on. A startup secret may not take such a name: it would swap the account under the job. */
   reservesEnv(name: string, env: NodeJS.ProcessEnv): boolean;
 }
-export const harnessTraits: Readonly<Record<string, HarnessTraits>> = Object.freeze({
-  claude: { needsFullReach: false, honoursDeniedTools: true,
-    // Claude Code on a cloud provider signs in with that provider's own variables.
-    reservesEnv: (name, env) => /^(?:CLAUDE_|ANTHROPIC_)/.test(name)
-      || !!env.CLAUDE_CODE_USE_BEDROCK && /^AWS_/.test(name)
-      || !!env.CLAUDE_CODE_USE_VERTEX && /^(?:GOOGLE_|GCLOUD_)/.test(name)
-      || !!env.CLAUDE_CODE_USE_FOUNDRY && /^AZURE_/.test(name) },
-  codex: { needsFullReach: true, honoursDeniedTools: false, reservesEnv: name => /^(?:CODEX_|OPENAI_)/.test(name) },
-  agy: { needsFullReach: true, honoursDeniedTools: false, reservesEnv: name => /^(?:GEMINI_|GOOGLE_|GCLOUD_|ANTIGRAVITY_)/.test(name) },
-});
 
 /** A guest is a sender from outside the household whom the agent's owner has not placed in the top tier.
  * One guest in a job's room makes the guests-only rules apply to the whole job. */
@@ -44,10 +32,8 @@ export function deniedTools(policy: WorkerRunPolicy | undefined): string[] {
 export function withUnknownSender(policy: WorkerRunPolicy): WorkerRunPolicy {
   return { ...policy, people: [...policy.people, { kind: 'unknown', person: null, tier: null }] };
 }
-/** Whether this harness would refuse the job. `reach` is the machine's, when the caller knows it (the body
- * does, placement does not). */
-export function harnessCannotRun(harness: string, policy: WorkerRunPolicy | undefined, reach?: 'loom' | 'all'): boolean {
-  if (!Object.hasOwn(harnessTraits, harness)) return false;
-  const traits = harnessTraits[harness];
+/** Whether a harness with these traits would refuse the job. `reach` is the machine's, when the caller
+ * knows it (the body does, placement does not). */
+export function refusesJob(traits: HarnessTraits, policy: WorkerRunPolicy | undefined, reach?: 'loom' | 'all'): boolean {
   return traits.needsFullReach && reach !== undefined && reach !== 'all' || !traits.honoursDeniedTools && deniedTools(policy).length > 0;
 }

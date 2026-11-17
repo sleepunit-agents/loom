@@ -8,6 +8,7 @@ import { createTempo } from '../core/tempo/tempo.js';
 import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
 import { createRuntime } from './runtime.js';
 import { Dispatcher } from './dispatcher.js';
+import { harnessCannotRun } from './body-harnesses.js';
 import { Jobs } from './jobs.js';
 import { Machines } from './machines.js';
 
@@ -39,7 +40,7 @@ function fixture() {
   const error = vi.fn();
   const runtime = createRuntime(db, clock, { changed, jobEnded, error });
   // The worker's side, as shared-runtime.ts registers it: the runtime itself only admits, stops and sweeps.
-  const worker = new Dispatcher(db, now, () => [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }]);
+  const worker = new Dispatcher(db, now, () => [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }], harnessCannotRun);
   tempo = createTempo(db, clock, { conversations: comms, admit: runtime.admit, operation: () => {} });
   tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });
   cleanups.push(() => { runtime.close(); tempo!.close(); });
