@@ -2,7 +2,9 @@
 import { and, eq, ne, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, boxes, boxAgents, boxFacts, memberAgents } from './core/data/schema.js';
+import { agents, boxes, boxAgents, boxFacts } from './core/data/schema.js';
+import { membersWithAgent } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { machineFacts } from './runtime/machine-facts.js';
 export const boxSettingsInput=z.object({box:z.string().min(1).max(200),name:z.string().trim().min(1).max(200).refine(value=>!/[\0\r\n]/.test(value)),hostsAny:z.boolean(),reportOnly:z.boolean(),alwaysOn:z.boolean(),
@@ -12,10 +14,12 @@ export const boxSettingsInput=z.object({box:z.string().min(1).max(200),name:z.st
 export function validateBoxSettings(db:DataDatabase,input:z.infer<typeof boxSettingsInput>){
    const box=db.select().from(boxes).where(eq(boxes.id,input.box)).get();
    if(!box||box.revokedAt)throw new OperationError('denied','Available machine required');
+   const sharing=sharedSharing(db);
    for(const value of input.agents){
     if(!db.select({id:agents.id}).from(agents).where(eq(agents.id,value.agent)).get())throw new OperationError('invalid','Choose existing agents');
-    const owned=db.select().from(memberAgents).where(and(eq(memberAgents.member,box.owner),eq(memberAgents.agent,value.agent))).get();
-    if(value.lent===!!owned)throw new OperationError('invalid','Lending must match current agent ownership');
+    // Who has an agent is policy.ts's reading (membersWithAgent), the one placement goes by.
+    const owned=membersWithAgent(value.agent,sharing).includes(box.owner);
+    if(value.lent===owned)throw new OperationError('invalid','Lending must match current agent ownership');
    }
    if(db.select({id:boxes.id}).from(boxes).where(and(ne(boxes.id,input.box),eq(boxes.name,input.name),isNull(boxes.revokedAt))).get())throw new OperationError('conflict','Machine name is already in use');
 }

@@ -2,7 +2,9 @@ import { currentAccountCapacity } from './account-windows.js';
 import { SILENCE_MS } from './silence.js';
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
+import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
+import { machineMayHost, namesCurrent } from '../policy.js';
+import { sharedSharing } from '../shared-sharing.js';
 
 /** `tag` is the operator's word for what kind of model this is within its family, such as best, normal or low.
  * Work that wants a tag runs on any allowed model carrying it, whichever family has room. */
@@ -32,19 +34,22 @@ export function selectPlacement(db: DataDatabase, input: {
 }): Placement | undefined {
   const now = Date.parse(input.now);
   if (!Number.isFinite(now)) throw new Error('Invalid placement time');
-  const owners = new Set(db.select().from(memberAgents).where(eq(memberAgents.agent, input.agent)).all().map(row => row.member));
-  const allowed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box,row.lent]));
+  // Whether a machine may be handed this agent's work is policy.ts's (machineMayHost), on the household as it is now.
+  const sharing = sharedSharing(db);
+  const listed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box, row]));
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
   const models = db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
-  const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all().filter(account => currentAccountCapacity(db, account.id, input.now).hasRoom);
+  // A removed member's account pays for nothing, like their machine runs nothing.
+  const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all()
+    .filter(account => namesCurrent('member', account.owner, sharing) && currentAccountCapacity(db, account.id, input.now).hasRoom);
   const signedIn = db.select().from(modelAccountBoxes).all();
   for (const preference of preferences) {
     const box = db.select().from(boxes).where(eq(boxes.id, preference.box)).get();
     if (!box || box.revokedAt || box.reportOnly || !box.lastSeenAt) continue;
     const silence = now - Date.parse(box.lastSeenAt);
     if (!Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS) continue;
-    if (!(allowed.has(box.id) && (owners.has(box.owner) || allowed.get(box.id))) && !(box.hostsAny && owners.has(box.owner))) continue;
+    if (!machineMayHost(box, listed.get(box.id), input.agent, sharing)) continue;
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all().map(row => row.fact);
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;
     for (const model of models) {

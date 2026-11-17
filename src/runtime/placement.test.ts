@@ -123,3 +123,34 @@ it('runs work that wants a tag on any allowed model carrying it, in the agent\'s
   expect(selectPlacement(db, { ...input, roles, wants: 'best' })).toMatchObject({ model: 'other-best', account: 'second', harness: 'other' });
   expect(place('normal')).toBeUndefined();
 });
+
+it('hands nothing to the machine of a removed member, whatever lists it was left on', () => {
+  const { db, input } = fixture();
+  // Lee has art, and a machine that lists art and takes any of lee's agents; it is art's first choice.
+  db.insert(members).values({ id: 'lee', role: 'member', joinedAt: input.now }).run();
+  db.insert(memberAgents).values({ member: 'lee', agent: 'art' }).run();
+  db.insert(boxes).values({ id: 'lees', name: 'lees', owner: 'lee', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: input.now, lastSeenAt: input.now }).run();
+  db.insert(boxAgents).values({ box: 'lees', agent: 'art', lent: false }).run();
+  db.insert(agentBoxes).values({ agent: 'art', box: 'lees', position: -1 }).run();
+  db.insert(modelAccountBoxes).values({ account: 'shared', box: 'lees' }).run();
+  expect(selectPlacement(db, input)?.box).toBe('lees');
+  // Removing a member keeps their list of agents and their machines. Neither places work any more.
+  db.update(members).set({ removedAt: input.now }).where(eq(members.id, 'lee')).run();
+  expect(selectPlacement(db, input)?.box).toBe('local');
+  // Not when the machine was lent to the agent either: a lent machine is still its owner's to lend.
+  db.update(boxAgents).set({ lent: true }).where(eq(boxAgents.box, 'lees')).run();
+  expect(selectPlacement(db, input)?.box).toBe('local');
+  db.update(members).set({ removedAt: null }).where(eq(members.id, 'lee')).run();
+  expect(selectPlacement(db, input)?.box).toBe('lees');
+  // An account is its member's too: with its owner removed, nothing is placed on it.
+  db.insert(modelAccounts).values({ id: 'aaa-lees', owner: 'lee', provider: 'provider', label: 'Lee', hasRoom: true }).run();
+  db.insert(modelAccountWindows).values({ account: 'aaa-lees', window: 'week', usage: 0.1, usageReadAt: input.now, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
+  db.insert(modelAccountBoxes).values({ account: 'aaa-lees', box: 'lees' }).run();
+  expect(selectPlacement(db, input)?.account).toBe('aaa-lees');
+  db.update(members).set({ removedAt: input.now }).where(eq(members.id, 'lee')).run();
+  expect(selectPlacement(db, input)).toMatchObject({ box: 'local', account: 'shared' });
+  db.update(members).set({ removedAt: null }).where(eq(members.id, 'lee')).run();
+  // A removed agent is placed nowhere.
+  db.update(agents).set({ removedAt: input.now }).where(eq(agents.id, 'art')).run();
+  expect(selectPlacement(db, input)).toBeUndefined();
+});

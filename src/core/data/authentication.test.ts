@@ -161,3 +161,18 @@ it('never takes a program token for a whole member unless the door that applies 
   expect(read.status).toBe(401);
   expect(dataAuthentication(db, () => Date.parse(at), { programs: 'admit' })(request({ authorization: 'Bearer ' + raw }))?.viewer).toEqual({ kind: 'member', id: 'sam' });
 });
+
+it('stops a machine\'s token, and a body running there, being current while the machine\'s owner is removed', () => {
+  const { db, authenticate, request } = fixture(), runner = 'c'.repeat(64), body = 'd'.repeat(64);
+  db.insert(agents).values({ id: 'art', about: '', markBg: '', markFg: '', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(boxes).values({ id: 'sams', name: 'sams', owner: 'sam', sameMachineAsLoom: false, hostsAny: false, reportOnly: false, alwaysOn: false, enrolledAt: at }).run();
+  db.insert(jobs).values({ id: 'job', agent: 'art', box: 'sams', title: '', brief: '', model: 'm', state: 'running', startedByKind: 'agent', startedBy: 'art', houseRepository: 'r', houseFile: 'f', houseBranch: 'b', queuedAt: at }).run();
+  db.insert(tokens).values([{ fingerprint: hash(runner), label: 'Worker', kind: 'runner', box: 'sams', createdAt: at }, { fingerprint: hash(body), label: 'Body', kind: 'agent', agent: 'art', job: 'job', madeFrom: hash(runner), createdAt: at }]).run();
+  const viewers = () => [runner, body].map(token => authenticate(request({ authorization: 'Bearer ' + token }))?.viewer);
+  expect(viewers()).toEqual([{ kind: 'runner', id: 'sams' }, { kind: 'agent', id: 'art' }]);
+  // Removing a member leaves their machines enrolled and unrevoked. To every rule a removed member is nobody.
+  db.update(members).set({ removedAt: at }).where(eq(members.id, 'sam')).run();
+  expect(viewers()).toEqual([undefined, undefined]);
+  db.update(members).set({ removedAt: null }).where(eq(members.id, 'sam')).run();
+  expect(viewers()).toEqual([{ kind: 'runner', id: 'sams' }, { kind: 'agent', id: 'art' }]);
+});
