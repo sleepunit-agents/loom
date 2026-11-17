@@ -621,6 +621,23 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: bodies needing to post files. A queued send then needs its bytes kept until the post is
   confirmed (a table of a send's files) and a multipart post.
 
+### Taken and working are shown on Discord, best effort
+- What: when a running job has taken a Discord message the bot reacts 👀 to it, and while that mail is
+  unanswered it keeps the typing indicator showing in the channel. The reaction is taken off when the mail
+  is settled, by the reply or by the job ending. A call Discord refuses is tried again on a later pass
+  while it is still wanted and is otherwise dropped: it changes no job, mail, send or connection, and is
+  not reported. Which messages carry the reaction is kept in memory only, so a restart of loom between a
+  job taking a message and answering it leaves that 👀 on. Slack shows neither.
+- Where: `src/pieces/bridges/presence.ts` (`workingOn` reads what to show; `BridgePresence` shows it),
+  called by `shared-daemon.ts` after committed writes and on its five-second pass.
+- Why: a job can take minutes, or wait behind another, and a person who sees nothing asks again. The
+  reaction is removed because the reply is the acknowledgment; left on, every answered message would keep
+  one. It is read from the mail and the job and not sent by the body, so a body that dies still has its
+  reaction taken off, and nothing about showing it can fail the work. Slack's app has no reactions scope
+  and Slack has no typing call for bots; adding a scope is a change to the client's workspace.
+- Would change it: stale reactions after restarts being a nuisance. Then what is shown is kept in a table
+  and cleared at start.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

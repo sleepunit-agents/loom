@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, inbox, jobs } from '../../core/data/schema.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { STOP_WORD } from './incoming.js';
+import { TAKEN_REACTION, TYPING_EVERY_MS, workingOn } from './presence.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { DiscordGatewayOptions } from './discord-gateway.js';
 
@@ -118,4 +119,66 @@ it('ends the working job on the stop word through the runtime\'s Stop, and says 
   expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop' });
   expect(announced).toEqual([['job']]);
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+
+it('reacts to a message a running job has taken, shows typing while it works, and takes the reaction off when the mail is settled', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const row = await f.say({ content: 'Look into this' }), message = JSON.parse(row.id.slice(3))[1] as string;
+  const reaction = `channels/${room}/messages/${message}/reactions/${encodeURIComponent(TAKEN_REACTION)}/@me`, typing = `channels/${room}/typing`;
+  const made = (method: string, path: string) => f.calls.filter(call => call.method === method && call.path === path).length;
+  const shown = async () => { f.daemon.changed(); await f.daemon.idle(); };
+  // Delivered and waiting: nobody has taken it, so nothing is shown.
+  await shown();
+  expect(workingOn(f.db)).toEqual([]); expect(made('PUT', reaction)).toBe(0); expect(made('POST', typing)).toBe(0);
+  // A job takes it.
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: row.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  f.db.update(inbox).set({ state: 'taken', job: 'job' }).run();
+  expect(workingOn(f.db)).toEqual([{ connection: 'connection', channel: room, message }]);
+  // The first try does not even reach Discord (the network is down). The connection is not given up for it.
+  f.request.mockImplementationOnce(async () => { throw Error('socket hang up'); });
+  f.request.mockImplementationOnce(async () => { throw Error('socket hang up'); });
+  await shown();
+  expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+  expect(f.gateways).toHaveLength(1);
+  f.calls.length = 0;
+  // Discord refuses the next try (a missing permission, a rate limit): nothing else changes, and it is tried again.
+  const before = JSON.stringify([f.db.select().from(jobs).all(), f.db.select().from(inbox).all(), f.db.select().from(bridgeIncoming).all(), f.db.select().from(bridgeConnections).all()]);
+  await shown();
+  expect(made('PUT', reaction)).toBe(1);
+  expect(JSON.stringify([f.db.select().from(jobs).all(), f.db.select().from(inbox).all(), f.db.select().from(bridgeIncoming).all(), f.db.select().from(bridgeConnections).all()])).toBe(before);
+  expect(f.errors).toEqual([]);
+  f.answers.set(`PUT ${reaction}`, null); f.answers.set(`DELETE ${reaction}`, null); f.answers.set(`POST ${typing}`, null);
+  await shown();
+  expect(made('PUT', reaction)).toBe(2);
+  // Once Discord has the reaction it is not asked for again, and typing is asked for no more often than it lapses.
+  await shown(); await shown();
+  expect(made('PUT', reaction)).toBe(2); expect(made('POST', typing)).toBe(0);
+  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(made('POST', typing)).toBe(1);
+  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(made('POST', typing)).toBe(2);
+  // The reply settles the mail: the reaction comes off and typing stops.
+  f.db.update(inbox).set({ state: 'done' }).run();
+  await shown();
+  expect(made('DELETE', reaction)).toBe(1);
+  f.clock.advance(TYPING_EVERY_MS); await f.daemon.idle();
+  expect(made('POST', typing)).toBe(2); expect(made('DELETE', reaction)).toBe(1);
+  expect(f.calls.find(call => call.path === reaction)?.body).toBeUndefined();
+});
+
+it('shows nothing for mail whose job is not running, or on a connection that is switched off', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const row = await f.say({ content: 'Look into this' });
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: row.conversation, title: 'Work', state: 'queued', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  f.db.update(inbox).set({ state: 'taken', job: 'job' }).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(jobs).set({ state: 'running' }).run();
+  expect(workingOn(f.db)).toHaveLength(1);
+  f.db.update(jobs).set({ state: 'stopped' }).run();
+  expect(workingOn(f.db)).toEqual([]);
+  f.db.update(jobs).set({ state: 'running' }).run();
+  f.db.update(bridgeConnections).set({ enabled: false }).run();
+  expect(workingOn(f.db)).toEqual([]);
 });

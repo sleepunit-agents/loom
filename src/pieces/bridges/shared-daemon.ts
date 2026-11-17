@@ -19,6 +19,7 @@ import { sharedBridgeSecretUse } from './shared-secret-use.js';
 import { BridgeChannels } from './channels.js';
 import { BridgeReceiver } from './receiver.js';
 import type { StopJob } from './incoming.js';
+import { BridgePresence, bridgePresenceApi } from './presence.js';
 import { bridgeAuthentication } from './authentication.js';
 import { bridgeChannelApi } from './channel-api.js';
 import { discordGateway } from './discord-gateway.js';
@@ -52,6 +53,8 @@ export class SharedBridges {
  readonly files:BridgeFiles;
  readonly sends:BridgeSends;
  private readonly credentials;
+ /** A reaction on a taken Discord message and typing while its job works (presence.ts). Best effort. */
+ private readonly presence:BridgePresence;
  private readonly lives=new Map<string,Life>();
  /** Channels whose details could not be classified, so each is reported once. */
  private readonly unclassified=new Set<string>();
@@ -75,6 +78,10 @@ export class SharedBridges {
    try{options.reportError(new Error(`${lost.events} received bridge event(s) were never read and have expired; ${lost.held} held message(s) could no longer be delivered and were dropped`));}catch{ /* reporting never retries effects */ }
    if(lost.held)this.notify();
   },options.stopJob);
+  this.presence=new BridgePresence(options.db,options.clock,id=>{
+   const life=this.lives.get(id);
+   return life&&life.authenticated&&this.current(life)?bridgePresenceApi({tokenSecret:life.connection.tokenSecret,secrets:life.secrets,current:()=>this.current(life),request:options.request}):undefined;
+  });
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
   this.credentials=bridgeCredentials(options.source,options.clock);
   this.unobserve=this.credentials.observe(()=>{void this.reconcile();});
@@ -133,6 +140,8 @@ export class SharedBridges {
   if(credentials||retired||key!==this.settingsKey)void this.reconcile();
   else for(const life of this.lives.values())this.pump(life);
   this.track(this.sends.flush());
+  // A body taking mail, a reply settling it and a job ending are all committed writes.
+  this.track(this.presence.show());
  }
  async ready(){await this.credentials.ready();await this.reconcile();}
  reconcile():Promise<void>{
@@ -161,8 +170,8 @@ export class SharedBridges {
     this.lives.set(row.id,life);this.state(row.id,'connecting');
     this.track(this.connect(life));
    }
-   // Each pass also retries replies that were claimed but could not be sent.
-   if(!this.closed)this.track(this.sends.flush());
+   // Each pass also retries replies that were claimed but could not be sent, and keeps typing showing.
+   if(!this.closed){this.track(this.sends.flush());this.track(this.presence.show());}
   }).catch(()=>this.report()).finally(()=>{
    this.syncing=undefined;
    if(!this.closed)this.cancelRetry=this.options.clock.at(this.options.clock.now()+5000,()=>{void this.reconcile();});

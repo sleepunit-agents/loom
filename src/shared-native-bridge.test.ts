@@ -32,6 +32,7 @@ it.each([{platform:'discord',revoke:false},{platform:'slack',revoke:false},{plat
   const path=String(url);
   if(path.endsWith('users/@me'))return Response.json({id:bot,bot:true});
   if(path.endsWith('guilds/'+workspace))return Response.json({id:workspace});
+  if(path.endsWith('guilds/'+workspace+'/roles'))return Response.json([]);
   if(path.endsWith('channels/'+channel)&&options?.method==='GET')return Response.json({id:channel,guild_id:workspace,type:0});
   if(path.endsWith('channels/'+channel+'/messages'))return Response.json({id:'523456789012345678',channel_id:channel});
   if(path.endsWith('auth.test'))return Response.json({ok:true,user_id:bot,team_id:workspace,bot_id:'BBOT'});
