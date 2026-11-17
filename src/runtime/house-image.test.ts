@@ -16,7 +16,7 @@ function engine(answer: (method: string, path: string) => unknown = () => undefi
   return { json, build, attach: vi.fn() } as unknown as DockerEngine & { json: typeof json; build: typeof build };
 }
 const labelled = (labels: Record<string, unknown>, config: Record<string, unknown> = {}) => ({ Id: id, Config: { WorkingDir: '/home/agent/house', Labels: labels, ...config } });
-const good = { 'loom.house': '1', 'loom.house.node': '/usr/local/bin/node', 'loom.house.body.claude': '/etc/loom/body/claude.json', 'loom.house.body.codex': '/etc/loom/body/codex.json' };
+const good = { 'loom.house': '2', 'loom.house.harnesses': 'claude codex' };
 
 it('names an image by its repository, Housefile and commit, and by nothing of the worker', () => {
   expect(image).toMatch(/^localhost\/loom-house-[0-9a-f]{16}:c{40}$/);
@@ -49,30 +49,32 @@ it('has the engine build from the context and the Housefile\'s path, adding noth
     await expect(buildHouse(unused, image, file, given, never())).rejects.toThrow('Invalid house image'); expect(unused.build).not.toHaveBeenCalled(); expect(given.destroyed).toBe(true);
   }
 });
-it('reads from the image how a body starts in it, for the job\'s harness', async () => {
-  const found = engine(() => labelled(good));
-  expect(await houseStart(found, image, 'claude', never())).toEqual({ id, node: '/usr/local/bin/node', body: '/etc/loom/body/claude.json', cwd: '/home/agent/house' });
-  expect(await houseStart(found, image, 'codex', never())).toMatchObject({ body: '/etc/loom/body/codex.json' });
+it('takes an image that says it is a house of this layout and serves the job\'s harness, and reads nothing else from it', async () => {
+  const found = engine(() => labelled(good, { WorkingDir: '/somewhere/of/its/own', Env: ['HOME=/root'] }));
+  // Only which image: where node, the body file and the repository are is the layout's, the same in every house.
+  expect(await houseStart(found, image, 'claude', never())).toEqual({ id });
+  expect(await houseStart(found, image, 'codex', never())).toEqual({ id });
   expect(found.json).toHaveBeenCalledWith('GET', `/images/${image}/json`, undefined, expect.any(AbortSignal));
+  // The labels of the first layout say nothing now: a house built for it is refused, and says which label.
+  const old = { 'loom.house': '1', 'loom.house.node': '/usr/local/bin/node', 'loom.house.body.claude': '/etc/loom/body/claude.json' };
+  expect((await houseStart(engine(() => labelled(old)), image, 'claude', never()).catch(error => error as UnmetHouseError)).rule).toBe('loom.house');
 });
 it.each([
-  ['no labels', labelled({}, { Labels: null })], ['no contract version', labelled({ ...good, 'loom.house': undefined })], ['a later contract version', labelled({ ...good, 'loom.house': '2' })],
-  ['no node', labelled({ ...good, 'loom.house.node': undefined })], ['a relative node', labelled({ ...good, 'loom.house.node': 'node' })],
-  ['a node that is not written plainly', labelled({ ...good, 'loom.house.node': '/usr/bin/../bin/node' })], ['a body file that is not text', labelled({ ...good, 'loom.house.body.claude': 7 })],
-  ['a relative body file', labelled({ ...good, 'loom.house.body.claude': 'claude.json' })], ['no working directory', labelled(good, { WorkingDir: '' })],
-  ['the root as working directory', labelled(good, { WorkingDir: '/' })], ['no configuration', { Id: id }],
+  ['no labels', labelled({}, { Labels: null })], ['no contract version', labelled({ ...good, 'loom.house': undefined })], ['an earlier contract version', labelled({ ...good, 'loom.house': '1' })],
+  ['a later contract version', labelled({ ...good, 'loom.house': '3' })], ['no list of harnesses', labelled({ ...good, 'loom.house.harnesses': undefined })],
+  ['a list of harnesses that is not text', labelled({ ...good, 'loom.house.harnesses': ['claude'] })], ['a list that names other harnesses', labelled({ ...good, 'loom.house.harnesses': 'codex agy' })],
+  ['a list in which the harness is only part of a name', labelled({ ...good, 'loom.house.harnesses': 'claude-code xclaude' })], ['no configuration', { Id: id }],
 ])('refuses an image with %s, as the house\'s fault', async (_what, inspected) => {
   await expect(houseStart(engine(() => inspected), image, 'claude', never())).rejects.toThrow(UnmetHouseError);
 });
 it('names the label or the rule an image breaks, and never anything else', async () => {
   const rule = async (inspected: unknown, harness = 'claude') => (await houseStart(engine(() => inspected), image, harness, never()).catch(error => error as UnmetHouseError)).rule;
-  expect(await rule(labelled({ ...good, 'loom.house': '2' }))).toBe('loom.house');
-  expect(await rule(labelled({ ...good, 'loom.house.node': '/usr/bin/../bin/node' }))).toBe('loom.house.node');
-  expect(await rule(labelled(good), 'agy')).toBe('loom.house.body.agy');
-  expect(await rule(labelled(good, { WorkingDir: '/' }))).toBe('WORKDIR');
+  expect(await rule(labelled({ ...good, 'loom.house': '1' }))).toBe('loom.house');
+  expect(await rule(labelled(good), 'agy')).toBe('loom.house.harnesses');
+  expect(await rule(labelled(good, { Volumes: { '/data': {} } }))).toBe('VOLUME');
   expect(await rule(labelled(good, { Labels: null }))).toBe('loom.house');
   // A harness that is no label's name is said as the rule, not echoed.
-  expect(await rule(labelled(good), 'a b\nc')).toBe('loom.house.body.<harness>');
+  expect(await rule(labelled(good), 'a b\nc')).toBe('loom.house.harnesses');
 });
 it.each([
   ['a volume of its own', { Volumes: { '/data': {} } }], ['a volume its base image declared', { Volumes: { '/var/lib/x': {}, '/data': {} } }],

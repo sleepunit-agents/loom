@@ -2,6 +2,7 @@
 import { doorTokenIn } from '../cli/connection.js';
 import { ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
 import { workerTurns } from './worker-turns.js';
+import { keyPart } from './worker-mounts.js';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -18,7 +19,7 @@ import { WORKER_STOP, WorkerStop, workerStopLine, type WorkerStopStage } from '.
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
-/** A directory of this machine and where a container sees it. Only the shape is read here: every rule
+/** A directory of this machine an agent's bodies are given, and where under the tenant's home it lands. Only the shape is read here: every rule
  * about these paths, and about the two engine sockets below, is in worker-mounts.ts, which stops the worker
  * with a line of its own (exit 52). A path written wrongly is that exit too, never this file's 41. */
 const hostDirectory = z.object({ source: z.string(), target: z.string() }).strict();
@@ -49,7 +50,9 @@ const configSchema = z.object({
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   /** A sign-in directory for each account id, then harness, mounted into that job's container and no
    * other. Container bodies only. When present, every job needs an exact entry. */
-  accountLogins: z.record(z.string().min(1), z.record(z.string().min(1), hostDirectory)).optional(),
+  // An entry is the machine's directory and nothing else. A `target` is what an entry used to carry: read
+  // here so that the worker can stop on it with its own line (WorkerStop 'retired').
+  accountLogins: z.record(z.string().min(1), z.record(z.string().min(1), z.object({ source: z.string(), target: z.unknown().optional() }).strict())).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
    * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests.
@@ -142,6 +145,9 @@ export async function workerProgram(input: {
     // not there: whoever wrote one expects it to do something.
     if (config.container) for (const [key, present] of [['build', config.build], ['runners', config.runners], ['accountRunners', config.accountRunners],
       ['container.mounts', Array.isArray(config.container.mounts) ? true : undefined]] as const) if (present !== undefined) throw new WorkerStop('retired', key);
+    // Where a sign-in appears in a house is loom's to say now (house-layout.ts), the same on every machine.
+    for (const [account, harnesses] of Object.entries(config.accountLogins ?? {})) for (const [harness, login] of Object.entries(harnesses))
+      if (login.target !== undefined) throw new WorkerStop('retired', `accountLogins.${keyPart(account)}.${keyPart(harness)}.target`);
     stage = 'token';
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';

@@ -20,6 +20,7 @@ import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
 import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, type HouseGuard, type HouseStart } from './house-image.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
+import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile } from './house-layout.js';
 import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
@@ -70,13 +71,14 @@ function portBindings(job: WorkerAssignment) {
   }
   return bindings;
 }
-/** One body's container. The image says which node runs the body, with which body file, in which
- * directory (house-image.ts); the program is the worker's own, mounted. The environment is the image's:
- * the worker adds only where the body may keep scratch files, which is the container's own temporary
- * directory, private to the body because the container is and removed with it. */
+/** One body's container. Where things are in it is the layout, the same in every house (house-layout.ts):
+ * node, the harness's body file, the tenant's home and its repository, where the body starts. The program
+ * is the worker's own, mounted. The rest of the environment is the image's: the worker adds the home and
+ * where the body may keep scratch files, which is the container's own temporary directory, private to the
+ * body because the container is and removed with it. */
 function createSpec(job: WorkerAssignment, house: HouseStart, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
-  return { Image: house.id, Entrypoint: [house.node], Cmd: [BODY_PROGRAM, house.body], WorkingDir: house.cwd,
-    Env: [`${BODY_SCRATCH}=/tmp`],
+  return { Image: house.id, Entrypoint: [HOUSE_NODE], Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)], WorkingDir: HOUSE_REPOSITORY,
+    Env: [`${BODY_SCRATCH}=/tmp`, `HOME=${HOUSE_HOME}`],
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },

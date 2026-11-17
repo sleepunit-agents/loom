@@ -364,6 +364,26 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A harness that reports the account it ran on. The worker could then
   compare it with the placed one and fail the job.
 
+### One layout inside every house, and nothing of it is checked in the image
+
+- **What.** The worker starts every body the same way: `/usr/local/bin/node`, the body file at
+  `/etc/loom/body/<harness>.json`, in `/home/agent/repo`, with `HOME=/home/agent` (`docs/runtime/worker.md`,
+  "The layout of every house"). An image says only that it was built for this layout (`loom.house="2"`)
+  and which harnesses it serves. The worker does not look inside an image, so a house that says so and
+  lacks one of those places fails when its body starts (exit 23 for node or the repository, 16 for the
+  body file), not when it is built.
+- **A house built for the earlier contract is refused, not run.** An image labelled `loom.house="1"`
+  fails its job with exit 30 until its Housefile is changed. One layout is read at a time; the worker
+  carries no second way to start a body.
+- **The user is not fixed.** The home is the same in every house and the user is the image's. A house
+  on a rootless engine runs as the container's root, which is the worker's own user outside it, because
+  that is the user that can write a mounted sign-in directory. Inside the container that body can change
+  any file of its house; outside it holds what the worker's user holds through its mounts and no more.
+- **Where.** `src/runtime/house-layout.ts`; `createSpec` in `src/runtime/worker-container.ts`;
+  `houseStart` in `src/runtime/house-image.ts`.
+- **What would change it.** A worker that asks the engine to map its own user to a fixed user of the
+  house, which the engine routes it uses today cannot ask for.
+
 ### Two bodies on one account share one sign-in directory
 
 - **What.** A container body is given its account's sign-in directory read-write (`accountLogins`). Two

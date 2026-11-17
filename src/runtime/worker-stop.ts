@@ -31,11 +31,11 @@ export const WORKER_STOP = {
   signin: [51, '--account-signin was removed; sign the account in from loom (runtime.accountSignIn), which runs the provider\'s program listed under accountSignIn.programs in this worker\'s configuration'],
   /** A path under `accountLogins` or `container.mounts`, or `container.socket` or `container.nestedSocket`
    * (worker-mounts.ts has the rules). The line is followed by the configuration key at fault, never by a path. */
-  mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
+  mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
   /** A worker with container bodies builds each house itself and reads from the image how a body starts.
    * The line is followed by the key that must go: `build`, `runners`, `accountRunners`, or `container.mounts`
-   * when it is one list and not a list for each agent. */
-  retired: [53, 'the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent'],
+   * when it is one list and not a list for each agent, or the `target` of an `accountLogins` entry. */
+  retired: [53, 'the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house'],
   /** A worker with container bodies fetches house repositories with the machine's git. */
   git: [54, `git ${GIT_MINIMUM.join('.')} or later, which fetches each house's repository, could not be run on this machine`],
   /** The directory the worker is installed in is mounted into every container for the body program. */

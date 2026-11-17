@@ -17,7 +17,7 @@ const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversatio
 const id = 'a'.repeat(64);
 /** The commit the job's branch is at, the image that makes, and what that image says about itself. */
 const commit = 'c'.repeat(40), built = houseImage(job.house, commit), imageId = `sha256:${'b'.repeat(64)}`;
-const houseLabels = { 'loom.house': '1', 'loom.house.node': '/usr/local/bin/node', 'loom.house.body.harness': '/etc/loom/body/harness.json', 'loom.house.body.unlisted': '/etc/loom/body/unlisted.json', 'io.buildah.version': '1.39' };
+const houseLabels = { 'loom.house': '2', 'loom.house.harnesses': 'harness unlisted', 'io.buildah.version': '1.39' };
 function frame(text: string, stream = 1) { const bytes = Buffer.from(text); const header = Buffer.alloc(8); header[0] = stream; header.writeUInt32BE(bytes.length, 4); return Buffer.concat([header, bytes]); }
 /** What loom's body program is handed on stdin with its job: a credential of its own. */
 const bootstrap = () => ({ origin: 'https://loom.example', job: job.id, token: Buffer.from('body_' + 'a'.repeat(64)) });
@@ -39,7 +39,7 @@ function fixture() {
   });
   // What is asked about images, kept apart: the house's image is there and says how a body starts in it.
   const images = vi.fn(async (method: string, path: string, _body: unknown, _signal: AbortSignal): Promise<unknown> =>
-    method === 'GET' && path.startsWith('/images/json') ? [] : method === 'GET' ? { Id: imageId, Config: { WorkingDir: '/home/agent/house', Labels: houseLabels } } : undefined);
+    method === 'GET' && path.startsWith('/images/json') ? [] : method === 'GET' ? { Id: imageId, Config: { WorkingDir: '/an/image/of/its/own', Labels: houseLabels } } : undefined);
   const build = vi.fn(async (_path: string, context: NodeJS.ReadableStream, _signal: AbortSignal) => { context.resume(); });
   const attach = vi.fn(async (_id: string, _signal: AbortSignal): Promise<Duplex> => socket);
   const whole: DockerEngine = { attach, build, json: (method, path, body, signal) => path.startsWith('/images/') || path.startsWith('/build/') ? images(method, path, body, signal) : json(method, path, body, signal) };
@@ -69,8 +69,8 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   expect(control.started).toHaveBeenCalledWith('job', built); expect(f.writes).toEqual([]);
   // The image by the id it was inspected under; its node, the worker's body program, the harness's body
   // file, the image's working directory. No environment but where scratch files go: the rest is the image's.
-  expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/house',
-    Env: ['LOOM_BODY_SCRATCH=/tmp'], Tty: false, ExposedPorts: {},
+  expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
+    Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent'], Tty: false, ExposedPorts: {},
     Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
     HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [programAsked()], DeviceRequests: [] } });
   ack.resolve(); await flush(); expect(JSON.parse(f.writes[0])).toEqual({ job, build: built, bootstrap: handed });
@@ -197,7 +197,7 @@ it('does not copy ambient worker credentials into container environment override
     const body = f.start(); await body.spawned;
     // Docker can retain baked image values; this list contains only configured
     // overrides and never copies worker process.env or the loom bearer token.
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp'] }); await body.stop();
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'HOME=/home/agent'] }); await body.stop();
   } finally { vi.unstubAllEnvs(); }
 });
 it('keeps running without a body timeout after both setup and cleanup intervals', async () => {
@@ -337,11 +337,11 @@ const nestedSock = join(houseDirectory('engine'), 'nested.sock'), engineSock = j
 const sockets: Server[] = [];
 beforeAll(async () => { for (const path of [nestedSock, engineSock]) await new Promise<void>(done => sockets.push(createServer().listen(path, done))); });
 afterAll(() => { for (const server of sockets) server.close(); });
-const accountLogins = { account: { harness: { source: loginA, target: '/home/agent/.claude' } }, other: { harness: { source: loginB, target: '/home/agent/.claude' } } };
-const houseMounts = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
+const accountLogins = { account: { harness: { source: loginA } }, other: { harness: { source: loginB } } };
+const houseMounts = [{ source: stamps, target: 'house/stamps', readOnly: false }, { source: mirror, target: 'house/mirror' }];
 /** What an engine reports of a bind mount it made. */
 function reported(Source: string, Destination: string, RW: boolean) { return { Type: 'bind', Source, Destination, Mode: '', RW, Propagation: 'rprivate' }; }
-const expectedReport = [reported(loginA, '/home/agent/.claude', true), reported(stamps, '/house/stamps', true), reported(mirror, '/house/mirror', false)];
+const expectedReport = [reported(loginA, '/run/loom/login/harness', true), reported(stamps, '/home/agent/house/stamps', true), reported(mirror, '/home/agent/house/mirror', false)];
 function house(inspected: unknown = expectedReport, container: Record<string, unknown> = { mounts: { art: houseMounts } }, logins: typeof accountLogins | null = accountLogins) {
   const f = fixture(), original = f.engine.json.getMockImplementation()!;
   f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: Array.isArray(inspected) ? [programReport(), ...inspected] : inspected }) : original(method, path, body, signal));
@@ -363,15 +363,15 @@ it('asks the engine for runc unless the configuration names crun, and for nothin
 it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and no other account\'s directory', async () => {
   const f = house(), body = f.executor.start(job, built, f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([programAsked(),
-    { Type: 'bind', Source: loginA, Target: '/home/agent/.claude', ReadOnly: false },
-    { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
-    { Type: 'bind', Source: mirror, Target: '/house/mirror', ReadOnly: true }]);
+    { Type: 'bind', Source: loginA, Target: '/run/loom/login/harness', ReadOnly: false },
+    { Type: 'bind', Source: stamps, Target: '/home/agent/house/stamps', ReadOnly: false },
+    { Type: 'bind', Source: mirror, Target: '/home/agent/house/mirror', ReadOnly: true }]);
   // Nothing sent to the engine for this job names the other account's directory.
   expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(loginB);
   expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
-  const other = house([reported(loginB, '/home/agent/.claude', true), ...expectedReport.slice(1)]);
+  const other = house([reported(loginB, '/run/loom/login/harness', true), ...expectedReport.slice(1)]);
   const second = other.executor.start({ ...job, account: 'other' }, built, other.abort.signal); await second.spawned;
-  expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts[1]).toEqual({ Type: 'bind', Source: loginB, Target: '/home/agent/.claude', ReadOnly: false });
+  expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts[1]).toEqual({ Type: 'bind', Source: loginB, Target: '/run/loom/login/harness', ReadOnly: false });
   expect(JSON.stringify(other.engine.json.mock.calls)).not.toContain(loginA); await second.stop();
 });
 it('gives every body the fixed mounts when no sign-in map is configured, beside the nested socket', async () => {
@@ -379,8 +379,8 @@ it('gives every body the fixed mounts when no sign-in map is configured, beside 
   const body = f.executor.start({ ...job, account: 'anyone', run: { gpu: false, nestedContainers: true, ports: [] } }, built, f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
     { Type: 'bind', Source: nestedSock, Target: '/var/run/docker.sock', ReadOnly: false }, programAsked(),
-    { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
-    { Type: 'bind', Source: mirror, Target: '/house/mirror', ReadOnly: true }]);
+    { Type: 'bind', Source: stamps, Target: '/home/agent/house/stamps', ReadOnly: false },
+    { Type: 'bind', Source: mirror, Target: '/home/agent/house/mirror', ReadOnly: true }]);
   await body.stop();
 });
 it('with a sign-in map, fails a job that has no exact entry before the builder, the engine or the body', async () => {
@@ -409,12 +409,12 @@ it.each([
   ['an image volume beside its own', [...expectedReport, { Type: 'volume', Name: 'v', Source: '/engine/volumes/v/_data', Destination: '/data', RW: true }]],
   ['a mount missing', expectedReport.slice(0, 2)],
   ['none of its mounts', []],
-  ['another account\'s directory at the sign-in target', [reported(loginB, '/home/agent/.claude', true), ...expectedReport.slice(1)]],
+  ['another account\'s directory at the sign-in target', [reported(loginB, '/run/loom/login/harness', true), ...expectedReport.slice(1)]],
   ['its sign-in directory at another place', [reported(loginA, '/elsewhere', true), ...expectedReport.slice(1)]],
-  ['a read-only mount made writable', [...expectedReport.slice(0, 2), reported(mirror, '/house/mirror', true)]],
-  ['a writable mount made read-only', [reported(loginA, '/home/agent/.claude', false), ...expectedReport.slice(1)]],
-  ['a mount that does not say whether it is writable', [...expectedReport.slice(0, 2), { Type: 'bind', Source: mirror, Destination: '/house/mirror' }]],
-  ['a volume where a bind mount was asked for', [...expectedReport.slice(0, 2), { ...reported(mirror, '/house/mirror', false), Type: 'volume' }]],
+  ['a read-only mount made writable', [...expectedReport.slice(0, 2), reported(mirror, '/home/agent/house/mirror', true)]],
+  ['a writable mount made read-only', [reported(loginA, '/run/loom/login/harness', false), ...expectedReport.slice(1)]],
+  ['a mount that does not say whether it is writable', [...expectedReport.slice(0, 2), { Type: 'bind', Source: mirror, Destination: '/home/agent/house/mirror' }]],
+  ['a volume where a bind mount was asked for', [...expectedReport.slice(0, 2), { ...reported(mirror, '/home/agent/house/mirror', false), Type: 'volume' }]],
   ['one mount reported twice in place of another', [expectedReport[0], expectedReport[1], expectedReport[1]]],
   ['something that is not a mount', [...expectedReport.slice(0, 2), null]],
   ['no list of mounts', null],
@@ -449,7 +449,7 @@ it('still runs the build of a nested job on a machine with no nested socket, and
 it('does not make a worker whose engine socket is not a socket, or that a mount would carry into a body', () => {
   const f = fixture();
   for (const container of [{ socket: '/loom-test/no.sock' }, { socket: 'relative.sock' }, { socket: join(houseRoot, 'engine') },
-    { mounts: { art: [{ source: join(houseRoot, 'engine'), target: '/house/run' }] } }, { mounts: { art: [{ source: houseRoot, target: '/house/all' }] } }])
+    { mounts: { art: [{ source: join(houseRoot, 'engine'), target: 'house/run' }] } }, { mounts: { art: [{ source: houseRoot, target: 'house/all' }] } }])
     expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, ...container } }, { ...f.deps })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   // Nor one whose mounts reach its own records or its token, or name one directory twice.
   for (const patch of [{ state: join(stamps, 'state') }, { tokenFile: join(mirror, 'token') }, { container: { ...f.config.container, mounts: { art: [...houseMounts, { source: stamps, target: '/again' }] } } }])
@@ -459,7 +459,7 @@ it('does not make a worker whose engine socket is not a socket, or that a mount 
 it('does not make a worker whose nested socket is not a socket, or is a way into a mounted directory', () => {
   const f = fixture();
   for (const container of [{ nestedSocket: '/loom-test/no.sock' }, { nestedSocket: join(houseRoot, 'logins') }, { nestedSocket: loginA },
-    { nestedSocket: nestedSock, mounts: { art: [{ source: join(houseRoot, 'engine'), target: '/house/engine' }] } }])
+    { nestedSocket: nestedSock, mounts: { art: [{ source: join(houseRoot, 'engine'), target: 'house/engine' }] } }])
     expect(() => containerWorkerExecutor({ ...f.config, accountLogins, container: { ...f.config.container, ...container } }, { ...f.deps })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   expect(f.engine.json).not.toHaveBeenCalled();
 });
@@ -468,7 +468,7 @@ it('accepts the mounts it asked for in whatever order the engine lists them', as
   await body.spawned; expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
 });
 it('puts no mount path in what the worker itself says: a failed start\'s report, a finished job\'s report, the envelope, the labels, the environment', async () => {
-  const paths = [houseRoot, '/home/agent/.claude', '/house/stamps', '/house/mirror', '/opt/loom'];
+  const paths = [houseRoot, '/run/loom/login', 'house/stamps', 'house/mirror', '/opt/loom'];
   const said = (control: { finish: ReturnType<typeof vi.fn>; started: ReturnType<typeof vi.fn> }) => JSON.stringify([control.finish.mock.calls, control.started.mock.calls]);
   // A start the worker refused because the engine's mounts were not its own.
   const refused = house([...expectedReport, reported(loginB, '/other', true)]);
@@ -489,9 +489,9 @@ it('puts no mount path in what the worker itself says: a failed start\'s report,
 });
 it('does not make a worker whose mounts cannot be used, and neither asks the engine anything nor fetches', () => {
   const f = fixture();
-  for (const patch of [{ accountLogins: { account: { harness: { source: join(houseRoot, 'missing'), target: '/home/agent/.claude' } } } },
-    { container: { ...f.config.container, mounts: { art: [{ source: 'relative', target: '/house/x' }] } } },
-    { accountLogins, container: { ...f.config.container, mounts: { art: [{ source: mirror, target: '/home/agent/.claude' }] } } }])
+  for (const patch of [{ accountLogins: { account: { harness: { source: join(houseRoot, 'missing') } } } },
+    { container: { ...f.config.container, mounts: { art: [{ source: 'relative', target: 'house/x' }] } } },
+    { accountLogins, container: { ...f.config.container, mounts: { art: [{ source: mirror, target: '/run/loom/login/harness' }] } } }])
     expect(() => containerWorkerExecutor({ ...f.config, ...patch }, { ...f.deps })).toThrow(expect.objectContaining({ stage: 'mounts' }));
   expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.images).not.toHaveBeenCalled(); expect(f.source.fetch).not.toHaveBeenCalled();
 });
@@ -581,7 +581,7 @@ it('goes on reporting a job as starting while its house builds, and fails it wit
   expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 32, 'Worker could not start the body: the build ran out of time', 'worker');
   expect(stuck.mock.calls[0][2].aborted).toBe(true); expect(f.engine.json).not.toHaveBeenCalled();
   // The worker takes its next job, of a house whose image is there.
-  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/home/agent/house', Labels: houseLabels } }));
+  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/an/image/of/its/own', Labels: houseLabels } }));
   const other = { ...job, id: 'next', agent: 'mark', house: { repository: 'https://example.com/mark/house.git', file: 'Housefile', branch: 'main' } }, next = controlFor(other);
   const second = workOnce({ box: 'box', control: next, executor, signal: f.abort.signal, schedule: { every: () => () => {} } });
   for (let turn = 0; turn < 20 && !f.writes.length; turn++) { await vi.advanceTimersByTimeAsync(0); await flush(); }
@@ -611,17 +611,17 @@ it.each([
   expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 22, 'Worker could not start the body: build failed', 'worker');
   expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.attach).not.toHaveBeenCalled();
   // And the build is not left in the way of the next job that wants the same image.
-  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/home/agent/house', Labels: houseLabels } }));
+  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/an/image/of/its/own', Labels: houseLabels } }));
   f.source.fetch.mockResolvedValue(commit);
   expect(await f.executor.build({ ...job, id: 'again' }, f.abort.signal)).toBe(built);
 });
 it.each([
-  ['says nothing about how a body starts', 'loom.house', { 'io.buildah.version': '1.39' }, {}], ['names no body file for the job\'s harness', 'loom.house.body.harness', { ...houseLabels, 'loom.house.body.harness': undefined }, {}],
-  ['is of a later contract', 'loom.house', { ...houseLabels, 'loom.house': '2' }, {}], ['names a node that is not a plain path', 'loom.house.node', { ...houseLabels, 'loom.house.node': 'node' }, {}],
-  ['has no working directory', 'WORKDIR', houseLabels, { WorkingDir: '' }], ['declares a volume', 'VOLUME', houseLabels, { Volumes: { '/data': {} } }],
+  ['says nothing about how a body starts', 'loom.house', { 'io.buildah.version': '1.39' }, {}], ['does not serve the job\'s harness', 'loom.house.harnesses', { ...houseLabels, 'loom.house.harnesses': 'unlisted' }, {}],
+  ['is of the earlier contract', 'loom.house', { 'loom.house': '1', 'loom.house.node': '/usr/local/bin/node', 'loom.house.body.harness': '/etc/loom/body/harness.json' }, {}],
+  ['does not say which harnesses it serves', 'loom.house.harnesses', { 'loom.house': '2' }, {}], ['declares a volume', 'VOLUME', houseLabels, { Volumes: { '/data': {} } }],
 ])('fails only that job, with the house\'s own exit code and the rule it breaks, when its image %s', async (_what, rule, labels, config) => {
   const f = fixture();
-  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/home/agent/house', Labels: labels, ...config } }));
+  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { Labels: labels, ...config } }));
   const control = controlFor(job);
   expect(await once(f, control)).toBe('finished');
   expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 30, `Worker could not start the body: the house image does not meet the image contract (${rule})`, 'worker');
@@ -640,11 +640,11 @@ it('refuses a job it cannot hold to its account: several accounts on the machine
   const held = house(), body = held.executor.start(several, built, held.abort.signal); await body.spawned; await body.stop();
 });
 it('mounts an agent\'s own directories into its bodies and never another agent\'s', async () => {
-  const markState = houseDirectory('mark/state'), mounts = { art: houseMounts, mark: [{ source: markState, target: '/house/stamps', readOnly: false }] };
+  const markState = houseDirectory('mark/state'), mounts = { art: houseMounts, mark: [{ source: markState, target: 'house/stamps', readOnly: false }] };
   for (const [agent, own, others] of [['art', [stamps, mirror], [markState]], ['mark', [markState], [stamps, mirror]], ['someone-new', [], [stamps, mirror, markState]]] as const) {
     const f = fixture(), original = f.engine.json.getMockImplementation()!;
     f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path)
-      ? Promise.resolve({ Mounts: [programReport(), ...own.map(source => reported(source, source === mirror ? '/house/mirror' : '/house/stamps', source !== mirror))] }) : original(method, path, body, signal));
+      ? Promise.resolve({ Mounts: [programReport(), ...own.map(source => reported(source, source === mirror ? '/home/agent/house/mirror' : '/home/agent/house/stamps', source !== mirror))] }) : original(method, path, body, signal));
     const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, mounts } }, { ...f.deps, name: () => 'agent' });
     const body = executor.start({ ...job, agent }, built, f.abort.signal); await body.spawned;
     const asked = (f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts as { Source: string }[];

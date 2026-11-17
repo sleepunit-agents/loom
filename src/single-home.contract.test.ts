@@ -60,8 +60,9 @@ import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
 import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
 import { BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
 import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
-import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_BODY, HOUSE_LABEL_NODE, HOUSE_VERSION } from './runtime/house-image.js';
+import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_HARNESSES, HOUSE_VERSION } from './runtime/house-image.js';
 import { HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
+import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './runtime/house-layout.js';
 import { WORKER_STOP } from './runtime/worker-stop.js';
 import { LISTING_MAX } from './runtime/docker-engine.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
@@ -609,9 +610,15 @@ it('says once where a body finds its program, what a house image must say, and h
   // Where the worker's own directory is in every container, and the body program in it.
   expect([BODY_PROGRAM_TARGET, BODY_PROGRAM]).toEqual(['/opt/loom', '/opt/loom/dist/body.js']);
   expect(sources('src').filter(file => text(file).includes('/opt/loom'))).toEqual(['src/runtime/worker-mounts.ts']);
-  expect(text('src/runtime/worker-container.ts')).toContain('Cmd: [BODY_PROGRAM, house.body]');
+  expect(text('src/runtime/worker-container.ts')).toContain('Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)]');
+  // The layout inside every house is written in one file: the home, the repository, node, the body files, the sign-in.
+  expect([HOUSE_HOME, HOUSE_REPOSITORY, HOUSE_NODE, houseBodyFile('claude'), houseLogin('claude'), houseMount('x')])
+    .toEqual(['/home/agent', '/home/agent/repo', '/usr/local/bin/node', '/etc/loom/body/claude.json', '/run/loom/login/claude', '/home/agent/x']);
+  expect(sources('src').filter(file => /\/home\/agent|\/run\/loom\/login|\/etc\/loom\/body|\/usr\/local\/bin\/node/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
+  // A machine's configuration says where a sign-in directory is on the machine, and nothing of where it appears.
+  expect(text('src/runtime/worker-mounts.ts')).toContain('target: houseLogin(harness), readOnly: false');
   // The image contract's labels: written in the one file that reads them.
-  expect([HOUSE_LABEL, HOUSE_VERSION, HOUSE_LABEL_NODE, HOUSE_LABEL_BODY]).toEqual(['loom.house', '1', 'loom.house.node', 'loom.house.body.']);
+  expect([HOUSE_LABEL, HOUSE_VERSION, HOUSE_LABEL_HARNESSES]).toEqual(['loom.house', '2', 'loom.house.harnesses']);
   expect(sources('src').filter(file => /['"`]loom\.house/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
   // What is kept on the disk, and how long a build may take.
   expect([HOUSE_IMAGES_PER_HOUSE, HOUSE_IMAGES_KEPT, HOUSE_MIRRORS_KEPT, HOUSE_BUILD_DEFAULT_MS]).toEqual([2, 10, 8, 1_800_000]);

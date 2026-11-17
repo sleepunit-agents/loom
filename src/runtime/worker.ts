@@ -99,7 +99,7 @@ export class UnservedJobError extends Error {}
  * WORKER_EXIT.house: the job fails and the worker goes on. */
 export class UnmetHouseError extends Error {
   /** @param rule Which part of the image contract the image breaks: the name of one of its labels
-   * (house-image.ts), `WORKDIR` or `VOLUME`. A name from the contract, never a path and never text from the image. */
+   * (house-image.ts), or `VOLUME`. A name from the contract, never a path and never text from the image. */
   constructor(readonly rule: string) { super('House image does not meet the image contract'); }
 }
 /** Thrown by an executor for a job whose house was not fetched and built within the build limit. Reported

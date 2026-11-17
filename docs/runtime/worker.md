@@ -161,7 +161,7 @@ said whose it was, and no stage is guessed.
 | 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"), or no sign-in directory for the job's account and harness (see "Worker-local account sign-in directories"). |
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
-| 30 | worker house | The house's image does not meet the image contract: a label is missing or names no plain path, it has no body file for the job's harness, no `WORKDIR`, or it declares a `VOLUME` (see "What a house image must say"). The house has to change, not the machine. |
+| 30 | worker house | The house's image does not meet the image contract: it does not say it is a house of this layout (`loom.house="2"`), it does not list the job's harness, or it declares a `VOLUME` (see "What a house image must say"). The house has to change, not the machine. |
 | 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 | 32 | worker build time | The house was not fetched and built within the build limit (`buildTimeoutMs`). The worker reported on the job all the while. |
 
@@ -192,8 +192,8 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
-| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
-| 53 | the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent's repository, the image says how a body starts, and mounts are listed by agent. The line ends with the key in brackets: `(build)`, `(runners)`, `(accountRunners)` or `(container.mounts)` (see "Container bodies") |
+| 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
+| 53 | the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent's repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house. The line ends with the key in brackets: `(build)`, `(runners)`, `(accountRunners)`, `(container.mounts)` or the `target` of a sign-in directory, as in `(accountLogins.subscription-a.claude.target)` (see "Container bodies") |
 | 54 | git 2.32.0 or later, which fetches each house's repository, could not be run on this machine |
 | 55 | the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them) |
 
@@ -457,44 +457,76 @@ does not answer, or its answer is longer than 4 MiB) nothing is removed and the
 worker prints `Worker could not look at its house images: old ones stay until it
 can`; it looks again after the next build.
 
+### The layout of every house
+
+Where things are inside a house is loom's to say, and it is the same in every
+house on every machine. No machine's configuration and no label of an image
+says any of it. Nothing in it is named for an agent: who lives in a house is
+the repository it was built from.
+
+| What | Where, in every container | Who puts it there |
+| --- | --- | --- |
+| The home | `/home/agent` | the image; the worker sets `HOME` to it |
+| The agent's repository | `/home/agent/repo` | the image (`COPY . /home/agent/repo`); a body starts there |
+| Node | `/usr/local/bin/node` | the image |
+| A harness's body file | `/etc/loom/body/<harness>.json` | the image |
+| The job's account's sign-in, for its harness | `/run/loom/login/<harness>` | the worker mounts it |
+| loom's own program | `/opt/loom` | the worker mounts it, read-only |
+| An agent's mounted directories | under `/home/agent`, at the path the configuration gives | the worker mounts them |
+
+The home is fixed and the user is not: a body runs as the image's `USER`. With a
+rootless engine the worker's user is the container's root, and it is the one
+that can write a mounted sign-in directory, so a house on such a machine runs as
+root with `/home/agent` as its home.
+
+A repository must not assume its own name in a path, a home other than `$HOME`,
+that its checkout is anywhere but `$HOME/repo` (the directory a body starts in),
+that a sign-in is anywhere but `/run/loom/login/<harness>`, or that it runs as a
+user of some name. A house that wants an older path makes a link to the fixed
+one in its Housefile.
+
 ### What a house image must say
 
-A house image tells the worker how a body starts in it with labels:
+A house image says two things with labels:
 
 ```dockerfile
-LABEL loom.house="1" \
-      loom.house.node="/usr/local/bin/node" \
-      loom.house.body.claude="/etc/loom/body/claude.json" \
-      loom.house.body.codex="/etc/loom/body/codex.json"
+LABEL loom.house="2" \
+      loom.house.harnesses="claude codex"
 ENV HOME=/home/agent PATH=/home/agent/.local/bin:/usr/local/bin:/usr/bin:/bin
-WORKDIR /home/agent/house
+COPY . /home/agent/repo
 ```
 
-- `loom.house` is the version of this contract: `1`.
-- `loom.house.node` is the node program in the image, as an absolute path.
-- `loom.house.body.<harness>` is that harness's body file in the image (see
-  "Private body bootstrap"), one for each harness the house serves.
-- The body starts in the image's `WORKDIR`, with the image's `ENV` and as the
-  image's `USER`. The worker adds one variable, `LOOM_BODY_SCRATCH=/tmp`.
+- `loom.house` is the version of this contract and of the layout above: `2`.
+  An image that says `1` was built for the layout before it, where labels named
+  the node program and the body files, and is refused.
+- `loom.house.harnesses` names the harnesses the house serves, with a space
+  between. It is what houses differ in that the worker must know before it
+  starts a body.
 - The image declares no `VOLUME` and keeps nothing at `/opt/loom`.
+- The image has node at `/usr/local/bin/node`, and for each harness it lists a
+  body file at `/etc/loom/body/<harness>.json` (see "Private body bootstrap").
 
-The body's command is `<node> /opt/loom/dist/body.js <body file>`. `/opt/loom` is
+The body's command is
+`/usr/local/bin/node /opt/loom/dist/body.js /etc/loom/body/<harness>.json`, started
+in `/home/agent/repo` with the image's `ENV` and as the image's `USER`. The
+worker sets two variables whatever the image says: `HOME=/home/agent` and
+`LOOM_BODY_SCRATCH=/tmp`. The image's `WORKDIR` is not read. `/opt/loom` is
 the directory the worker itself is installed in, mounted read-only: every body
 runs the body program of the loom that is running the worker, and no image
 carries one. The body program is JavaScript only, so any node that loom supports
 runs it.
 
 Everything of this that an image's own description shows is checked before a
-container is made of it: the three labels, that their paths are absolute and
-plainly written, a `WORKDIR` that is not `/`, and that the image and its base
+container is made of it: the two labels, and that the image and its base
 declare no `VOLUME`. An image that fails one fails that job with exit code 30,
 and the job's line names the label or rule, as in `the house image does not meet
-the image contract (loom.house.node)`. The worker goes on with its next job.
+the image contract (loom.house.harnesses)`. The worker goes on with its next job.
 
-What the description does not show is checked by nothing: whether the node
-program and the body file are really in the image at the paths the labels name.
-An image whose node is not there fails when the body is started (exit code 23);
-one whose body file is not there fails in the body program (exit code 16).
+What the description does not show is checked by nothing: whether node, the
+body file and the repository are really in the image at their places. An image
+without node there fails when the body is started (exit code 23), and so does
+one with no `/home/agent/repo`; one whose body file is not there fails in the
+body program (exit code 16).
 
 ### The container
 
@@ -547,11 +579,11 @@ and needs none to run.
     "runtime": "crun",
     "mounts": {
       "art": [
-        {"source": "/var/lib/houses/art/stamps", "target": "/house/stamps", "readOnly": false},
-        {"source": "/var/lib/houses/art/mirror", "target": "/house/mirror"}
+        {"source": "/var/lib/houses/art/stamps", "target": ".local/state/stamps", "readOnly": false},
+        {"source": "/var/lib/houses/art/mirror", "target": "mirror"}
       ],
       "mark": [
-        {"source": "/var/lib/houses/mark/stamps", "target": "/house/stamps", "readOnly": false}
+        {"source": "/var/lib/houses/mark/stamps", "target": ".local/state/stamps", "readOnly": false}
       ]
     }
   }
@@ -572,8 +604,11 @@ directories of `accountLogins`.
 - `source` is an absolute path to an existing directory that belongs to the
   worker's user. Neither it nor any directory above it is a symbolic link: it is
   written as its real path, with no `.`, `..`, doubled or trailing slash.
-- `target` is an absolute path inside the container, written as plainly, and not
-  `/`.
+- `target` is where the directory lands under the house's home: a relative
+  path, written as plainly, so `.local/state/stamps` is
+  `/home/agent/.local/state/stamps` in the container. It does not start with
+  `/` and does not climb. It is not `repo` (the agent's repository) and does not
+  hold it; it may be inside it.
 - No target is, holds or is inside the target of another directory that can be
   in the same container: another mount of the same agent, a sign-in directory,
   or `/opt/loom`. Two agents' mounts are never in one container and may use the
@@ -711,29 +746,34 @@ bodies, `accountLogins` names that directory for each account, keyed like
 {
   "accountLogins": {
     "subscription-a": {
-      "claude": {"source": "/home/worker/logins/subscription-a/claude", "target": "/home/agent/.claude"}
+      "claude": {"source": "/home/worker/logins/subscription-a/claude"}
     },
     "subscription-b": {
-      "claude": {"source": "/home/worker/logins/subscription-b/claude", "target": "/home/agent/.claude"}
+      "claude": {"source": "/home/worker/logins/subscription-b/claude"}
     }
   }
 }
 ```
 
 A job placed on an account, for a harness, gets exactly that one directory in
-its container, mounted read-write so the program can renew. No other account's
+its container, at `/run/loom/login/<harness>` ("The layout of every house"),
+mounted read-write so the program can renew. An entry gives only the machine's
+directory. Where it appears is the same in every house, and the house points
+its harness there (a variable for Claude Code, a link for Codex). An entry
+that still has a `target` stops the worker with exit code 53, naming the key. No other account's
 directory, and no other harness's, is ever mounted into that container. A job
 with `run.nestedContainers` is the exception to what that is worth: it holds the
 engine, and can have the engine mount any of these directories into a container
-it starts itself (see "Container bodies"). Two
-accounts may use the same `target`, since only one of them is in any container.
+it starts itself (see "Container bodies").
 
 When this map is present, every job needs an exact account/harness entry. A job
 without one fails before the builder or the body starts (exit code 27). It never
 runs without a sign-in directory and never with another account's.
 
-`source` and `target` follow the rules of "Mounted directories", are checked
-when the worker starts (exit code 52) and are fixed from then on. The mount is
+`source` follows the rules of "Mounted directories", is checked when the
+worker starts (exit code 52) and is fixed from then on. A harness's name is
+part of the place its directory is mounted at, so it is lower-case letters,
+digits, `-` and `_`. The mount is
 one of those the worker expects when it reads the created container's mounts
 back. `accountLogins` needs `container`: a body run as a process is not given
 anything by a mount, so a configuration with `accountLogins` and no `container`
