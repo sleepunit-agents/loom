@@ -5,6 +5,7 @@
  *
  * These are the worker process's own exit codes. A job's exit code (job-exit.ts) is a different thing,
  * recorded on the job's row; the numbers are kept apart all the same. 0 is a worker that was asked to stop. */
+import { GIT_MINIMUM } from './worker-limits.js';
 export const WORKER_STOP = {
   /** A failure in none of the stages below: a defect in the worker. */
   unexpected: [1, 'an unexpected failure'],
@@ -31,12 +32,20 @@ export const WORKER_STOP = {
   /** A path under `accountLogins` or `container.mounts`, or `container.socket` or `container.nestedSocket`
    * (worker-mounts.ts has the rules). The line is followed by the configuration key at fault, never by a path. */
   mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
+  /** A worker with container bodies builds each house itself and reads from the image how a body starts.
+   * The line is followed by the key that must go: `build`, `runners`, `accountRunners`, or `container.mounts`
+   * when it is one list and not a list for each agent. */
+  retired: [53, 'the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent'],
+  /** A worker with container bodies fetches house repositories with the machine's git. */
+  git: [54, `git ${GIT_MINIMUM.join('.')} or later, which fetches each house's repository, could not be run on this machine`],
+  /** The directory the worker is installed in is mounted into every container for the body program. */
+  program: [55, 'the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */
 export class WorkerStop extends Error {
   /** @param key For a stage that can be reached from many entries of the configuration: the configuration
-   * key at fault (`container.mounts[1].source`). A key, with an account's id or a harness's name in it at
+   * key at fault (`container.mounts.<agent>[1].source`). A key, with an account's id or a harness's name in it at
    * most; never the value written under it, so never a path. */
   constructor(readonly stage: WorkerStopStage, readonly key?: string) { super(WORKER_STOP[stage][1]); }
 }

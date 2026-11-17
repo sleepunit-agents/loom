@@ -187,6 +187,8 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   if (!validDeadline(buildTimeoutMs, BUILD_DEADLINE_MAX_MS))
     throw new Error('Invalid worker build deadline');
   const runner = workerRunner(config), left = config.state === undefined ? undefined : open(config.state);
+  /** Settles when every build command started so far has ended; undefined while none is running. */
+  let building: Promise<void> | undefined;
   const noted = (attempt: ReturnType<typeof launch>, job: WorkerAssignment, scratch?: string) => {
     const pid = attempt.pid();
     return left && pid ? left.note(pid, { job: job.id, harness: job.harness, account: job.account }, scratch) : () => {};
@@ -204,28 +206,41 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
     },
     async build(job, signal, repositoryInput) {
       runner(job);
-      const abort = new AbortController();
-      const cancel = () => abort.abort();
-      signal.addEventListener('abort', cancel, { once: true });
-      if (signal.aborted) cancel();
-      const timer = setTimeout(cancel, buildTimeoutMs);
-      let attempt: ReturnType<typeof launch> | undefined, forget = () => {};
-      try {
-        attempt = launch(buildPlan, abort.signal, runtime);
-        forget = noted(attempt, job);
-        await attempt.spawned;
-        await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
-        const result = await attempt.exited;
-        if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
-        const output: unknown = JSON.parse(attempt.output());
-        if (!output || typeof output !== 'object' || !('build' in output) || typeof output.build !== 'string' || !output.build.trim()) throw new Error('Builder returned no artifact');
-        return output.build;
-      } finally {
-        clearTimeout(timer);
-        signal.removeEventListener('abort', cancel);
-        if (attempt) await attempt.stop();
-        forget();
-      }
+      // One build command at a time. The command is the operator's, and nothing says it can run beside
+      // itself; a worker with several slots runs the second job's build when the first has ended. A build
+      // that is free to start does so at once, with no wait at all.
+      const before = building; let ended!: () => void;
+      const own = new Promise<void>(resolve => { ended = resolve; });
+      const mine = building = before ? Promise.all([before, own]).then(() => {}) : own;
+      try { return await (async () => {
+        if (before) {
+          const cancelled = new Promise<never>((_, reject) => { if (signal.aborted) reject(new Error('Worker build failed')); else signal.addEventListener('abort', () => reject(new Error('Worker build failed')), { once: true }); });
+          void cancelled.catch(() => {});
+          await Promise.race([before, cancelled]);
+        }
+        const abort = new AbortController();
+        const cancel = () => abort.abort();
+        signal.addEventListener('abort', cancel, { once: true });
+        if (signal.aborted) cancel();
+        const timer = setTimeout(cancel, buildTimeoutMs);
+        let attempt: ReturnType<typeof launch> | undefined, forget = () => {};
+        try {
+          attempt = launch(buildPlan, abort.signal, runtime);
+          forget = noted(attempt, job);
+          await attempt.spawned;
+          await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
+          const result = await attempt.exited;
+          if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
+          const output: unknown = JSON.parse(attempt.output());
+          if (!output || typeof output !== 'object' || !('build' in output) || typeof output.build !== 'string' || !output.build.trim()) throw new Error('Builder returned no artifact');
+          return output.build;
+        } finally {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', cancel);
+          if (attempt) await attempt.stop();
+          forget();
+        }
+      })(); } finally { ended(); if (building === mine) building = undefined; }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
       const plan = runner(job);

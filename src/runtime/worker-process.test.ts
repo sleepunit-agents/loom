@@ -290,6 +290,23 @@ describe('configured quota reader', () => {
   });
 });
 
+it('runs one build command at a time: a second job\'s build starts when the first has ended, and a cancelled wait starts nothing', async () => {
+  const f = fixture(), never = new AbortController().signal, stopped = new AbortController();
+  const first = f.executor.build(job, never), second = f.executor.build({ ...job, id: 'k' }, stopped.signal), third = f.executor.build({ ...job, id: 'm' }, never);
+  await flush(); expect(f.children).toHaveLength(1);
+  // The job in the middle is stopped while it waits: it fails alone, and its place is not a way past the first.
+  stopped.abort(); await expect(second).rejects.toThrow('Worker build failed'); await flush(); expect(f.children).toHaveLength(1);
+  f.children[0].child.emit('spawn'); await flush(); f.children[0].child.stdout.emit('data', Buffer.from('{"build":"one"}')); f.children[0].child.emit('close', 0, null);
+  expect(await first).toBe('one'); await flush();
+  expect(f.children).toHaveLength(2); expect(JSON.parse(await (async () => { f.children[1].child.emit('spawn'); await flush(); return f.children[1].input(); })()).job).toBe('m');
+  f.children[1].child.stdout.emit('data', Buffer.from('{"build":"three"}')); f.children[1].child.emit('close', 0, null);
+  expect(await third).toBe('three');
+  // A build that fails does not hold the ones after it.
+  const failing = f.executor.build(job, never), after = f.executor.build(job, never); await flush();
+  f.children[2].child.emit('spawn'); await flush(); f.children[2].child.emit('close', 1, null); await expect(failing).rejects.toThrow(); await flush();
+  expect(f.children).toHaveLength(4); f.children[3].child.emit('spawn'); await flush();
+  f.children[3].child.stdout.emit('data', Buffer.from('{"build":"after"}')); f.children[3].child.emit('close', 0, null); expect(await after).toBe('after');
+});
 it('times out a stuck build, reaps it, and leaves the worker available for the server retry', async () => {
   vi.useFakeTimers();
   try {
