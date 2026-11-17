@@ -94,6 +94,10 @@ itself. The rule lives in `Jobs.retry` (`src/runtime/jobs.ts`).
   shows as failed. Nothing runs until fresh mail arrives in the conversation;
   the next job then takes the old mail with the new.
 - A job stopped by a person is never retried.
+- A queued job does not wait for ever. One that no machine has taken 24 hours
+  after it could first be claimed (`QUEUE_DEADLINE_MS`) is ended as failed with
+  exit code 31 and is not tried again. Its mail stays with it and shows as
+  failed until fresh mail arrives.
 
 A failed job says where it failed by its exit code, the one field kept for a
 private conversation (its log tail is dropped, because output can hold the
@@ -114,15 +118,50 @@ shows the stage name beside the number (`JobRecord.exitStage`).
 | 17 | body envelope | What the worker handed over on stdin is not a body's input. |
 | 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. |
 | 19 | body report | The first report to loom failed: loom unreachable, or the job no longer this body's. |
+| 20 | body contact | A later report failed while the body was at work: it lost loom, or loom had ended the job. The body dropped what it was doing, whatever stage that was. |
 | 21 | worker input | Fetching the private repository input. |
 | 22 | worker build | The build command. |
 | 23 | worker launch | Starting the body's process. |
 | 24 | worker enroll | Registering the body's credential with loom. |
 | 25 | worker release | Handing the started body its input. |
 | 26 | worker reap | The body's process could not be watched or reaped to its end. |
+| 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"). |
+| 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 
 Any other code is the runner's own (a builder or a custom runner). A job swept
-as lost has no exit code; its log tail says in which state it went silent.
+as lost has no exit code; its log tail says in which state it went silent. When
+a body ends by itself before the worker could hand it its input, the job carries
+the body's own code (for example 16), not the worker's 25.
+
+Mail that cannot become a job at all (the agent was removed, or has no run
+settings or no model) leaves no job row. loom tells the agent's owners why in a
+notice, once, and closes the notice when the mail is admitted.
+
+## What a killed worker leaves, and how the next one ends it
+
+A worker that is killed cannot stop its bodies: each is a process group of its
+own, or a container, and goes on running while loom marks the job lost and
+queues the work again. So before it reports or claims anything, a worker ends
+what the worker before it left on the machine. If it cannot, it does not start.
+
+- The worker keeps a state directory: `state` in its configuration, or
+  `loom-worker-<uid>-<hash of box>` under the temporary directory. It must be a
+  directory of the worker's user alone (mode 0700); the worker creates it. Each
+  body's scratch directory is made inside it, beside a record of the body's
+  process group. A build command's process group is recorded too. Records and
+  scratch directories are removed when the process ends.
+- At start, a recorded process group is killed only when its leader is still
+  the recorded process (same pid and same start time). On Linux, every process
+  whose environment names a left scratch directory is killed as well, which
+  finds a body's descendants after the leader has gone. Scratch directories are
+  then removed, with whatever a harness left in them.
+- Container bodies carry the labels `loom.job` and `loom.box`. At start the
+  worker removes every container labelled as a job of its machine.
+- Only one worker may hold a state directory. A second one started on it while
+  the first is alive stops with an error.
+
+What this does not cover is listed in `docs/accepted-tradeoffs.md` under
+"Running work".
 
 Mail and its answer. A body takes its mail, reports it received (`conversation.accept`:
 the sender sees it delivered) and settles it (`conversation.confirm`) only after
@@ -198,9 +237,15 @@ an engine.
 
 ### Worker-local account runner bindings
 
-A shared `runners` command can implement account selection from the startup JSON
-itself. For separate local profiles or private runner commands, configure
-`accountRunners`, keyed first by the account ID and then by harness:
+A shared `runners` command is signed in to one account by its own environment,
+and the worker cannot check which. That is right while one account of the job's
+provider is signed in on the machine. When several are, loom says so in the
+assignment (`accountChoices`) and the worker refuses the job (exit code 27)
+rather than run it on an account loom did not pick. Two things lift the refusal:
+a shared runner that reads the account from the startup JSON and signs in to it
+itself says so with `"selectsAccount": true` on its command; or, for separate
+local profiles or private runner commands, configure `accountRunners`, keyed
+first by the account ID and then by harness:
 
 ```json
 {

@@ -36,8 +36,8 @@ it('matches capabilities and never silently substitutes a disallowed requested m
   const { db, input } = fixture();
   db.insert(boxFacts).values({ box: 'remote', fact: 'gpu:5090', fromOwner: false }).run();
   expect(selectPlacement(db, { ...input, needs: ['gpu:5090'] })?.box).toBe('remote');
-  expect(selectPlacement(db, { ...input, model: 'unlisted' })).toBeUndefined();
-  expect(selectPlacement(db, { ...input, model: 'backup' })?.harness).toBe('other');
+  expect(selectPlacement(db, { ...input, wants: 'unlisted' })).toBeUndefined();
+  expect(selectPlacement(db, { ...input, wants: 'backup' })?.harness).toBe('other');
 });
 it('shares exhausted account capacity across workers and respects actual sign-in locations', () => {
   const { db, input } = fixture();

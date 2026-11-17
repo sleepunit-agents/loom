@@ -159,6 +159,8 @@ describe('worker command adapter (no child processes in tests)', () => {
     const bound = workerRunner({ runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, command: '/worker/run-sub' } } } });
     expect(bound({ ...job, accountChoices: 2 }).command).toBe('/worker/run-sub');
     expect(() => bound({ ...job, account: 'other', accountChoices: 2 })).toThrow(NoRunnerError);
+    // So is a runner that says it signs in to the account its envelope names.
+    expect(workerRunner({ runners: { 'custom-runner': { ...plan, selectsAccount: true } } })({ ...job, accountChoices: 2 })).toMatchObject({ command: plan.command });
     const shared = workerRunner({ runners: { 'custom-runner': plan } });
     expect(shared({ ...job, accountChoices: 1 })).toMatchObject({ command: plan.command }); expect(shared(job)).toMatchObject({ command: plan.command });
   });

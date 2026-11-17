@@ -13,7 +13,7 @@ import { defaultWorkerState } from './worker-left.js';
 import type { WorkerExecutor } from './worker.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
-const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional() });
+const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
 const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
 const containerDeadline = z.number().int().min(1).max(300_000);
 const accountCommand = z.object({

@@ -23,7 +23,7 @@ export function meetsNeed(facts: readonly string[], need: string): boolean {
  * No viable combination means leave the work queued, rather than run elsewhere.
  */
 export function selectPlacement(db: DataDatabase, input: {
-  agent: string; now: string; roles: readonly ModelRole[]; model?: string; needs?: readonly string[];
+  agent: string; now: string; roles: readonly ModelRole[]; needs?: readonly string[];
   /** What the work asked to run on: a tag or one model's name. Only the agent's allowed models that match are tried. */
   wants?: string | null;
   /** Whether a harness would refuse this job (see harnessCannotRun). A model whose harness would is passed
@@ -36,7 +36,6 @@ export function selectPlacement(db: DataDatabase, input: {
   const allowed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box,row.lent]));
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
   const models = db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
-    .filter(row => input.model === undefined || row.model === input.model)
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all().filter(account => currentAccountCapacity(db, account.id, input.now).hasRoom);
   const signedIn = db.select().from(modelAccountBoxes).all();

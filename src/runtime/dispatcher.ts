@@ -48,8 +48,9 @@ export class Dispatcher {
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
-        // model on a queued job is the initial preference; this records the
-        // model actually requested from the worker after current placement.
+        // Placement is decided here and nowhere else. The model a queued job carries is only what the
+        // column needs before that (the agent's first model, also on a retry); this records the model,
+        // account and harness the worker is actually asked for.
         this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
         const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
@@ -106,8 +107,9 @@ export class Dispatcher {
         const thread = this.currentThread(job);
         if (thread) new Threads(this.db, this.now).working(thread.id, true);
       }
-      // The worker reports a live process, not whether its body resumed work.
-      // Preserve a body's explicit waiting status until a body status update.
+      // The worker reports a live process, not what its body is doing, so its report never moves a job
+      // between running and waiting. (Nothing in the program sets `waiting` today: see
+      // docs/accepted-tradeoffs.md, "The waiting job state has no writer".)
       this.jobs.heartbeat(id, box, job.state === 'waiting' ? 'waiting' : state);
       return { active: true };
     }, { behavior: 'immediate' });

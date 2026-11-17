@@ -74,7 +74,9 @@ export class TriggerEngine {
   private closed = false;
   private ticking = false;
   private again = false;
-  /** The timezone the stored next times were last checked against; unknown until the first scan. */
+  /** The timezone the stored next times were last checked against; unknown until the first scan, so a
+   * change made while the program was down is not seen (docs/accepted-tradeoffs.md, "A timezone change
+   * while loom is down is seen one firing late"). */
   private zoned?: string;
   constructor(private db: DataDatabase, private clock: Clock, private effects: TriggerEffects) {}
   private open() { if (this.closed) throw new Error('Tempo is closed'); }

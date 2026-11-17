@@ -28,7 +28,8 @@ const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120
  * account has room or no allowed harness can run it, and most of those pass: a machine wakes, a usage
  * window resets. A job still unclaimed after this long is ended as failed with LOOM_EXIT.unplaced
  * (Jobs.sweep), so that it shows as a failure and its conversation can take fresh mail, and is not tried
- * again: a next attempt would only wait as long. */
+ * again: a next attempt would only wait as long. One number for every reason: docs/accepted-tradeoffs.md,
+ * "A queued job has one deadline, whatever keeps it queued". */
 export const QUEUE_DEADLINE_MS = 24 * 3_600_000;
 /** What admission answers: the conversation's unended job, or why its waiting mail did not become one. */
 export interface Admission {

@@ -19,6 +19,9 @@ import { NoRunnerError, type WorkerAssignment, type WorkerBody, type WorkerExecu
 export interface WorkerCommand {
   /** This configured child understands the private bootstrap stdin envelope. */
   bodyBootstrap?: boolean;
+  /** This runner reads the account from its startup envelope and signs in to that account itself, so one
+   * command can serve several accounts. loom's own body program does not. */
+  selectsAccount?: boolean;
   command: string;
   args: readonly string[];
   cwd: string;
@@ -51,8 +54,9 @@ export interface WorkerRunnerConfig {
   /** One command per harness. Such a command is signed in to one account by its own environment, and
    * nothing here can check which. That is right while the machine has one account of the job's provider:
    * it is then the account loom placed the job on. When loom says several are signed in on this machine
-   * (WorkerAssignment.accountChoices), the job is refused: it needs accountRunners. See
-   * docs/accepted-tradeoffs.md, "The placed account is taken on trust". */
+   * (WorkerAssignment.accountChoices), the job is refused unless the command says it picks the account
+   * itself (selectsAccount): it needs accountRunners. See docs/accepted-tradeoffs.md, "The placed
+   * account is taken on trust". */
   runners: Readonly<Record<string, WorkerCommand>>;
   /** When present, every job requires an exact account/harness binding. */
   accountRunners?: Readonly<Record<string, Readonly<Record<string, WorkerCommand>>>>;
@@ -68,7 +72,7 @@ export function workerRunner(config: WorkerRunnerConfig) {
     if (!selected) throw new NoRunnerError('Worker has no configured runner for account');
     // One command cannot be on two accounts. Running the job anyway would spend an account loom did not
     // pick, perhaps one with no room, so the job fails here and says so (WORKER_EXIT.runner).
-    if (!accounts && (job.accountChoices ?? 1) > 1) throw new NoRunnerError('Several accounts need a runner each');
+    if (!accounts && !selected.selectsAccount && (job.accountChoices ?? 1) > 1) throw new NoRunnerError('Several accounts need a runner each');
     return selected;
   };
 }
