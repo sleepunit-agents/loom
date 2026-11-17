@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
-import { mindReceiptsReady } from './receipt-schema.js';
+import { mindReceipts, mindReceiptsReady } from './receipt-schema.js';
 import { snapshotKnowledgeRevision } from '../../backends/knowledge-revisions.js';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
 /** Composition supplies the synchronous shared store primitive, without a piece
@@ -21,11 +21,8 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
   const recover = (ctx: Context) => {
     if (!db || !ctx.receipt || !mindReceiptsReady(db)) return;
-    const receipt = ctx.receipt;
-    const prior = db.prepare('SELECT name, input_hash, result, expires FROM mind_operation_receipts WHERE viewer = ? AND id = ? AND expires > ?')
-      .get(receipt.viewer, receipt.id, ctx.now) as { name: string; input_hash: string; result: string; expires: number } | undefined;
+    const prior = mindReceipts.find(db, ctx.receipt, ctx.now);
     if (!prior) return;
-    if (prior.name !== receipt.name || prior.input_hash !== receipt.inputHash) throw new OperationError('conflict', 'Operation id already used for different input');
     const result = JSON.parse(prior.result) as { slugs: string[] };
     for (const slug of result.slugs) ctx.changed('knowledge', slug);
     return new RecoveredWrite(result, prior.expires);
@@ -46,7 +43,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
         const receipt = ctx.receipt;
         if (!receipt) throw new Error('Knowledge writes require a retry identity');
         const result = db.transaction(() => {
-          db.prepare('DELETE FROM mind_operation_receipts WHERE expires <= ?').run(ctx.now);
+          mindReceipts.expire(db, ctx.now);
           // Another daemon sharing this source may have committed since lookup.
           const replay = recover(ctx);
           if (replay) return replay;
@@ -54,8 +51,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
           if (page.status === 'archived') throw new OperationError('conflict', 'Restore the page before checking it');
           const answer = options.verify(db, { slug: input.slug, outcome, ...(input.note ? { note: input.note } : {}), ...(input.freshnessAnchor ? { freshness_anchor: input.freshnessAnchor } : {}), verifier: ctx.viewer.id }, ctx.now);
-          db.prepare('INSERT INTO mind_operation_receipts VALUES (?, ?, ?, ?, ?, ?)')
-            .run(receipt.viewer, receipt.id, receipt.name, receipt.inputHash, JSON.stringify(answer), receipt.expires);
+          mindReceipts.save(db, receipt, answer, receipt.expires);
           return answer;
         }).immediate();
         // Replaying after a failed core receipt also repairs missed live publication.
@@ -76,7 +72,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       if (!slug) throw new OperationError('invalid', 'That title has nothing to make an address from');
       const receipt = ctx.receipt!;
       const answer = db.transaction(() => {
-        db.prepare('DELETE FROM mind_operation_receipts WHERE expires <= ?').run(ctx.now);
+        mindReceipts.expire(db, ctx.now);
         const replay = recover(ctx); if (replay) return replay;
         if (db.prepare('SELECT 1 FROM pages WHERE slug = ?').get(slug)) throw new OperationError('conflict', 'Knowledge already has a page by that title');
         const at = new Date(ctx.now).toISOString(), sourcing = input.source ? 'sourced' : 'provisional';
@@ -85,7 +81,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
         db.prepare('INSERT INTO citations(page_id,claim,source_kind,source_locator,excerpt,retrieved_at,created) VALUES(?,?,?,?,?,?,?)')
           .run(inserted.lastInsertRowid,input.title,input.source ? 'web' : 'conversation',input.source || `${ctx.viewer.id} on loom's page`,input.title,at,at);
         const result = { slug, slugs: [slug], sourcing };
-        db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),receipt.expires);
+        mindReceipts.save(db, receipt, result, receipt.expires);
         return result;
       }).immediate();
       if (!(answer instanceof RecoveredWrite)) ctx.changed('knowledge', slug);
@@ -103,7 +99,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
         const receipt = ctx.receipt;
         if (!receipt) throw new Error('Knowledge writes require a retry identity');
         const answer = db.transaction(() => {
-          db.prepare('DELETE FROM mind_operation_receipts WHERE expires <= ?').run(ctx.now);
+          mindReceipts.expire(db, ctx.now);
           const replay = recover(ctx); if (replay) return replay;
           const page = db.prepare('SELECT id, body, status FROM pages WHERE slug = ?').get(value.slug) as { id: number; body: string; status: string } | undefined;
           if (!page) throw new OperationError('not-found', 'Knowledge page not found');
@@ -122,7 +118,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
             db.prepare("UPDATE pages SET sourcing = 'sourced' WHERE id = ?").run(page.id);
           }
           const result = { slug: value.slug, slugs: [value.slug], revision };
-          db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer, receipt.id, receipt.name, receipt.inputHash, JSON.stringify(result), receipt.expires);
+          mindReceipts.save(db, receipt, result, receipt.expires);
           return result;
         }).immediate();
         if (!(answer instanceof RecoveredWrite)) ctx.changed('knowledge', value.slug);

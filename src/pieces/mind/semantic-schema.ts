@@ -18,10 +18,10 @@ export function prepareSemanticMemory(db:Database){
   if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_command_schema'").get())db.exec(schemaSql);
   const rows=db.prepare('SELECT number,sql FROM memory_command_schema ORDER BY number').all();
   if(rows.length){if(!semanticMemoryReady(db))throw Error('Unknown semantic Memory preparation');}
-  else{db.exec(sql);db.prepare('INSERT INTO memory_command_schema VALUES(1,?)').run(sql);}
+  else{db.exec(sql);db.prepare('INSERT INTO memory_command_schema (number,sql) VALUES(1,?)').run(sql);}
   if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_card_schema'").get())db.exec(cardSchemaSql);
   const cards=db.prepare('SELECT number,sql FROM memory_card_schema ORDER BY number').all();
   if(cards.length){if(!semanticCardsReady(db))throw Error('Unknown private card preparation');}
-  else{db.exec(cardSql);db.prepare('INSERT INTO memory_card_schema VALUES(1,?)').run(cardSql);}
+  else{db.exec(cardSql);db.prepare('INSERT INTO memory_card_schema (number,sql) VALUES(1,?)').run(cardSql);}
  }).immediate();
 }
