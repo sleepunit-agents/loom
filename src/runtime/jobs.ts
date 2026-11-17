@@ -6,8 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
-import { membersWithAgent } from '../policy.js';
-import { householdOwners, sharedSharing } from '../shared-sharing.js';
+import { agentsPeople } from '../policy.js';
+import { sharedSharing } from '../shared-sharing.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
@@ -90,8 +90,7 @@ export class Jobs {
    * agent becomes unable to run is told once however often admission is asked. */
   private declined(agent: string, mail: readonly Pick<typeof inbox.$inferSelect, 'id'>[], why: string): Admission {
     const key = (item: string) => `mail-not-admitted:${JSON.stringify([agent, item])}`;
-    let to = membersWithAgent(agent, sharedSharing(this.db));
-    if (!to.length) to = householdOwners(this.db);
+    const to = agentsPeople(agent, sharedSharing(this.db));
     let noticed = false;
     for (const member of to) {
       const before = this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.toKind, 'person'), eq(inbox.to, member), eq(inbox.source, 'notice'), eq(inbox.sourceId, key(mail[0].id)))).get();

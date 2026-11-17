@@ -33,10 +33,20 @@ it('answers an agent’s terminal credential from the household’s own rules on
  expect(await f.rule('merge',unread)).toEqual({tier:'do',scope:'github:sleepunit-agents/*',person:''});
  // It needs only the kind and the target's words: loom holds no such change. Another repository has no rule; words that are not a target ask.
  expect(await f.rule('merge','github:elsewhere/app#2@'+head)).toEqual(ask);
- expect(await f.rule('merge','github:sleepunit-agents/art#185')).toEqual(ask);
- // A project's rule answers for the agent's own open change in that project, and for no other target.
+ // Words that are not a merge target are refused, as they are for a body.
+ expect((await f.call('rule',{kind:'merge',target:'github:sleepunit-agents/art#185'})).status).toBe(409);
+ // A project's rule answers for the agent's own open change in that project.
  f.rules.set({kind:'merge',scope:'project:pond',tier:'tell'},'pat');
  expect(await f.rule('merge',held)).toEqual({tier:'tell',scope:'project:pond',person:''});
+ // loom reads acme/app, so a target there is held to the agent's own open change at that head, for a rule
+ // read as for a card. Under a rule that would say do, each of these is refused, not answered on its words.
+ f.rules.set({kind:'merge',scope:'github:acme/*',tier:'do'},'pat');
+ f.db.insert(s.changes).values({id:'github:acme/app#7',repository:'acme/app',number:7,title:'Marks',body:'',url:'',state:'open',draft:false,authorLogin:'mark',agent:'mark',project:'pond',branch:'m',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:f.at,updatedAt:f.at}).run();
+ f.db.insert(s.changes).values({id:'github:acme/app#8',repository:'acme/app',number:8,title:'Closed',body:'',url:'',state:'closed',draft:false,authorLogin:'art',agent:'art',project:'pond',branch:'c',headCommit:head,baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:f.at,updatedAt:f.at}).run();
+ for(const wrong of ['github:acme/app#1@'+'f'.repeat(40),'github:acme/app#7@'+head,'github:acme/app#8@'+head,'github:acme/app#99@'+head]){
+  expect((await f.call('rule',{kind:'merge',target:wrong})).status,wrong).toBe(409);
+  expect((await f.call('request',{kind:'merge',target:wrong,...words})).status,wrong).toBe(403);
+ }
  // An exact owner No is still a No.
  f.rules.set({kind:'command',scope:'deploy:*',tier:'do'},'pat');
  expect(await f.rule('command','deploy:site')).toEqual({tier:'do',scope:'deploy:*',person:''});
@@ -47,7 +57,11 @@ it('answers an agent’s terminal credential from the household’s own rules on
  expect(await f.rule('merge',unread)).toEqual(ask);
  expect(f.cards()).toEqual([]);expect(f.db.select().from(s.approvalRecord).all()).toEqual([]);
  // Only an agent's own credential asks: not a member, not a worker. Another agent asks for itself, and nobody has it.
- for(const token of [raw.member,raw.runner,f.owner])expect((await f.call('rule',{kind:'merge',target:unread},token)).status).toBe(403);
+ for(const token of [raw.member,raw.runner,f.owner]){
+  expect((await f.call('rule',{kind:'merge',target:unread},token)).status).toBe(403);
+  expect((await f.call('request',{kind:'merge',target:unread,...words},token)).status).toBe(403);
+  for(const [name,input] of [['use',{id:'a-none',kind:'merge',target:unread}],['report',{id:'a-none',what:'x'}],['withdraw',{id:'a-none'}]] as const)expect((await f.call(name,input,token)).status,name).toBe(403);
+ }
  f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'pat')).run());
  expect(await f.rule('merge',unread,f.other)).toEqual(ask);
  // Nothing lists the rules for an agent.
@@ -56,8 +70,26 @@ it('answers an agent’s terminal credential from the household’s own rules on
 });
 
 it('never answers work done for a member who is not a household owner from the household’s own rules, and reads a lane as the agent’s own',async()=>{
- const f=await fixture();f.ownsArt('pat');
+ const f=await fixture();
  f.rules.set({kind:'merge',scope:'*',tier:'do'},'pat');
+ // A lane of an agent that only alice has, and she is not a household owner: the household's rule is not read.
+ const early=f.root.writes.run(()=>f.root.services.conversations.open({agent:'art',venue:'wake',place:'early',label:'Early',project:'pond'})).value,thread=f.thread.conversation;
+ f.root.writes.run(()=>f.db.update(s.jobs).set({member:null,conversation:early.id}).run());
+ expect(await f.rule('merge',held,raw.body)).toEqual(ask);
+ f.root.writes.run(()=>f.db.update(s.jobs).set({member:'alice',conversation:thread}).run());
+ f.ownsArt('pat');
+ // A handoff carries the member it was opened for: work handed on for alice is still alice's, and reads no household rule.
+ const handed=f.root.writes.run(()=>f.root.services.conversations.open({agent:'art',venue:'handoff',place:'handed',label:'Handed on',project:'pond',member:'alice'})).value;
+ f.root.writes.run(()=>f.db.update(s.jobs).set({conversation:handed.id}).run());
+ expect(await f.rule('merge',held,raw.body)).toEqual(ask);
+ f.rules.set({kind:'merge',scope:'project:pond',person:'alice',tier:'tell'},'pat');
+ expect(await f.rule('merge',held,raw.body)).toEqual({tier:'tell',scope:'project:pond',person:'alice'});
+ f.rules.set({kind:'merge',scope:'project:pond',person:'alice',tier:null},'pat');
+ // A handoff for no member is nobody's.
+ const loose=f.root.writes.run(()=>f.root.services.conversations.open({agent:'art',venue:'handoff',place:'loose',label:'Loose',project:'pond'})).value;
+ f.root.writes.run(()=>f.db.update(s.jobs).set({member:null,conversation:loose.id}).run());
+ expect(await f.rule('merge',held,raw.body)).toEqual(ask);
+ f.root.writes.run(()=>f.db.update(s.jobs).set({member:'alice',conversation:thread}).run());
  // The body works in alice's own thread: her work. The household's rule is not hers, though the same agent's terminal reads it.
  expect(await f.rule('merge',held,raw.body)).toEqual(ask);
  expect(await f.rule('merge',held)).toEqual({tier:'do',scope:'*',person:''});

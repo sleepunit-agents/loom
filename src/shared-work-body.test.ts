@@ -16,7 +16,7 @@ async function fixture(){
  return {...f,owner,call,ask,snapshot};
 }
 it('requests through the actual mounted HTTP body proof with server-derived provenance and one receipt',async()=>{
- const f=await fixture();// A member and a worker have no door here. The agent's terminal credential has had one since 2026-11-18 (shared-work-own.test.ts).
+ const f=await fixture();// A member and a worker have no door here. The agent's terminal credential has had one since 2026-11-17 (shared-work-own.test.ts).
  for(const token of [raw.member,raw.runner])expect((await f.call('request',request,'denied-'+token[0],token)).status).toBe(403);
  for(const claim of [{agent:'mark'},{actingFor:'pat'},{member:'bob'},{project:'other'},{conversation:'forged'},{askedFrom:'forged'},{job:'other'}])expect((await f.call('request',{...request,...claim})).status).toBe(400);
  const id=await f.ask('same');expect(await f.ask('same')).toBe(id);

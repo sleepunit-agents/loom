@@ -8,7 +8,7 @@ import type {DataDatabase} from './core/data/database.js';
 import {approvals,changes} from './core/data/schema.js';
 import {bodyOperationDefaults,requireBodyScope,type conversationBodyScope} from './core/conversations/body-scope.js';
 import {operation,OperationError,type Operations} from './core/operations/index.js';
-import type {approvalService} from './apps/approvals.js';
+import {ASKED_FROM_TERMINAL,type approvalService} from './apps/approvals.js';
 import {approvalRuleKind,approvalTier,type approvalRulesService} from './apps/approval-rules.js';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {holds,rules as policyRules,workPrincipal,type Viewer} from './policy.js';
@@ -20,7 +20,7 @@ import {MESSAGE_WORDS_MAX} from './core/conversations/words.js';
  *  - A body in its conversation: the conversation's labels, and its principal (policy.ts, `workPrincipal`).
  *  - The agent's terminal credential, bound to no job: the agent's own work, in no conversation. */
 export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string,
- terminal:(viewer:Viewer)=>Readonly<{agent:string}>|undefined=()=>undefined){
+ terminal:(viewer:Viewer)=>Readonly<{agent:string}>|undefined){
  // The terminal credential is its agent while the agent is in the household (rule `agentItself`).
  const session=(viewer:Viewer)=>{const own=current(viewer)?undefined:terminal(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
  const defaults=bodyOperationDefaults(current,hash,'body-work');
@@ -31,7 +31,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   const bound=current(viewer);
   if(bound){const {cv}=bound;return {own:false,agent:cv.agent,conversation:cv.id,askedFrom:cv.id,actingFor:workPrincipal(cv.agent,cv),project:cv.project,member:cv.member};}
   const own=session(viewer);if(!own)throw new OperationError('denied','An agent\'s own credential is required');
-  return {own:true,agent:own.agent,conversation:null,askedFrom:'terminal',actingFor:workPrincipal(own.agent,undefined),project:null,member:null};
+  return {own:true,agent:own.agent,conversation:null,askedFrom:ASKED_FROM_TERMINAL,actingFor:workPrincipal(own.agent,undefined),project:null,member:null};
  };
  // What a merge target is held to, for a rule read, a card filed and a card spent alike.
  // A repository loom reads (apps/changes.ts, `readsRepository`): in a conversation, this agent's change at
@@ -53,7 +53,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  const card=(viewer:Viewer,id:string)=>{
   const context=source(viewer),row=db.select().from(approvals).where(eq(approvals.id,id)).get();
   const mine=row&&row.agent===context.agent&&row.conversation===context.conversation&&row.member===context.member
-   &&(context.own?row.askedFrom==='terminal'&&row.operation===null&&(row.kind==='merge'||row.kind==='command'):row.project===context.project||row.project===null);
+   &&(context.own?row.askedFrom===ASKED_FROM_TERMINAL&&row.operation===null&&(row.kind==='merge'||row.kind==='command'):row.project===context.project||row.project===null);
   if(!row||!mine)throw new OperationError('denied',context.own?'Approval is not one this agent filed from a terminal':'Approval does not belong to this body conversation');
   return row;
  };
@@ -63,8 +63,8 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   output:z.object({id:z.string(),state:z.string()}).strict(),
   may(viewer,input){try{merge(source(viewer),input.kind,input.target,true);return true;}catch{return false;}},
   run(ctx,input){
-   const {own:_own,...context}=source(ctx.viewer),binding=merge(source(ctx.viewer),input.kind,input.target,true);
-   const row=requestApprovalWithRules(db,service,rules,{...input,...context,project:binding.project});
+   const context=source(ctx.viewer),binding=merge(context,input.kind,input.target,true);
+   const row=requestApprovalWithRules(db,service,rules,{...input,agent:context.agent,conversation:context.conversation,askedFrom:context.askedFrom,actingFor:context.actingFor,member:context.member,project:binding.project});
    if(binding.change&&row.state==='allowed')ctx.changed('changes',binding.change.id);
    ctx.changed('approvals',row.id);return {id:row.id,state:service.get(row.id).state};
   },
@@ -76,9 +76,9 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   run(ctx,input){
    const context=source(ctx.viewer);
    if(context.own&&input.kind!=='merge'&&input.kind!=='command')return {tier:'ask' as const,scope:null,person:null};
-   // A body's read is held to its conversation's change, as before. The agent's own work has no such change
-   // to be held to: a target loom cannot place is read with no project.
-   let project:string|null;try{project=merge(context,input.kind,input.target,true).project;}catch(error){if(!context.own)throw error;project=null;}
+   // Held to the same target a card would be: for a repository loom reads, a wrong head, another agent's
+   // change or a closed one is refused here as it is at filing, never answered on its words.
+   const project=merge(context,input.kind,input.target,true).project;
    const rule=lastApprovalAnswer(db,context.agent,input.kind,input.target)?.event==='deny'?undefined:rules.resolve({...input,project,actingFor:context.actingFor});
    return {tier:rule?.tier??'ask',scope:rule?.scope??null,person:rule?.person??null};
   },

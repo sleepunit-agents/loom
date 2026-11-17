@@ -243,7 +243,7 @@ alone. Three things change where work is filed.
 
 ## An agent's own work, and what it may raise
 
-*Added 2026-11-18, so the agent's own scripts can ask loom what a standing rule says and tell its owners
+*Added 2026-11-17, so the agent's own scripts can ask loom what a standing rule says and tell its owners
 when something is wrong.*
 
 - **Whose standing rules answer.** A standing approval rule with no person is the household's own: a household
@@ -253,8 +253,10 @@ when something is wrong.*
   - the agent's own work is a terminal session, or a lane for no member. It reads the household's own rules
     while a current household owner has the agent on their own list, and none otherwise. So an agent that only
     members who are not owners have gets nothing from an owner's rule through its lane or its terminal;
-  - a room on Discord or Slack, and a handoff, are nobody's and always ask: people outside the household talk
-    to an agent there.
+  - a handoff carries the member it was opened for, so work handed on for a person is still that person's
+    and reads that person's rules;
+  - a room on Discord or Slack, and a handoff for no member, are nobody's and always ask: people outside the
+    household talk to an agent in a room.
 
   The rule is `workPrincipal` and `rulesPerson` in `src/policy.ts`. A household change proposed with no
   member behind it still always asks; the agent's own account is for merges and commands.
@@ -264,15 +266,26 @@ when something is wrong.*
   Nothing lists the rule table for an agent: it asks about one kind and one target.
 - **A merge target.** `github:<owner>/<repo>#<n>@<commit>` names one pull request at one exact commit. For
   a repository loom reads, the target must be the agent's own open change at that commit, and a card carries
-  that change's project. For a repository loom does not read, loom has nothing to hold it to: the rule is
+  that change's project; a rule read is held to the same target, so a wrong commit, another agent's change
+  or a closed one is refused and never answered on its words. For a repository loom does not read, loom has nothing to hold it to: the rule is
   read, and a card filed, allowed and spent, on the target's own words. Such a card has no project, so a
   project's rule never answers for it. Whoever merges must merge that commit and no other.
 - **Raising a notice.** `notices.raise` puts one waiting notice in the Inbox of each member who has the
-  calling agent (the household owners when nobody has it), private to each, and pushes to their devices
-  unless it is raised `quiet`. One notice per agent and key while it waits: raising it again brings its words
-  up to date and tells nobody twice. `notices.clear` resolves it with a reason. Only the agent's own
-  credential raises one, for itself; the agent is told its own key, whether the notice was new and how many
-  devices were pushed to, and nothing of anyone's Inbox. The limits are in `src/shared-notices.ts`.
+  calling agent (the household owners when nobody has it; `agentsPeople` in `src/policy.ts`), private to
+  each, and pushes to their devices. One notice per agent, key and person while it waits.
+  - *Who has the agent is read on every raise.* Someone who still has it and has the notice waiting gets its
+    words brought up to date, and is not told twice. Someone who has gained the agent gets the notice.
+    Someone who no longer has it has theirs settled as it stood.
+  - *Two things are filed without a push, then or ever:* a notice raised `quiet`, and a notice for a person
+    whose notice of that key was settled within the last ten minutes. An alert that flaps must not buzz a
+    phone each time. Such a notice is in the Inbox like any other; it is not dimmed, so no quiet time runs
+    out and pushes it later.
+  - `notices.clear` resolves the waiting notices of a key with a reason.
+  - Only the agent's own credential raises or clears one, for itself. The agent may learn whether its own
+    notice is still waiting, which it needs so as not to raise it twice. It is told its own key, whether the
+    notice was news, and whether any push was queued. It is told nothing else of anyone's Inbox: not who has
+    the notice, how many people or phones, who settled it or when.
+  - The limits are in `src/shared-notices.ts`.
 
 ## What the tests must pin
 

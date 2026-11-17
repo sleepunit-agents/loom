@@ -403,6 +403,13 @@ export function directsAgent(v: Viewer, agent: string, s: Sharing): boolean {
 export function membersWithAgent(agent: string, s: Sharing): string[] {
   return Object.keys(s.members).filter(id => s.members[id].agents.includes(agent)).sort();
 }
+/** The people an agent's own notices and troubles go to: the members who have it on their own list, or the
+ * household's owners when nobody has it. In id order. The one reading of it: a notice the agent raises
+ * (shared-notices.ts) and loom's own notice that the agent's mail got no job (runtime/jobs.ts) both ask. */
+export function agentsPeople(agent: string, s: Sharing): string[] {
+  const has = membersWithAgent(agent, s);
+  return has.length ? has : Object.keys(s.members).filter(id => s.members[id].owner).sort();
+}
 /** May this machine be handed this agent's work? A machine is its owner's, and a removed member is nobody:
  * their machine runs nothing, whatever lists it was left on. Otherwise the agent must be in the household
  * and either
@@ -424,8 +431,10 @@ export function machineMayHost(machine: { owner: string; hostsAny: boolean }, li
  *  - work for a member (their own thread, their trigger): that member;
  *  - the agent's own work, done for no member: a terminal session, or a lane (a `wake` conversation with no
  *    member). Written `agent:<id>`, which no member's id can be;
- *  - anything else for no member (a room on a bridge, a handoff from one): `unknown`. People outside the
- *    household talk to an agent in a room; what is asked there is nobody's account.
+ *  - anything else for no member (a room on a bridge, a handoff with no member): `unknown`. People outside
+ *    the household talk to an agent in a room; what is asked there is nobody's account.
+ * A handoff carries the member it was opened for (core/conversations/handoff.ts), so work handed on for a
+ * person is still that person's: the first case.
  * `workPrincipal` names the principal; `rulesPerson` says which rules it reads. */
 export const OWN_WORK = 'agent:';
 export function workPrincipal(agent: string, where: { member: string | null; venue: string } | undefined): string {

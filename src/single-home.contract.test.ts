@@ -706,10 +706,16 @@ it('decides whose standing rules answer for a piece of work in policy.ts and now
 
 it('states the limits of a notice an agent raises once, and takes who raises it from policy.ts', () => {
   const notices = text('src/shared-notices.ts');
-  expect(sources('src').filter(file => /NOTICE_(TITLE|DETAIL|WHY|KEYS)_MAX\s*=|NOTICE_PUSH_AGAIN_MS\s*=/.test(text(file)))).toEqual(['src/shared-notices.ts']);
+  expect(sources('src').filter(file => /NOTICE_(KEY|TITLE|DETAIL|WHY|KEYS)_MAX\s*=|NOTICE_PUSH_AGAIN_MS\s*=/.test(text(file)))).toEqual(['src/shared-notices.ts']);
   expect(notices).toContain('holds(rules.agentItself,viewer,{agent:found.agent},sharedSharing(db))');
-  // Who it is for is who has the agent, by policy's one reading of that; it writes no Inbox row itself.
-  expect(notices).toContain('membersWithAgent(name,sharedSharing(db))');
+  // Who it is for is policy's one reading of an agent's people, which loom's own notice about that agent asks too.
+  expect(notices).toContain('agentsPeople(name,sharedSharing(db))');
+  expect(text('src/runtime/jobs.ts')).toContain('agentsPeople(agent, sharedSharing(this.db))');
+  expect(sources('src').filter(file => /function agentsPeople\b/.test(text(file)))).toEqual(['src/policy.ts']);
+  for (const file of ['src/shared-notices.ts', 'src/runtime/jobs.ts']) expect(text(file), file).not.toMatch(/membersWithAgent|householdOwners/);
+  // What is never pushed is said in one file, and asked by the one place that queues a push.
+  expect(sources('src').filter(file => /'quiet-notice:'/.test(text(file)))).toEqual(['src/core/data/inbox-push.ts']);
+  expect(text('src/core/signin/shared-notifications.ts')).toContain('sql`not ${neverPushed(inbox)}`');
   expect(notices).not.toMatch(/\.(insert|update|delete)\(/);
 });
 

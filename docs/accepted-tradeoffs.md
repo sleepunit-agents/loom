@@ -51,8 +51,10 @@ Entries are grouped by the part of the program they belong to.
   still open at that commit, or that it is the agent's; the script that merges must merge that commit and no
   other (`--match-head-commit`). Such a card carries no project, so a project's rule never answers it: only
   a rule whose scope is a repository pattern does.
-- **Checked.** `src/shared-work-own.test.ts`: a repository loom reads is held to the change (wrong commit,
-  another agent's change and a closed change are refused); one it does not read is answered on its words.
+- **Checked.** `src/shared-work-own.test.ts`, "answers an agent's terminal credential ...": in a repository
+  loom reads, a wrong commit, another agent's change, a closed change and a change loom does not hold are
+  each refused, for a rule read and for a card, under a rule that would say do. "files, allows, spends once
+  ...": a repository loom does not read is answered on its words.
 - **What would change the answer.** If loom came to read the agent's own repositories, the stricter path
   applies to them with no change here.
 

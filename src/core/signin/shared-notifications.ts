@@ -1,4 +1,5 @@
 import {SHA256_HEX} from '../sha256-hex.js';
+import {neverPushed} from '../data/inbox-push.js';
 import {readPersonalNotificationDevices} from '../data/personal-account-read.js';
 /** Browser devices and post-settlement pushes on the shared program. No source
  * words enter a push. Attempts are claimed before IO and never blindly retried.
@@ -34,7 +35,7 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
   if(!found||found.session.isAgent||found.viewer.kind!=='member'||found.viewer.id!==row.member)return;
   return row;
  };
- const visible=(member:string,id:string)=>db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),eq(inbox.toKind,'person'),eq(inbox.to,member),eq(inbox.state,'waiting'),eq(inbox.volume,'full'),sql`(${inbox.quietUntil} is null or ${inbox.quietUntil} <= ${new Date(clock.now()).toISOString()})`,options.visible({kind:'member',id:member},getTableColumns(inbox)))).get();
+ const visible=(member:string,id:string)=>db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),eq(inbox.toKind,'person'),eq(inbox.to,member),eq(inbox.state,'waiting'),eq(inbox.volume,'full'),sql`not ${neverPushed(inbox)}`,sql`(${inbox.quietUntil} is null or ${inbox.quietUntil} <= ${new Date(clock.now()).toISOString()})`,options.visible({kind:'member',id:member},getTableColumns(inbox)))).get();
  const remove=(endpoint:string)=>{db.delete(notificationQueue).where(eq(notificationQueue.device,endpoint)).run();db.delete(notificationDevices).where(eq(notificationDevices.endpoint,endpoint)).run();};
  async function drain(){
   if(closed||!options.config)return;
@@ -49,6 +50,11 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
    finally{stop();aborts.delete(abort);}
   }
  }
+ // One row per device and item, for ever: an item is pushed to a device at most once. How many were new.
+ const queue=(member:string,ids:readonly string[])=>{let queued=0;
+  for(const target of db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all())for(const item of ids)
+   if(device(target.endpoint)&&visible(member,item))queued+=db.insert(notificationQueue).values({id:hash(JSON.stringify([target.endpoint,item])),device:target.endpoint,item,queuedAt:new Date(clock.now()).toISOString()}).onConflictDoNothing().run().changes;
+  return queued;};
  const kick=()=>{if(running){again=true;return;}if(!closed){again=false;running=Promise.resolve().then(drain).catch(()=>{try{options.reportError(Error('Push delivery unavailable'));}catch{}}).finally(()=>{running=undefined;if(again&&!closed)kick();});}};
  return {
   read(member:string){return{publicKey:options.config?.vapid.publicKey??null,devices:readPersonalNotificationDevices(db,member).map(row=>({ref:ref(row.endpoint),device:row.device,createdAt:row.createdAt,seenAt:row.seenAt}))};},
@@ -63,14 +69,11 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
     db.insert(notificationDevices).values({endpoint:input.sub.endpoint,...values,createdAt}).onConflictDoUpdate({target:notificationDevices.endpoint,set:{...values,createdAt}}).run();ctx.changed('notifications',ctx.viewer.id);return{saved:true as const};}});
    operations.register({name:'notifications.removeDevice',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(SHA256_HEX)}).strict(),output:z.object({removed:z.literal(true)}).strict(),may:member,run(ctx,input){const row=db.select().from(notificationDevices).where(eq(notificationDevices.member,ctx.viewer.id)).all().find(row=>ref(row.endpoint)===input.ref);if(!row)throw new OperationError('not-found','Device not found');remove(row.endpoint);ctx.changed('notifications',ctx.viewer.id);return{removed:true as const};}});
   },
-  publish(member:string,ids:readonly string[]){if(closed||!options.config)return false;write(()=>{for(const target of db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all())for(const item of ids){if(device(target.endpoint)&&visible(member,item))db.insert(notificationQueue).values({id:hash(JSON.stringify([target.endpoint,item])),device:target.endpoint,item,queuedAt:new Date(clock.now()).toISOString()}).onConflictDoNothing().run();}});kick();return running??Promise.resolve();},
+  publish(member:string,ids:readonly string[]){if(closed||!options.config)return false;write(()=>queue(member,ids));kick();return running??Promise.resolve();},
   /** Queue a push inside the caller's own write, and say how many devices it was queued for. `publish`
    * opens a write of its own; a registered operation is already in one. Sent by `flush` once that commits. */
   enqueue(member:string,ids:readonly string[]){
-   if(closed||!options.config)return 0;let queued=0;
-   for(const target of db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all())for(const item of ids)
-    if(device(target.endpoint)&&visible(member,item))queued+=db.insert(notificationQueue).values({id:hash(JSON.stringify([target.endpoint,item])),device:target.endpoint,item,queuedAt:new Date(clock.now()).toISOString()}).onConflictDoNothing().run().changes;
-   return queued;
+   return closed||!options.config?0:queue(member,ids);
   },
   flush(){kick();},
   close(){closed=true;for(const abort of aborts)abort.abort();return running??Promise.resolve();},
