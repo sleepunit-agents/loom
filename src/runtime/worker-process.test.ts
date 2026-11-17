@@ -8,6 +8,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import { commandUsageProvider, commandWorkerExecutor, commandOutput, workerRunner, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
 import { NoRunnerError, type WorkerAssignment } from './worker.js';
+import { WORKER_EXIT } from './job-exit.js';
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'custom-model', account: 'sub', harness: 'custom-runner', brief: 'private brief', house: { repository: 'repo', file: 'Containerfile', branch: 'main' } };
 const plan: WorkerCommand = { command: '/worker/build', args: ['--json'], cwd: '/worker', env: { PATH: '/usr/bin' } };
@@ -69,7 +70,7 @@ describe('worker command adapter (no child processes in tests)', () => {
     f.children[0].child.emit('spawn'); await flush(); abort.abort(); await expect(build).rejects.toThrow('build failed');
     const controller = new AbortController(), body = f.executor.start(job, 'image', controller.signal);
     f.children[1].child.emit('spawn'); await body.spawned; controller.abort();
-    expect((await body.exited).exitCode).toBe(1); expect(f.children[1].input()).toBe('');
+    expect((await body.exited).exitCode).toBe(WORKER_EXIT.killed); expect(f.children[1].input()).toBe('');
     await expect(body.release()).rejects.toThrow('unavailable'); await body.stop();
   });
   it('kills descendants at leader exit so inherited pipes cannot keep close pending', async () => {
@@ -148,7 +149,8 @@ describe('worker command adapter (no child processes in tests)', () => {
     const killed = f.executor.start(job, 'image', new AbortController().signal);
     f.children[1].child.emit('spawn'); await killed.spawned;
     f.children[1].child.emit('exit', null, 'SIGKILL'); f.children[1].child.emit('close', null, 'SIGKILL');
-    expect(await killed.exited).toMatchObject({ exitCode: 1, own: false });
+    // Not 1, which is the body's own code for a failure before it knew its work.
+    expect(await killed.exited).toMatchObject({ exitCode: WORKER_EXIT.killed, own: false });
   });
   it('refuses a job when several accounts of its provider are signed in here and one command serves the harness', async () => {
     const f = fixture();

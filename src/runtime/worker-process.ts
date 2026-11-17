@@ -17,6 +17,7 @@ import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
 import { NoRunnerError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
+import { WORKER_EXIT } from './job-exit.js';
 export interface WorkerCommand {
   /** This configured child understands the private bootstrap stdin envelope. */
   bodyBootstrap?: boolean;
@@ -140,13 +141,14 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   let leaderExit: number | undefined, own = false;
   // close waits for inherited pipes. Kill descendants at leader exit, otherwise
   // an orphan holding stdout can keep both close and terminal reporting stuck.
-  child.once('exit', (code) => { leaderExit = code ?? 1; own = code !== null; kill(); });
+  // No code means a signal ended the leader. That is not 1, which a body uses for a failure of its own.
+  child.once('exit', (code) => { leaderExit = code ?? WORKER_EXIT.killed; own = code !== null; kill(); });
   child.once('close', (code, _signal) => {
     closed = true;
     retained.stdout(outDecoder.end(), 0); retained.stderr(errorDecoder.end());
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
-    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail: retained.tail(), own });
+    exitResolve({ exitCode: leaderExit ?? code ?? WORKER_EXIT.killed, logTail: retained.tail(), own });
   });
   // Covers cancellation during the injected spawn operation/listener setup.
   if (signal.aborted) kill();

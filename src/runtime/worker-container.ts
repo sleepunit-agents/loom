@@ -11,6 +11,7 @@ import { BODY_SCRATCH } from './body-harness.js';
 import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type WorkerCommand } from './worker-process.js';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 import { WorkerStop } from './worker-stop.js';
+import { containerExit } from './job-exit.js';
 
 export interface ContainerConfig {
   socket: string;
@@ -189,7 +190,7 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
           const [result] = await both;
           if (abort.signal.aborted || !result || typeof result !== 'object' || !('StatusCode' in result)
             || !Number.isSafeInteger(result.StatusCode) || ('Error' in result && result.Error)) throw new Error('Invalid container exit');
-          return { exitCode: result.StatusCode as number, logTail: logs!.tail() };
+          return { exitCode: containerExit(result.StatusCode as number), logTail: logs!.tail() };
         } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
       void exited.catch(() => {});

@@ -4,7 +4,11 @@
  * conversation's words, so neither can carry the stage. The number can. The body's own program uses
  * BODY_EXIT; the worker uses WORKER_EXIT for a job whose body it could not get running; loom itself uses
  * LOOM_EXIT for a job it ended without any worker having run it. Any other code is the runner's own (a
- * builder, a custom runner), and 0 is success. */
+ * builder, a custom runner), and 0 is success.
+ *
+ * The row keeps the number and not who chose it, so a custom runner that exits by itself with one of the
+ * numbers below is shown with that number's stage (docs/accepted-tradeoffs.md, "A custom runner's exit
+ * code can read as one of loom's"). */
 export const BODY_EXIT = {
   /** Unexpected failure before the body knew what it was asked to do. */
   input: 1,
@@ -41,7 +45,12 @@ export const WORKER_EXIT = {
   reap: 26,
   /** This worker has no command for the job's harness, or none it can hold to the account loom placed it on. */
   runner: 27,
+  /** The body did not end by itself: a signal ended its process (the system's memory killer, an operator's
+   * kill). The body reported nothing, so this is the worker's word for it. (28 is the body's.) */
+  killed: 29,
 } as const;
+/** What a container engine reports for a process a signal ended: 128 plus the signal's number. */
+export const containerExit = (status: number): number => status > 128 && status <= 128 + 64 ? WORKER_EXIT.killed : status;
 
 export const LOOM_EXIT = {
   /** No machine took the job within the queue deadline (Jobs.sweep): nothing ran. */
@@ -52,6 +61,8 @@ const stages = new Map<number, string>([
   ...Object.entries(BODY_EXIT).map(([stage, code]): [number, string] => [code, `body ${stage}`]),
   ...Object.entries(WORKER_EXIT).map(([stage, code]): [number, string] => [code, `worker ${stage}`]),
   ...Object.entries(LOOM_EXIT).map(([stage, code]): [number, string] => [code, `loom ${stage}`]),
+  // The worker says it, about the body.
+  [WORKER_EXIT.killed, 'body killed'],
 ]);
 /** The stage a job's exit code names, for showing beside the number; undefined for 0 and for a runner's own code. */
 export function exitStage(code: number | null | undefined): string | undefined {

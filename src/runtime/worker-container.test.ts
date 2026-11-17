@@ -298,3 +298,11 @@ it('does not start beside containers it cannot list or cannot get rid of', async
   f.engine.json.mockRejectedValue(new Error('docker is down'));
   await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('docker is down');
 });
+
+it('reports a container whose process a signal ended as killed, the same stage as a body run as a process', async () => {
+  const { containerExit } = await import('./job-exit.js');
+  // 128 plus the signal: the memory killer and `docker kill` (9), a plain stop (15).
+  expect([137, 143].map(containerExit)).toEqual([29, 29]);
+  // An exit the process made by itself is passed on as it is.
+  expect([0, 1, 14, 128, 200].map(containerExit)).toEqual([0, 1, 14, 128, 200]);
+});

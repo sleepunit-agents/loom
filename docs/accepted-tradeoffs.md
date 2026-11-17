@@ -396,6 +396,19 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** Storing the zone each next time was worked out in, which is a schema
   change.
 
+### A custom runner's exit code can read as one of loom's
+
+- **What.** A job's row keeps its exit code and not who chose it. loom's body program, the worker and loom
+  use the numbers 1, 10 to 29 and 31, and job history shows each with its stage ("body harness", "worker
+  build", "body killed"). A machine's own `{job, build}` runner that exits by itself with one of those
+  numbers is shown with that stage too, though its number means something of its own.
+- **Where.** `exitStage` in `src/runtime/job-exit.ts`, shown by `src/runtime/job-summary.ts`.
+- **Why accepted.** Telling them apart needs the row to say whose code it is, which is a new column. The
+  stage is a label beside the number and decides nothing: retries and mail follow the number being zero or
+  not. A body a signal ended is told apart without it (29, set by the worker).
+- **What would change the answer.** A household that runs custom runners and reads their codes. Then the
+  column (`jobs.exit_by`: body, worker, loom or runner), set where the worker reports the job.
+
 ## Bridges and conversations
 
 ### Mail is delivered at least once
