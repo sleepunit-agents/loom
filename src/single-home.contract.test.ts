@@ -58,6 +58,8 @@ import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './pieces/mind/knowledge.js'
 import { RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME } from './pieces/bridges/events.js';
 import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
 import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
+import { NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
+import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
 
 const root = new URL('../', import.meta.url).pathname;
@@ -568,6 +570,30 @@ it('works out when a Knowledge page changes state from the days that decide the 
   expect(sources('src/pieces/mind').filter(file => /\b(20|30|7)\s*\*\s*86_?400_?000/.test(text(file)))).toEqual([]);
   expect(text('src/pieces/mind/knowledge-query.ts')).toMatch(/anchor\+AGING_DAYS\*[^,]+,anchor\+CHECK_DAYS\*[^,]+,[^;]*RECENT_DAYS\*/);
   expect(sources('src').filter(file => /\b(CHECK|AGING|RECENT)_DAYS\s*=\s*[\d(]/.test(text(file)))).toEqual(['src/pieces/mind/knowledge.ts']);
+});
+
+it('names where a nested job finds the engine, the engine runtimes and a mount\'s read-only default once', () => {
+  // The socket's place inside a container: what the worker mounts there and what no other mount may cover.
+  expect(NESTED_SOCKET_TARGET).toBe('/var/run/docker.sock');
+  expect(sources('src').filter(file => /\/(var\/)?run\/docker\.sock/.test(text(file)))).toEqual(['src/runtime/worker-mounts.ts']);
+  expect(text('src/runtime/worker-mounts.ts')).toContain("const SOCKET_PLACES = [NESTED_SOCKET_TARGET, '/run/docker.sock'] as const;");
+  expect(text('src/runtime/worker-mounts.ts')).toContain('target: NESTED_SOCKET_TARGET');
+  // How a mounted path and an engine socket must be written is one function. The configuration's schema
+  // reads only that each is a string, and nothing else looks at how a socket's path begins.
+  expect(plainPath('/run/engine.sock')).toBe(true);
+  expect(['run/engine.sock', '/', '/run/', '/run//engine.sock', '/run/../engine.sock', '/run/./engine.sock', '/run/\0', '', 7, undefined].some(plainPath)).toBe(false);
+  expect(text('src/runtime/worker-program.ts')).toContain('container: z.object({ socket: z.string(), nestedSocket: z.string().optional(),');
+  expect(text('src/runtime/worker-program.ts')).toContain('const hostDirectory = z.object({ source: z.string(), target: z.string() }).strict();');
+  expect(text('src/runtime/docker-engine.ts')).toContain('if (!plainPath(socketPath))');
+  expect(sources('src/runtime').filter(file => /[sS]ocket(Path)?\??\.(startsWith|includes)\(/.test(text(file)))).toEqual([]);
+  // The runtime names: the first is what a configuration that names none gets; the file is read by the same list.
+  expect([...CONTAINER_RUNTIMES]).toEqual(['runc', 'crun']);
+  expect(sources('src').filter(file => /['"`](runc|crun)['"`]/.test(text(file)))).toEqual(['src/runtime/worker-container.ts']);
+  expect(text('src/runtime/worker-program.ts')).toContain('runtime: z.enum(CONTAINER_RUNTIMES)');
+  expect(text('src/runtime/worker-container.ts')).toContain('Runtime: config.runtime ?? CONTAINER_RUNTIMES[0]');
+  // A fixed mount is read-only unless it says false, decided in one place; the file's schema gives no default of its own.
+  expect(sources('src/runtime').filter(file => /readOnly\s*(\?\?|!==|===|\|\|)|readOnly:[^,}\n]*\.default\(/.test(text(file)))).toEqual(['src/runtime/worker-mounts.ts']);
+  expect(text('src/runtime/worker-mounts.ts')).toContain('readOnly: mount.readOnly !== false');
 });
 
 it('makes two times that must agree one time, or works one out from the other', () => {

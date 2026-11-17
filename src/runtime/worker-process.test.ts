@@ -7,7 +7,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import { commandUsageProvider, commandWorkerExecutor, commandOutput, workerRunner, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
-import { NoRunnerError, type WorkerAssignment } from './worker.js';
+import { UnservedJobError, type WorkerAssignment } from './worker.js';
 import { WORKER_EXIT } from './job-exit.js';
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'custom-model', account: 'sub', harness: 'custom-runner', brief: 'private brief', house: { repository: 'repo', file: 'Containerfile', branch: 'main' } };
@@ -154,13 +154,13 @@ describe('worker command adapter (no child processes in tests)', () => {
   });
   it('refuses a job when several accounts of its provider are signed in here and one command serves the harness', async () => {
     const f = fixture();
-    await expect(f.executor.build({ ...job, accountChoices: 2 }, new AbortController().signal)).rejects.toBeInstanceOf(NoRunnerError);
-    expect(() => f.executor.start({ ...job, accountChoices: 2 }, 'image', new AbortController().signal)).toThrow(NoRunnerError);
+    await expect(f.executor.build({ ...job, accountChoices: 2 }, new AbortController().signal)).rejects.toBeInstanceOf(UnservedJobError);
+    expect(() => f.executor.start({ ...job, accountChoices: 2 }, 'image', new AbortController().signal)).toThrow(UnservedJobError);
     expect(f.runtime.spawn).not.toHaveBeenCalled();
     // A runner bound to the account is the answer; one account, or a loom that does not say, runs as before.
     const bound = workerRunner({ runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, command: '/worker/run-sub' } } } });
     expect(bound({ ...job, accountChoices: 2 }).command).toBe('/worker/run-sub');
-    expect(() => bound({ ...job, account: 'other', accountChoices: 2 })).toThrow(NoRunnerError);
+    expect(() => bound({ ...job, account: 'other', accountChoices: 2 })).toThrow(UnservedJobError);
     // So is a runner that says it signs in to the account its envelope names.
     expect(workerRunner({ runners: { 'custom-runner': { ...plan, selectsAccount: true } } })({ ...job, accountChoices: 2 })).toMatchObject({ command: plan.command });
     const shared = workerRunner({ runners: { 'custom-runner': plan } });

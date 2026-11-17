@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { NoRunnerError, workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
+import { UnservedJobError, workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
 import { WORKER_EXIT } from './job-exit.js';
 const deferred = <T>() => { let resolve!: (v: T) => void; let reject!: (e?: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -179,7 +179,7 @@ describe('worker work plane', () => {
   });
   it('names the runner stage when this worker has no command it can run the job on', async () => {
     const f = fixture();
-    f.executor.build.mockImplementation(() => { throw new NoRunnerError('Several accounts need a runner each'); });
+    f.executor.build.mockImplementation(() => { throw new UnservedJobError('Several accounts need a runner each'); });
     expect(await f.run()).toBe('finished');
     expect(f.executor.start).not.toHaveBeenCalled();
     expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.runner, 'Worker could not start the body: runner failed', 'worker');

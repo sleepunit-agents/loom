@@ -51,7 +51,9 @@ export const WORKER_EXIT = {
   release: 25,
   /** The body's process could not be watched or reaped to its end. */
   reap: 26,
-  /** This worker has no command for the job's harness, or none it can hold to the account loom placed it on. */
+  /** This worker is not configured to serve the job: it has no command for the job's harness, or none it
+   * can hold to the account loom placed it on, or (container bodies with `accountLogins`) no sign-in
+   * directory for that account and harness. */
   runner: 27,
   /** The body did not end by itself: a signal ended its process (the system's memory killer, an operator's
    * kill). The body reported nothing, so this is the worker's word for it. (28 is the body's.) */

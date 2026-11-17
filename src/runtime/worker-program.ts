@@ -9,7 +9,7 @@ import { RELAY_MS } from './account-signin-time.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
 import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
-import { containerWorkerExecutor } from './worker-container.js';
+import { CONTAINER_RUNTIMES, containerWorkerExecutor } from './worker-container.js';
 import { REPORT_MS } from './silence.js';
 import { defaultWorkerState } from './worker-left.js';
 import type { WorkerExecutor } from './worker.js';
@@ -18,6 +18,10 @@ const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
 const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(ENV_NAME), commandString) });
+/** A directory of this machine and where a container sees it. Only the shape is read here: every rule
+ * about these paths, and about the two engine sockets below, is in worker-mounts.ts, which stops the worker
+ * with a line of its own (exit 52). A path written wrongly is that exit too, never this file's 41. */
+const hostDirectory = z.object({ source: z.string(), target: z.string() }).strict();
 const stepDeadline = z.number().int().min(1).max(STEP_DEADLINE_MAX_MS);
 const accountCommand = z.object({
   command,
@@ -34,18 +38,26 @@ const configSchema = z.object({
   state: commandString.startsWith('/').optional(),
   build: command, buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(), runners: z.record(z.string(), runnerCommand),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
+  /** A sign-in directory for each account id, then harness, mounted into that job's container and no
+   * other. Container bodies only. When present, every job needs an exact entry. */
+  accountLogins: z.record(z.string().min(1), z.record(z.string().min(1), hostDirectory)).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
    * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests.
    * This is the one way a worker signs an account in. */
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
     intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
-  container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
+  container: z.object({ socket: z.string(), nestedSocket: z.string().optional(),
+    runtime: z.enum(CONTAINER_RUNTIMES).optional(),
+    mounts: z.array(hostDirectory.extend({ readOnly: z.boolean().optional() }).strict()).optional(),
     setupTimeoutMs: stepDeadline.optional(),
     cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),
 }).strict().superRefine((config, context) => {
   const accounts = config.accountUsage?.readers.map(reader => reader.account.account) ?? [];
   if (new Set(accounts).size !== accounts.length) context.addIssue({ code: 'custom', message: 'Duplicate account quota reader' });
+  // A body run as a process is given nothing by a mount: sign-in directories that would be shared by every
+  // body all the same are refused, never quietly ignored.
+  if (config.accountLogins && !config.container) context.addIssue({ code: 'custom', message: 'Account sign-in directories need container bodies' });
   if (!config.container) return;
   const plans = [...Object.values(config.runners), ...Object.values(config.accountRunners ?? {}).flatMap(values => Object.values(values))];
   if (plans.some(plan => !containerCommand.safeParse(plan).success)) context.addIssue({ code: 'custom', message: 'Invalid container runner command' });
@@ -189,7 +201,7 @@ export async function workerProgram(input: {
   } catch (error) {
     // One fixed line and code for the stage; never the error's own words.
     const at = error instanceof WorkerStop ? error.stage : stage;
-    input.error(workerStopLine(at));
+    input.error(workerStopLine(at, error instanceof WorkerStop ? error.key : undefined));
     return WORKER_STOP[at][0];
   } finally { executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

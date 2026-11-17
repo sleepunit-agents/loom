@@ -360,6 +360,35 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A harness that reports the account it ran on. The worker could then
   compare it with the placed one and fail the job.
 
+### Two bodies on one account share one sign-in directory
+
+- **What.** A container body is given its account's sign-in directory read-write (`accountLogins`). Two
+  bodies on the same account and harness, at once or one after the other, are given the same directory.
+  Each can read and change what the other's provider program wrote there, and two programs renewing the
+  sign-in at once write the same files.
+- **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
+  `src/runtime/worker-container.ts`.
+- **What is enforced.** The worker mounts into a job's container the directory of that job's account and
+  harness and no other. A fixed mount or another entry that names the same directory, one above it or one
+  inside it stops the worker at start; so does any mounted directory that is, holds or is inside either
+  engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
+  file. With `accountLogins` present, a job
+  with no exact entry does not run.
+- **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
+  configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
+  engine's user can reach on the machine, every account's sign-in directory included: it can start a
+  container of its own with any of them mounted. "Its own directory and no other" holds for every job
+  that is not given the engine.
+- **Why the rest is accepted.** A sign-in is one set of files per account, which the provider's program
+  must be able to rewrite. Two processes signed in to one account on a host share them in the same way
+  today, and both bodies already act as that account. The engine's socket was already broad authority
+  over the machine that both an agent's run settings and the machine's operator must opt in to; the
+  sign-in directories are one more thing within its reach, not a new kind of reach.
+- **What would change the answer.** A provider program that takes its sign-in from a file it does not
+  rewrite, or renews through the worker. Each body could then have a copy of its own. For nested
+  containers: an engine of the job's own (one that cannot see the machine's files) in place of the
+  machine's socket.
+
 ### Bodies a killed worker left that cannot be told from a stranger
 
 - **What.** A worker that starts ends what a killed worker left (`src/runtime/worker-left.ts`). Three

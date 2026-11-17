@@ -1,6 +1,7 @@
 /** Worker-only local Docker Engine transport. No retries and no ambient socket. */
 import { request } from 'node:http';
 import type { Duplex } from 'node:stream';
+import { plainPath } from './worker-mounts.js';
 export interface DockerEngine {
   json(method: string, path: string, body: unknown, signal: AbortSignal): Promise<unknown>;
   attach(id: string, signal: AbortSignal): Promise<Duplex>;
@@ -9,7 +10,8 @@ export class DockerResponseError extends Error {
   constructor(readonly status: number) { super('Docker request failed'); }
 }
 export function dockerEngine(socketPath: string): DockerEngine {
-  if (!socketPath.startsWith('/') || socketPath.includes('\0')) throw new Error('Expected absolute Docker socket');
+  // How the path must be written is worker-mounts.ts's rule; the worker has checked there that it is a socket.
+  if (!plainPath(socketPath)) throw new Error('Expected absolute Docker socket');
   return {
     json(method, path, body, signal) {
       return new Promise((resolve, reject) => {
