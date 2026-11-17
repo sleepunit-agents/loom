@@ -506,3 +506,12 @@ it('checks a Knowledge page without changing its words unless a note is given, a
  for(const bad of [{note:'   '},{note:'n'.repeat(4001)},{freshnessAnchor:'a'.repeat(201)}])expect((await mind('knowledgeVerify',{slug:'plain-fact',...bad},'verify-bad-'+Object.keys(bad)[0]+String(Object.values(bad)[0]).length)).status).toBe(400);
  expect(state().checks).toBe(4);
 });
+it('answers a recall on a fresh home with nothing, before any memory has been written',async()=>{
+ const f=await fixture();expect(f.source.prepare("SELECT 1 FROM sqlite_schema WHERE name IN ('memories','vec_memories')").get()).toBeUndefined();
+ const before=f.source.serialize(),recall=await f.call('recall',{query:'alpha'},'fresh-recall');
+ expect(recall.status).toBe(200);expect(recall.result.value).toEqual({ids:[],matches:[]});
+ // Reading made nothing: the tables still arrive with the first write, in its transaction.
+ expect(f.source.serialize()).toEqual(before);
+ const remembered=await f.call('remember',input,'fresh-remember');expect(remembered.status).toBe(200);
+ expect((await f.call('recall',{query:'alpha'},'fresh-recall-again')).result.value).toMatchObject({ids:remembered.result.value.ids});
+});

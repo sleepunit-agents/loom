@@ -95,6 +95,8 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
    const source=current(viewer),agent=options.body(viewer)?.agent;
    // A source that has not been prepared is left exactly as it is.
    if(!source||!agent)throw new OperationError(selected(viewer)?'unavailable':'denied',selected(viewer)?'Memory is not prepared for commands':'Current body required');
+   // The memory tables are made by the first write, in its transaction. Until then there is nothing to recall.
+   if(!source.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memories'").get())return {ids:[],matches:[]};
    const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,deferSchema:true},(options.embedding??createEmbeddingProvider)());
    try{
     const matches=(await backend.recall(input)).map(row=>({id:`${agent}:${opaque(source.db,row.path)}`,score:row.relevance}));
