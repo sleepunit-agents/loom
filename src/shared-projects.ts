@@ -58,6 +58,8 @@ export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string
 };
 /** One agent let onto one project. */
 export const projectJoinInput=z.object({project:id,agent:householdId}).strict();
+/** The one refusal for an agent that is on the project already, in the words both doors use. */
+export const alreadyOnProject=(value:{project:string;agent:string})=>new OperationError('invalid',value.agent+' is already on project '+value.project);
 export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toISOString()){
  const validate=(value:z.infer<typeof projectInput>)=>{
   for(const member of value.members)if(!db.select().from(members).where(eq(members.id,member)).get())throw new OperationError('invalid','Choose existing members');
@@ -91,7 +93,7 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
    if(project.removedAt)return new OperationError('invalid','Project '+value.project+' is removed');
    if(!agent)return new OperationError('not-found','No agent has the id '+value.agent);
    if(agent.removedAt)return new OperationError('invalid','Agent '+value.agent+' is removed');
-   if(db.select().from(projectAgents).all().some(row=>row.project===value.project&&row.agent===value.agent))return new OperationError('invalid',value.agent+' is already on project '+value.project);
+   if(db.select().from(projectAgents).all().some(row=>row.project===value.project&&row.agent===value.agent))return alreadyOnProject(value);
    return undefined;
   },
   /** Add one agent to one project. Nothing else about the project changes: not its name, its people, its

@@ -38,7 +38,7 @@ import { PRIVATE_SECRET_TIMEOUT_MS, privateSecretClient } from './pieces/secrets
 import { secretAnswer, secretRuleInput } from './pieces/secrets/requests.js';
 import { householdService } from './apps/household.js';
 import { AgentFiles } from './pieces/mind/sources.js';
-import { dangerousHouseholdChanges, householdChanges } from './shared-household-proposals.js';
+import { alwaysAsks, dangerousHouseholdChanges, householdChanges } from './shared-household-proposals.js';
 import { householdMemorySources } from './shared-memory.js';
 import { householdSettings } from './core/data/household-settings.js';
 import { secretRules } from './core/data/schema.js';
@@ -336,6 +336,10 @@ it('lists the kinds of household change once', () => {
   expect(text('src/shared-mcp-named.ts')).toContain('z.enum(householdChanges)');
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
+  // The kinds no standing rule answers are named once, and filing asks that one list.
+  expect([...alwaysAsks].sort()).toEqual(['projectJoin', 'rule']);
+  expect(text('src/shared-household-proposals.ts')).toContain('if(alwaysAsks.has(value.change))return card;');
+  expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin)'\)return card/);
   // What cannot be put back: three revocations, and a merge of two projects.
   expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'projectMerge', 'tokenRevoke']);
 });

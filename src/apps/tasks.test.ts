@@ -228,21 +228,22 @@ it('takes the labels of mail filed under a task’s own labels with the task, an
   expect(db.select().from(inbox).all().filter(item => item.project === 'pond' || item.project === 'shed')).toEqual([]);
 
   // A task from a conversation its people read: the question is filed there, under the conversation's labels.
-  const room = mail.open({ agent: 'art', venue: 'loom', place: 'pond', label: 'Pond', project: 'pond' });
+  // The room is the shed's and the task is the pond's, so what came from which can be told apart.
+  const room = mail.open({ agent: 'art', venue: 'loom', place: 'shed', label: 'Shed', project: 'shed' });
   tasks = taskService(db, () => at, () => true);
   const sourced = tasks.create({ title: 'Clean filter', goal: 'Clean', why: 'Clogged', owner: asker, project: 'pond', source: { kind: 'conversation', id: room.id } }, asker);
   tasks.ask(sourced.id, { to: actor, ask: 'Today?', ifYes: 'I do it', ifNo: 'Tomorrow' }, asker);
   const inRoom = db.select().from(inbox).where(eq(inbox.waitsOnId, sourced.id)).get()!;
   tasks.answer(sourced.id, 'yes', '', actor);
   const back = db.select().from(inbox).where(eq(inbox.sourceId, inRoom.id)).get()!;
-  expect([labelsOf(inRoom.id), labelsOf(back.id)]).toEqual([{ project: 'pond', agent: 'art', member: null, conversation: room.id }, { project: 'pond', agent: 'art', member: null, conversation: room.id }]);
+  expect([labelsOf(inRoom.id), labelsOf(back.id)]).toEqual([{ project: 'shed', agent: 'art', member: null, conversation: room.id }, { project: 'pond', agent: 'art', member: null, conversation: room.id }]);
   // Something else in the same room that only mentions the task is not the task's mail.
   const mention = mail.send({ toKind: 'agent', to: 'art', conversation: room.id, source: 'answer', sourceId: 'in-elsewhere', fromKind: 'person', fromId: actor.id, words: `See ${sourced.id}`, refs: [sourced.id] });
-  tasks.moveToProject([sourced.id], 'shed', actor);
+  tasks.moveToProject([sourced.id], null, actor);
   // The question keeps its room's labels. The answer to the agent took its project from the task, so it follows.
-  expect(labelsOf(inRoom.id)).toEqual({ project: 'pond', agent: 'art', member: null, conversation: room.id });
-  expect(labelsOf(back.id)).toEqual({ project: 'shed', agent: 'art', member: null, conversation: room.id });
-  expect(labelsOf(mention.id).project).toBe('pond');
+  expect(labelsOf(inRoom.id)).toEqual({ project: 'shed', agent: 'art', member: null, conversation: room.id });
+  expect(labelsOf(back.id)).toEqual({ project: null, agent: 'art', member: null, conversation: room.id });
+  expect(labelsOf(mention.id).project).toBe('shed');
 });
 
 it('changes a task’s project one way: an edit that names another project is the same move', () => {

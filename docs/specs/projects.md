@@ -59,8 +59,9 @@ An agent that is told to work on a household project it is not on asks to be let
 - **Who may ask.** The agent itself, for itself, from a terminal session or a body. A household owner may file
   the same card for any agent. Nobody else: not another agent, not a member who is not a household owner. The
   rule is `asksToJoin` in `src/policy.ts`.
-- **The card** says who wants onto which project ("Let mark work on project pond?") and the reason given. It
-  is a setting, answered by a household owner like any other.
+- **The card** says who wants onto which project ("Let mark work on project pond?") and the reason given. A
+  household owner answers it with one plain Allow or Deny. No standing approval rule answers it, however
+  wide: being on a project lets an agent read what is filed under it, and that is an owner's to say each time.
 - **Allowing it** adds that one agent to that one project. The project's name, people, other agents and
   repositories are as they were.
 - **Refused.** An agent that asks to join a project it is already on is told so, and no card is filed. A

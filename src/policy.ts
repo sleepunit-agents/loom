@@ -214,7 +214,8 @@ const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('age
 const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
 /** Who may ask for an agent to be let onto a project: the agent itself, for itself, or a household owner
  * for any agent. Another agent, and a member who is not a household owner, may not ask for it. Asking
- * grants nothing: a household owner allows the card, and only then is the agent on the project. */
+ * grants nothing: a household owner allows the card, and only then is the agent on the project. No standing
+ * approval rule answers such a card (shared-household-proposals.ts, `alwaysAsks`). */
 const asksToJoin: Rule = any(agentItself, householdOwner);
 /** Using a secret. Secrets are the household owners' (tableRules.secrets): no other member reads one, sets
  * one or answers for one. An agent uses a secret on a household owner's word, and that word comes two ways:
