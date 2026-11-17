@@ -189,6 +189,22 @@ Entries are grouped by the part of the program they belong to.
 - What would change it: a dispatcher that can run a write without keeping its answer. Then these become
   operations and the gates become `may`.
 
+### A household owner can issue a token in another member's name
+- Where: `POST /api/signin/token` with `kind: "owner"` and any existing `member`
+  (`src/core/signin/shared-links.ts`, `ownerTokenInput` in `src/core/signin/shared-tokens.ts`).
+- What: the door hands the calling owner a bearer that signs in as the member named. With it the owner is
+  that member to every rule, their private threads with agents included. The owner ruled that the owner
+  role does not read another member's private thread; no rule lets it, and this door is how an owner who
+  set out to could. It leaves a token row with its label, which the household's token list shows.
+- What the door does not do: bind a token to a job. A bearer for a running job would be a second body in
+  that job's conversation, so a job's token is made only where its worker enrols it (`enrolBody`), and a
+  new one ends the job's other token.
+- Why accepted: a new member's first token is how they are let in, and a member who has lost every device
+  is let back in the same way. The household owner also runs the machine loom is on and can read its files,
+  so this door gives them nothing they could not take; it does not make it a rule that they may.
+- What would change it: an invitation the member redeems themselves, so that no bearer in their name is
+  ever shown to someone else. Then this door refuses a member other than the caller.
+
 ### A device sign-in's user code stays in the inbox item
 - Where: `src/shared-account-signin.ts` (`runtime.signInPage`).
 - What: for a provider's device flow, the short code the person types on the provider's page is part of the
