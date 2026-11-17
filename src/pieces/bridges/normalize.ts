@@ -37,6 +37,16 @@ export interface DiscordChannel {
   parent?: string;
 }
 
+/** Who the author summoned by writing their mention. Discord's `mentions` list
+ * also names the author of a message being replied to (the reply ping), which
+ * is not a summons: a plain reply to one bot's message in a room another agent
+ * answers must still reach that agent. The list stays the authority on who a
+ * written mention resolved to; the text only says which of them were written. */
+function discordSummons(content: string, resolved: string[]): string[] {
+  const written = new Set([...content.matchAll(/<@!?([^<>\s]+)>/g)].map(match => match[1]));
+  return [...new Set(resolved.filter(id => written.has(id)))];
+}
+
 export function normalizeDiscord(connection: PlatformConnection, payload: unknown, channel: DiscordChannel): IncomingMessage | null {
   const dispatch = discordDispatch.parse(payload);
   if (dispatch.t !== 'MESSAGE_CREATE') return null;
@@ -51,7 +61,7 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
     ...(channel.kind === 'dm' && channel.group ? { groupDm: true } : {}),
     isDm: channel.kind === 'dm', user: message.author.id, text: message.content,
     postedAt: new Date(message.timestamp).toISOString(),
-    mentions: [...new Set(message.mentions.map(mention => mention.id))],
+    mentions: discordSummons(message.content, message.mentions.map(mention => mention.id)),
     bot: message.author.bot ?? false, webhook: !!message.webhook_id,
   };
 }

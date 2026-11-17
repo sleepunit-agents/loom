@@ -2,6 +2,7 @@ import {expect,it,vi} from 'vitest';
 import {FakeClock} from '../../core/clock.js';
 import type {SecretUse} from '../secrets/role.js';
 import {bridgeReplyApi} from './reply-api.js';
+import {BridgeReplyNotSent} from './outbound.js';
 function fixture(platform:'discord'|'slack'='discord'){
  const clock=new FakeClock();let live=true;const channel=platform==='discord'?'123':'CROOM';
  const request=vi.fn<typeof fetch>(async()=>Response.json(platform==='discord'?{id:'456',channel_id:channel}:{ok:true,channel,ts:'1794432000.000001'}));
@@ -14,8 +15,14 @@ it.each(['discord','slack'] as const)('posts one %s part with no generated menti
  expect(f.request).toHaveBeenCalledOnce();const [url,options]=f.request.mock.calls[0];expect(url).toBe(platform==='discord'?'https://discord.com/api/v10/channels/123/messages':'https://slack.com/api/chat.postMessage');expect(options).toMatchObject({method:'POST',redirect:'error',headers:{Authorization:platform==='discord'?'Bot synthetic-token':'Bearer synthetic-token'}});
  const body=JSON.parse(String(options?.body));expect(body).toEqual(platform==='discord'?{content:'Hi <@everyone> & here',allowed_mentions:{parse:[],replied_user:false}}:{channel:'CROOM',text:'Hi &lt;@everyone&gt; &amp; here',mrkdwn:false,parse:'none',link_names:false,unfurl_links:false,unfurl_media:false,thread_ts:'1794432000.000000'});
 });
+it('says not sent, never uncertain, when the secret holder fails before any request',async()=>{
+ const f=fixture();vi.mocked(f.secrets.withValue).mockRejectedValueOnce(Error('holder away'));
+ await expect(f.api.post({channel:f.channel,thread:null},'Hi')).rejects.toMatchObject({again:true});expect(f.request).not.toHaveBeenCalled();
+ // Once the request is made, a failure is uncertain however early it comes.
+ f.request.mockRejectedValueOnce(Error('socket hang up'));await expect(f.api.post({channel:f.channel,thread:null},'Hi')).rejects.toThrow('uncertain');
+});
 it('rejects unsafe addresses and dead lifetimes before acquiring a token',async()=>{
- const f=fixture();for(const channel of ['../token','https://evil.test','123?x=y'])await expect(f.api.post({channel,thread:null},'Hi')).rejects.toThrow('uncertain');f.stop();await expect(f.api.post({channel:'123',thread:null},'Hi')).rejects.toThrow('uncertain');expect(f.secrets.withValue).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
+ const f=fixture();for(const channel of ['../token','https://evil.test','123?x=y'])await expect(f.api.post({channel,thread:null},'Hi')).rejects.toMatchObject({again:false});f.stop();await expect(f.api.post({channel:'123',thread:null},'Hi')).rejects.toBeInstanceOf(BridgeReplyNotSent);expect(f.secrets.withValue).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
 });
 it.each(['headers','body','holder return'] as const)('refuses an acknowledgement invalidated at %s',async phase=>{
  const f=fixture();let cancelled=false;
@@ -46,5 +53,5 @@ it.each([{status:503,body:{ok:true,channel:'CROOM',ts:'1794432000.000001'}},{sta
  const f=fixture('slack');f.request.mockResolvedValue(Response.json(input.body,{status:input.status}));await expect(f.api.post({channel:'CROOM',thread:null},'Hi')).rejects.toThrow(/^Bridge reply attempt uncertain$/);expect(f.request).toHaveBeenCalledOnce();
 });
 it.each([{platform:'slack' as const,channel:'https://evil.test',thread:null},{platform:'slack' as const,channel:'CROOM',thread:'../token'},{platform:'discord' as const,channel:'123',thread:'456'}])('refuses invalid platform address/thread before credentials: %j',async input=>{
- const f=fixture(input.platform);await expect(f.api.post(input,'Hi')).rejects.toThrow('uncertain');expect(f.secrets.withValue).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
+ const f=fixture(input.platform);await expect(f.api.post(input,'Hi')).rejects.toMatchObject({again:false});expect(f.secrets.withValue).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
 });

@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSends } from '../../core/data/schema.js';
-import { BridgeSends } from './sends.js';
+import { BridgeSends, reviewReply } from './sends.js';
+import { BridgeReplyNotSent } from './outbound.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -48,13 +49,15 @@ describe('approved bridge reply queue', () => {
     f.db.update(bridgeConnections).set({ enabled: true }).run();
     await f.sends.flush();
     expect(f.post).not.toHaveBeenCalled();
-    f.sends.release('reply');
+    reviewReply(f.db, 'reply', 'release');
     await f.sends.flush();
     expect(f.read().state).toBe('sent');
     f.sends.queue({ id: 'held', incoming: 'in', text: 'Hold', held: true });
-    f.sends.dismiss('held');
-    f.sends.dismiss('held');
+    reviewReply(f.db, 'held', 'dismiss');
     expect(f.read('held').state).toBe('dismissed');
+    // A decided reply is no longer awaiting one.
+    expect(() => reviewReply(f.db, 'held', 'dismiss')).toThrow('not awaiting');
+    expect(() => reviewReply(f.db, 'missing', 'dismiss')).toThrow('Unknown send');
   });
 
   it('waits for a reconnect without attempting a post', async () => {
@@ -78,8 +81,8 @@ describe('approved bridge reply queue', () => {
     expect(JSON.stringify(f.read())).not.toContain('credential');
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(1);
-    expect(() => f.sends.release('reply')).toThrow();
-    f.sends.dismiss('reply');
+    expect(() => reviewReply(f.db, 'reply', 'release')).toThrow('not awaiting');
+    reviewReply(f.db, 'reply', 'dismiss');
     expect(f.read().state).toBe('dismissed');
   });
 
@@ -134,6 +137,47 @@ describe('approved bridge reply queue', () => {
     await drain;
     expect(nested).toBe(drain);
     expect(f.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a reply that never left pending, and sends it once the transport can', async () => {
+    const f = fixture();
+    f.post.mockRejectedValueOnce(new BridgeReplyNotSent(true));
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello back' });
+    await f.sends.flush();
+    // Refused before any request: not uncertain, which could only be dismissed.
+    expect(f.read()).toMatchObject({ state: 'pending', postedId: null });
+    // Its own write must not make it spin: the next attempt waits a little.
+    await f.sends.flush();
+    expect(f.post).toHaveBeenCalledTimes(1);
+    for (let second = 0; second < 5; second++) f.advance();
+    await f.sends.flush();
+    expect(f.read()).toMatchObject({ state: 'sent', postedId: 'posted' });
+    expect(f.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not claim a reply while the transport is not ready', async () => {
+    const f = fixture();
+    let ready = false;
+    const sends = new BridgeSends(f.db, { ready: () => ready, post: f.post }, f.now, f.changed);
+    sends.queue({ id: 'reply', incoming: 'in', text: 'Hello back' });
+    f.changed.mockClear();
+    await sends.flush();
+    expect(f.read().state).toBe('pending'); expect(f.post).not.toHaveBeenCalled(); expect(f.changed).not.toHaveBeenCalled();
+    ready = true; await sends.flush();
+    expect(f.read().state).toBe('sent');
+  });
+
+  it('hands a reply no request can be built for to a person, and keeps a half-sent one uncertain', async () => {
+    const f = fixture();
+    f.post.mockRejectedValueOnce(new BridgeReplyNotSent(false));
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello back' });
+    await f.sends.flush();
+    expect(f.read().state).toBe('held');
+    // The first part is out; the second never left. The reply as a whole is not unsent.
+    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
+    f.sends.queue({ id: 'long', incoming: 'in', text: 'x'.repeat(2001) });
+    await f.sends.flush();
+    expect(f.read('long').state).toBe('uncertain');
   });
 
   it('uses existing chunking and records uncertainty after a partial reply', async () => {

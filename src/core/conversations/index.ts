@@ -3,6 +3,7 @@ import {privateInboxEnvelope,isPrivateInboxQuestion} from './private-inbox-words
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
 import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
+import { acceptAnswer } from './answer-rule.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, max, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
@@ -29,11 +30,12 @@ export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => st
 export class Conversations {
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {}
 
-  open(input: ConversationInput): Conversation {
+  /** `at` is for a caller that stamps a second record of the same moment (a
+   * thread and its conversation): it passes the one time it read. */
+  open(input: ConversationInput, at = this.now()): Conversation {
     return this.db.transaction(() => {
       const existing = this.db.select().from(conversations).where(and(eq(conversations.agent, input.agent), eq(conversations.venue, input.venue), eq(conversations.place, input.place))).get();
       if (existing) return existing;
-      const at = this.now();
       return this.db.insert(conversations).values({ ...input, id: `cv-${randomUUID()}`, startedAt: at, lastAt: at, turnCount: 0 }).returning().get();
     });
   }
@@ -44,9 +46,10 @@ export class Conversations {
     return row;
   }
 
-  turn(input: Omit<Turn, 'seq' | 'at'>): typeof turns.$inferSelect {
+  /** `at` as for open(): a thread message and its turn are one moment. */
+  turn(input: Omit<Turn, 'seq' | 'at'>, at = this.now()): typeof turns.$inferSelect {
     return this.db.transaction(() => {
-      const conversation = this.conversation(input.conversation), at = this.now();
+      const conversation = this.conversation(input.conversation);
       const seq = conversation.turnCount + 1;
       const row = this.db.insert(turns).values({ ...input, seq, at }).returning().get();
       this.db.update(conversations).set({ turnCount: seq, lastAt: at }).where(eq(conversations.id, conversation.id)).run();
@@ -140,11 +143,7 @@ export class Conversations {
       const item = this.item(itemId);
       if (item.toKind !== 'person' || !item.answers) throw new Error('Item is not a question for a person');
       if (item.thread || isPrivateInboxQuestion(item)) throw new Error('Answer through encrypted conversation service');
-      if (item.state === 'answered') return item;
-      if (item.state !== 'waiting') throw new Error('Question is already settled');
-      if (item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
-      if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
-      if ((answer === 'words' || answer === 'replied') && !words?.trim()) throw new Error('Answer needs words');
+      if (acceptAnswer(item, member, answer, words, false) === 'repeat') return item;
       const at = this.now();
       inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
       const updated = this.db.update(inbox).set({ state: 'answered', answer, answerText: words ?? null, answeredBy: member, answeredAt: at, changedAt: at }).where(eq(inbox.id, itemId)).returning().get()!;

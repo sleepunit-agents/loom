@@ -15,10 +15,17 @@ const sl = (changes = {}) => ({ type: 'event_callback', team_id: 'team', event: 
 
 describe('authenticated Discord message normalisation', () => {
   it('preserves platform identity and text, and normalises timestamps and mentions', () => {
-    expect(normalizeDiscord(discord, dc(), { id: 'channel', guild: 'guild', kind: 'channel' })).toEqual({
+    expect(normalizeDiscord(discord, dc({ content: '<@bot> hello <@!bot>' }), { id: 'channel', guild: 'guild', kind: 'channel' })).toEqual({
       id: 'message', connection: 'dc', channel: 'channel', isDm: false, user: 'person',
-      text: 'hello', postedAt: '2026-11-14T16:00:00.000Z', mentions: ['bot'], bot: false, webhook: false,
+      text: '<@bot> hello <@!bot>', postedAt: '2026-11-14T16:00:00.000Z', mentions: ['bot'], bot: false, webhook: false,
     });
+  });
+  it('does not count the reply ping, or an unresolved mention in the text, as a summons', () => {
+    const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
+    // A reply to the bot's message: Discord lists the bot although nobody wrote its mention.
+    expect(normalizeDiscord(discord, dc({ type: 19, content: 'hello' }), channel)?.mentions).toEqual([]);
+    // Mention text Discord did not resolve (inside a code block, say) summons nobody.
+    expect(normalizeDiscord(discord, dc({ content: '`<@other>` and <@bot>' }), channel)?.mentions).toEqual(['bot']);
   });
   it('uses the resolved thread parent for filters and retains the actual thread', () => {
     expect(normalizeDiscord(discord, dc({ channel_id: 'thread', type: 19 }),

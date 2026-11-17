@@ -3,6 +3,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
+import { incomingId, inboxSourceId } from './keys.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
@@ -23,9 +24,11 @@ export interface IncomingMessage {
   webhook?: boolean;
 }
 
+/** Stored words that are empty were either sent empty or erased at the keep
+ * time (core/conversations/private-bridge-words.ts); neither can be compared. */
 function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
  return row.channel===message.channel&&row.thread===(message.thread??null)&&row.isDm===message.isDm
-  &&row.user===message.user&&row.text===message.text&&row.postedAt===message.postedAt;
+  &&row.user===message.user&&(row.text===''||row.text===message.text)&&row.postedAt===message.postedAt;
 }
 
 export class BridgeIncoming {
@@ -40,7 +43,7 @@ export class BridgeIncoming {
    * spool supplies its original receipt time when processing was delayed. */
   receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
-      const id = `bi:${JSON.stringify([message.connection, message.id])}`;
+      const id = incomingId(message.connection, message.id);
       const existing = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       if (existing) {
         if (!sameMessage(existing,message)) throw new Error('Incoming id reused for a different message');
@@ -74,7 +77,7 @@ export class BridgeIncoming {
       if (state === 'delivered') {
         // Include workspace and the real channel even for DMs: outside user ids
         // and thread ids are not globally unique. Never accept a claimed member.
-        const sourceId = JSON.stringify([connection.workspace, message.channel, message.id]);
+        const sourceId = inboxSourceId(connection.workspace, message.channel, message.id);
         const delivered = this.db.select().from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, connection.agent), eq(inbox.source, connection.platform), eq(inbox.sourceId, sourceId))).get();
         const fromKind = sender ? 'agent' : link ? 'person' : 'unknown';
         const fromId = sender?.agent ?? link?.member ?? null;
@@ -84,12 +87,18 @@ export class BridgeIncoming {
             channel: bridgeIncoming.channel, thread: bridgeIncoming.thread, isDm: bridgeIncoming.isDm, text: bridgeIncoming.text, postedAt: bridgeIncoming.postedAt })
             .from(inboxRefs).innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref))
             .where(and(eq(inboxRefs.item, delivered.id), eq(bridgeIncoming.state, 'delivered'))).all()
-            .find(row => row.id === `bi:${JSON.stringify([row.connection, message.id])}`);
+            .find(row => row.id === incomingId(row.connection, message.id));
           if (!original || !sameMessage(original,message)) throw Error('Bridge delivery identity changed');
           deliveredAt = delivered.at;
           conversation = delivered.conversation;
           matchedMember = delivered.fromKind === 'person' ? delivered.fromId : null;
         } else {
+          // Which conversation a message joins is decided here and nowhere else.
+          // The adapter supplies the platform's own address (channel, and the
+          // thread a message starts or sits in); the place adds the workspace
+          // and, for a DM, who it is private to. Only a one-to-one DM from a
+          // linked member is private to a member: a group DM has several
+          // senders, and an unlinked sender is nobody in this household.
           const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
           // Future messages after a person-link change receive a new private
           // place; duplicate delivery always keeps its original recorded scope.

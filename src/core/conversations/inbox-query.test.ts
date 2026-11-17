@@ -5,7 +5,7 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { actionResults, agents, household, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
+import { actionResults, agents, bridgeConnections, bridgeIncoming, household, inbox, inboxReads, members, messages, secrets, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { InboxQueries, inboxQueryFields } from './inbox-query.js';
 const clients: Database.Database[] = [];
@@ -504,4 +504,21 @@ it('retries a private Inbox read when an overlapping read-marker write invalidat
     expect((await stream.next()).value).toMatchObject({revision:1,patches:[{path:[],value:{inboxItems:[{id:f.ask.inboxItem,read:true,body:{words:'Order the private pump?'}}]}}]});
     expect(f.opens()).toBe(2);
   } finally {await stream.return?.();live.close();}
+});
+it('gives bridge direct-message words to people and not to the agent\'s own token', async () => {
+  const f = await fixture(), at = '2026-11-14T18:00:00.000Z', cvs = f.comms.threads.conversations;
+  // This reader's rule lets the agent see its own unlabelled mail, as production's does.
+  const service = new InboxQueries(f.db, f.key, (viewer, row) => viewer.kind === 'agent' ? eq(row.agent, viewer.id) : viewer.kind === 'member' ? sql`true` : sql`false`, () => at);
+  f.db.insert(secrets).values({ name: 'TOKEN', description: '', changedAt: at, changedBy: 'alice' }).run();
+  f.db.insert(bridgeConnections).values({ id: 'c', platform: 'slack', agent: 'art', workspace: 'w', botUser: 'bot', tokenSecret: 'TOKEN', enabled: true, state: 'connected', stateAt: at }).run();
+  const mail = (id: string, isDm: boolean) => {
+    const cv = cvs.open({ agent: 'art', venue: 'slack', place: id, label: id });
+    f.db.insert(bridgeIncoming).values({ id, connection: 'c', channel: id, isDm, user: 'stranger', text: id, postedAt: at, receivedAt: at, state: 'delivered', conversation: cv.id }).run();
+    return cvs.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'slack', sourceId: id, fromKind: 'unknown', words: `${id} words`, refs: [id] });
+  };
+  const dm = mail('dm', true), room = mail('room', false), art = { kind: 'agent' as const, id: 'art' };
+  expect(await service.body(art, room.id)).toMatchObject({ words: 'room words' });
+  expect(service.item(art, dm.id)?.id).toBe(dm.id);
+  expect(await service.body(art, dm.id)).toBeNull();
+  expect(await service.body(alice, dm.id)).toMatchObject({ words: 'dm words' });
 });

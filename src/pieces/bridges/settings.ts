@@ -3,7 +3,8 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeSends } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople } from '../../core/data/schema.js';
+import { reviewReply } from './sends.js';
 const text=z.string().trim().min(1).max(200), platform=z.enum(['discord','slack']);
 const address={platform,workspace:text};
 export const bridgeConfiguration=z.discriminatedUnion('action',[
@@ -66,14 +67,7 @@ export class BridgeSettings {
      const {action:_action,...row}=input;this.db.insert(bridgePeople).values(row).onConflictDoUpdate({target:[bridgePeople.platform,bridgePeople.workspace,bridgePeople.user],set:row}).run();break;
     }
     case 'removePerson':this.db.delete(bridgePeople).where(and(eq(bridgePeople.platform,input.platform),eq(bridgePeople.workspace,input.workspace),eq(bridgePeople.user,input.user))).run();break;
-    case 'review':{
-     const row=this.db.select().from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
-     if(!row)throw Error('Unknown send');
-     const state=input.decision==='release'?'pending':'dismissed';
-
-     if(row.state!=='held'&&(input.decision!=='dismiss'||row.state!=='uncertain'))throw Error('Reply is not awaiting this review');
-     if(!this.db.update(bridgeSends).set({state}).where(and(eq(bridgeSends.id,input.id),eq(bridgeSends.state,row.state))).run().changes)throw Error('Reply state changed');
-    }
+    case 'review':reviewReply(this.db,input.id,input.decision);
    }
   }));
  }

@@ -3,14 +3,16 @@
  * ACK/resume advancement; metadata lookup and admission happen in drain().
  * Channel resolvers read an authenticated adapter cache synchronously. Missing
  * metadata and held messages retain their receipt until retry or one-hour expiry.
+ * Expiry loses the message: a held row is then closed as dropped, since only its
+ * receipt could retry it, and composition is told how many receipts were lost.
  * This service performs no network IO and is owned/closed by composition.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections } from '../../core/data/schema.js';
-import { BridgeEvents, type BridgeCheckpoint } from './events.js';
+import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
+import { BridgeEvents, RAW_EVENT_LIFETIME, type BridgeCheckpoint } from './events.js';
 import { BridgeIncoming } from './incoming.js';
 import { normalizeDiscord, normalizeSlack, type DiscordChannel, type SlackChannel } from './normalize.js';
 
@@ -30,8 +32,13 @@ export interface BridgeChannelCache {
 export class BridgeReceiver {
   private readonly events: BridgeEvents;
   private readonly incoming: BridgeIncoming;
-  constructor(private db: DataDatabase, clock: Clock, private channels: BridgeChannelCache) {
-    this.events = new BridgeEvents(db, clock);
+  /** `lost` hears of receipts that expired unprocessed, and how many of those were held messages now closed. */
+  constructor(private db: DataDatabase, private clock: Clock, private channels: BridgeChannelCache,
+    lost: (expired: { events: number; held: number }) => void = () => {}) {
+    this.events = new BridgeEvents(db, clock, events => lost({ events, held: this.closeExpiredHeld() }));
+    // Rows left held by a process that stopped before their receipts expired.
+    const stale = this.closeExpiredHeld();
+    if (stale) lost({ events: 0, held: stale });
     this.incoming = new BridgeIncoming(db, () => new Date(clock.now()).toISOString());
   }
 
@@ -120,6 +127,14 @@ export class BridgeReceiver {
       if(row.state==='held')return false;
       return row.state==='delivered'?delivered?.(row,raw):undefined;
     }, limit);
+  }
+
+  /** A held row keeps its receipt's arrival time, so one older than the receipt
+   * lifetime has no receipt left and can never be retried. Say so on the row. */
+  private closeExpiredHeld(): number {
+    const cutoff = new Date(this.clock.now() - RAW_EVENT_LIFETIME).toISOString();
+    return this.db.update(bridgeIncoming).set({ state: 'dropped', reason: sql`'Held for an hour without delivery: ' || coalesce(${bridgeIncoming.reason}, 'no reason recorded')` })
+      .where(and(eq(bridgeIncoming.state, 'held'), sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${cutoff})`)).run().changes;
   }
 
   private connection(connection: string, platform?: 'discord' | 'slack') {

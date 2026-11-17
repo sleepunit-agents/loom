@@ -4,6 +4,7 @@ import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxAnswer,hasPrivateInboxPayload,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion,isPrivateInboxQuestion} from './private-inbox-words.js';
 import { wordsDeadline } from './retention.js';
+import { answerable } from './answer-rule.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
 import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
@@ -12,6 +13,7 @@ import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { actionResults, household, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
+import { carriesDirectMessage } from '../data/bridge-secrets-visibility.js';
 import type { WordsKey } from './words.js';
 
 const projected=Symbol('Inbox display projection');
@@ -50,9 +52,7 @@ export class InboxQueries {
   }
   canAnswer(viewer: Viewer, id: string): boolean {
     const item = this.current(viewer, id);
-    return viewer.kind === 'member' && !!item && item.toKind === 'person' && item.to === viewer.id
-      && item.state === 'waiting' && !!item.answers && !item.waitsOnKind
-      && !['task','approval','secret-request'].includes(item.source);
+    return viewer.kind === 'member' && !!item && item.to === viewer.id && answerable(item);
   }
   list(viewer: Viewer, filter: InboxFilter = {}): Item[] {
     const { limit = 50, offset = 0 } = filter;
@@ -294,6 +294,8 @@ export class InboxQueries {
       if(!current||JSON.stringify(current)!==JSON.stringify(item)||this.keepDays()!==days||handoffDeadline(current,days)<=Date.parse(this.now()))return null;
       retainedUntil?.(until);return {words};
     }
+    // Direct-message words are for people; an agent's token reads its rooms, not its DMs.
+    if (viewer.kind !== 'member' && carriesDirectMessage(this.db, item)) return null;
     if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
     const row = () => this.readSet?(()=>{const message=this.readSet!.message(item),thread=this.readSet!.thread(item.thread!);return message&&thread?{message,conversation:thread.conversation}:undefined;})():this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread))

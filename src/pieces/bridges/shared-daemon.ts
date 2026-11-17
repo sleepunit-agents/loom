@@ -2,6 +2,7 @@ import { liveDiscordReceipts } from './discord-receipts.js';
 import { slackFiles, type SlackFilesPermit } from './slack-files.js';
 import { BridgeSends } from './sends.js';
 import { bridgeReplyApi } from './reply-api.js';
+import { BridgeReplyNotSent } from './outbound.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
  * asynchronous metadata/drain work follows separately. Installed parts share the
  * database directly; all outside permissions live at their respective doors. */
@@ -52,13 +53,19 @@ export class SharedBridges {
  private readonly unobserve:()=>void;
  private closing?:Promise<void>;
  constructor(private readonly options:SharedBridgeOptions){
-  this.sends=new BridgeSends(options.db,{post:async(row,address,text)=>{
-   const life=this.lives.get(row.id);if(!life||!this.current(life)||configuration(row)!==life.key)throw Error('Bridge reply attempt uncertain');
+  const sender=(row:Connection)=>{const life=this.lives.get(row.id);return life&&this.current(life)&&configuration(row)===life.key?life:undefined;};
+  this.sends=new BridgeSends(options.db,{ready:row=>!!sender(row),post:async(row,address,text)=>{
+   // No lifetime to send through: nothing has left, so the reply waits for the next one.
+   const life=sender(row);if(!life)throw new BridgeReplyNotSent(true);
    return bridgeReplyApi({platform:row.platform,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:options.clock,current:()=>this.current(life),request:options.request}).post(address,text);
   }},()=>new Date(options.clock.now()).toISOString(),()=>{},write=>{
    const result=options.writes.run(write);for(const _error of result.notificationErrors)this.report();return result.value;
   });
-  this.receiver=new BridgeReceiver(options.db,options.clock,this.channels);
+  // A receipt that expires was never delivered. Nothing can bring it back, so it is at least reported.
+  this.receiver=new BridgeReceiver(options.db,options.clock,this.channels,lost=>{
+   try{options.reportError(new Error(`${lost.events} received bridge event(s) expired before they could be processed; ${lost.held} held message(s) were dropped`));}catch{ /* reporting never retries effects */ }
+   if(lost.held)this.notify();
+  });
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
   this.credentials=bridgeCredentials(options.source,options.clock);
   this.unobserve=this.credentials.observe(()=>{void this.reconcile();});
@@ -95,7 +102,11 @@ export class SharedBridges {
   for(const _error of result.notificationErrors)this.report();
  }
  private retire(life:Life){
-  life.active=false;life.receipts?.reset();life.retry?.();life.channels?.close();life.secrets.close();
+  // A resume cursor outlives a restart, a pause and a lost socket, but not the credential it was made
+  // under: when this connection's own secrets or secret names changed, the next lifetime identifies afresh.
+  const row=this.options.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,life.connection.id)).get();
+  if(life.receipts&&!this.closed&&row&&(this.stamp(life.connection)!==life.stamp||row.tokenSecret!==life.connection.tokenSecret)){try{this.receiver.reset(row.id);}catch{this.report();}}
+  life.active=false;life.retry?.();life.channels?.close();life.secrets.close();
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
  }
@@ -145,6 +156,8 @@ export class SharedBridges {
     this.lives.set(row.id,life);this.state(row.id,'connecting');
     this.track(this.connect(life));
    }
+   // Each pass also retries replies that were claimed but could not be sent.
+   if(!this.closed)this.track(this.sends.flush());
   }).catch(()=>this.report()).finally(()=>{
    this.syncing=undefined;
    if(!this.closed)this.cancelRetry=this.options.clock.at(this.options.clock.now()+5000,()=>{void this.reconcile();});

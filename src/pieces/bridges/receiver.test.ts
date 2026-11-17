@@ -27,7 +27,8 @@ function fixture() {
     discord: (_connection, channel) => ({ id: channel, guild: 'w', kind: 'channel' }),
     slack: (_connection, channel) => ({ id: channel, kind: 'channel' }),
   };
-  const receiver = new BridgeReceiver(db, clock, channels);
+  const expired: { events: number; held: number }[] = [];
+  const receiver = new BridgeReceiver(db, clock, channels, lost => expired.push(lost));
   cleanups.push(() => { receiver.close(); client.close(); });
   const raw = () => db.select().from(bridgeRawEvents).all();
   const discord = (sequence = 1, message = 'm') => Buffer.from(JSON.stringify({ op: 0, t: 'MESSAGE_CREATE', s: sequence,
@@ -37,7 +38,7 @@ function fixture() {
     payload: { type: 'event_callback', event_id: eventId, team_id: 'w', event: { type, channel: 'room', ts: '1794432000.000001', user: 'user', text: 'Friday?' } },
   }, null, 2));
   const checkpoint = (sequence = 1) => ({ session: 'session', sequence, resumeUrl: 'wss://gateway.discord.gg/' });
-  return { client, db, clock, now, receiver, channels, raw, discord, slack, checkpoint };
+  return { client, db, clock, now, receiver, channels, raw, discord, slack, checkpoint, expired };
 }
 
 it.each(['discord', 'slack'] as const)('moves original %s frame into one conversation delivery atomically', platform => {
@@ -102,6 +103,25 @@ it.each(['discord', 'slack'] as const)('waits for trusted %s channel metadata an
   f.clock.advance(3_600_000);
   expect(f.raw()).toEqual([]);
   expect(f.receiver.drain(platform)).toBe(0);
+  // The message is gone for good. That is said out loud, once.
+  expect(f.expired).toEqual([{ events: 1, held: 0 }]);
+});
+
+it('closes a held message when its receipt expires, so nothing stays held with no way to retry', () => {
+  const f = fixture();
+  f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
+  f.receiver.discord('discord', f.discord(), f.checkpoint());
+  f.receiver.drain('discord');
+  expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ state: 'held', reason: 'Connection disabled' });
+  f.clock.advance(3_599_999);
+  expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('held'); expect(f.expired).toEqual([]);
+  f.clock.advance(1);
+  expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ state: 'dropped', reason: 'Held for an hour without delivery: Connection disabled', conversation: null });
+  expect(f.expired).toEqual([{ events: 1, held: 1 }]);
+  // Fixing the configuration afterwards cannot bring it back, and does not pretend to.
+  f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
+  expect(f.receiver.drain('discord')).toBe(0);
+  expect(f.db.select().from(inbox).all()).toEqual([]);
 });
 
 it.each(['discord', 'slack'] as const)('delivers later %s events while metadata is missing, then recovers the deferred message', platform => {
@@ -112,7 +132,7 @@ it.each(['discord', 'slack'] as const)('delivers later %s events while metadata 
   const later = Buffer.from((platform === 'discord' ? f.discord(2, 'later') : f.slack('ack2', 'ev2')).toString().replace('"room"', '"other"'));
   // Direct mentions let the later channel deliver without a default route.
   const parsed = JSON.parse(later.toString());
-  if (platform === 'discord') parsed.d.mentions = [{ id: 'bot' }];
+  if (platform === 'discord') { parsed.d.mentions = [{ id: 'bot' }]; parsed.d.content = '<@bot> ' + parsed.d.content; }
   else parsed.payload.event.text = '<@bot> Friday?';
   if (platform === 'discord') {
     f.receiver.discord(platform, first, f.checkpoint());
