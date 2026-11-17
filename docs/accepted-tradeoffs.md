@@ -761,19 +761,33 @@ Entries are grouped by the part of the program they belong to.
   words key. The next body of the same harness is handed it, puts the files back and tells the harness to
   continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
   agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
+- Where a session is kept at all: only where the harness's directory is that body's alone for that one
+  job. A restored session is the conversation's words in plain files beside the harness's sign-in
+  (`~/.claude`, or `CLAUDE_CONFIG_DIR`). A worker says the directory is the body's own
+  (`LOOM_BODY_OWN_HARNESS=1`) only for a container that is removed after the body and has nothing of the
+  machine mounted writable into it. A body run as a plain process, and a house whose account sign-in
+  directory is mounted in (`accountLogins`), share that directory with other bodies and leave it behind:
+  there no session is kept or restored, and every body starts fresh with the kept history. So **resume
+  needs a house that carries its own sign-in**. The body never makes the harness's directory; a harness
+  that has none keeps no session.
 - Limits, each stated once in `src/core/conversations/session-limit.ts`: a packed session holds at most
-  700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is kept for the
-  household's keep time for words; it is handed on only within one family of models.
+  700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is handed on
+  only within one family of models. It is erased when the household's keep time for words has passed
+  since the session was STARTED, however often it has been saved since (`conversation_sessions.saved_at`
+  is that start), so no word in it outlives the keep time; the next body then starts fresh.
 - Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
   different harness or family of models; a session past the keep time; one too large to pack (which also
-  removes the one kept before); a conversation answered after the session was saved (its body died after
-  replying, or another harness answered since), so that a session behind what was said is never
+  removes the one kept before); a conversation answered after the session was last saved (its body died
+  after replying, or another harness answered since), so that a session behind what was said is never
   continued; a harness that cannot continue the session it was handed and ends having said nothing, in
-  which case the same body runs the work once more, afresh.
+  which case the same body runs the work once more, afresh. A body that is handed nothing it can continue
+  tells loom at once, and what was kept is removed; one past its keep time is removed by the words' sweep.
 - Who can read it: nobody but the body holding the conversation's job. The table is not served by the
   query door and no page shows it, to an owner either: a session is the model's own record of the
   conversation, words included. Both doors (`conversation.session`, `conversation.sessionSave`) ask for
-  that body. A conversation has one unended job at a time, so two bodies cannot each continue and save one
+  that body, and the body program keeps both from the model's own tools, so a model cannot store a
+  session of its own making for the next body to continue. A pack is put back without following a link
+  at any step of its path and without writing over a file that is there. A conversation has one unended job at a time, so two bodies cannot each continue and save one
   session.
 - Where: `src/core/conversations/sessions.ts` and `shared-conversation-sessions.ts`; the body's side is
   `src/runtime/body-session.ts`, `body-program.ts` and the adapter (`claude-body.ts`, `sessionFiles`).
@@ -782,11 +796,15 @@ Entries are grouped by the part of the program they belong to.
   and the next body may run on any machine. Sealed and unread because it holds the words of what may be a
   private conversation. The body removes the files from its machine once they are handed over.
 - What this costs: a continued session re-reads all of itself on every message, and grows until it passes
-  the size limit and the conversation starts fresh. A body killed between answering and saving leaves a
-  transcript in the harness's directory until its container goes; on a machine that runs bodies as plain
-  processes it stays until the account's directory is cleaned. A continued session does not see changes
-  to the agent's identity pages until it next starts fresh.
-- Would change it: sessions passing 700 KB so often that conversations keep starting over. Then a session
+  the size limit and the conversation starts fresh. A conversation that never pauses still starts fresh
+  once in every keep time. A continued session does not see changes to the agent's identity pages until
+  it next starts fresh. On a worker that mounts the sign-in directory, or runs bodies as processes, there
+  is no resume at all.
+- Would change it: wanting resume where the sign-in directory is shared. Claude Code would have to keep
+  its sessions apart from its sign-in. Its program names `CLAUDE_CONFIG_DIR` (which moves both together)
+  and `CLAUDE_SECURESTORAGE_CONFIG_DIR` (undocumented; what it moves was not established), and nothing
+  that moves only `projects/`. A per-job directory with the sign-in elsewhere would then be the body's
+  own. Or: sessions passing 700 KB so often that conversations keep starting over. Then a session
   is sent in pieces, or the harness's own compaction is asked for before the limit. Or Codex bodies
   answering on bridges: its sessions directory is packed the same way, in its adapter.
 

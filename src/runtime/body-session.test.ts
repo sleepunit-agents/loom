@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -20,7 +20,7 @@ function home() {
   writeFileSync(join(project, session, 'tool-results', 'one.txt'), 'A LONG TOOL RESULT');
   writeFileSync(join(project, 'another-session-9.jsonl'), 'SOMEBODY ELSE');
   writeFileSync(join(root, '.credentials.json'), 'THE ACCOUNT');
-  return { root, env: { CLAUDE_CONFIG_DIR: root }, project };
+  return { root, env: { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' }, project };
 }
 
 it('says which paths are a session\'s own: its transcript and what is under its directory, in one project', () => {
@@ -73,13 +73,14 @@ it('takes the kept session from loom, hands back the one the run left, and leave
   const calls: [string, unknown][] = [];
   const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]);
     return operation === 'conversation.session' ? { ok: true as const, value: { session: { session, files: kept } } } : { ok: true as const, value: { saved: true } }; } };
-  const keeper = bodySessions(client as never, 'claude', { CLAUDE_CONFIG_DIR: after })!;
+  const keeper = bodySessions(client as never, 'claude', { CLAUDE_CONFIG_DIR: after, LOOM_BODY_OWN_HARNESS: '1' })!;
   expect(await keeper.take()).toBe(session);
   expect(existsSync(join(after, 'projects', '-house', `${session}.jsonl`))).toBe(true);
   // The run went on in the same session and added to it.
   writeFileSync(join(after, 'projects', '-house', `${session}.jsonl`), '{"type":"user"}\n{"type":"assistant"}\n{"type":"user"}\n');
   await keeper.save(session);
   expect(calls.map(call => call[0])).toEqual(['conversation.session', 'conversation.sessionSave']);
+  expect(calls[1][1]).toHaveProperty('files');
   const saved = calls[1][1] as { session: string; files: string };
   expect(saved.session).toBe(session);
   const check = mkdtempSync(join(tmpdir(), 'loom-body-session-')); made.push(check); unpackSession(check, saved.files, session);
@@ -90,16 +91,76 @@ it('takes the kept session from loom, hands back the one the run left, and leave
 
 it('starts fresh, and never fails, when loom has none, loom is away, or what it hands over is not a session', async () => {
   const root = mkdtempSync(join(tmpdir(), 'loom-body-session-')); made.push(root);
-  const answers: unknown[] = [{ ok: true, value: { session: null } }, { ok: false, code: 'denied', message: 'no' }, { ok: true, value: { session: { session, files: 'bm90IGd6aXA=' } } }, { ok: true, value: { session: { session: '../x', files: 'eA==' } } }];
-  for (const answer of answers) expect(await bodySessions({ command: async () => answer } as never, 'claude', { CLAUDE_CONFIG_DIR: root })!.take()).toBeUndefined();
-  expect(await bodySessions({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', { CLAUDE_CONFIG_DIR: root })!.take()).toBeUndefined();
+  const env = { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' };
+  const answers: unknown[] = [{ ok: true, value: { session: null } }, { ok: true, value: { session: { session, files: 'bm90IGd6aXA=' } } }, { ok: true, value: { session: { session: '../x', files: 'eA==' } } }];
+  for (const answer of answers) {
+    const calls: unknown[] = [];
+    const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]); return operation === 'conversation.session' ? answer : { ok: true, value: { saved: false } }; } };
+    expect(await bodySessions(client as never, 'claude', env)!.take()).toBeUndefined();
+    // Handed nothing it can continue, it says so at once: what loom keeps is of no use to this body and is removed.
+    expect(calls).toEqual([['conversation.session', {}], ['conversation.sessionSave', { session: null }]]);
+  }
+  // Refused, or loom away: nothing more is asked, and nothing fails.
+  const refused: string[] = [];
+  expect(await bodySessions({ command: async (operation: string) => { refused.push(operation); return { ok: false, code: 'denied', message: 'no' }; } } as never, 'claude', env)!.take()).toBeUndefined();
+  expect(refused).toEqual(['conversation.session']);
+  expect(await bodySessions({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', env)!.take()).toBeUndefined();
   // A run that left no session, or one too large to pack, says so; loom then removes what it kept.
   const said: unknown[] = [];
-  const keeper = bodySessions({ command: async (_operation: string, input: unknown) => { said.push(input); return { ok: true, value: { saved: false } }; } } as never, 'claude', { CLAUDE_CONFIG_DIR: root })!;
+  const keeper = bodySessions({ command: async (_operation: string, input: unknown) => { said.push(input); return { ok: true, value: { saved: false } }; } } as never, 'claude', env)!;
   await keeper.save(undefined); await keeper.save('no-such-session-1');
   expect(said).toEqual([{ session: null }, { session: null }]);
-  await bodySessions({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', { CLAUDE_CONFIG_DIR: root })!.save(session);
-  // A harness with no sessions, and a directory that cannot be written, have no keeper: the body runs as before.
-  expect(bodySessions({ command: async () => ({}) } as never, 'codex', { CLAUDE_CONFIG_DIR: root })).toBeUndefined();
-  expect(bodySessions({ command: async () => ({}) } as never, 'claude', { CLAUDE_CONFIG_DIR: '/proc/loom-no-such-place' })).toBeUndefined();
+  await bodySessions({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', env)!.save(session);
+});
+
+it('keeps no session unless the harness directory is this body\'s alone, is there already, and can be written', () => {
+  const root = mkdtempSync(join(tmpdir(), 'loom-body-session-')); made.push(root);
+  const client = { command: async () => ({ ok: true, value: { session: null } }) } as never;
+  expect(bodySessions(client, 'claude', { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' })).toBeDefined();
+  // Not said to be the body's own: a plain process, or a container with the sign-in directory mounted in.
+  for (const env of [{ CLAUDE_CONFIG_DIR: root }, { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '0' }, { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: 'true' }]) expect(bodySessions(client, 'claude', env)).toBeUndefined();
+  // A harness directory that is not there is not made: no directory, no session.
+  const missing = join(root, 'no-claude-here');
+  expect(bodySessions(client, 'claude', { CLAUDE_CONFIG_DIR: missing, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(existsSync(missing)).toBe(false);
+  const home = join(root, 'home');mkdirSync(home);
+  expect(bodySessions(client, 'claude', { HOME: home, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(existsSync(join(home, '.claude'))).toBe(false);
+  // A file where the directory should be, and a harness that keeps no sessions.
+  writeFileSync(join(root, 'a-file'), 'x');
+  expect(bodySessions(client, 'claude', { CLAUDE_CONFIG_DIR: join(root, 'a-file'), LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(bodySessions(client, 'codex', { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+});
+
+it('unpacks through no link: one planted at any step of a session\'s path refuses the whole pack and nothing lands outside', () => {
+  const pack = (entries: unknown) => gzipSync(Buffer.from(JSON.stringify(entries))).toString('base64');
+  const data = Buffer.from('TRANSCRIPT').toString('base64');
+  const files = [{ rel: `projects/-house/${session}.jsonl`, data }, { rel: `projects/-house/${session}/tool-results/one.txt`, data }];
+  /** A harness directory and, beside it, a place a link could lead to. */
+  const place = () => { const base = mkdtempSync(join(tmpdir(), 'loom-body-session-')); made.push(base); const root = join(base, 'claude'), outside = join(base, 'outside'); mkdirSync(root); mkdirSync(outside); return { root, outside }; };
+  const empty = (directory: string) => readdirSync(directory, { recursive: true }).length === 0;
+  // `projects` itself is a link.
+  let at = place(); symlinkSync(at.outside, join(at.root, 'projects'));
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(empty(at.outside)).toBe(true);
+  // The project directory is a link.
+  at = place(); mkdirSync(join(at.root, 'projects')); symlinkSync(at.outside, join(at.root, 'projects', '-house'));
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(empty(at.outside)).toBe(true);
+  // The session's own directory, and one inside it, is a link.
+  at = place(); mkdirSync(join(at.root, 'projects', '-house'), { recursive: true }); symlinkSync(at.outside, join(at.root, 'projects', '-house', session));
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(empty(at.outside)).toBe(true);
+  expect(existsSync(join(at.root, 'projects', '-house', `${session}.jsonl`))).toBe(false);
+  at = place(); mkdirSync(join(at.root, 'projects', '-house', session), { recursive: true }); symlinkSync(at.outside, join(at.root, 'projects', '-house', session, 'tool-results'));
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(empty(at.outside)).toBe(true);
+  // The file itself is a link, to a file that is there and to one that is not; or a file is already there.
+  at = place(); mkdirSync(join(at.root, 'projects', '-house'), { recursive: true }); writeFileSync(join(at.outside, 'victim'), 'UNTOUCHED');
+  symlinkSync(join(at.outside, 'victim'), join(at.root, 'projects', '-house', `${session}.jsonl`));
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(readFileSync(join(at.outside, 'victim'), 'utf8')).toBe('UNTOUCHED');
+  at = place(); mkdirSync(join(at.root, 'projects', '-house'), { recursive: true }); symlinkSync(join(at.outside, 'made-by-link'), join(at.root, 'projects', '-house', `${session}.jsonl`));
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(empty(at.outside)).toBe(true);
+  at = place(); mkdirSync(join(at.root, 'projects', '-house'), { recursive: true }); writeFileSync(join(at.root, 'projects', '-house', `${session}.jsonl`), 'ALREADY HERE');
+  expect(() => unpackSession(at.root, pack(files), session)).toThrow(); expect(readFileSync(join(at.root, 'projects', '-house', `${session}.jsonl`), 'utf8')).toBe('ALREADY HERE');
+  // With no link in the way the same pack lands where it belongs.
+  at = place();
+  expect(unpackSession(at.root, pack(files), session)).toHaveLength(2);
+  expect(readFileSync(join(at.root, 'projects', '-house', session, 'tool-results', 'one.txt'), 'utf8')).toBe('TRANSCRIPT');
 });

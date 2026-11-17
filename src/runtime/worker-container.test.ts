@@ -68,9 +68,10 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   expect(f.engine.json.mock.calls.map(call => call[1])).toEqual(['/containers/create?name=loom-unique', `/containers/${id}/json`, `/containers/${id}/start`, `/containers/${id}/wait?condition=not-running`]);
   expect(control.started).toHaveBeenCalledWith('job', built); expect(f.writes).toEqual([]);
   // The image by the id it was inspected under; its node, the worker's body program, the harness's body
-  // file, the image's working directory. No environment but where scratch files go: the rest is the image's.
+  // file, the image's working directory. No environment but where scratch files go, and that nothing of
+  // the machine is mounted writable (only the read-only body program is): the rest is the image's.
   expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/house',
-    Env: ['LOOM_BODY_SCRATCH=/tmp'], Tty: false, ExposedPorts: {},
+    Env: ['LOOM_BODY_SCRATCH=/tmp', 'LOOM_BODY_OWN_HARNESS=1'], Tty: false, ExposedPorts: {},
     Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
     HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [programAsked()], DeviceRequests: [] } });
   ack.resolve(); await flush(); expect(JSON.parse(f.writes[0])).toEqual({ job, build: built, bootstrap: handed });
@@ -197,7 +198,7 @@ it('does not copy ambient worker credentials into container environment override
     const body = f.start(); await body.spawned;
     // Docker can retain baked image values; this list contains only configured
     // overrides and never copies worker process.env or the loom bearer token.
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp'] }); await body.stop();
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'LOOM_BODY_OWN_HARNESS=1'] }); await body.stop();
   } finally { vi.unstubAllEnvs(); }
 });
 it('keeps running without a body timeout after both setup and cleanup intervals', async () => {
@@ -349,6 +350,15 @@ function house(inspected: unknown = expectedReport, container: Record<string, un
   return { ...f, executor };
 }
 type Spec = { HostConfig: { Runtime: string; Mounts: unknown[] } };
+
+it('tells a body the harness directory is its own only when nothing of the machine is mounted writable into its container', async () => {
+  const env = async (f: ReturnType<typeof house>) => { const body = f.executor.start(job, built, f.abort.signal); await body.spawned; const spec = f.engine.json.mock.calls.find(call => String(call[1]).startsWith('/containers/create'))![2] as { Env: string[] }; await body.stop(); return spec.Env; };
+  // A sign-in directory of the machine is mounted read-write: it is shared with every body of the account
+  // and outlives this one, so nothing of one conversation may be kept in it.
+  expect(await env(house())).toEqual(['LOOM_BODY_SCRATCH=/tmp']);
+  // Only read-only mounts (the body program, an agent's read-only directories): everything written goes with the container.
+  expect(await env(house([], { mounts: {} }, null))).toEqual(['LOOM_BODY_SCRATCH=/tmp', 'LOOM_BODY_OWN_HARNESS=1']);
+});
 
 it('asks the engine for runc unless the configuration names crun, and for nothing else', async () => {
   for (const [runtime, sent] of [[undefined, 'runc'], ['runc', 'runc'], ['crun', 'crun']] as const) {

@@ -6,17 +6,26 @@
  * left on the machine the body ran on. The container a body runs in is thrown away, and the next body may
  * run anywhere: loom is the one place a session waits.
  *
+ * Where: only where the harness's directory is this body's alone for this one job (BODY_OWN_HARNESS, set by
+ * a worker whose container has nothing of the machine mounted writable). A restored session is the
+ * conversation's words in plain files beside the harness's sign-in. In a directory other bodies share, or
+ * one that outlives this body (a body run as a plain process; a sign-in directory mounted into the
+ * container), another conversation's body could read it. There no session is kept or restored at all, and
+ * the body starts fresh with the conversation's kept history. Nor is the directory ever made here: a
+ * harness that has none keeps no session.
+ *
  * Everything here is best effort. No session handed over, files that cannot be put back, a session too
  * large to pack: each ends in the body starting fresh with the conversation's kept history, never in a
  * failed job. A packed session is its files as JSON, gzipped; the limits are session-limit.ts.
  */
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, normalize, sep } from 'node:path';
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeSync } from 'node:fs';
+import { join, normalize, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { z } from 'zod';
 import type { bodyCommandClient } from './body-command-client.js';
 import { harnessSessionFiles } from './body-harnesses.js';
+import { BODY_OWN_HARNESS } from './body-harness.js';
 import { SESSION_BYTES, SESSION_FILES, SESSION_ID, SESSION_UNPACKED_BYTES as UNPACKED_BYTES } from '../core/conversations/session-limit.js';
 
 const packed = z.array(z.object({ rel: z.string().min(1).max(1024), data: z.base64() }).strict()).min(1).max(SESSION_FILES);
@@ -41,20 +50,35 @@ export function packSession(root: string, files: readonly string[], session: str
   return pack.byteLength <= SESSION_BYTES ? pack.toString('base64') : undefined;
 }
 
-/** Writes a pack's files under `root`. Throws, having written nothing it leaves behind, on anything that
- * is not this session's own. */
+/** Writes one file of a pack under `root` without following a link at any step. Each directory on the way
+ * is looked at as it is (`lstat`): one that is there must be a real directory, one that is not is made, one
+ * level at a time. The file itself is made new, and never through a link (`O_EXCL`, `O_NOFOLLOW`): a file
+ * or link already at its place refuses the whole pack. So a link an earlier body left anywhere under the
+ * session's path cannot send what is written somewhere else. */
+function writeUnfollowed(root: string, rel: string, bytes: Buffer): void {
+  const parts = rel.split(sep); let at = root;
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part);
+    let found; try { found = lstatSync(at); } catch { found = undefined; }
+    if (!found) { mkdirSync(at, { mode: 0o700 }); found = lstatSync(at); }
+    if (!found.isDirectory() || found.isSymbolicLink()) throw Error('Not a directory of the session');
+  }
+  const handle = openSync(join(at, parts.at(-1)!), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try { let written = 0; while (written < bytes.byteLength) written += writeSync(handle, bytes, written, bytes.byteLength - written); }
+  finally { closeSync(handle); }
+}
+
+/** Writes a pack's files under `root`. Throws, leaving behind none of the files it wrote, on anything that
+ * is not this session's own, or whose path meets a link or an existing file. `root` is taken as it really
+ * is (links in the way to it are the machine's own layout, not a body's doing). */
 export function unpackSession(root: string, pack: string, session: string): string[] {
   const entries = packed.parse(JSON.parse(gunzipSync(Buffer.from(pack, 'base64'), { maxOutputLength: UNPACKED_BYTES }).toString('utf8')));
   if (entries.some(entry => !sessionPath(entry.rel, session)) || new Set(entries.map(entry => entry.rel)).size !== entries.length) throw Error('Not this session');
-  const written: string[] = [];
+  const real = realpathSync(root), written: string[] = [];
   try {
-    for (const entry of entries) {
-      mkdirSync(dirname(join(root, entry.rel)), { recursive: true, mode: 0o700 });
-      writeFileSync(join(root, entry.rel), Buffer.from(entry.data, 'base64'), { mode: 0o600 });
-      written.push(entry.rel);
-    }
+    for (const entry of entries) { writeUnfollowed(real, entry.rel, Buffer.from(entry.data, 'base64')); written.push(entry.rel); }
     return written;
-  } catch (error) { for (const rel of written) rmSync(join(root, rel), { force: true }); throw error; }
+  } catch (error) { for (const rel of written) rmSync(join(real, rel), { force: true }); throw error; }
 }
 
 export interface BodySessions {
@@ -65,13 +89,14 @@ export interface BodySessions {
   /** Removes from this machine the session `take` put back, telling loom nothing: for a run that did not answer. */
   discard(): void;
 }
-/** The keeper for one body, or nothing when its harness keeps no sessions or cannot write where it keeps them. */
+/** The keeper for one body, or nothing: its harness keeps no sessions, the harness's directory is not this
+ * body's alone (see the head of this file), or that directory is not there or cannot be written. */
 export function bodySessions(client: Client, harness: string, env: Env): BodySessions | undefined {
   const where = (session: string) => harnessSessionFiles(harness, env, session);
   const root = where('probe-session')?.root;
-  if (!root) return undefined;
-  // The harness's own directory, made if only it is missing; never a path built up from nothing.
-  try { if (!existsSync(root)) mkdirSync(root, { mode: 0o700 }); accessSync(root, constants.W_OK); } catch { return undefined; }
+  if (!root || env[BODY_OWN_HARNESS] !== '1') return undefined;
+  // The harness's own directory as it stands. It is never made here.
+  try { if (!lstatSync(realpathSync(root)).isDirectory()) return undefined; accessSync(root, constants.W_OK); } catch { return undefined; }
   const remove = (session: string) => { for (const rel of where(session)?.files ?? []) { try { rmSync(join(root, rel), { force: true }); } catch { /* the container goes with it */ } } };
   let restored: string | undefined;
   return {
@@ -80,10 +105,12 @@ export function bodySessions(client: Client, harness: string, env: Env): BodySes
         const reply = await client.command('conversation.session', {}, randomUUID());
         if (!reply.ok) return undefined;
         const kept = z.object({ session: z.object({ session: z.string().regex(SESSION_ID), files: z.string() }).strict().nullable() }).strict().parse(reply.value).session;
-        if (!kept) return undefined;
-        unpackSession(root, kept.files, kept.session);
-        return restored = kept.session;
-      } catch { return undefined; }
+        if (kept) { unpackSession(root, kept.files, kept.session); return restored = kept.session; }
+      } catch { /* handed something this body cannot use */ }
+      // Handed nothing it can continue: whatever loom keeps is of no use to this body and will be behind the
+      // conversation once it answers. Say so now, so that it is removed (core/conversations/sessions.ts).
+      try { await client.command('conversation.sessionSave', { session: null }, randomUUID()); } catch { /* the sweep and the next save see to it */ }
+      return undefined;
     },
     discard() { if (restored) remove(restored); },
     async save(session) {

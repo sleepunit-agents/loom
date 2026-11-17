@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "89d06625bfb145d4d39da2f4eb605bd2730e29151c5acd3ef34f7788abdd331d",
+  "sourceSha256": "e3c9b2054619d4e4efe020d456a39e1b310c24a42a91a8fecffcfc855ed10a04",
   "promises": [
     {
       "id": "data-001",
@@ -153,7 +153,7 @@
     },
     {
       "id": "data-025",
-      "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it, and it is erased at the household's keep time.",
+      "promise": "conversation_sessions A model program's own record of a conversation, sealed, kept between runs so the next one picks up where the last left off. One for a conversation and program; nothing but the next run reads it. It is erased when the household's keep time has passed since it was started, however often it was saved since; the next run then starts over.",
       "source": "docs/how-it-works/site/data.html"
     },
     {

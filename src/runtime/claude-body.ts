@@ -19,6 +19,8 @@ import { SESSION_ID } from '../core/conversations/session-limit.js';
 import { deniedTools } from './harness-traits.js';
 import { bodyDeniedTools } from './body-named-tools.js';
 
+/** What marks an event of the model's own in the harness's output. */
+const SPOKE = '"type":"assistant"';
 /** The spawn seam a test supplies; the same one every harness takes. */
 export type ClaudeSpawn = HarnessSpawn;
 /** What the adapter sets in the child's environment when the body has tools, unless the machine's body file
@@ -47,7 +49,7 @@ export const claudeBody: BodyHarness = input => {
     // unless the program gives it another; either way the id every event carries is the one reported.
     const resume = keep?.resume;
     if (resume !== undefined && !SESSION_ID.test(resume)) { control?.fill(0); throw harnessUnavailable(); }
-    let session: string | undefined = resume ? undefined : randomUUID(), spoke = false;
+    let session: string | undefined = resume ? undefined : randomUUID(), spoke = false, tail = '';
     const args = ['-p', '--model', job.model, ...(resume ? ['--resume', resume] : ['--session-id', session!]),
       '--output-format', 'stream-json', '--verbose', ...(keep ? [] : ['--no-session-persistence']),
       // With full reach nothing asks and nothing is listed: everything is allowed except what is denied below.
@@ -56,7 +58,8 @@ export const claudeBody: BodyHarness = input => {
       ...(denied.length ? ['--disallowedTools', ...denied] : [])];
     let output: Buffer;
     try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
-      onOutput: chunk => { if (chunk.includes('"type":"assistant"')) spoke = true; } }); }
+      // Looked for across the join of two pieces of output too: a marker cut in half is still the model speaking.
+      onOutput: chunk => { const seen = tail + chunk.toString('latin1'); if (seen.includes(SPOKE)) spoke = true; tail = seen.slice(-SPOKE.length); } }); }
     // A session that cannot be continued ends the program before the model is asked anything.
     catch { throw resume && !spoke && !signal.aborted ? new HarnessResumeUnavailable() : harnessUnavailable(); }
     try {

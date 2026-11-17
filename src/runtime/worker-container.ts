@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { dockerEngine, DockerResponseError, type DockerEngine } from './docker-engine.js';
-import { BODY_SCRATCH } from './body-harness.js';
+import { BODY_OWN_HARNESS, BODY_SCRATCH } from './body-harness.js';
 import { BuildTimeError, UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 import { defaultWorkerState, workerLeft } from './worker-left.js';
 import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
@@ -76,7 +76,9 @@ function portBindings(job: WorkerAssignment) {
  * directory, private to the body because the container is and removed with it. */
 function createSpec(job: WorkerAssignment, house: HouseStart, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
   return { Image: house.id, Entrypoint: [house.node], Cmd: [BODY_PROGRAM, house.body], WorkingDir: house.cwd,
-    Env: [`${BODY_SCRATCH}=/tmp`],
+    // And whether everything it can write goes with the container: nothing of the machine is mounted
+    // writable, so the harness's own directory is this body's alone (body-harness.ts, BODY_OWN_HARNESS).
+    Env: [`${BODY_SCRATCH}=/tmp`, ...(mounts.every(mount => mount.ReadOnly) ? [`${BODY_OWN_HARNESS}=1`] : [])],
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },

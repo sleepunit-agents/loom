@@ -60,6 +60,13 @@ export const BODY_SCRATCH = 'LOOM_BODY_SCRATCH';
 /** The name every harness is given a body's tools server under. A terminal session registers loom's own
  * door under the same name (docs/runtime/terminal.md), so a tool has one name in both places. */
 export const BODY_TOOLS_SERVER = 'loom';
+/** Set to `1` in a body's environment by a worker, and only when everything the body can write goes with
+ * it: a container that is removed after the body and has no writable directory of the machine mounted
+ * into it. The harness's own directory (its sign-in, and whatever it keeps of a run) is then this body's
+ * alone for this one job. Anywhere else that directory is shared with other bodies and outlives this one
+ * (a body run as a plain process; a sign-in directory mounted into the container), and nothing private to
+ * one conversation may be left in it: a harness session is kept only where this is set (body-session.ts). */
+export const BODY_OWN_HARNESS = 'LOOM_BODY_OWN_HARNESS';
 /** Every tool loom serves a body is named with this prefix, then the tool's own name. */
 export const harnessToolPrefix = `mcp__${BODY_TOOLS_SERVER}__`;
 const toolName = TOOL_NAME;

@@ -37,7 +37,9 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
      const input=command.parse(args),body=input.input;
      // Acceptance, observed provider facts, and Stop acknowledgement belong to
      // the receiving runtime. The model cannot fabricate these observations.
-     if(['conversation.accept','conversation.confirm','conversation.turn'].includes(input.operation))return unavailable();
+     // Nor its kept harness session: the body program hands that over and takes it back (body-session.ts). A
+     // model that could store a session of its own making would choose what the next body remembers.
+     if(['conversation.accept','conversation.confirm','conversation.turn','conversation.session','conversation.sessionSave'].includes(input.operation))return unavailable();
      if(input.operation==='conversation.status'&&object(body)&&(body.state==='idle'||body.state==='offline'))return unavailable();
      if(['conversation.message','bridges.reply'].includes(input.operation)&&object(body)&&('model'in body||'latencyMs'in body))return unavailable();
      const known=await client.command('runtime.commandCatalog',{name:input.operation},randomUUID());

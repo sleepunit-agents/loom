@@ -169,3 +169,12 @@ it('says a session could not be continued only when the harness ended having sai
   await expect(unsafe.run(job, 'mail', unsafe.abort.signal, { resume: '../../etc/passwd' })).rejects.toThrow('Native execution unavailable');
   expect(unsafe.launch).not.toHaveBeenCalled();
 });
+it('knows the model spoke when the marker of its event is cut across two pieces of output', async () => {
+  const f = fixture(), result = f.run(job, 'mail', f.abort.signal, { resume: 'earlier-session-1' });
+  const line = JSON.stringify({ type: 'assistant', parent_tool_use_id: null, session_id: 'earlier-session-1', message: { model: 'm', content: [{ type: 'tool_use', name: 'Bash' }] } });
+  const cut = line.indexOf('"type":"assistant"') + 9;
+  (f.child.stdout as PassThrough).write(line.slice(0, cut)); await new Promise(resolve => setImmediate(resolve));
+  (f.child.stdout as PassThrough).write(line.slice(cut) + '\n'); await new Promise(resolve => setImmediate(resolve));
+  f.child.emit('close', 1);
+  expect(await result.catch((error: unknown) => error)).not.toBeInstanceOf(HarnessResumeUnavailable);
+});

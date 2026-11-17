@@ -55,15 +55,26 @@ it('keeps nothing too large, empty or with an id that could be a path, and then 
   expect(f.db.select().from(conversationSessions).all()).toEqual([]);
 });
 
-it('keeps a session for the household\'s keep time for words, and the words\' sweep removes it', async () => {
+it('keeps a session for the household\'s keep time counted from when it was started, however often it is saved since', async () => {
   const f = fixture(); await f.save();
-  expect(oldestConversationSession(f.db)).toBe(Date.parse(f.now()));
-  f.later(3 * 86_400_000 - 1000);
+  const started = Date.parse(f.now());
+  expect(oldestConversationSession(f.db)).toBe(started);
+  // The conversation goes on: the session is saved again each day, and its start does not move.
+  for (let day = 1; day <= 2; day++) {
+    f.later(86_400_000); await f.save({ files: Buffer.from('record, day ' + day).toString('base64') });
+    expect(f.db.select().from(conversationSessions).get()?.savedAt).toBe(new Date(started).toISOString());
+    expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toMatchObject({ startedAt: new Date(started).toISOString(), lastSavedAt: f.now() });
+  }
+  f.later(86_400_000 - 1000);
   expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).not.toBeNull();
   expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(0);
   f.later(1000);
-  // Past the keep time it is not handed on, whether or not the sweep has run.
+  // Three days after it was started it is not handed on, though it was saved a day ago, whether or not the sweep has run.
   expect(await f.sessions.open(f.cv, 'claude', 'claude-opus-5-5')).toBeNull();
+  // A save now does not continue it: it starts a new session and a new count.
+  await f.save({ session: 'fresh-0001' });
+  expect(f.db.select().from(conversationSessions).get()).toMatchObject({ session: 'fresh-0001', savedAt: f.now() });
+  f.later(3 * 86_400_000);
   expect(expireConversationSessions(f.db, ageCutoff(f.now(), 3))).toBe(1);
   expect(oldestConversationSession(f.db)).toBeUndefined();
 });

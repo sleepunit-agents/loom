@@ -1892,7 +1892,9 @@ export const bridgeSendFiles = sqliteTable('bridge_send_files', {
 }, t => [primaryKey({ columns: [t.send, t.position] })]);
 /** A harness's own record of a conversation, kept between bodies so the next body of the same harness
  * resumes it. One for a conversation and harness; `files` is sealed with the household's words key and
- * read by nothing but the body it is handed to. `bytes` is the size of what was sealed. */
+ * read by nothing but the body it is handed to. `bytes` is the size of what was sealed. `saved_at` is when
+ * the session kept here was started: it is erased when the household's keep time has passed since then,
+ * however often it has been saved again (core/conversations/sessions.ts). */
 export const conversationSessions = sqliteTable('conversation_sessions', {
   conversation: text('conversation').notNull().references(() => conversations.id),
   harness: text('harness').notNull(),
