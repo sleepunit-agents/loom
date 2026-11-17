@@ -3,6 +3,7 @@ import {PassThrough,Writable} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { claudeBody } from './claude-body.js';
+import { bodyHarness } from './body-harnesses.js';
 import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'requested-model', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -44,7 +45,9 @@ it.each(['model-option', 'tool-option', 'harness', 'pre-abort'] as const)('rejec
   if (mode === 'tool-option') changed.run!.policy!.deniedTools[0].pattern = '--allowedTools';
   if (mode === 'harness') changed.harness = 'codex';
   if (mode === 'pre-abort') f.abort.abort();
-  await expect(f.run(changed, 'mail', f.abort.signal)).rejects.toThrow(); expect(f.launch).not.toHaveBeenCalled();
+  // Through the registry, as the body program runs it: that is where a job for another harness is refused.
+  const run = bodyHarness('claude', { command: '/private/claude', cwd: '/house', env: f.env, spawn: f.launch });
+  await expect(run(changed, 'mail', f.abort.signal)).rejects.toThrow(/^Native execution unavailable$/); expect(f.launch).not.toHaveBeenCalled();
 });
 
 it('does not classify authenticated household people as guests from a missing outside tier', async () => {

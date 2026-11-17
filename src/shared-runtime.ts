@@ -8,10 +8,12 @@ import { jobs, conversations } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import type { Viewer } from './policy.js';
 import { Dispatcher } from './runtime/dispatcher.js';
+import { harnessCannotRun } from './runtime/body-harnesses.js';
 import type { ModelRole } from './runtime/placement.js';
 import { liveWorker } from './shared-worker.js';
 import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
+import { claimedJobStates } from './core/data/job-states.js';
 
 const jobInput = z.object({ job: z.string().min(1) });
 const ack = z.object({ ok: z.literal(true) }).strict();
@@ -21,7 +23,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   /** Called after the effect AND receipt commit, including successful replay. */
   jobEnded(id: string): void;
 }) {
-  const dispatcher = new Dispatcher(db, options.now, options.roles);
+  const dispatcher = new Dispatcher(db, options.now, options.roles, harnessCannotRun);
   const stopped=new WeakSet<object>();
   const machine = (viewer: Viewer) => !!liveWorker(db, viewer, options.runner(viewer));
   const assigned = (viewer: Viewer, id: string, states?: readonly string[]) => {
@@ -55,7 +57,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   });
   operations.register({ name: 'runtime.started', write: true, recheckPolicy: true, doors: ['http'],
     input: jobInput.extend({ build: z.string().trim().min(1) }).strict(), output: ack,
-    may: (viewer, input) => assigned(viewer, input.job, ['starting', 'running', 'waiting']),
+    may: (viewer, input) => assigned(viewer, input.job, claimedJobStates),
     run(ctx, input) {
       const result = dispatcher.started(runner(ctx.viewer), input.job, input.build);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return result;

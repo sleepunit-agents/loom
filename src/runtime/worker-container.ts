@@ -6,6 +6,7 @@ import { isIP } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { dockerEngine, DockerResponseError, type DockerEngine } from './docker-engine.js';
+import { BODY_SCRATCH } from './body-harness.js';
 import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type WorkerCommand } from './worker-process.js';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 
@@ -33,13 +34,17 @@ function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, c
     if (!config.nestedSocket?.startsWith('/') || config.nestedSocket.includes('\0')) throw new Error('Nested containers unavailable');
     mounts.push({ Type: 'bind', Source: config.nestedSocket, Target: '/var/run/docker.sock' });
   }
+  // A container body's scratch directory is the container's own temporary directory: it is private to the
+  // body because the container is, and it is removed with the container.
+  const env = { [BODY_SCRATCH]: plan.env.TMPDIR || '/tmp', ...plan.env };
   return { Image: image, Entrypoint: [plan.command], Cmd: [...plan.args], WorkingDir: plan.cwd,
-    Env: Object.entries(plan.env).map(([key, value]) => {
+    Env: Object.entries(env).map(([key, value]) => {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || value.includes('\0')) throw new Error('Invalid container environment');
       return `${key}=${value}`;
     }),
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
-    Labels: { 'loom.job': job.id, 'loom.agent': job.agent },
+    // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
+    Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },
     ExposedPorts: Object.fromEntries(Object.keys(bindings).map(key => [key, {}])),
     HostConfig: { AutoRemove: false, Privileged: false, PublishAllPorts: false, Runtime: 'runc',
       LogConfig: { Type: 'none', Config: {} },
@@ -92,6 +97,10 @@ function output(socket: Duplex, signal: AbortSignal) {
 export function containerWorkerExecutor(config: WorkerRunnerConfig & {
   build: WorkerCommand; buildTimeoutMs?: number;
   container: ContainerConfig;
+  /** This machine's id, as its jobs name it: the containers it may end at start carry it as a label. */
+  box: string;
+  /** For the build commands, which are processes: see commandWorkerExecutor. */
+  state?: string;
 }, dependencies: { engine?: DockerEngine; builder?: WorkerExecutor; name?: () => string } = {}): WorkerExecutor {
   const fixed = structuredClone(config);
   const runner = workerRunner(fixed);
@@ -100,6 +109,26 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
   const cleanupMs = deadline(fixed.container.cleanupTimeoutMs, 30_000);
   return {
+    close() { builder.close?.(); },
+    /** The build commands a previous worker left are processes (the builder ends those). Its bodies are
+     * containers: every one labelled as a job of this machine is removed, running or not. The list is
+     * read a few at a time until it is empty, so one reply never outgrows what the engine client reads. */
+    async endLeft(signal) {
+      const processes = await builder.endLeft?.(signal) ?? { unverified: 0 };
+      const filters = encodeURIComponent(JSON.stringify({ label: ['loom.job', `loom.box=${fixed.box}`] }));
+      for (let round = 0; ; round++) {
+        const within = AbortSignal.any([signal, AbortSignal.timeout(cleanupMs)]);
+        const listed = await engine.json('GET', `/containers/json?all=1&limit=8&filters=${filters}`, undefined, within);
+        if (!Array.isArray(listed)) throw new Error('Invalid container list');
+        if (!listed.length) return processes;
+        if (round >= 64) throw new Error('Containers a previous worker left could not be removed');
+        for (const row of listed) {
+          const id: unknown = row && typeof row === 'object' && 'Id' in row ? row.Id : undefined;
+          if (typeof id !== 'string' || !/^[a-f0-9]{12,64}$/.test(id)) throw new Error('Invalid container identity');
+          await engine.json('DELETE', `/containers/${id}?force=1&v=1`, undefined, within);
+        }
+      }
+    },
     build: (job, signal, repositoryInput) => { runner(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job), plan = runner(assignment);

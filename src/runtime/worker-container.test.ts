@@ -22,7 +22,7 @@ function fixture() {
     return undefined;
   }) };
   const builder = { build: vi.fn(async () => 'image:built'), start: vi.fn() };
-  const config = { build: structuredClone(plan), runners: { harness: structuredClone(plan) }, container: { socket: '/configured/docker.sock', setupTimeoutMs: 100, cleanupTimeoutMs: 50 } };
+  const config = { box: 'box', build: structuredClone(plan), runners: { harness: structuredClone(plan) }, container: { socket: '/configured/docker.sock', setupTimeoutMs: 100, cleanupTimeoutMs: 50 } };
   const executor = containerWorkerExecutor(config, { engine, builder, name: () => 'unique' });
   const abort = new AbortController();
   const start = (assignment = job) => executor.start(assignment, 'image:built', abort.signal);
@@ -41,8 +41,8 @@ it('runs the fixed in-image command with no ambient authority, releasing input o
   expect(f.engine.json.mock.calls.map(call => call[1])).toEqual(['/containers/create?name=loom-unique', `/containers/${id}/json`, `/containers/${id}/start`, `/containers/${id}/wait?condition=not-running`]);
   expect(control.started).toHaveBeenCalledWith('job', 'image:built'); expect(f.writes).toEqual([]);
   const spec = f.engine.json.mock.calls[0][2];
-  expect(spec).toEqual(expect.objectContaining({ Image: 'image:built', Entrypoint: ['/runner'], Cmd: ['--fixed'], WorkingDir: '/work', Env: ['SECRET=local-value'], Tty: false,
-    Labels: { 'loom.job': 'job', 'loom.agent': 'art' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
+  expect(spec).toEqual(expect.objectContaining({ Image: 'image:built', Entrypoint: ['/runner'], Cmd: ['--fixed'], WorkingDir: '/work', Env: ['LOOM_BODY_SCRATCH=/tmp', 'SECRET=local-value'], Tty: false,
+    Labels: { 'loom.job': 'job', 'loom.agent': 'art', 'loom.box': 'box' }, AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true,
     HostConfig: { AutoRemove: false, Privileged: false, Runtime: 'runc', PublishAllPorts: false, LogConfig: { Type: 'none', Config: {} }, PortBindings: {}, Mounts: [], DeviceRequests: [] } }));
   ack.resolve(); await flush(); expect(JSON.parse(f.writes[0])).toEqual({ job, build: 'image:built' });
   const bytes = Buffer.concat([frame('hello €'), frame(' error', 2)]);
@@ -76,7 +76,7 @@ it('uses a snapshotted assignment/config and does not repeat or release after ca
   const f = fixture(), assignment = structuredClone(job), body = f.start(assignment);
   assignment.brief = 'changed'; f.config.runners.harness.env.SECRET = 'changed';
   await body.spawned; await body.release(); expect(JSON.parse(f.writes[0]).job.brief).toBe('private-input');
-  expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['SECRET=local-value'] });
+  expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'SECRET=local-value'] });
   await expect(body.release()).rejects.toThrow(); const first = body.stop(); expect(body.stop()).toBe(first); await first;
   await expect(body.release()).rejects.toThrow(); expect(f.writes).toHaveLength(1);
   expect(f.engine.json.mock.calls.filter(call => call[0] === 'DELETE')).toHaveLength(1);
@@ -167,7 +167,7 @@ it('does not copy ambient worker credentials into container environment override
     const body = f.start(); await body.spawned;
     // Docker can retain baked image values; this list contains only configured
     // overrides and never copies worker process.env or the loom bearer token.
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['SECRET=local-value'] }); await body.stop();
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Env: ['LOOM_BODY_SCRATCH=/tmp', 'SECRET=local-value'] }); await body.stop();
   } finally { vi.unstubAllEnvs(); }
 });
 it('keeps running without a body timeout after both setup and cleanup intervals', async () => {
@@ -228,7 +228,7 @@ it('selects only the assigned account runner for container argv and environment'
   selected.env.ACCOUNT_PROFILE = 'mutated'; selected.command = '/wrong'; selected.args.push('--wrong');
   const body = executor.start(job, 'image', f.abort.signal); await body.spawned;
   const spec = f.engine.json.mock.calls[0][2];
-  expect(spec).toMatchObject({ Entrypoint: ['/account-runner'], Cmd: ['--profile-a'], Env: ['ACCOUNT_PROFILE=a'] });
+  expect(spec).toMatchObject({ Entrypoint: ['/account-runner'], Cmd: ['--profile-a'], Env: ['LOOM_BODY_SCRATCH=/tmp', 'ACCOUNT_PROFILE=a'] });
   expect(f.writes).toEqual([]); await body.release();
   expect(JSON.parse(f.writes[0]).job).toMatchObject({ account: job.account, model: job.model, harness: job.harness });
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); await body.exited; await body.stop();
@@ -243,7 +243,7 @@ it('uses each account and harness binding in the actual Docker specification', a
   for (const [account, harness] of [['a', 'first'], ['a', 'second'], ['b', 'first']]) {
     const f = fixture(), executor = containerWorkerExecutor({ ...f.config, accountRunners: accounts }, { engine: f.engine, builder: f.builder, name: () => 'selection' });
     const body = executor.start({ ...job, account, harness }, 'image', f.abort.signal); await body.spawned;
-    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Entrypoint: [`/${account}-${harness}`], Env: [`PROFILE=${account}-${harness}`] });
+    expect(f.engine.json.mock.calls[0][2]).toMatchObject({ Entrypoint: [`/${account}-${harness}`], Env: ['LOOM_BODY_SCRATCH=/tmp', `PROFILE=${account}-${harness}`] });
     await body.release(); f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); await body.exited; await body.stop();
   }
 });
@@ -267,4 +267,33 @@ it('selects each account/harness private mode for the actual container stdin env
     const token = Buffer.from('body_'+'a'.repeat(64)); if (privateMode) await body.release({ origin: 'https://loom.example', job: assignment.id, token }); else await body.release();
     const value = JSON.parse(f.writes[0]); expect(value.job).toEqual(assignment); expect(Boolean(value.bootstrap)).toBe(privateMode); await body.stop(); token.fill(0);
   }
+});
+
+it('before taking work, removes every container labelled as a job of this machine, a few at a time, after the builder ends its own', async () => {
+  const f = fixture(), left = ['b'.repeat(64), 'c'.repeat(64), 'd'.repeat(12)], order: string[] = [];
+  const builder = { ...f.builder, endLeft: vi.fn(async () => { order.push('builder'); return { unverified: 2 }; }) };
+  f.engine.json.mockImplementation(async (method: string, path: string) => {
+    order.push(`${method} ${path.split('?')[0]}`);
+    if (method === 'GET') return left.slice(0, 2).map(Id => ({ Id, Labels: { 'loom.job': 'old' } }));
+    left.splice(left.indexOf(path.split('/')[2].split('?')[0]), 1); return undefined;
+  });
+  const executor = containerWorkerExecutor(f.config, { engine: f.engine, builder });
+  expect(await executor.endLeft!(f.abort.signal)).toEqual({ unverified: 2 });
+  expect(left).toEqual([]);
+  expect(order).toEqual(['builder', 'GET /containers/json', `DELETE /containers/${'b'.repeat(64)}`, `DELETE /containers/${'c'.repeat(64)}`,
+    'GET /containers/json', `DELETE /containers/${'d'.repeat(12)}`, 'GET /containers/json']);
+  const [, listed] = f.engine.json.mock.calls[0];
+  expect(Object.fromEntries(new URL(listed, 'http://docker').searchParams)).toEqual({ all: '1', limit: '8', filters: JSON.stringify({ label: ['loom.job', 'loom.box=box'] }) });
+  expect(f.engine.json.mock.calls.filter(([method]) => method === 'DELETE').every(([, path]) => path.endsWith('?force=1&v=1'))).toBe(true);
+});
+it('does not start beside containers it cannot list or cannot get rid of', async () => {
+  const f = fixture();
+  f.engine.json.mockResolvedValueOnce({ message: 'not a list' });
+  await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('Invalid container list');
+  f.engine.json.mockResolvedValueOnce([{ Id: '../../etc' }]);
+  await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('Invalid container identity');
+  f.engine.json.mockImplementation(async (method: string) => method === 'GET' ? [{ Id: 'e'.repeat(64) }] : undefined);
+  await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('could not be removed');
+  f.engine.json.mockRejectedValue(new Error('docker is down'));
+  await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('docker is down');
 });

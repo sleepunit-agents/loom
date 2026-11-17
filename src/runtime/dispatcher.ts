@@ -3,17 +3,21 @@
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
 import { workerPolicy } from './body-policy.js';
-import { harnessCannotRun } from './harness-traits.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads, triggers } from '../core/data/schema.js';
+import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
+import type { WorkerRunPolicy } from './worker.js';
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
-  constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[]) {
+  /** `cannotRun` answers whether a harness would refuse a job with this room (harnessCannotRun in
+   * body-harnesses.ts). It is handed in because the harness adapters start processes, and nothing this
+   * file imports may. */
+  constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[],
+    private readonly cannotRun: (harness: string, policy: WorkerRunPolicy | undefined) => boolean) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
   }
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
@@ -40,12 +44,13 @@ export class Dispatcher {
         // Who is in the job's room decides which tools its body is not given, and so which harnesses can run it.
         const policy = workerPolicy(this.db, job);
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs, wants: this.wants(job.conversation),
-          cannotRun: harness => harnessCannotRun(harness, policy) });
+          cannotRun: harness => this.cannotRun(harness, policy) });
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
         if (!claimed) continue;
-        // model on a queued job is the initial preference; this records the
-        // model actually requested from the worker after current placement.
+        // Placement is decided here and nowhere else. The model a queued job carries is only what the
+        // column needs before that (the agent's first model, also on a retry); this records the model,
+        // account and harness the worker is actually asked for.
         this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
         const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
@@ -54,7 +59,7 @@ export class Dispatcher {
         if(thread)new Threads(this.db,this.now).working(thread.id,true);
         const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
         return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
-          model: placement.model, account: placement.account, harness: placement.harness,
+          model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
@@ -67,6 +72,13 @@ export class Dispatcher {
     const row = this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, conversation)).get();
     if (row?.venue !== 'wake' || !row.place) return null;
     return this.db.select({ wants: triggers.wantsModel }).from(triggers).where(eq(triggers.id, row.place)).get()?.wants ?? null;
+  }
+  /** How many accounts of the placed account's provider are signed in on the machine. Placement checked the
+   * placed one for room; only the worker knows whether its command can be held to it (see workerRunner). */
+  private accountChoices(box: string, account: string): number {
+    const provider = this.db.select({ provider: modelAccounts.provider }).from(modelAccounts).where(eq(modelAccounts.id, account)).get()?.provider;
+    return this.db.select({ id: modelAccounts.id }).from(modelAccountBoxes).innerJoin(modelAccounts, eq(modelAccounts.id, modelAccountBoxes.account))
+      .where(and(eq(modelAccountBoxes.box, box), eq(modelAccounts.provider, provider ?? ''))).all().length || 1;
   }
   private liveMachine(box: string) {
     const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();
@@ -95,8 +107,9 @@ export class Dispatcher {
         const thread = this.currentThread(job);
         if (thread) new Threads(this.db, this.now).working(thread.id, true);
       }
-      // The worker reports a live process, not whether its body resumed work.
-      // Preserve a body's explicit waiting status until a body status update.
+      // The worker reports a live process, not what its body is doing, so its report never moves a job
+      // between running and waiting. (Nothing in the program sets `waiting` today: see
+      // docs/accepted-tradeoffs.md, "The waiting job state has no writer".)
       this.jobs.heartbeat(id, box, job.state === 'waiting' ? 'waiting' : state);
       return { active: true };
     }, { behavior: 'immediate' });

@@ -1,11 +1,11 @@
 /** Trusted worker health records. Authentication of a worker belongs at the door. */
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { machineFacts } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
 import { Conversations } from '../core/conversations/index.js';
+import { SILENCE_MS } from './silence.js';
 
-export const MACHINE_SILENCE_MS = 120_000;
 type Box = typeof boxes.$inferSelect;
 const outage = (box: Box) => `machine-silent:${JSON.stringify([box.id, box.lastSeenAt ?? box.enrolledAt])}`;
 
@@ -36,12 +36,14 @@ export class Machines {
 
   /** One private notice per owner/outage, also across service/process restarts.
    * A same-machine or report-only worker still needs to report its health. */
-  sweep(silenceMs = MACHINE_SILENCE_MS): typeof inbox.$inferSelect[] {
+  sweep(silenceMs = SILENCE_MS): typeof inbox.$inferSelect[] {
     if (!Number.isFinite(silenceMs) || silenceMs <= 0) throw new Error('Invalid silence interval');
     const at = this.now(), now = Date.parse(at);
     if (!Number.isFinite(now)) throw new Error('Invalid machine time');
     return this.db.transaction(() => {
       const notices = new Conversations(this.db, () => at);
+      // As in Jobs.sweep: a stamp later than now is left by a clock since set back, and is counted from now.
+      this.db.update(boxes).set({ lastSeenAt: at }).where(gt(boxes.lastSeenAt, at)).run();
       return this.db.select().from(boxes).where(and(eq(boxes.alwaysOn, true), isNull(boxes.revokedAt))).all()
         .filter(box => now - Date.parse(box.lastSeenAt ?? box.enrolledAt) > silenceMs)
         .map(box => notices.send({ toKind: 'person', to: box.owner, member: box.owner, source: 'notice', sourceId: outage(box),

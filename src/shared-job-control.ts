@@ -8,6 +8,7 @@ import { holds, rules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { jobs } from './core/data/schema.js';
+import { jobUnended } from './core/data/job-states.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { Jobs } from './runtime/jobs.js';
 export function registerSharedJobControl(operations: Operations, db: DataDatabase, options: { now(): string; jobEnded(job: string): void }) {
@@ -22,7 +23,7 @@ export function registerSharedJobControl(operations: Operations, db: DataDatabas
     may: (viewer, input) => may(viewer, input.job),
     run(ctx, input) {
       const job = db.select({ state: jobs.state }).from(jobs).where(eq(jobs.id, input.job)).get();
-      if (!job || !['queued', 'starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'That job has already ended');
+      if (!job || !jobUnended(job.state)) throw new OperationError('conflict', 'That job has already ended');
       store.stop(input.job, ctx.viewer.id, input.reason);
       ctx.changed('job', input.job);
       return { stopped: true as const };

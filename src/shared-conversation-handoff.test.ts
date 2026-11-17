@@ -28,8 +28,11 @@ async function create(f:Awaited<ReturnType<typeof fixture>>,id='handoff'){
 function receive(f:Awaited<ReturnType<typeof fixture>>,cv:string){
  const row=f.db.select().from(s.jobs).where(eq(s.jobs.conversation,cv)).get()!;expect(row).toBeDefined();
  const token='body_'+'d'.repeat(64);
+ // These tests move the clock by days with no worker reporting. They are about the brief, not about a silent
+ // job, so the silence sweep is stopped. (A report stamped in the future no longer hides a job from it.)
+ f.root.services.runtime.close();
  f.root.writes.run(()=>{
-  f.db.update(s.jobs).set({box:'box',state:'running',heardAt:new Date(f.clock.now()+100*86400000).toISOString()}).where(eq(s.jobs.id,row.id)).run();
+  f.db.update(s.jobs).set({box:'box',state:'running',heardAt:new Date(f.clock.now()).toISOString()}).where(eq(s.jobs.id,row.id)).run();
   f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional child',kind:'agent',agent:'mark',job:row.id,createdAt:new Date(f.clock.now()).toISOString()}).run();
  });
  const sdk=bodyConversationClient({url:'https://loom.invalid',token,job:row.id,conversation:cv,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(String(url),init))});clean.push(()=>sdk.close());return{sdk,job:row.id,token};

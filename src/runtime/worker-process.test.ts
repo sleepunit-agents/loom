@@ -6,8 +6,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { commandUsageProvider, commandWorkerExecutor, commandOutput, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
-import type { WorkerAssignment } from './worker.js';
+import { commandUsageProvider, commandWorkerExecutor, commandOutput, workerRunner, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
+import { NoRunnerError, type WorkerAssignment } from './worker.js';
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'custom-model', account: 'sub', harness: 'custom-runner', brief: 'private brief', house: { repository: 'repo', file: 'Containerfile', branch: 'main' } };
 const plan: WorkerCommand = { command: '/worker/build', args: ['--json'], cwd: '/worker', env: { PATH: '/usr/bin' } };
@@ -61,7 +61,7 @@ describe('worker command adapter (no child processes in tests)', () => {
     expect(JSON.parse(child.input())).toEqual({ job: configured, build: 'image@sha' });
     await expect(body.release()).rejects.toThrow('unavailable');
     child.child.stderr.emit('data', 'error '); child.child.stdout.emit('data', 'result'); child.child.emit('close', 9, null);
-    expect(await body.exited).toEqual({ exitCode: 9, logTail: 'error result' });
+    expect(await body.exited).toMatchObject({ exitCode: 9, logTail: 'error result' });
     await body.stop(); await body.stop(); expect(f.runtime.kill).toHaveBeenCalledOnce();
   });
   it('cancels and reaps builds and bodies without releasing body input', async () => {
@@ -138,6 +138,31 @@ describe('worker command adapter (no child processes in tests)', () => {
     // Fake has no real group: mock process.kill so cleanup launches no processes.
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
     try { await body.stop(); expect(kill).toHaveBeenCalledWith(-123, 'SIGKILL'); } finally { kill.mockRestore(); }
+  });
+  it('says whether a body ended by itself or was killed', async () => {
+    const f = fixture();
+    const alone = f.executor.start(job, 'image', new AbortController().signal);
+    f.children[0].child.emit('spawn'); await alone.spawned;
+    f.children[0].child.emit('exit', 16, null); f.children[0].child.emit('close', 16, null);
+    expect(await alone.exited).toMatchObject({ exitCode: 16, own: true });
+    const killed = f.executor.start(job, 'image', new AbortController().signal);
+    f.children[1].child.emit('spawn'); await killed.spawned;
+    f.children[1].child.emit('exit', null, 'SIGKILL'); f.children[1].child.emit('close', null, 'SIGKILL');
+    expect(await killed.exited).toMatchObject({ exitCode: 1, own: false });
+  });
+  it('refuses a job when several accounts of its provider are signed in here and one command serves the harness', async () => {
+    const f = fixture();
+    await expect(f.executor.build({ ...job, accountChoices: 2 }, new AbortController().signal)).rejects.toBeInstanceOf(NoRunnerError);
+    expect(() => f.executor.start({ ...job, accountChoices: 2 }, 'image', new AbortController().signal)).toThrow(NoRunnerError);
+    expect(f.runtime.spawn).not.toHaveBeenCalled();
+    // A runner bound to the account is the answer; one account, or a loom that does not say, runs as before.
+    const bound = workerRunner({ runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, command: '/worker/run-sub' } } } });
+    expect(bound({ ...job, accountChoices: 2 }).command).toBe('/worker/run-sub');
+    expect(() => bound({ ...job, account: 'other', accountChoices: 2 })).toThrow(NoRunnerError);
+    // So is a runner that says it signs in to the account its envelope names.
+    expect(workerRunner({ runners: { 'custom-runner': { ...plan, selectsAccount: true } } })({ ...job, accountChoices: 2 })).toMatchObject({ command: plan.command });
+    const shared = workerRunner({ runners: { 'custom-runner': plan } });
+    expect(shared({ ...job, accountChoices: 1 })).toMatchObject({ command: plan.command }); expect(shared(job)).toMatchObject({ command: plan.command });
   });
   it('rejects native Windows before launching anything', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -370,7 +395,7 @@ it('passes a credential only to an explicitly opted-in fixed child stdin and dis
   expect(JSON.parse(child.input())).toEqual({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: job.id, token: raw } });
   expect(JSON.stringify(vi.mocked(f.runtime.spawn).mock.calls)).not.toContain(raw);
   child.child.stdout.emit('data', raw); child.child.stderr.emit('data', raw); child.child.emit('close', 0);
-  expect(await body.exited).toEqual({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
+  expect(await body.exited).toMatchObject({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
 });
 it('never sends a bootstrap to an ordinary envelope child', async () => {
   const f = fixture(), body = f.executor.start(job, 'image', new AbortController().signal), child = f.children[0]; child.child.emit('spawn'); await body.spawned;
@@ -397,6 +422,60 @@ it('clears retained stdout and both tails, then disables private output capture'
   expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
   retained.stdout('PRIVATE_BODY_TOKEN', 18); retained.stderr('PRIVATE_BODY_TOKEN');
   expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
+});
+
+describe('what the executor records for the worker after it', () => {
+  function recorded() {
+    const notes: { pid: number; entry: object; scratch?: string; forgotten: boolean }[] = [], tidied: unknown[] = [];
+    const left = { scratch: vi.fn(() => '/state/body-one'), close: vi.fn(),
+      note: vi.fn((pid: number, entry: object, scratch?: string) => { const note = { pid, entry, scratch, forgotten: false }; notes.push(note); return () => { note.forgotten = true; }; }),
+      reap: vi.fn(async (tidy?: (left: { pid: number; born: string | null; job: string; harness?: string; account?: string }, scratch: string | undefined) => void) => {
+        // As the real record does: tidying is best effort for each thing left.
+        for (const [found, scratch] of [[{ pid: 9, born: 'then', job: 'old', harness: 'agy', account: 'sub' }, '/state/body-old'], [{ pid: 8, born: 'then', job: 'old-build' }, undefined],
+          [{ pid: 7, born: 'then', job: 'gone', harness: 'agy', account: 'removed-account' }, '/state/body-gone']] as const) try { tidy?.(found, scratch); } catch { /* next */ }
+        return { ended: 2, unverified: 1 };
+      }) };
+    const f = fixture();
+    const open = vi.fn((_dir: string) => left);
+    const executor = commandWorkerExecutor({ build: plan, runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, command: '/worker/run' }, agy: { ...plan, env: { HOME: '/home/sub' } } } }, state: '/state' }, f.runtime, open);
+    return { ...f, executor, left, open, notes, tidied };
+  }
+  it('holds the worker\'s state directory from when it is made until it is closed, and none when none is named', () => {
+    const f = recorded();
+    expect(f.open).toHaveBeenCalledExactlyOnceWith('/state'); expect(f.left.close).not.toHaveBeenCalled();
+    f.executor.close!(); expect(f.left.close).toHaveBeenCalledOnce();
+    const open = vi.fn(); commandWorkerExecutor({ build: plan, runners: {} }, f.runtime, open).close!(); expect(open).not.toHaveBeenCalled();
+  });
+it('notes a build and a body as soon as each has a process, and forgets each once it is reaped', async () => {
+    const f = recorded();
+    const built = f.executor.build(job, new AbortController().signal);
+    expect(f.notes).toMatchObject([{ pid: 123, entry: { job: 'j' }, scratch: undefined, forgotten: false }]);
+    f.children[0].child.emit('spawn'); await flush();
+    f.children[0].child.stdout.emit('data', Buffer.from('{"build":"image"}')); f.children[0].child.emit('close', 0, null);
+    expect(await built).toBe('image'); expect(f.notes[0].forgotten).toBe(true);
+    const body = f.executor.start(job, 'image', new AbortController().signal);
+    expect(vi.mocked(f.runtime.spawn).mock.calls[1][0].env.LOOM_BODY_SCRATCH).toBe('/state/body-one');
+    expect(f.notes[1]).toMatchObject({ pid: 123, entry: { job: 'j', harness: 'custom-runner', account: 'sub' }, scratch: '/state/body-one', forgotten: false });
+    f.children[1].child.emit('spawn'); await body.spawned; expect(f.notes[1].forgotten).toBe(false);
+    f.children[1].child.emit('close', 0, null); await body.exited;
+    expect(f.notes[1].forgotten).toBe(true);
+  });
+  it('does not run a body it could not record', async () => {
+    const f = recorded(); f.left.note.mockImplementation(() => { throw new Error('disk full'); });
+    expect(() => f.executor.start(job, 'image', new AbortController().signal)).toThrow('disk full');
+    expect(f.runtime.kill).toHaveBeenCalledOnce();
+  });
+  it('ends what was left through the record, and tidies each left body as its harness would have', async () => {
+    const leftovers = vi.spyOn(await import('./body-harnesses.js'), 'harnessLeftovers').mockImplementation(() => {});
+    try {
+      const f = recorded();
+      expect(await f.executor.endLeft!(new AbortController().signal)).toEqual({ unverified: 1 });
+      // The build had no scratch directory, and the account of the third has no runner here any more.
+      expect(leftovers).toHaveBeenCalledExactlyOnceWith('agy', '/state/body-old', { HOME: '/home/sub' });
+      expect(f.runtime.spawn).not.toHaveBeenCalled();
+      expect(await fixture().executor.endLeft!(new AbortController().signal)).toEqual({ unverified: 0 });
+    } finally { leftovers.mockRestore(); }
+  });
 });
 
 describe('a body\'s scratch directory', () => {

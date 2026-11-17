@@ -1,7 +1,7 @@
 /** The harnesses a body can run on. One entry per harness; the body program picks by the job's harness name.
  *
- * To add a harness, write one file that exports a BodyHarness and add it to `bodyHarnesses` in body-harnesses.ts. It has
- * three jobs and nothing else:
+ * To add a harness, write one file that exports a Harness and add it to `harnesses` in body-harnesses.ts.
+ * Besides stating what it can run (HarnessTraits), it has three jobs and nothing else:
  *   1. turn (model, cwd, reach, the tools endpoint, denied tools) into a command line and environment;
  *   2. give the model its words on stdin (use `runHarnessChild`);
  *   3. read what the harness printed into a HarnessReply, refusing anything it cannot vouch for.
@@ -13,6 +13,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable } from 'node:stream';
 import type { WorkerAssignment } from './worker.js';
+import type { HarnessTraits } from './harness-traits.js';
 
 export interface HarnessReply { text: string; model: string; actions: { model: string }[] }
 export type HarnessSpawn = (command: string, args: readonly string[], options: {
@@ -31,6 +32,13 @@ export interface HarnessInput {
 }
 export type HarnessRun = (job: WorkerAssignment, words: string, signal: AbortSignal) => Promise<HarnessReply>;
 export type BodyHarness = (input: HarnessInput) => HarnessRun;
+/** One harness, whole: what it can run and how it is run. This is the only thing body-harnesses.ts lists,
+ * so there is no listing an adapter without its traits. */
+export interface Harness extends HarnessTraits {
+  run: BodyHarness;
+  /** Remove what the harness leaves outside the body's scratch directory (see harnessLeftovers). */
+  leftovers?(scratch: string, env: Readonly<Record<string, string | undefined>>): void;
+}
 
 export const harnessUnavailable = () => new Error('Native execution unavailable');
 export const harnessModel = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/;

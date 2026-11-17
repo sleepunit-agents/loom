@@ -6,8 +6,11 @@
  *   added to it with --add-dir. The file holds the short-lived bearer of this body's own loopback tools
  *   server. It is mode 0600 in a 0700 directory, so only this user's processes can read it: that includes
  *   whatever the model's own shell runs, which could call the same tools anyway, for as long as the body
- *   lives. The workspace is made inside the body's scratch directory, which the worker removes after the
- *   body's process group is gone, so the file does not outlive a body that was killed.
+ *   lives (docs/accepted-tradeoffs.md, "The body-tools bearer is readable by the body's own user"). The
+ *   workspace is made inside the body's scratch directory and nowhere else. The worker removes that
+ *   directory after the body's process group is gone, and a worker that starts removes the ones a killed
+ *   worker left (worker-left.ts), so the file outlives neither a killed body nor a killed worker. A
+ *   container body's scratch directory is the container's own and goes with the container.
  * - The words go in on stdin as one stream-json line, so they are in no argument.
  * - agy has no switch to leave a conversation unsaved. What it wrote for this conversation is removed
  *   afterwards, as far as its files are known; that is best effort, not a promise. The conversation's id is
@@ -22,8 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { BODY_SCRATCH, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness } from './body-harness.js';
-import { harnessCannotRun } from './harness-traits.js';
+import { BODY_SCRATCH, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const conversationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = z.object({ event: z.string() }).passthrough();
@@ -53,7 +55,7 @@ export const agyBody: BodyHarness = input => {
   let used = false;
   return async (job, words, signal) => {
     if (tools && used) throw harnessUnavailable(); used = true;
-    if (signal.aborted || job.harness !== 'agy' || !harnessModel.test(job.model) || harnessCannotRun('agy', job.run?.policy, input.reach ?? 'loom')
+    if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES) throw harnessUnavailable();
     let workspace: string | undefined, conversation: string | undefined;
     const scratch = input.env[BODY_SCRATCH];
@@ -67,6 +69,9 @@ export const agyBody: BodyHarness = input => {
       if (id || head.length > 65_536) { noted = true; head = ''; }
     };
     try {
+      // The tools file holds a bearer, so it is only ever written inside the scratch directory the worker
+      // named: that is what the worker removes after the body, also for a body or a worker that was killed.
+      if (tools && !scratch) throw harnessUnavailable();
       workspace = mkdtempSync(join(scratch || tmpdir(), 'loom-body-'));
       if (tools) {
         mkdirSync(join(workspace, '.agents'), { mode: 0o700 });
@@ -100,3 +105,5 @@ export const agyBody: BodyHarness = input => {
     }
   };
 };
+export const agy: Harness = { needsFullReach: true, honoursDeniedTools: false, reservesEnv: name => /^(?:GEMINI_|GOOGLE_|GCLOUD_|ANTIGRAVITY_)/.test(name),
+  run: agyBody, leftovers: agyLeftovers };

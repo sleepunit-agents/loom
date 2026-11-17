@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
-import { bodyHarnesses } from './body-harnesses.js';
+import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
 import type { HarnessRun } from './body-harness.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
@@ -20,7 +20,8 @@ import {bodyMemoryIdentity} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
-import { harnessCannotRun, withUnknownSender } from './harness-traits.js';
+import { withUnknownSender } from './harness-traits.js';
+import { REPORT_MS } from './silence.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
 // way the household's list of tools an agent's body is not given still applies.
@@ -71,7 +72,7 @@ export async function bodyProgram(input: {
     exit=BODY_EXIT.assignment;
     const bridge=job.venue==='discord'||job.venue==='slack';
     const background=job.venue==='wake'||job.venue==='handoff';
-    if (!Object.hasOwn(bodyHarnesses, job.harness) || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
+    if (!Object.hasOwn(harnesses, job.harness) || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
     // What the harness would refuse is known from the assignment and this machine's reach. Refuse now, while
     // the mail is unaccepted and stays with the job, rather than after the message has been consumed.
     if (!input.native && harnessCannotRun(job.harness, job.run?.policy, plan.reach)) throw new Error();
@@ -88,7 +89,7 @@ export async function bodyProgram(input: {
       if(pending||signal.aborted)return;
       pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
     };
-    cancel=input.schedule?input.schedule.every(15_000,beat):(()=>{const timer=setInterval(beat,15_000);return()=>clearInterval(timer);})();
+    cancel=input.schedule?input.schedule.every(REPORT_MS,beat):(()=>{const timer=setInterval(beat,REPORT_MS);return()=>clearInterval(timer);})();
     exit=BODY_EXIT.startup;
     await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();
@@ -130,7 +131,7 @@ export async function bodyProgram(input: {
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
-    const native = input.native ?? bodyHarnesses[job.harness]({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const native = input.native ?? bodyHarness(job.harness, { ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     const room=lateStranger&&job.run?.policy?{...job,run:{...job.run,policy:withUnknownSender(job.run.policy)}}:job;
@@ -160,7 +161,8 @@ export async function bodyProgram(input: {
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await client.status(left);return BODY_EXIT.stopped;}catch{}
     }
-    input.error('Body stopped: invalid input or unavailable execution\n'); return exit;
+    // A report that failed is why the work was dropped, whichever stage was dropped.
+    input.error('Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
   }
   finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

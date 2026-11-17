@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
 import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
-import { MISSED_GRACE_MS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
+import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
 const stops: (() => void)[] = [];
 afterEach(() => { for (const stop of stops.splice(0).reverse()) stop(); });
@@ -330,4 +330,62 @@ it('edits a lane\'s words and times, keeps what they said before and who changed
   expect(row(tagged.id).wantsModel).toBeNull(); expect(edits().filter(e => e.trigger === tagged.id).map(e => e.before)).toEqual([{ wantsModel: 'best' }, { wantsModel: 'normal' }]);
   const answer = engine.set({ ...base, sourceKind: 'answer', watches: 'approval:a', times: undefined });
   expect(() => engine.edit(answer.id, { times: '12:00' }, { kind: 'agent', id: 'art' })).toThrow('Only a time trigger');
+});
+
+// Chicago is six hours behind UTC in November: 12:01 there is 18:01Z.
+it('judges every listed time a gap swallowed by the one rule: fires those within the grace, and logs each one beyond it', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01,12:04,12:30,12:33,13:00', days: null, lifespan: 'until-stopped' });
+  f.engine.close();
+  // The program is down from before 12:01 until 12:34: two times are far behind, two are a few minutes late, one is ahead.
+  f.clock.advance(34 * 60_000);
+  const engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick();
+  const log = () => f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().filter(l => l.event !== 'set').map(l => [l.event, l.note]);
+  expect(log()).toEqual([['missed', 'time:2026-11-14T18:01:00.000Z'], ['missed', 'time:2026-11-14T18:04:00.000Z'],
+    ['fired', 'time:2026-11-14T18:30:00.000Z'], ['fired', 'time:2026-11-14T18:33:00.000Z']]);
+  expect(f.items()).toHaveLength(2);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-14T19:00:00.000Z' });
+  f.clock.advance(26 * 60_000); expect(f.items()).toHaveLength(3);
+});
+it('does not drop a listed time that passes while an earlier one fires late', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01,12:03', days: null, lifespan: 'until-stopped' });
+  f.engine.close(); f.clock.advance(4 * 60_000);
+  const engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick();
+  expect(f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().filter(l => l.event !== 'set').map(l => [l.event, l.note]))
+    .toEqual([['fired', 'time:2026-11-14T18:01:00.000Z'], ['fired', 'time:2026-11-14T18:03:00.000Z']]);
+  expect(f.row(lane.id).nextDueAt).toBe('2026-11-15T18:01:00.000Z');
+});
+it('records a long gap in a bounded number of rows that still say how many times were skipped and the last of them', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01,18:01', days: null, lifespan: 'until-stopped' });
+  f.engine.close(); f.clock.advance(400 * 86_400_000);
+  const engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick();
+  const missed = f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().filter(l => l.event === 'missed').map(l => l.note);
+  expect(missed).toHaveLength(MISSED_ROWS + 1);
+  expect(missed[0]).toBe('time:2026-11-14T18:01:00.000Z');
+  expect(missed.at(-1)).toMatch(new RegExp(`^${800 - MISSED_ROWS} more, the last at time:2027-12-1[89]T`));
+  expect(f.items()).toEqual([]);
+  expect(Date.parse(f.row(lane.id).nextDueAt!)).toBeGreaterThan(f.clock.now());
+});
+it('leaves a lane\'s times alone when it is run by hand, and a failed firing has used its time', () => {
+  const failing = { fail: false };
+  const f = fixture({ operation: () => { if (failing.fail) throw new Error('reconcile is broken'); } });
+  const lane = f.engine.set({ ...f.base, targetKind: 'operation', target: 'tasks.reconcile', toKind: null, to: null, times: '12:01,12:10', days: null, lifespan: 'until-stopped' });
+  f.engine.runNow(lane.id);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', nextDueAt: '2026-11-14T18:01:00.000Z' });
+  failing.fail = true; f.clock.advance(60_000);
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-14T18:10:00.000Z' });
+});
+it('works its times out again when the household moves to another timezone', () => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
+  const once = f.engine.set({ ...f.base, times: '2026-11-14T20:00:00Z' });
+  expect(f.row(lane.id).nextDueAt).toBe('2026-11-14T18:01:00.000Z');
+  f.db.update(household).set({ timezone: 'America/New_York' }).run(); f.engine.tick();
+  // 12:01 in New York has already passed today: the lane stands for tomorrow there, with nothing fired or logged as missed.
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', nextDueAt: '2026-11-15T17:01:00.000Z' });
+  expect(f.row(once.id).nextDueAt).toBe('2026-11-14T20:00:00.000Z');
+  expect(f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().map(l => l.event)).toEqual(['set', 'rezoned']);
+  expect(f.items()).toEqual([]);
 });

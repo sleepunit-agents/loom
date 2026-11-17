@@ -5,15 +5,15 @@
  *   a server's bearer only by variable name. It is the short-lived token of this body's own tools server on
  *   loopback, never a loom credential, and it is in no argument. Codex is told to leave the variable out of
  *   the environment of the commands its shell runs. A process of this user can still read it from the
- *   Codex process itself while the body lives; it opens nothing the model's own tools do not.
+ *   Codex process itself while the body lives; it opens nothing the model's own tools do not
+ *   (docs/accepted-tradeoffs.md, "The body-tools bearer is readable by the body's own user").
  * - Codex always has its shell. There is no "loom's tools only", so a machine that has not given bodies full
  *   reach cannot run a Codex body, and a body with denied tools cannot either: Codex has no way to honour them.
  * - Codex's events do not name the model that answered. The reply carries the model the job asked for.
  */
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness } from './body-harness.js';
-import { harnessCannotRun } from './harness-traits.js';
+import { harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const tokenVariable = 'LOOM_BODY_TOOLS_TOKEN';
 const event = z.object({ type: z.string() }).passthrough();
@@ -28,7 +28,7 @@ export const codexBody: BodyHarness = input => {
   let used = false;
   return async (job, words, signal) => {
     if (tools && used) throw harnessUnavailable(); used = true;
-    if (signal.aborted || job.harness !== 'codex' || !harnessModel.test(job.model) || harnessCannotRun('codex', job.run?.policy, input.reach ?? 'loom')
+    if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES) throw harnessUnavailable();
     const server = 'mcp_servers.loom_secrets.';
     const args = ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check',
@@ -60,3 +60,4 @@ export const codexBody: BodyHarness = input => {
     finally { output.fill(0); }
   };
 };
+export const codex: Harness = { needsFullReach: true, honoursDeniedTools: false, reservesEnv: name => /^(?:CODEX_|OPENAI_)/.test(name), run: codexBody };

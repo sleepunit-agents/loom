@@ -117,7 +117,8 @@ it('registers Knowledge before the one shared Tempo starts and preserves a stopp
  app.writes.run(()=>app.services.tempo.triggers.stop('knowledge-sweep:fiction'));await app.close();f.clock.advance(86400000);
  const again=await serveShared(options);cleanup.push(()=>again.close());
  expect(f.db.select().from(triggers).where(eq(triggers.id,'knowledge-sweep:fiction')).get()).toMatchObject({enabled:false,state:'stopped'});
- f.clock.advance(86400000);expect(f.db.select().from(inbox).all()).toHaveLength(1);
+ // The agent in this fixture cannot run, so its owner is also told why its mail started no work: count the agent's mail.
+ f.clock.advance(86400000);expect(f.db.select().from(inbox).all().filter(row=>row.to==='fiction')).toHaveLength(1);
 });
 it('builds project sections from current visible Tasks, Changes and Conversations without legacy roles',async()=>{
  const f=fixture(),at=new Date(f.clock.now()).toISOString();f.db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();

@@ -5,7 +5,8 @@
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { bodyInput } from './body-bootstrap.js';
 import { BODY_SCRATCH } from './body-harness.js';
-import { bodyLeftovers } from './body-harnesses.js';
+import { harnessLeftovers } from './body-harnesses.js';
+import { workerLeft } from './worker-left.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,10 +15,13 @@ import { z } from 'zod';
 import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
-import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
+import { NoRunnerError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 export interface WorkerCommand {
   /** This configured child understands the private bootstrap stdin envelope. */
   bodyBootstrap?: boolean;
+  /** This runner reads the account from its startup envelope and signs in to that account itself, so one
+   * command can serve several accounts. loom's own body program does not. */
+  selectsAccount?: boolean;
   command: string;
   args: readonly string[];
   cwd: string;
@@ -47,10 +51,12 @@ function command(plan: WorkerCommand): WorkerCommand {
   return { ...plan, args: [...plan.args], env: { ...plan.env } };
 }
 export interface WorkerRunnerConfig {
-  /** One command per harness, whatever the account. loom placed the job on an account it checked for room,
-   * and names it in the startup envelope, but nothing here holds the command to it: the job runs on whichever
-   * account that command's own environment is signed in to. That is right for a machine with one account
-   * per harness. A machine with several must use accountRunners, or usage lands on an account loom did not pick. */
+  /** One command per harness. Such a command is signed in to one account by its own environment, and
+   * nothing here can check which. That is right while the machine has one account of the job's provider:
+   * it is then the account loom placed the job on. When loom says several are signed in on this machine
+   * (WorkerAssignment.accountChoices), the job is refused unless the command says it picks the account
+   * itself (selectsAccount): it needs accountRunners. See docs/accepted-tradeoffs.md, "The placed
+   * account is taken on trust". */
   runners: Readonly<Record<string, WorkerCommand>>;
   /** When present, every job requires an exact account/harness binding. */
   accountRunners?: Readonly<Record<string, Readonly<Record<string, WorkerCommand>>>>;
@@ -61,9 +67,12 @@ export function workerRunner(config: WorkerRunnerConfig) {
   const shared = plans(config.runners);
   const accounts = config.accountRunners === undefined ? undefined
     : new Map(Object.entries(config.accountRunners).map(([account, values]) => [account, plans(values)]));
-  return (job: Pick<WorkerAssignment, 'account' | 'harness'>) => {
+  return (job: Pick<WorkerAssignment, 'account' | 'harness' | 'accountChoices'>) => {
     const selected = accounts ? accounts.get(job.account)?.get(job.harness) : shared.get(job.harness);
-    if (!selected) throw new Error('Worker has no configured runner for account');
+    if (!selected) throw new NoRunnerError('Worker has no configured runner for account');
+    // One command cannot be on two accounts. Running the job anyway would spend an account loom did not
+    // pick, perhaps one with no room, so the job fails here and says so (WORKER_EXIT.runner).
+    if (!accounts && !selected.selectsAccount && (job.accountChoices ?? 1) > 1) throw new NoRunnerError('Several accounts need a runner each');
     return selected;
   };
 }
@@ -89,11 +98,11 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   let spawned = false, closed = false, stopRequested = false;
   const retained = commandOutput();
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
-  let exitResolve!: (result: { exitCode: number; logTail: string }) => void;
+  let exitResolve!: (result: { exitCode: number; logTail: string; own: boolean }) => void;
   let exitReject!: (error: Error) => void;
   const ready = new Promise<void>((yes, no) => { spawnResolve = yes; spawnReject = no; });
   void ready.catch(() => {});
-  const exited = new Promise<{ exitCode: number; logTail: string }>((yes, no) => { exitResolve = yes; exitReject = no; });
+  const exited = new Promise<{ exitCode: number; logTail: string; own: boolean }>((yes, no) => { exitResolve = yes; exitReject = no; });
   void exited.catch(() => {});
   let killed = false;
   let cleanupError: Error | undefined;
@@ -127,22 +136,24 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     spawnResolve();
   });
   child.once('error', () => { spawnReject(new Error('Worker command could not start')); });
-  let leaderExit: number | undefined;
+  let leaderExit: number | undefined, own = false;
   // close waits for inherited pipes. Kill descendants at leader exit, otherwise
   // an orphan holding stdout can keep both close and terminal reporting stuck.
-  child.once('exit', (code) => { leaderExit = code ?? 1; kill(); });
+  child.once('exit', (code) => { leaderExit = code ?? 1; own = code !== null; kill(); });
   child.once('close', (code, _signal) => {
     closed = true;
     retained.stdout(outDecoder.end(), 0); retained.stderr(errorDecoder.end());
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
-    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail: retained.tail() });
+    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail: retained.tail(), own });
   });
   // Covers cancellation during the injected spawn operation/listener setup.
   if (signal.aborted) kill();
   let released = false;
   let stopping: Promise<void> | undefined;
   return {
+    /** The process group's id once the system has given one: at once for a real spawn. */
+    pid: () => child.pid,
     spawned: ready, exited,
     discardOutput: retained.discard,
     output: retained.value,
@@ -162,13 +173,31 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   build: WorkerCommand;
   /** Maximum build time; running bodies have their own lifecycle. */
   buildTimeoutMs?: number;
-}, runtime: ProcessRuntime = native): WorkerExecutor {
+  /** The worker's own directory, where the process groups this executor starts are recorded so that a
+   * later worker can end them if this one is killed (worker-left.ts). The worker program always names
+   * one; it is held from here until close(). */
+  state?: string;
+}, runtime: ProcessRuntime = native, open: typeof workerLeft = workerLeft): WorkerExecutor {
   const buildPlan = command(config.build);
   const buildTimeoutMs = config.buildTimeoutMs ?? 300_000;
   if (!Number.isSafeInteger(buildTimeoutMs) || buildTimeoutMs < 1 || buildTimeoutMs > 3_600_000)
     throw new Error('Invalid worker build deadline');
-  const runner = workerRunner(config);
+  const runner = workerRunner(config), left = config.state === undefined ? undefined : open(config.state);
+  const noted = (attempt: ReturnType<typeof launch>, job: WorkerAssignment, scratch?: string) => {
+    const pid = attempt.pid();
+    return left && pid ? left.note(pid, { job: job.id, harness: job.harness, account: job.account }, scratch) : () => {};
+  };
   return {
+    close() { left?.close(); },
+    async endLeft() {
+      if (!left) return { unverified: 0 };
+      const { unverified } = await left.reap((record, scratch) => {
+        if (!scratch || !record.harness || !record.account) return;
+        // The same tidying as after a body this worker reaped, with the environment its runner has now.
+        harnessLeftovers(record.harness, scratch, runner({ harness: record.harness, account: record.account }).env);
+      });
+      return { unverified };
+    },
     async build(job, signal, repositoryInput) {
       runner(job);
       const abort = new AbortController();
@@ -176,9 +205,10 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       signal.addEventListener('abort', cancel, { once: true });
       if (signal.aborted) cancel();
       const timer = setTimeout(cancel, buildTimeoutMs);
-      let attempt: ReturnType<typeof launch> | undefined;
+      let attempt: ReturnType<typeof launch> | undefined, forget = () => {};
       try {
         attempt = launch(buildPlan, abort.signal, runtime);
+        forget = noted(attempt, job);
         await attempt.spawned;
         await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
         const result = await attempt.exited;
@@ -190,6 +220,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
         clearTimeout(timer);
         signal.removeEventListener('abort', cancel);
         if (attempt) await attempt.stop();
+        forget();
       }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
@@ -197,16 +228,22 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       // Each body gets a directory of its own (mode 0700, named to it in BODY_SCRATCH) for files a harness
       // can only be configured through. The worker removes it once the body's whole process group is gone,
       // so what was written there does not outlive the job when the body is killed and cannot tidy up.
-      const scratch = mkdtempSync(join(tmpdir(), 'loom-body-'));
-      let removed = false;
+      // If the worker itself is killed, the directory and the record beside it are what the next worker
+      // finds the body by (endLeft), and it removes them then.
+      const scratch = left ? left.scratch() : mkdtempSync(join(tmpdir(), 'loom-body-'));
+      let removed = false, forget = () => {};
       const remove = () => {
         if (removed) return; removed = true;
-        try { bodyLeftovers[job.harness]?.(scratch, plan.env); } catch { /* best effort, as in the harness itself */ }
+        try { harnessLeftovers(job.harness, scratch, plan.env); } catch { /* best effort, as in the harness itself */ }
         try { rmSync(scratch, { recursive: true, force: true }); } catch { /* nothing in it is live once the body is dead */ }
+        forget();
       };
       let attempt: ReturnType<typeof launch>;
       try { attempt = launch({ ...plan, env: { ...plan.env, [BODY_SCRATCH]: scratch } }, signal, runtime); }
       catch (error) { remove(); throw error; }
+      // A body that could not be recorded could not be found again: it is not run.
+      try { forget = noted(attempt, job, scratch); }
+      catch (error) { void attempt.stop().then(remove, remove); throw error; }
       const exited = attempt.exited.finally(remove);
       void exited.catch(() => {});
       return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: attempt.spawned, exited,

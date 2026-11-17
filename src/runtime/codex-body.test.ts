@@ -3,7 +3,7 @@ import {PassThrough} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { expect, it, vi } from 'vitest';
 import { codexBody } from './codex-body.js';
-import { bodyHarnesses } from './body-harnesses.js';
+import { bodyHarness } from './body-harnesses.js';
 import type { HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gpt-fictional', account: 'sub', harness: 'codex', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -21,7 +21,7 @@ function fixture(input: Partial<Parameters<typeof codexBody>[0]> = {}) {
   let words = ''; child.stdin.on('data', data => { words += data; });
   const launch = vi.fn<HarnessSpawn>(() => child as unknown as ChildProcessWithoutNullStreams), abort = new AbortController();
   const config = toolsFile();
-  const run = codexBody({ command: '/native/codex', cwd: '/house', env: { PATH: '/usr/bin', HOME: '/home/fictional' }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
+  const run = bodyHarness('codex', { command: '/native/codex', cwd: '/house', env: { PATH: '/usr/bin', HOME: '/home/fictional' }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
   config.fill(0);
   const finish = (rows: unknown[] | string, code = 0) => { child.stdout.end(typeof rows === 'string' ? rows : rows.map(row => JSON.stringify(row)).join('\n') + '\n'); child.stderr.end('PRIVATE DIAGNOSTIC'); setImmediate(() => { child.emit('exit', code); child.emit('close', code); }); };
   return { run, launch, abort, finish, words: () => words, child };
@@ -75,4 +75,3 @@ it('stops the child and answers nothing when the body is told to stop', async ()
   expect(f.child.kill).toHaveBeenCalledWith('SIGKILL'); setImmediate(() => f.child.emit('close', null));
   await expect(result).rejects.toThrow('Native execution unavailable');
 });
-it('lists the harnesses a body can run on', () => { expect(Object.keys(bodyHarnesses).sort()).toEqual(['agy', 'claude', 'codex']); });

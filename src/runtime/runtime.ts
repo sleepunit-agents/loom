@@ -1,10 +1,12 @@
-/** The server's own part in the runtime: the periodic sweep for silent jobs and machines. Execution stays
+/** The server's own part in the runtime: the periodic sweep for silent jobs and machines, and for jobs
+ * queued past their deadline. Execution stays
  * in the separate worker program, and a worker's reports arrive as operations (shared-runtime.ts); the
  * root supplies post-commit Tempo/subscription callbacks and owns shutdown. */
 import type { Clock } from '../core/clock.js';
 import type { DataDatabase } from '../core/data/database.js';
 import { Jobs, agentMailAdmission } from './jobs.js';
 import { Machines } from './machines.js';
+import { SILENCE_MS } from './silence.js';
 
 export interface RuntimeOptions {
   /** Whatever else runs out of time and is closed on the same tick (an account sign-in nobody finished). */
@@ -33,13 +35,24 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
     finally { options.changed(); }
   };
   const admission = agentMailAdmission(jobs, options.changed);
+  // Silence is judged by this server's clock, so the server must have been watching for the silence it
+  // judges. A sweep that comes much later than it was due, or before the one that preceded it, means the
+  // clock was stepped or the program stood still: every stamp then looks old (or new) at once, though
+  // the workers may never have stopped reporting. After that nothing is called silent until they have
+  // had one whole interval to report against the clock as it now is. The first sweep after a start is
+  // not held back: what went silent while loom was down is found at once.
+  let sweptAt: number | undefined, judgeFrom = -Infinity;
   const sweep = () => {
     available();
-    const lost = jobs.sweep();
-    // These services commit separately. Publish lost-job events even if the
-    // machine notice pass fails, so a later tick need not rediscover the loss.
-    try { try { machines.sweep(); } finally { options.expire?.(); } }
-    finally { ended(lost.map(job => job.id)); }
+    const at = clock.now();
+    if (sweptAt !== undefined && (at < sweptAt || at - sweptAt > interval + SILENCE_MS / 2)) judgeFrom = at + SILENCE_MS;
+    sweptAt = at;
+    const judge = at >= judgeFrom;
+    const over = judge ? jobs.sweep() : [];
+    // These services commit separately. Publish ended-job events even if the
+    // machine notice pass fails, so a later tick need not rediscover them.
+    try { try { if (judge) machines.sweep(); } finally { options.expire?.(); } }
+    finally { ended(over.map(job => job.id)); }
   };
   const tick = () => {
     if (closed) return;

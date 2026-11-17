@@ -5,6 +5,7 @@ import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLStri
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
 import { jobs } from '../core/data/schema.js';
+import { unendedJobStates } from '../core/data/job-states.js';
 import { exitStage } from './job-exit.js';
 
 export class JobSummaries {
@@ -14,7 +15,7 @@ export class JobSummaries {
     if (!is(allowed, SQL)) throw new Error('SQL visibility required for jobs');
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title,
       state: jobs.state, box: jobs.box, queuedAt: jobs.queuedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, ['queued', 'starting', 'running', 'waiting'])))
+      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates)))
       .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
   }
   /** An agent's jobs, ended ones included, newest first. Same visibility as current(). */

@@ -1,5 +1,6 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT } from './job-exit.js';
+import { REPORT_MS, SILENCE_MS } from './silence.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
 export interface WorkerRunPolicy {
@@ -28,6 +29,10 @@ export interface WorkerAssignment {
   venue?: string | null;
   model: string;
   account: string;
+  /** How many accounts of this job's provider are signed in on this machine, the placed one included.
+   * With more than one, a worker that has one command for the harness cannot hold the job to the placed
+   * account, and refuses it (workerRunner). Absent from a loom older than this field. */
+  accountChoices?: number;
   harness: string;
   brief: string;
   /** Current agent configuration at claim; absent means no extra capabilities. */
@@ -37,17 +42,27 @@ export interface WorkerAssignment {
 export interface WorkerBody {
   /** Resolves only after the child has actually spawned, rejects on launch failure. */
   spawned: Promise<void>;
-  exited: Promise<{ exitCode: number; logTail: string }>;
+  /** `own` is true when the body ended by itself with this code, and not because it was killed. An
+   * executor that cannot tell leaves it out. */
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
   release(bootstrap?: BodyBootstrap): Promise<void>;
-  /** Must stop and reap every child belonging to this attempt. Idempotent. */
+  /** Must stop and reap every child belonging to this attempt. Idempotent. `exited` settles once this has. */
   stop(): Promise<void>;
 }
 export interface WorkerExecutor {
   build(job: WorkerAssignment, signal: AbortSignal, repositoryInput?: Uint8Array): Promise<string>;
   start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody;
+  /** Called once, before the worker takes any work: end every build and body a worker before this one
+   * left running on this machine, and remove what they kept. A killed worker cannot stop its bodies, and
+   * loom queues a lost job's work again; without this the same work would run twice side by side.
+   * Rejects when something left could not be ended; the worker then does not start. `unverified` counts
+   * what is still running and could not be shown to be a previous worker's, and so was left. */
+  endLeft?(signal: AbortSignal): Promise<{ unverified: number }>;
+  /** Give up what the executor holds for the life of the worker, when the worker stops in good order. */
+  close?(): void;
 }
 export interface WorkerControl {
   /** Claims once on the server. An uncertain response is never retried locally. */
@@ -68,6 +83,9 @@ const schedule: WorkerSchedule = {
   every(ms, callback) { const timer = setInterval(callback, ms); return () => clearInterval(timer); },
 };
 export type WorkerResult = 'idle' | 'finished' | 'abandoned';
+/** Thrown by an executor for a job this worker has no command for: no runner for its harness, or none it
+ * can hold to the placed account. Reported as WORKER_EXIT.runner, apart from a build that failed. */
+export class NoRunnerError extends Error {}
 
 /** One assignment per invocation, never a local launch retry. The server owns
  * start retries, terminal states and placement. Transport uncertainty aborts the
@@ -82,8 +100,8 @@ export async function workOnce(input: {
   schedule?: WorkerSchedule; heartbeatMs?: number;
 }): Promise<WorkerResult> {
   const { control, executor } = input;
-  const interval = input.heartbeatMs ?? 15_000;
-  if (!Number.isFinite(interval) || interval <= 0 || interval >= 120_000) throw new Error('Invalid worker heartbeat interval');
+  const interval = input.heartbeatMs ?? REPORT_MS;
+  if (!Number.isFinite(interval) || interval <= 0 || interval >= SILENCE_MS) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
   let job: WorkerAssignment | undefined;
   // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.
@@ -139,8 +157,9 @@ export async function workOnce(input: {
         if (!control.enrollBody) throw new Error('Body enrollment unavailable');
         bootstrap = await control.enrollBody(assignment.id, abort.signal);
       }
-    } catch {
+    } catch (error) {
       if (abort.signal.aborted) return 'abandoned';
+      if (error instanceof NoRunnerError) stage = 'runner';
       // Reap a partly launched process before allowing the server's start retry.
       if (body) await body.stop();
       reporting = true;
@@ -171,7 +190,17 @@ export async function workOnce(input: {
       result = await body.exited;
       failed = undefined;
     }
-    catch { result = { exitCode: WORKER_EXIT[failed!], logTail: `Worker lost the body: ${failed} failed` }; }
+    catch {
+      result = { exitCode: WORKER_EXIT[failed!], logTail: `Worker lost the body: ${failed} failed` };
+      // Input cannot be handed to a body that has already ended, and a body that ended before reading its
+      // input did so for a reason of its own (its arguments, its body file). That reason is the one to
+      // record: once the body is reaped, a non-zero exit it made by itself replaces the worker's code.
+      if (failed === 'release') {
+        await body.stop();
+        const ended = await body.exited.catch(() => undefined);
+        if (ended?.own && ended.exitCode !== 0) { result = ended; failed = undefined; }
+      }
+    }
     // Reap the entire process group before a terminal report can admit more work.
     await body.stop();
     reporting = true;

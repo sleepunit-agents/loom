@@ -10,9 +10,10 @@ import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 import type { SignInReason } from './account-signin-reasons.js';
+import { FINISH_BUDGET_MS } from './silence.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
-  conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), model: z.string(), account: z.string(),
+  conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), model: z.string(), account: z.string(), accountChoices: z.number().int().min(1).optional(),
   harness: z.string().min(1), brief: z.string(),
   run: z.object({ policy: z.object({
     deniedTools: z.array(z.object({ pattern: z.string().min(1), guestsOnly: z.boolean() })),
@@ -29,8 +30,8 @@ export interface WorkerHttpOptions {
   /** Waits between the tries of a finish report; tests supply their own. */
   pause?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
-/** A finish report is sent at most this many times, this far apart. With the request deadline that stays
- * inside loom's two-minute silence interval, after which the job is lost whatever arrives. */
+/** A finish report is sent at most this many times, this far apart, and all of it inside FINISH_BUDGET_MS:
+ * a try is given no more time than the budget has left, whatever the request deadline is set to. */
 const FINISH_TRIES = 3, FINISH_PAUSE_MS = 2_000;
 function operationCaller(input: WorkerHttpOptions) {
   const base = new URL(input.url);
@@ -40,9 +41,9 @@ function operationCaller(input: WorkerHttpOptions) {
   if (!input.token.trim() || /[\r\n]/.test(input.token)) throw new Error('Worker token is invalid');
   const timeoutMs = input.timeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('Invalid worker request timeout');
-  async function call<T>(name: string, args: unknown, schema: z.ZodType<T>, onAbort?: () => void, id: string = randomUUID()): Promise<T> {
+  async function call<T>(name: string, args: unknown, schema: z.ZodType<T>, onAbort?: () => void, id: string = randomUUID(), withinMs = timeoutMs): Promise<T> {
     const deadline = new AbortController();
-    const timer = setTimeout(() => deadline.abort(), timeoutMs);
+    const timer = setTimeout(() => deadline.abort(), Math.max(0, Math.min(timeoutMs, withinMs)));
     const signal = AbortSignal.any([input.signal, deadline.signal]);
     let response: Response | undefined;
     if (onAbort) { signal.addEventListener('abort', onAbort, { once: true }); if (signal.aborted) onAbort(); }
@@ -135,10 +136,11 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // it answers the next from that receipt and the job is finished once.
     finish: async (job, exitCode, logTail) => {
       const id = randomUUID(), pause = input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
+      const until = performance.now() + FINISH_BUDGET_MS;
       for (let tries = 1; ; tries++) {
-        try { await call('finish', { job, exitCode, logTail }, ack, undefined, id); return; }
+        try { await call('finish', { job, exitCode, logTail }, ack, undefined, id, until - performance.now()); return; }
         catch (error) {
-          if (tries >= FINISH_TRIES || input.signal.aborted) throw error;
+          if (tries >= FINISH_TRIES || input.signal.aborted || until - performance.now() <= FINISH_PAUSE_MS) throw error;
           try { await pause(FINISH_PAUSE_MS, input.signal); } catch { throw error; }
         }
       }

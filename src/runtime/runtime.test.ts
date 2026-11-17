@@ -8,6 +8,9 @@ import { createTempo } from '../core/tempo/tempo.js';
 import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
 import { createRuntime } from './runtime.js';
 import { Dispatcher } from './dispatcher.js';
+import { harnessCannotRun } from './body-harnesses.js';
+import { Jobs } from './jobs.js';
+import { Machines } from './machines.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const close of cleanups.splice(0).reverse()) close(); });
@@ -37,7 +40,7 @@ function fixture() {
   const error = vi.fn();
   const runtime = createRuntime(db, clock, { changed, jobEnded, error });
   // The worker's side, as shared-runtime.ts registers it: the runtime itself only admits, stops and sweeps.
-  const worker = new Dispatcher(db, now, () => [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }]);
+  const worker = new Dispatcher(db, now, () => [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }], harnessCannotRun);
   tempo = createTempo(db, clock, { conversations: comms, admit: runtime.admit, operation: () => {} });
   tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });
   cleanups.push(() => { runtime.close(); tempo!.close(); });
@@ -106,4 +109,43 @@ it('keeps polling after a callback fails and start is idempotent', () => {
   f.runtime.close();
   f.clock.advance(30_000);
   expect(f.changed).toHaveBeenCalledOnce();
+});
+
+it('does not take a jump of the server clock for silence: after one it waits a full interval before ending anything', () => {
+  const client = new Database(':memory:'); cleanups.push(() => client.close());
+  // A clock that can be stepped without its timers having run in between, as a wall clock can.
+  const fake = new FakeClock(); let step = 0;
+  const clock = { now: () => fake.now() + step, at: (time: number, fn: () => void) => fake.at(time - step, fn) };
+  const now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
+  db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: now() }).run();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(boxes).values({ id: 'worker', name: 'Workshop', owner: 'owner', hostsAny: true, sameMachineAsLoom: false, reportOnly: false, alwaysOn: true, enrolledAt: now(), lastSeenAt: now() }).run();
+  db.insert(agentModels).values({ agent: 'art', model: 'model', position: 0 }).run();
+  db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', nestedContainers: false, gpu: false }).run();
+  const comms = new Conversations(db, now), store = new Jobs(db, now), machines = new Machines(db, now);
+  const conversation = comms.open({ agent: 'art', venue: 'loom', place: 'thread', label: 'thread' });
+  comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Work' });
+  const job = store.admit(conversation.id)!; store.claim(job.id, 'worker'); store.started(job.id, 'worker', 'image');
+  const jobEnded = vi.fn(), runtime = createRuntime(db, clock, { changed: () => {}, jobEnded, error: vi.fn() });
+  cleanups.push(() => runtime.close());
+  const report = () => { store.heartbeat(job.id, 'worker', 'running'); machines.heartbeat('worker'); };
+  const notices = () => db.select().from(inbox).all().filter(row => row.source === 'notice');
+  runtime.start(); fake.advance(30_000); report();
+  // The clock is set ten minutes ahead. The worker reported fifteen seconds ago by any watch but the server's.
+  step += 600_000; fake.advance(30_000);
+  expect(store.get(job.id).state).toBe('running'); expect(notices()).toEqual([]);
+  // It goes on reporting, and nothing is ended while the interval after the jump runs out and after.
+  for (let n = 0; n < 10; n++) { report(); fake.advance(15_000); }
+  expect(store.get(job.id).state).toBe('running'); expect(notices()).toEqual([]);
+  // Then it really goes silent, and is found as usual.
+  fake.advance(150_000);
+  expect(store.get(job.id).state).toBe('lost'); expect(jobEnded).toHaveBeenCalledExactlyOnceWith(job.id); expect(notices()).toHaveLength(1);
+  // Set back an hour: the jobs and machines stamped later than now are not kept hidden for that hour.
+  comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'More' });
+  const retry = db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
+  fake.advance(5_000); store.claim(retry.id, 'worker'); store.started(retry.id, 'worker', 'image'); machines.heartbeat('worker');
+  step -= 3_600_000; fake.advance(30_000);
+  expect(store.get(retry.id).state).toBe('running');
+  fake.advance(300_000);
+  expect(store.get(retry.id).state).toBe('lost');
 });

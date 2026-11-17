@@ -90,3 +90,12 @@ it('keeps taking reports after the server clock is set back, stamped with the pr
   advance(120_000); expect(service.sweep()).toEqual([]);
   advance(1); expect(service.sweep()).toHaveLength(1);
 });
+
+it('counts a machine stamped later than now from now, so a clock set back does not hide a silent machine', () => {
+  const { db, service, add, advance, now } = fixture();
+  add('worker'); service.heartbeat('worker'); advance(-3_600_000);
+  expect(service.sweep()).toEqual([]);
+  expect(db.select().from(boxes).get()?.lastSeenAt).toBe(now());
+  advance(120_001);
+  expect(service.sweep().map(row => row.words)).toEqual(['Machine worker has stopped reporting.']);
+});

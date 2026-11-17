@@ -3,18 +3,19 @@ import {keepJobText} from './job-text.js';
  * External machine identity is checked at the API door before calling it. */
 import { mailWords } from '../core/conversations/volume.js';
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
+import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, memberAgents, members, messages, threads } from '../core/data/schema.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
-import { BODY_EXIT } from './job-exit.js';
+import { BODY_EXIT, LOOM_EXIT } from './job-exit.js';
+import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
+import { SILENCE_MS } from './silence.js';
 
 export type Job = typeof jobs.$inferSelect;
-const active = ['queued', 'starting', 'running', 'waiting'] as const;
 /** Join condition: this job is the one working in the conversation row, that is, its one job that has not ended. */
-export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, active));
+export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, unendedJobStates));
 /** One piece of work gets its first attempt and at most this many more, whatever made each attempt fail. */
 export const JOB_RETRIES = 3;
 /** How long each retry waits, by how many attempts came before it. A start that failed (no body ran) is
@@ -22,6 +23,22 @@ export const JOB_RETRIES = 3;
  * silent most often lost loom itself, to a restart or an upgrade, so those retries are spread over a few
  * minutes: a schedule of seconds would spend every attempt before loom is back. */
 const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120_000];
+/** How long a queued job waits for a machine, counted from when it could first be claimed (when it was
+ * queued, or its retry time). Placement leaves a job queued while no allowed machine is reporting, no
+ * account has room or no allowed harness can run it, and most of those pass: a machine wakes, a usage
+ * window resets. A job still unclaimed after this long is ended as failed with LOOM_EXIT.unplaced
+ * (Jobs.sweep), so that it shows as a failure and its conversation can take fresh mail, and is not tried
+ * again: a next attempt would only wait as long. One number for every reason: docs/accepted-tradeoffs.md,
+ * "A queued job has one deadline, whatever keeps it queued". */
+export const QUEUE_DEADLINE_MS = 24 * 3_600_000;
+/** What admission answers: the conversation's unended job, or why its waiting mail did not become one. */
+export interface Admission {
+  job?: Job;
+  /** Why mail that is waiting got no job, in loom's own words. Absent when there was nothing to admit. */
+  declined?: string;
+  /** Whether this call told the agent's owners so for the first time. */
+  noticed?: boolean;
+}
 export class Jobs {
   private readonly mail: Conversations;
   constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now); }
@@ -54,22 +71,46 @@ export class Jobs {
 
   /** Called after inbox settling. Repeated admission returns the same active job.
    * Work that ran out of attempts and work that was stopped need fresh mail to resume. */
-  admit(conversationId: string): Job | undefined {
+  admit(conversationId: string): Job | undefined { return this.admission(conversationId).job; }
+
+  /** The notices that say why this mail got no job: one for each of the agent's owners, or for the household's
+   * owners when the agent has none. Keyed by the first piece of mail that was held up, so each time an
+   * agent becomes unable to run is told once however often admission is asked. */
+  private declined(agent: string, mail: readonly Pick<typeof inbox.$inferSelect, 'id'>[], why: string): Admission {
+    const key = (item: string) => `mail-not-admitted:${JSON.stringify([agent, item])}`;
+    let to = this.db.select({ member: memberAgents.member }).from(memberAgents).innerJoin(members, eq(members.id, memberAgents.member))
+      .where(and(eq(memberAgents.agent, agent), isNull(members.removedAt))).all().map(row => row.member);
+    if (!to.length) to = this.db.select({ id: members.id }).from(members).where(and(eq(members.role, 'owner'), isNull(members.removedAt))).all().map(row => row.id);
+    let noticed = false;
+    for (const member of to) {
+      const before = this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.toKind, 'person'), eq(inbox.to, member), eq(inbox.source, 'notice'), eq(inbox.sourceId, key(mail[0].id)))).get();
+      this.mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: key(mail[0].id), fromKind: 'unknown',
+        words: `Mail for ${agent} is waiting and no work was started: ${why}.`, refs: [agent] });
+      noticed ||= !before;
+    }
+    return { declined: why, noticed };
+  }
+
+  /** admit(), and when waiting mail got no job, why. That is recorded as a notice to the agent's owners
+   * (see declined), and the notice is closed when the mail is admitted after all. */
+  admission(conversationId: string): Admission {
     return this.db.transaction(() => {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
       if (!conversation) throw new Error('Conversation not found');
-      const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, [...active]))).get();
-      if (existing) return existing;
+      const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
+      if (existing) return { job: existing };
       const mail = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
-      if (!mail.length) return;
+      if (!mail.length) return {};
       // A waiting row's job is its last admission attempt, even before take().
       // New mail has no job: no timestamp comparison can lose same-tick mail.
-      if (!mail.some(item => item.job === null)) return;
+      if (!mail.some(item => item.job === null)) return {};
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
-      if (!settings || !model) return;
       // A removed agent keeps its history and its mail, and does not run.
-      if (this.db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, conversation.agent)).get()?.removedAt) return;
+      if (this.db.select({ removedAt: agents.removedAt }).from(agents).where(eq(agents.id, conversation.agent)).get()?.removedAt)
+        return this.declined(conversation.agent, mail, 'the agent has been removed');
+      if (!settings) return this.declined(conversation.agent, mail, 'the agent has no run settings');
+      if (!model) return this.declined(conversation.agent, mail, 'the agent has no model to run on');
       const at = this.now();
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
@@ -85,7 +126,20 @@ export class Jobs {
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
       this.delivery(job.id,'held');
-      return job;
+      for (const item of mail) this.mail.resolveSource('notice', `mail-not-admitted:${JSON.stringify([conversation.agent, item.id])}`, 'Work was started');
+      return { job };
+    }, { behavior: 'immediate' });
+  }
+
+  /** Record that admitting a conversation's mail threw, for agentMailAdmission: the same notice as a declined admission. */
+  failed(conversationId: string, error: unknown): Admission {
+    return this.db.transaction(() => {
+      const conversation = this.db.select({ agent: conversations.agent }).from(conversations).where(eq(conversations.id, conversationId)).get();
+      const mail = conversation ? this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all() : [];
+      if (!conversation || !mail.length) return {};
+      // loom's own error, first line only: it is about the database or the conversation, not anyone's words.
+      const why = (error instanceof Error ? error.message : String(error)).split(/[\r\n]/, 1)[0].slice(0, 200);
+      return this.declined(conversation.agent, mail, `loom could not admit it (${why})`);
     }, { behavior: 'immediate' });
   }
 
@@ -111,7 +165,7 @@ export class Jobs {
   started(id: string, box: string, build: string): Job {
     return this.db.transaction(() => {
       // A worker may report "started" late or twice. Once the job is running that report changes nothing.
-      const job = this.assigned(id, box, ['starting', 'running', 'waiting']);
+      const job = this.assigned(id, box, claimedJobStates);
       if (job.state !== 'starting') return job;
       return this.db.update(jobs).set({ state: 'running', build, heardAt: this.now() }).where(eq(jobs.id, id)).returning().get()!;
     });
@@ -163,7 +217,7 @@ export class Jobs {
    * after JOB_RETRIES, and the mail then stays with the last attempt until fresh mail arrives. */
   finish(id: string, box: string, exitCode: number, logTail = ''): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
-      const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
+      const before = this.assigned(id, box, claimedJobStates);
       const at = this.now();
       // A body that says it left for a Stop is believed only while that Stop is still waiting for this job.
       const stopped = exitCode === BODY_EXIT.stopped ? this.endIfStopAsked(before, { exitCode }) : undefined;
@@ -203,26 +257,40 @@ export class Jobs {
   stop(id: string, member: string, reason: 'reset' | 'write-off'): Job {
     return this.db.transaction(() => {
       const job = this.get(id);
-      if (!active.includes(job.state as typeof active[number])) throw new Error('Job has ended');
+      if (!jobUnended(job.state)) throw new Error('Job has ended');
       return this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
     });
   }
 
-  /** Fake-clock sweep. A job nobody has reported on for the silence interval is lost; like a failed
-   * attempt it is tried again while it has attempts left (see finish). The row says in which state it
-   * went silent: these are loom's own words, so they are kept for a private conversation too. */
-  sweep(silenceMs = 120_000): Job[] {
-    if (!Number.isFinite(silenceMs) || silenceMs <= 0) throw new Error('Invalid silence interval');
+  /** Fake-clock sweep: ends the jobs that time alone ends, and returns them.
+   * - A claimed job nobody has reported on for the silence interval is lost; like a failed attempt it is
+   *   tried again while it has attempts left (see finish).
+   * - A queued job no machine has taken within the queue deadline is failed with LOOM_EXIT.unplaced and
+   *   not tried again (see QUEUE_DEADLINE_MS).
+   * Either row says what happened in loom's own words, which are kept for a private conversation too.
+   * Silence is read from this server's clock, so the caller must not sweep across a jump of that clock
+   * (createRuntime waits one interval after one); a stamp left later than now by a clock set back is
+   * counted from now here. */
+  sweep(silenceMs = SILENCE_MS, queueMs = QUEUE_DEADLINE_MS): Job[] {
+    if (!Number.isFinite(silenceMs) || silenceMs <= 0 || !Number.isFinite(queueMs) || queueMs <= 0) throw new Error('Invalid silence interval');
     return this.db.transaction(() => {
-      const at = this.now();
-      return this.db.select().from(jobs).where(inArray(jobs.state, ['starting', 'running', 'waiting'])).all()
-        .filter(job => Date.parse(at) - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
+      const at = this.now(), now = Date.parse(at);
+      // Only a clock that has since been set back leaves a report stamped later than now. Its true age is
+      // unknown; counting from now delays noticing a dead job by one interval and never loses a live one.
+      this.db.update(jobs).set({ heardAt: at }).where(and(inArray(jobs.state, claimedJobStates), gt(jobs.heardAt, at))).run();
+      const lost = this.db.select().from(jobs).where(inArray(jobs.state, claimedJobStates)).all()
+        .filter(job => now - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
         .map(job => {
-          const lost = this.end(job, 'lost', { endedAt: at, logTail: `Lost while ${job.state}: its worker stopped reporting` });
+          const ended = this.end(job, 'lost', { endedAt: at, logTail: `Lost while ${job.state}: its worker stopped reporting` });
           this.retry(job, at);
-          return lost;
+          return ended;
         });
-    });
+      const unplaced = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).all()
+        .filter(job => now - Math.max(Date.parse(job.queuedAt), job.retryAt ? Date.parse(job.retryAt) : 0) > queueMs)
+        .map(job => this.end(job, 'failed', { endedAt: at, exitCode: LOOM_EXIT.unplaced,
+          logTail: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
+      return [...lost, ...unplaced];
+    }, { behavior: 'immediate' });
   }
 
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
@@ -236,23 +304,33 @@ export class Jobs {
     // The job working in a conversation is its one job that has not ended, so ending that job is what
     // leaves the conversation with none. Clear its working indicator in the same transaction; an
     // unobserved Stop and the last reported agent state stay.
-    if (job.conversation && active.includes(job.state as typeof active[number])) this.db.update(threads)
+    if (job.conversation && jobUnended(job.state)) this.db.update(threads)
       .set({ working: false, workingSince: null, workingBeat: null }).where(eq(threads.conversation, job.conversation)).run();
     return ended;
   }
 }
 
 /** How settled mail for an agent becomes work: one job per conversation the mail is in, even when one
- * settled batch holds mail from several. Tempo calls this; it is the only caller of Jobs.admit outside
- * tests. True only when every conversation in the batch has a job; `changed` runs when any was admitted. */
+ * settled batch holds mail from several. Tempo calls this; it is the only caller of admission outside
+ * tests. True only when every conversation in the batch has a job. Mail that got none is not dropped in
+ * silence: Jobs.admission tells the agent's owners why, and an admission that threw is recorded the same
+ * way here instead of being left to the caller, which could only swallow it. `changed` runs when any job
+ * was admitted or any such notice was newly written. */
 export function agentMailAdmission(jobs: Jobs, changed: () => void): AdmitInbox {
   return (who, items) => {
     if (who.kind !== 'agent') return false;
     const conversations = new Set(items.filter(item => item.toKind === 'agent' && item.to === who.id)
       .flatMap(item => item.conversation ? [item.conversation] : []));
-    let admitted = 0;
-    for (const id of conversations) if (jobs.admit(id)) admitted++;
-    if (admitted) changed();
+    let admitted = 0, noticed = false;
+    for (const id of conversations) {
+      let result: Admission;
+      try { result = jobs.admission(id); }
+      // If even the record cannot be written, the caller hears the error and offers the mail again later.
+      catch (error) { result = jobs.failed(id, error); }
+      if (result.job) admitted++;
+      noticed ||= result.noticed === true;
+    }
+    if (admitted || noticed) changed();
     return admitted > 0 && admitted === conversations.size;
   };
 }

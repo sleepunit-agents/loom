@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { describe, it, expect, vi } from 'vitest';
 import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
+import { FINISH_BUDGET_MS, REPORT_MS, SILENCE_MS } from './silence.js';
 vi.mock('node:crypto', async original => { const actual = await original<typeof import('node:crypto')>(); return { ...actual, randomBytes: vi.fn((size: number) => actual.randomBytes(size)) }; });
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
@@ -46,6 +47,20 @@ describe('worker operation client', () => {
     const abort = new AbortController(), stopped = vi.fn<typeof fetch>().mockImplementation(async () => { abort.abort(); throw new Error('down'); });
     await expect(httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: stopped, signal: abort.signal, pause }).finish('j1', 0, 'done')).rejects.toThrow();
     expect(stopped).toHaveBeenCalledTimes(1);
+  });
+  it('keeps every try of a finish report inside the budget the silence interval leaves, whatever the request deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
+    try {
+      const began = performance.now(), gaveUp: number[] = [];
+      // loom never answers: each request ends only when its own deadline aborts it.
+      const silent = vi.fn<typeof fetch>((_url, init) => new Promise((_, reject) => init!.signal!.addEventListener('abort', () => { gaveUp.push(performance.now() - began); reject(new Error('aborted')); })));
+      const finished = httpWorkerControl({ url: 'https://loom.example', token: 'private-token', fetch: silent, signal: new AbortController().signal, timeoutMs: 60_000, pause: async () => {} }).finish('j1', 0, 'done');
+      const refused = expect(finished).rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
+      await vi.advanceTimersByTimeAsync(300_000); await refused;
+      expect(gaveUp.length).toBeGreaterThan(0);
+      expect(Math.max(...gaveUp)).toBeLessThanOrEqual(FINISH_BUDGET_MS);
+      expect(FINISH_BUDGET_MS + REPORT_MS).toBeLessThan(SILENCE_MS);
+    } finally { vi.useRealTimers(); }
   });
   it('rejects an oversized body and cancels its stream', async () => {
     const cancel = vi.fn();

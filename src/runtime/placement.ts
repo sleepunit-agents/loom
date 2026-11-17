@@ -1,4 +1,5 @@
 import { currentAccountCapacity } from './account-windows.js';
+import { SILENCE_MS } from './silence.js';
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
@@ -7,7 +8,6 @@ import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, mode
  * Work that wants a tag runs on any allowed model carrying it, whichever family has room. */
 export interface ModelRole { model: string; provider: string; harness: string; series: string; tag?: string }
 export interface Placement { box: string; model: string; account: string; harness: string }
-export const WORKER_SILENCE_MS = 120_000;
 
 /** Both reported and owner-labelled capabilities describe the worker. */
 export function meetsNeed(facts: readonly string[], need: string): boolean {
@@ -23,7 +23,7 @@ export function meetsNeed(facts: readonly string[], need: string): boolean {
  * No viable combination means leave the work queued, rather than run elsewhere.
  */
 export function selectPlacement(db: DataDatabase, input: {
-  agent: string; now: string; roles: readonly ModelRole[]; model?: string; needs?: readonly string[];
+  agent: string; now: string; roles: readonly ModelRole[]; needs?: readonly string[];
   /** What the work asked to run on: a tag or one model's name. Only the agent's allowed models that match are tried. */
   wants?: string | null;
   /** Whether a harness would refuse this job (see harnessCannotRun). A model whose harness would is passed
@@ -36,7 +36,6 @@ export function selectPlacement(db: DataDatabase, input: {
   const allowed = new Map(db.select().from(boxAgents).where(eq(boxAgents.agent, input.agent)).all().map(row => [row.box,row.lent]));
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
   const models = db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
-    .filter(row => input.model === undefined || row.model === input.model)
     .filter(row => !input.wants || row.model === input.wants || input.roles.some(role => role.model === row.model && role.tag === input.wants));
   const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all().filter(account => currentAccountCapacity(db, account.id, input.now).hasRoom);
   const signedIn = db.select().from(modelAccountBoxes).all();
@@ -44,7 +43,7 @@ export function selectPlacement(db: DataDatabase, input: {
     const box = db.select().from(boxes).where(eq(boxes.id, preference.box)).get();
     if (!box || box.revokedAt || box.reportOnly || !box.lastSeenAt) continue;
     const silence = now - Date.parse(box.lastSeenAt);
-    if (!Number.isFinite(silence) || silence < 0 || silence > WORKER_SILENCE_MS) continue;
+    if (!Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS) continue;
     if (!(allowed.has(box.id) && (owners.has(box.owner) || allowed.get(box.id))) && !(box.hostsAny && owners.has(box.owner))) continue;
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all().map(row => row.fact);
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;

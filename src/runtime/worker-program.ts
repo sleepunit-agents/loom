@@ -8,9 +8,12 @@ import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js
 import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
+import { REPORT_MS } from './silence.js';
+import { defaultWorkerState } from './worker-left.js';
+import type { WorkerExecutor } from './worker.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
-const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional() });
+const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
 const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
 const containerDeadline = z.number().int().min(1).max(300_000);
 const accountCommand = z.object({
@@ -23,6 +26,10 @@ const signInCommand = accountCommand.extend({ box: z.string().trim().min(1) });
 const configSchema = z.object({
   facts: machineFacts.optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
+  /** A directory of this worker's own, where it records the builds and bodies it starts and keeps each
+   * body's scratch directory, so that the worker after it can end them if this one is killed
+   * (worker-left.ts). Left out, it is a directory under the temporary directory named for this user and machine. */
+  state: commandString.startsWith('/').optional(),
   build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), runnerCommand),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
@@ -62,6 +69,7 @@ export async function workerProgram(input: {
 }): Promise<number> {
   const abort = new AbortController();
   const stop = () => abort.abort();
+  let executor: WorkerExecutor | undefined;
   input.on('SIGINT', stop); input.on('SIGTERM', stop);
   async function observe(config: z.infer<typeof accountCommand>, remote?: { url: string; token: string; signal: AbortSignal }) {
     if (abort.signal.aborted) throw new Error('Cancelled');
@@ -109,9 +117,15 @@ export async function workerProgram(input: {
     const token = (await input.read(config.tokenFile)).trim();
     const remote = { url: config.url, token, signal: abort.signal };
     const control = (input.control ?? httpWorkerControl)(config.facts === undefined ? remote : { ...remote, facts: config.facts });
-    const executor = config.container
-      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: config.container })
-      : (input.executor ?? commandWorkerExecutor)(config);
+    // The executor holds the state directory from here, and refuses it when another worker is alive on it.
+    const state = config.state ?? defaultWorkerState(config.box);
+    executor = config.container
+      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: config.container, state })
+      : (input.executor ?? commandWorkerExecutor)({ ...config, state });
+    // Before any report or claim: end what a worker killed before this one left running, or the work loom
+    // has queued again would run beside it. If that cannot be done, this worker does not start.
+    const found = await executor.endLeft?.(abort.signal);
+    if (found?.unverified) input.error(`Worker left ${found.unverified} process group(s) running that it could not show to be a previous worker's\n`);
     // Refresh before admitting jobs, then alongside the worker slot. Each scan
     // and each private reader settles before another starts. Shutdown joins it.
     const scan = async () => {
@@ -131,7 +145,7 @@ export async function workerProgram(input: {
         heartbeat = health().then(() => {}, () => {
           if (!abort.signal.aborted) { failed = true; abort.abort(); }
         }).finally(() => { heartbeat = undefined; });
-      }, 15_000);
+      }, REPORT_MS);
       try { await scan(); }
       finally { clearInterval(timer); await heartbeat; }
       if (failed) throw new Error('Startup health unavailable');
@@ -169,5 +183,5 @@ export async function workerProgram(input: {
   } catch {
     input.error('Worker stopped: invalid configuration or unavailable execution\n');
     return 1;
-  } finally { input.off('SIGINT', stop); input.off('SIGTERM', stop); }
+  } finally { executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }
