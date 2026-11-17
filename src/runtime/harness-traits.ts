@@ -13,7 +13,8 @@ export interface HarnessTraits {
   /** Whether the harness can be told which tools a body is not given. One that cannot never runs a job any denied tool applies to. */
   honoursDeniedTools: boolean;
   /** Whether a name in the body's environment (upper-cased) selects or signs in the account this harness
-   * runs on. A startup secret may not take such a name: it would swap the account under the job. */
+   * runs on, or is one the adapter sets for the child itself. A startup secret may not take such a name:
+   * it would swap the account under the job, or stand in for the adapter's own setting. */
   reservesEnv(name: string, env: NodeJS.ProcessEnv): boolean;
 }
 

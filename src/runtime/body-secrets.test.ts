@@ -2,6 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {FakeClock} from '../core/clock.js';
 import {bodyStartupSecrets} from './body-secrets.js';
 import type {WorkerAssignment} from './worker.js';
+import {claude,claudeToolSettings} from './claude-body.js';
 const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:'cv',model:'model',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
 const clean:(()=>void)[]=[];afterEach(()=>{for(const close of clean.splice(0).reverse())close();vi.restoreAllMocks();});
 function fixture(values=new Map([['GITHUB_TOKEN',Buffer.from('PRIVATE_STARTUP')]]),base:NodeJS.ProcessEnv={PATH:'/usr/bin',ACCOUNT_PROFILE:'/account'}){
@@ -19,6 +20,13 @@ it('preserves Unicode and a leading BOM instead of changing credential text',asy
 });
 it.each(['bad-name','VALUE=OTHER','PATH','HOME','ACCOUNT_PROFILE','NODE_OPTIONS','ANTHROPIC_API_KEY','CLAUDE_CONFIG_DIR','HTTPS_PROXY','MCP_TOOL_TIMEOUT','MAX_MCP_OUTPUT_TOKENS','LOOM_BODY_SCRATCH'])('refuses %s without partially modifying the environment',async alias=>{
  const f=fixture(new Map([['GOOD_TOKEN',Buffer.from('FIRST_PRIVATE')],[alias,Buffer.from('SECOND_PRIVATE')]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);expect(JSON.stringify(f.environment)).not.toContain('PRIVATE');
+});
+it('reserves every name the Claude adapter sets for its child, from the adapter\'s own list',async()=>{
+ expect(Object.keys(claudeToolSettings)).toContain('MAX_MCP_OUTPUT_TOKENS');
+ for(const alias of Object.keys(claudeToolSettings)){
+  const f=fixture(new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);
+  expect(claude.reservesEnv(alias,{})).toBe(true);
+ }
 });
 it.each([Buffer.from([255]),Buffer.from('before\0after')])('refuses an unrepresentable environment value %j',async value=>{
  const f=fixture(new Map([['GOOD_TOKEN',Buffer.from('FIRST_PRIVATE')],['BINARY_TOKEN',value]]));await expect(f.start()).rejects.toThrow(/^Startup secret environment unavailable$/);expect(f.environment).toEqual(f.base);
