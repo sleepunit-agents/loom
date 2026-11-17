@@ -15,6 +15,19 @@ export interface SendTransport {
   post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string): Promise<{ id: string }>;
 }
 
+/** A person's decision on one reply awaiting review, as one statement of the
+ * rule. A held reply may be released to be sent or dismissed. An uncertain
+ * reply may only be dismissed: the platform may already have it, and sending
+ * again would risk posting it twice. The caller commits and publishes. */
+export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 'dismiss'): void {
+  const send = db.select().from(bridgeSends).where(eq(bridgeSends.id, id)).get();
+  if (!send) throw new Error('Unknown send');
+  if (send.state !== 'held' && (decision !== 'dismiss' || send.state !== 'uncertain')) throw new Error('Reply is not awaiting this review');
+  const changed = db.update(bridgeSends).set({ state: decision === 'release' ? 'pending' : 'dismissed' })
+    .where(and(eq(bridgeSends.id, id), eq(bridgeSends.state, send.state))).run();
+  if (!changed.changes) throw new Error('Reply state changed');
+}
+
 /** Trusted in-process send queue on the approved shared schema. External callers
  * enter through their authenticated operation; this module owns no permissions.
  * One daemon owns a database. Construct once at startup, before draining sends.
@@ -55,18 +68,6 @@ export class BridgeSends {
     }));
     this.changed();
     return result;
-  }
-
-  /** Held replies may be released; uncertain replies require review and dismissal.
-   * Releasing uncertainty would risk a duplicate message already received outside.
-   */
-  release(id: string): void { this.transition(id, 'held', 'pending'); }
-  dismiss(id: string): void {
-    const send = this.db.select().from(bridgeSends).where(eq(bridgeSends.id, id)).get();
-    if (!send) throw new Error('No reply send');
-    if (send.state === 'dismissed') return;
-    if (send.state !== 'held' && send.state !== 'uncertain') throw new Error('Reply is not awaiting review');
-    this.transition(id, send.state, 'dismissed');
   }
 
   private transition(id: string, from: BridgeSend['state'], to: BridgeSend['state']): void {

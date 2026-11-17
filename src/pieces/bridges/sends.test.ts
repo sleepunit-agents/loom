@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSends } from '../../core/data/schema.js';
-import { BridgeSends } from './sends.js';
+import { BridgeSends, reviewReply } from './sends.js';
 import { BridgeReplyNotSent } from './outbound.js';
 
 const opened: Database.Database[] = [];
@@ -49,13 +49,15 @@ describe('approved bridge reply queue', () => {
     f.db.update(bridgeConnections).set({ enabled: true }).run();
     await f.sends.flush();
     expect(f.post).not.toHaveBeenCalled();
-    f.sends.release('reply');
+    reviewReply(f.db, 'reply', 'release');
     await f.sends.flush();
     expect(f.read().state).toBe('sent');
     f.sends.queue({ id: 'held', incoming: 'in', text: 'Hold', held: true });
-    f.sends.dismiss('held');
-    f.sends.dismiss('held');
+    reviewReply(f.db, 'held', 'dismiss');
     expect(f.read('held').state).toBe('dismissed');
+    // A decided reply is no longer awaiting one.
+    expect(() => reviewReply(f.db, 'held', 'dismiss')).toThrow('not awaiting');
+    expect(() => reviewReply(f.db, 'missing', 'dismiss')).toThrow('Unknown send');
   });
 
   it('waits for a reconnect without attempting a post', async () => {
@@ -79,8 +81,8 @@ describe('approved bridge reply queue', () => {
     expect(JSON.stringify(f.read())).not.toContain('credential');
     await f.sends.flush();
     expect(f.post).toHaveBeenCalledTimes(1);
-    expect(() => f.sends.release('reply')).toThrow();
-    f.sends.dismiss('reply');
+    expect(() => reviewReply(f.db, 'reply', 'release')).toThrow('not awaiting');
+    reviewReply(f.db, 'reply', 'dismiss');
     expect(f.read().state).toBe('dismissed');
   });
 
