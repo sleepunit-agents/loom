@@ -20,6 +20,9 @@ export const BODY_EXIT = {
   assignment: 18,
   /** The first report to loom failed: loom unreachable, or the job no longer this body's. */
   report: 19,
+  /** A later report failed while the body was at work: it lost loom, or loom had ended the job. The body
+   * dropped what it was doing, whatever stage that was; the harness is not to blame. */
+  contact: 20,
 } as const;
 export const WORKER_EXIT = {
   /** Fetching the private repository input. */
@@ -33,6 +36,8 @@ export const WORKER_EXIT = {
   release: 25,
   /** The body's process could not be watched or reaped to its end. */
   reap: 26,
+  /** This worker has no command for the job's harness, or none it can hold to the account loom placed it on. */
+  runner: 27,
 } as const;
 
 export const LOOM_EXIT = {

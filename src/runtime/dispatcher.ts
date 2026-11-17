@@ -6,7 +6,7 @@ import { workerPolicy } from './body-policy.js';
 import { harnessCannotRun } from './harness-traits.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads, triggers } from '../core/data/schema.js';
+import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
 import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
@@ -54,7 +54,7 @@ export class Dispatcher {
         if(thread)new Threads(this.db,this.now).working(thread.id,true);
         const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
         return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
-          model: placement.model, account: placement.account, harness: placement.harness,
+          model: placement.model, account: placement.account, accountChoices: this.accountChoices(box, placement.account), harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
       }
@@ -67,6 +67,13 @@ export class Dispatcher {
     const row = this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, conversation)).get();
     if (row?.venue !== 'wake' || !row.place) return null;
     return this.db.select({ wants: triggers.wantsModel }).from(triggers).where(eq(triggers.id, row.place)).get()?.wants ?? null;
+  }
+  /** How many accounts of the placed account's provider are signed in on the machine. Placement checked the
+   * placed one for room; only the worker knows whether its command can be held to it (see workerRunner). */
+  private accountChoices(box: string, account: string): number {
+    const provider = this.db.select({ provider: modelAccounts.provider }).from(modelAccounts).where(eq(modelAccounts.id, account)).get()?.provider;
+    return this.db.select({ id: modelAccounts.id }).from(modelAccountBoxes).innerJoin(modelAccounts, eq(modelAccounts.id, modelAccountBoxes.account))
+      .where(and(eq(modelAccountBoxes.box, box), eq(modelAccounts.provider, provider ?? ''))).all().length || 1;
   }
   private liveMachine(box: string) {
     const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();

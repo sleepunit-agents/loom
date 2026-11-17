@@ -36,7 +36,7 @@ it('claims only on the selected worker and delivers an execution-ready snapshot 
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.next('first')).toEqual({ venue:'loom', thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }], mail: [f.mail.id] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
-    model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
+    model: 'primary', account: 'account', accountChoices: 1, harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
   expect(f.runtime.jobs.get(f.job.id).state).toBe('starting');
@@ -297,4 +297,11 @@ it('takes the facts a worker reports with its poll, keeps them when a poll names
   expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
   f.runtime.next('first'); expect(f.db.select().from(boxFacts).all()).toHaveLength(1);
   f.runtime.next('first', []); expect(f.db.select().from(boxFacts).all()).toEqual([]);
+});
+
+it('tells the worker how many accounts of the placed provider are signed in on its machine', () => {
+  const f = fixture();
+  f.db.insert(modelAccounts).values([{ id: 'second-account', owner: 'owner', provider: 'provider', label: 'Second', hasRoom: true }, { id: 'elsewhere', owner: 'owner', provider: 'another', label: 'Other', hasRoom: true }]).run();
+  f.db.insert(modelAccountBoxes).values([{ account: 'second-account', box: 'first' }, { account: 'elsewhere', box: 'first' }]).run();
+  expect(f.runtime.next('first')).toMatchObject({ account: 'account', accountChoices: 2 });
 });

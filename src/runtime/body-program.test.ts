@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { bodyProgram } from './body-program.js';
-import { BODY_EXIT } from './job-exit.js';
+import { BODY_EXIT, exitStage } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
 const raw = 'body_' + 'a'.repeat(64);
@@ -105,13 +105,13 @@ it('keeps native work reported, serializes beats, and erases bootstrap before st
  expect(f.calls.filter(row=>row.path==='status'&&(row.body.input as {state:string}).state==='working')).toHaveLength(3);
  expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});expect(f.calls.some(row=>row.path==='message'||row.path==='confirm')).toBe(false);
 });
-it('ends native work when a current body status beat fails, without publishing a late reply',async()=>{
+it('ends native work when a status report fails mid-run, publishes no late reply, and says it lost loom rather than blaming the harness',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,statuses=0;const started=new Promise<void>(resolve=>{entered=resolve;});
  f.native.mockImplementation(async(_job,_words,signal)=>{entered();await new Promise<void>((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('cancelled')),{once:true}));throw new Error();});
  const pending=bodyProgram({...f.options,schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
   if(String(url).endsWith('/status')&&++statuses>2)throw new Error(raw);return fetcher(url,init);
  }});
- await started;tick();expect(await pending).toBe(BODY_EXIT.harness);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
+ await started;tick();expect(await pending).toBe(BODY_EXIT.contact);expect(exitStage(BODY_EXIT.contact)).toBe('body contact');expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
 it('refuses mail arriving after Stop was observed during an outstanding take',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,release!:()=>void,cancelled!:()=>void;

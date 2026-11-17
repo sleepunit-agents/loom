@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
+import { NoRunnerError, workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
 import { WORKER_EXIT } from './job-exit.js';
 const deferred = <T>() => { let resolve!: (v: T) => void; let reject!: (e?: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'm', account: 'a', harness: 'h', brief: 'hello', run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] }, house: { repository: 'r', file: 'Containerfile', branch: 'main' } };
 function fixture() {
-  const exited = deferred<{ exitCode: number; logTail: string }>();
+  const exited = deferred<{ exitCode: number; logTail: string; own?: boolean }>();
   const built = deferred<string>();
   const spawned = deferred<void>();
   const body: WorkerBody = { release: vi.fn(async () => {}), spawned: spawned.promise, exited: exited.promise,
@@ -145,11 +145,37 @@ describe('worker work plane', () => {
   it('reaps a body before reporting an input-release failure to the server', async () => {
     const f = fixture(), reaped = deferred<void>();
     vi.mocked(f.body.release).mockRejectedValue(new Error('stdin gone'));
-    vi.mocked(f.body.stop).mockImplementation(() => reaped.promise);
+    vi.mocked(f.body.stop).mockImplementation(() => reaped.promise.then(() => f.exited.resolve({ exitCode: 1, logTail: '', own: false })));
     const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
     expect(f.control.finish).not.toHaveBeenCalled();
     reaped.resolve(); expect(await run).toBe('finished');
     expect(f.control.finish).toHaveBeenCalledWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed');
+  });
+  it('reports the code a body ended with by itself before its input could be handed over, not the worker\'s', async () => {
+    const f = fixture();
+    vi.mocked(f.body.release).mockRejectedValue(new Error('stdin gone'));
+    // The body had already left with its own code (16 is a body file it could not read) when the worker reaped it.
+    vi.mocked(f.body.stop).mockImplementation(async () => { f.exited.resolve({ exitCode: 16, logTail: 'cannot read body file', own: true }); });
+    const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve();
+    expect(await run).toBe('finished');
+    expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', 16, 'cannot read body file');
+  });
+  it('keeps its own release code when the body it could not feed ended cleanly or only when killed', async () => {
+    for (const ended of [{ exitCode: 0, logTail: '', own: true }, { exitCode: 137, logTail: '', own: false }]) {
+      const f = fixture();
+      vi.mocked(f.body.release).mockRejectedValue(new Error('stdin gone'));
+      vi.mocked(f.body.stop).mockImplementation(async () => { f.exited.resolve(ended); });
+      const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve();
+      expect(await run).toBe('finished');
+      expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.release, 'Worker lost the body: release failed');
+    }
+  });
+  it('names the runner stage when this worker has no command it can run the job on', async () => {
+    const f = fixture();
+    f.executor.build.mockImplementation(() => { throw new NoRunnerError('Several accounts need a runner each'); });
+    expect(await f.run()).toBe('finished');
+    expect(f.executor.start).not.toHaveBeenCalled();
+    expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.runner, 'Worker could not start the body: runner failed');
   });
   it('cancels a build on shutdown, without fabricating a failure', async () => {
     const f = fixture(), run = f.run(); await flush(); f.abort.abort();

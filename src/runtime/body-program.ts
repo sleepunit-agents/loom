@@ -161,7 +161,8 @@ export async function bodyProgram(input: {
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await client.status(left);return BODY_EXIT.stopped;}catch{}
     }
-    input.error('Body stopped: invalid input or unavailable execution\n'); return exit;
+    // A report that failed is why the work was dropped, whichever stage was dropped.
+    input.error('Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
   }
   finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

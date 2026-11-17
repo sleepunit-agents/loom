@@ -6,8 +6,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
-import { commandUsageProvider, commandWorkerExecutor, commandOutput, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
-import type { WorkerAssignment } from './worker.js';
+import { commandUsageProvider, commandWorkerExecutor, commandOutput, workerRunner, type ProcessRuntime, type WorkerCommand } from './worker-process.js';
+import { NoRunnerError, type WorkerAssignment } from './worker.js';
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'custom-model', account: 'sub', harness: 'custom-runner', brief: 'private brief', house: { repository: 'repo', file: 'Containerfile', branch: 'main' } };
 const plan: WorkerCommand = { command: '/worker/build', args: ['--json'], cwd: '/worker', env: { PATH: '/usr/bin' } };
@@ -61,7 +61,7 @@ describe('worker command adapter (no child processes in tests)', () => {
     expect(JSON.parse(child.input())).toEqual({ job: configured, build: 'image@sha' });
     await expect(body.release()).rejects.toThrow('unavailable');
     child.child.stderr.emit('data', 'error '); child.child.stdout.emit('data', 'result'); child.child.emit('close', 9, null);
-    expect(await body.exited).toEqual({ exitCode: 9, logTail: 'error result' });
+    expect(await body.exited).toMatchObject({ exitCode: 9, logTail: 'error result' });
     await body.stop(); await body.stop(); expect(f.runtime.kill).toHaveBeenCalledOnce();
   });
   it('cancels and reaps builds and bodies without releasing body input', async () => {
@@ -138,6 +138,29 @@ describe('worker command adapter (no child processes in tests)', () => {
     // Fake has no real group: mock process.kill so cleanup launches no processes.
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
     try { await body.stop(); expect(kill).toHaveBeenCalledWith(-123, 'SIGKILL'); } finally { kill.mockRestore(); }
+  });
+  it('says whether a body ended by itself or was killed', async () => {
+    const f = fixture();
+    const alone = f.executor.start(job, 'image', new AbortController().signal);
+    f.children[0].child.emit('spawn'); await alone.spawned;
+    f.children[0].child.emit('exit', 16, null); f.children[0].child.emit('close', 16, null);
+    expect(await alone.exited).toMatchObject({ exitCode: 16, own: true });
+    const killed = f.executor.start(job, 'image', new AbortController().signal);
+    f.children[1].child.emit('spawn'); await killed.spawned;
+    f.children[1].child.emit('exit', null, 'SIGKILL'); f.children[1].child.emit('close', null, 'SIGKILL');
+    expect(await killed.exited).toMatchObject({ exitCode: 1, own: false });
+  });
+  it('refuses a job when several accounts of its provider are signed in here and one command serves the harness', async () => {
+    const f = fixture();
+    await expect(f.executor.build({ ...job, accountChoices: 2 }, new AbortController().signal)).rejects.toBeInstanceOf(NoRunnerError);
+    expect(() => f.executor.start({ ...job, accountChoices: 2 }, 'image', new AbortController().signal)).toThrow(NoRunnerError);
+    expect(f.runtime.spawn).not.toHaveBeenCalled();
+    // A runner bound to the account is the answer; one account, or a loom that does not say, runs as before.
+    const bound = workerRunner({ runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, command: '/worker/run-sub' } } } });
+    expect(bound({ ...job, accountChoices: 2 }).command).toBe('/worker/run-sub');
+    expect(() => bound({ ...job, account: 'other', accountChoices: 2 })).toThrow(NoRunnerError);
+    const shared = workerRunner({ runners: { 'custom-runner': plan } });
+    expect(shared({ ...job, accountChoices: 1 })).toMatchObject({ command: plan.command }); expect(shared(job)).toMatchObject({ command: plan.command });
   });
   it('rejects native Windows before launching anything', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
@@ -370,7 +393,7 @@ it('passes a credential only to an explicitly opted-in fixed child stdin and dis
   expect(JSON.parse(child.input())).toEqual({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: job.id, token: raw } });
   expect(JSON.stringify(vi.mocked(f.runtime.spawn).mock.calls)).not.toContain(raw);
   child.child.stdout.emit('data', raw); child.child.stderr.emit('data', raw); child.child.emit('close', 0);
-  expect(await body.exited).toEqual({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
+  expect(await body.exited).toMatchObject({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
 });
 it('never sends a bootstrap to an ordinary envelope child', async () => {
   const f = fixture(), body = f.executor.start(job, 'image', new AbortController().signal), child = f.children[0]; child.child.emit('spawn'); await body.spawned;

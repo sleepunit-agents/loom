@@ -29,6 +29,10 @@ export interface WorkerAssignment {
   venue?: string | null;
   model: string;
   account: string;
+  /** How many accounts of this job's provider are signed in on this machine, the placed one included.
+   * With more than one, a worker that has one command for the harness cannot hold the job to the placed
+   * account, and refuses it (workerRunner). Absent from a loom older than this field. */
+  accountChoices?: number;
   harness: string;
   brief: string;
   /** Current agent configuration at claim; absent means no extra capabilities. */
@@ -38,12 +42,14 @@ export interface WorkerAssignment {
 export interface WorkerBody {
   /** Resolves only after the child has actually spawned, rejects on launch failure. */
   spawned: Promise<void>;
-  exited: Promise<{ exitCode: number; logTail: string }>;
+  /** `own` is true when the body ended by itself with this code, and not because it was killed. An
+   * executor that cannot tell leaves it out. */
+  exited: Promise<{ exitCode: number; logTail: string; own?: boolean }>;
   /** Releases the brief only after loom acknowledges running. */
   /** Only explicit fixed-child adapters receive a private credential. */
   acceptsBootstrap?: boolean;
   release(bootstrap?: BodyBootstrap): Promise<void>;
-  /** Must stop and reap every child belonging to this attempt. Idempotent. */
+  /** Must stop and reap every child belonging to this attempt. Idempotent. `exited` settles once this has. */
   stop(): Promise<void>;
 }
 export interface WorkerExecutor {
@@ -69,6 +75,9 @@ const schedule: WorkerSchedule = {
   every(ms, callback) { const timer = setInterval(callback, ms); return () => clearInterval(timer); },
 };
 export type WorkerResult = 'idle' | 'finished' | 'abandoned';
+/** Thrown by an executor for a job this worker has no command for: no runner for its harness, or none it
+ * can hold to the placed account. Reported as WORKER_EXIT.runner, apart from a build that failed. */
+export class NoRunnerError extends Error {}
 
 /** One assignment per invocation, never a local launch retry. The server owns
  * start retries, terminal states and placement. Transport uncertainty aborts the
@@ -140,8 +149,9 @@ export async function workOnce(input: {
         if (!control.enrollBody) throw new Error('Body enrollment unavailable');
         bootstrap = await control.enrollBody(assignment.id, abort.signal);
       }
-    } catch {
+    } catch (error) {
       if (abort.signal.aborted) return 'abandoned';
+      if (error instanceof NoRunnerError) stage = 'runner';
       // Reap a partly launched process before allowing the server's start retry.
       if (body) await body.stop();
       reporting = true;
@@ -172,7 +182,17 @@ export async function workOnce(input: {
       result = await body.exited;
       failed = undefined;
     }
-    catch { result = { exitCode: WORKER_EXIT[failed!], logTail: `Worker lost the body: ${failed} failed` }; }
+    catch {
+      result = { exitCode: WORKER_EXIT[failed!], logTail: `Worker lost the body: ${failed} failed` };
+      // Input cannot be handed to a body that has already ended, and a body that ended before reading its
+      // input did so for a reason of its own (its arguments, its body file). That reason is the one to
+      // record: once the body is reaped, a non-zero exit it made by itself replaces the worker's code.
+      if (failed === 'release') {
+        await body.stop();
+        const ended = await body.exited.catch(() => undefined);
+        if (ended?.own && ended.exitCode !== 0) { result = ended; failed = undefined; }
+      }
+    }
     // Reap the entire process group before a terminal report can admit more work.
     await body.stop();
     reporting = true;

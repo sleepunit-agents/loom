@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
-import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
+import { NoRunnerError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 export interface WorkerCommand {
   /** This configured child understands the private bootstrap stdin envelope. */
   bodyBootstrap?: boolean;
@@ -47,10 +47,11 @@ function command(plan: WorkerCommand): WorkerCommand {
   return { ...plan, args: [...plan.args], env: { ...plan.env } };
 }
 export interface WorkerRunnerConfig {
-  /** One command per harness, whatever the account. loom placed the job on an account it checked for room,
-   * and names it in the startup envelope, but nothing here holds the command to it: the job runs on whichever
-   * account that command's own environment is signed in to. That is right for a machine with one account
-   * per harness. A machine with several must use accountRunners, or usage lands on an account loom did not pick. */
+  /** One command per harness. Such a command is signed in to one account by its own environment, and
+   * nothing here can check which. That is right while the machine has one account of the job's provider:
+   * it is then the account loom placed the job on. When loom says several are signed in on this machine
+   * (WorkerAssignment.accountChoices), the job is refused: it needs accountRunners. See
+   * docs/accepted-tradeoffs.md, "The placed account is taken on trust". */
   runners: Readonly<Record<string, WorkerCommand>>;
   /** When present, every job requires an exact account/harness binding. */
   accountRunners?: Readonly<Record<string, Readonly<Record<string, WorkerCommand>>>>;
@@ -61,9 +62,12 @@ export function workerRunner(config: WorkerRunnerConfig) {
   const shared = plans(config.runners);
   const accounts = config.accountRunners === undefined ? undefined
     : new Map(Object.entries(config.accountRunners).map(([account, values]) => [account, plans(values)]));
-  return (job: Pick<WorkerAssignment, 'account' | 'harness'>) => {
+  return (job: Pick<WorkerAssignment, 'account' | 'harness' | 'accountChoices'>) => {
     const selected = accounts ? accounts.get(job.account)?.get(job.harness) : shared.get(job.harness);
-    if (!selected) throw new Error('Worker has no configured runner for account');
+    if (!selected) throw new NoRunnerError('Worker has no configured runner for account');
+    // One command cannot be on two accounts. Running the job anyway would spend an account loom did not
+    // pick, perhaps one with no room, so the job fails here and says so (WORKER_EXIT.runner).
+    if (!accounts && (job.accountChoices ?? 1) > 1) throw new NoRunnerError('Several accounts need a runner each');
     return selected;
   };
 }
@@ -89,11 +93,11 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   let spawned = false, closed = false, stopRequested = false;
   const retained = commandOutput();
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
-  let exitResolve!: (result: { exitCode: number; logTail: string }) => void;
+  let exitResolve!: (result: { exitCode: number; logTail: string; own: boolean }) => void;
   let exitReject!: (error: Error) => void;
   const ready = new Promise<void>((yes, no) => { spawnResolve = yes; spawnReject = no; });
   void ready.catch(() => {});
-  const exited = new Promise<{ exitCode: number; logTail: string }>((yes, no) => { exitResolve = yes; exitReject = no; });
+  const exited = new Promise<{ exitCode: number; logTail: string; own: boolean }>((yes, no) => { exitResolve = yes; exitReject = no; });
   void exited.catch(() => {});
   let killed = false;
   let cleanupError: Error | undefined;
@@ -127,16 +131,16 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     spawnResolve();
   });
   child.once('error', () => { spawnReject(new Error('Worker command could not start')); });
-  let leaderExit: number | undefined;
+  let leaderExit: number | undefined, own = false;
   // close waits for inherited pipes. Kill descendants at leader exit, otherwise
   // an orphan holding stdout can keep both close and terminal reporting stuck.
-  child.once('exit', (code) => { leaderExit = code ?? 1; kill(); });
+  child.once('exit', (code) => { leaderExit = code ?? 1; own = code !== null; kill(); });
   child.once('close', (code, _signal) => {
     closed = true;
     retained.stdout(outDecoder.end(), 0); retained.stderr(errorDecoder.end());
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
-    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail: retained.tail() });
+    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail: retained.tail(), own });
   });
   // Covers cancellation during the injected spawn operation/listener setup.
   if (signal.aborted) kill();
