@@ -141,7 +141,9 @@ export const UPKEEP_FAILED = 'Worker could not look at its house images: old one
  * load in every container, so the worker is not started on one. */
 function programInside(program: string): boolean {
   try {
-    if (!lstatSync(join(program, 'dist', 'body.js')).isFile()) return false;
+    const body = join(program, 'dist', 'body.js');
+    // Itself, and not a link to one outside: only this directory is in a container.
+    if (!lstatSync(body).isFile() || realpathSync(body) !== body) return false;
     const manifest: unknown = JSON.parse(readFileSync(join(program, 'package.json'), 'utf8'));
     const needed: unknown = manifest && typeof manifest === 'object' && 'dependencies' in manifest ? manifest.dependencies : {};
     if (!needed || typeof needed !== 'object' || Array.isArray(needed)) return false;
@@ -225,12 +227,13 @@ export function containerWorkerExecutor(config: {
    * job: it runs beside whatever comes next, under a limit of its own, one at a time, and a failure is
    * said and nothing more. An image a job holds, or one being built, is kept: asked at each removal. */
   let upkeeping: AbortController | undefined;
-  const upkeep = (image: string) => {
+  const upkeep = (built: string) => {
     if (upkeeping) return;
     const abort = upkeeping = new AbortController(), timer = setTimeout(() => abort.abort(), UPKEEP_MS);
     // What builds leave behind is asked gone only when this was the only build: another's unfinished
     // layers have no name either.
-    void pruneHouses(engine, guard, builds.size <= 1, abort.signal).then(looked => looked, () => false)
+    // The image whose build this follows stays, whoever still wants it: it was only just made.
+    void pruneHouses(engine, { take: image => image !== built && guard.take(image), done: guard.done }, builds.size <= 1, abort.signal).then(looked => looked, () => false)
       .then(looked => { clearTimeout(timer); if (upkeeping === abort) upkeeping = undefined; if (!looked && !closed) dependencies.say?.(UPKEEP_FAILED); });
   };
   let closed = false;
@@ -241,7 +244,7 @@ export function containerWorkerExecutor(config: {
       const timer = setTimeout(() => { made.ranOut = true; abort.abort(); }, buildMs);
       made.done = (async () => {
         if (await houseBuilt(engine, image, abort.signal)) return;
-        await buildHouse(engine, image, house.file, source.archive(house, commit, abort.signal), abort.signal);
+        await buildHouse(engine, image, house.file, source.context(house, commit, abort.signal), abort.signal);
         upkeep(image);
       })().finally(() => { clearTimeout(timer); if (builds.get(image) === made) builds.delete(image); });
       void made.done.catch(() => {});

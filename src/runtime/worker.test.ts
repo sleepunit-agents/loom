@@ -386,3 +386,13 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
     const unbuilt = fixture(); Object.assign(unbuilt.executor, { discard });
     const none = unbuilt.run(); await flush(); unbuilt.built.reject(new Error('build failed')); expect(await none).toBe('finished'); expect(discard).not.toHaveBeenCalled();
   });
+  it('tells the executor of a build that is handed over in the same moment the job is cancelled', async () => {
+    const f = fixture(), discard = vi.fn(); Object.assign(f.executor, { discard });
+    // An executor whose build does not notice the cancel: it resolves, and the job is already cancelled.
+    f.executor.build.mockImplementation(() => f.built.promise);
+    const run = f.run(); await flush();
+    f.built.resolve('image-in-hand'); f.abort.abort();
+    expect(await run).toBe('abandoned'); expect(f.executor.start).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 'j' }), 'image-in-hand');
+  });
+

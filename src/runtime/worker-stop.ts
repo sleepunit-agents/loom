@@ -45,7 +45,7 @@ export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */
 export class WorkerStop extends Error {
   /** @param key For a stage that can be reached from many entries of the configuration: the configuration
-   * key at fault (`container.mounts[1].source`). A key, with an account's id or a harness's name in it at
+   * key at fault (`container.mounts.<agent>[1].source`). A key, with an account's id or a harness's name in it at
    * most; never the value written under it, so never a path. */
   constructor(readonly stage: WorkerStopStage, readonly key?: string) { super(WORKER_STOP[stage][1]); }
 }

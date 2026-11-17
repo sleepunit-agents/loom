@@ -24,9 +24,13 @@ export const SLOTS_MAX = 16;
 /** How many bodies a worker runs on one account at once when the configuration does not say
  * (`accountSlots`); never more than its slots. */
 export const ACCOUNT_SLOTS_DEFAULT = 4;
-/** The oldest git a worker with container bodies fetches houses with. Each part of how it runs git has a
- * first release, and this is the newest of them: `--no-write-fetch-head` (2.29), settings given in the
- * environment (`GIT_CONFIG_COUNT`, 2.31), no per-user configuration file (`GIT_CONFIG_GLOBAL`, 2.32), and
- * the handling of a commit's `.gitattributes` and `export-subst` without the two memory faults mended in
- * 2.39.1 (CVE-2022-23521, CVE-2022-41903), which `git archive` of a stranger's commit would reach. */
-export const GIT_MINIMUM = [2, 39, 1] as const;
+/** The oldest git a worker with container bodies fetches houses with: the newest of the first releases
+ * of what the fetch uses. `--no-write-fetch-head` came in 2.29, settings given in the environment
+ * (`GIT_CONFIG_COUNT`) in 2.31, and running with no per-user configuration file (`GIT_CONFIG_GLOBAL`) in
+ * 2.32. Reading a commit's tree and files (`ls-tree`, `cat-file`) is far older. */
+export const GIT_MINIMUM = [2, 32, 0] as const;
+/** The most one file of a house's build context may hold, and the most the whole context may: past either
+ * the job fails as a failed build, before anything is sent to the engine. */
+export const CONTEXT_FILE_MAX = 104_857_600, CONTEXT_MAX = 1_073_741_824;
+/** The most files and links a context may have, and the longest name or link target, in bytes. */
+export const CONTEXT_ENTRIES_MAX = 50_000, CONTEXT_NAME_MAX = 4_096;

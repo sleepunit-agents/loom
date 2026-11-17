@@ -1,10 +1,13 @@
 /** Where a house comes from: the worker's own fetch of an agent's house repository.
  *
  * The worker keeps one bare mirror per repository under its state directory, fetches the job's branch into
- * it with the machine's `git`, and hands out that commit as a tar stream (`git archive`), which is the
- * build context the engine is given (house-image.ts). That is all the worker does with a repository: it
- * never checks one out, never reads a file of one, and nothing a repository holds becomes an argument, a
- * file on this machine outside the mirror's objects, or input to a shell.
+ * it with the machine's `git`, and hands out that commit as a tar stream it writes itself from git's
+ * objects (house-context.ts), which is the build context the engine is given (house-image.ts). That is all
+ * the worker does with a repository: it never checks one out, neither it nor git interprets a file of
+ * one, and nothing a repository holds becomes an argument, a file on this machine outside the mirror's
+ * objects, or input to a shell. git is not asked to check what it fetches beyond what it always does
+ * (`fetch.fsckObjects` is left off): that check reads a commit's `.gitmodules` and refuses tips over names
+ * that only matter to a checkout, and nothing here checks out. The names the worker uses it checks itself.
  *
  * Whoever can place a job chooses the repository, so `git` is run as a stranger's errand:
  *  - only `https://` addresses. `ext::` would run a command, a local path or `file://` would read this
@@ -19,9 +22,11 @@
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, utimesSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PassThrough, type Readable } from 'node:stream';
+import { Readable } from 'node:stream';
+import { houseContext, type ContextLimits } from './house-context.js';
 import { COMMIT } from '../apps/merge-target.js';
 import { GIT_MINIMUM } from './worker-limits.js';
 
@@ -37,9 +42,9 @@ export interface House { repository: string; file: string; branch: string }
  * The message is the worker's own words and never names the repository. */
 export class HouseSourceError extends Error {}
 /** Start git with these arguments and this environment, and nothing else of the worker's. */
-export type GitSpawn = (args: readonly string[], env: Readonly<Record<string, string>>, output: 'pipe' | 'ignore') => ChildProcess;
+export type GitSpawn = (args: readonly string[], env: Readonly<Record<string, string>>, output: 'pipe' | 'ignore', input?: 'pipe' | 'ignore') => ChildProcess;
 
-const native: GitSpawn = (args, env, output) => spawn('git', [...args], { env: { ...env }, shell: false, detached: true, stdio: ['ignore', output, 'ignore'] });
+const native: GitSpawn = (args, env, output, input = 'ignore') => spawn('git', [...args], { env: { ...env }, shell: false, detached: true, stdio: [input, output, 'ignore'] });
 /** A branch name plain enough to be put in a refspec: no option, no range, no pattern, no ref trickery. */
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const control = (text: string) => /[\0-\x1f\x7f]/.test(text);
@@ -68,14 +73,16 @@ function authorization(credential: Uint8Array): string {
   if (!text || control(text)) throw new HouseSourceError('House repository secret is not usable');
   return `Authorization: Basic ${Buffer.from(text.includes(':') ? text : `x-access-token:${text}`).toString('base64')}`;
 }
+/** Where git is looked for: the worker's own search path, the one thing of its environment git is given. */
+const searchPath = () => process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin';
 /** git's whole environment. Settings go in as configuration here, so no argument carries one. */
 function environment(home: string, protocols: readonly string[], extra: readonly [string, string][] = []): Record<string, string> {
   const settings: [string, string][] = [
     ['credential.helper', ''], ['core.hooksPath', '/dev/null'], ['core.attributesFile', '/dev/null'], ['core.fsmonitor', 'false'],
-    ['http.followRedirects', 'false'], ['fetch.fsckObjects', 'true'], ['gc.autoDetach', 'false'],
+    ['http.followRedirects', 'false'], ['gc.autoDetach', 'false'],
     ['protocol.allow', 'never'], ...protocols.map((protocol): [string, string] => [`protocol.${protocol}.allow`, 'always']), ...extra,
   ];
-  return { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: home, LC_ALL: 'C',
+  return { PATH: searchPath(), HOME: home, LC_ALL: 'C',
     GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: protocols.join(':'),
     GIT_CONFIG_COUNT: String(settings.length),
     ...Object.fromEntries(settings.flatMap(([key, value], index) => [[`GIT_CONFIG_KEY_${index}`, key], [`GIT_CONFIG_VALUE_${index}`, value]])) };
@@ -92,7 +99,7 @@ export const gitNewEnough = (printed: string): boolean => {
 /** Whether this machine has a git the worker can run, and one new enough. */
 export const gitAvailable = (): boolean => {
   try {
-    const asked = spawnSync('git', ['--version'], { env: { PATH: process.env.PATH ?? '' }, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, encoding: 'utf8' });
+    const asked = spawnSync('git', ['--version'], { env: { PATH: searchPath() }, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, encoding: 'utf8' });
     return asked.status === 0 && gitNewEnough(asked.stdout);
   } catch { return false; }
 };
@@ -103,9 +110,10 @@ export interface HouseSource {
   /** Bring the mirror of the house's repository up to its branch and say which commit that is. The secret
    * is used for this one fetch and kept nowhere. */
   fetch(house: House, credential: Uint8Array | undefined, signal: AbortSignal): Promise<string>;
-  /** That commit's files as a tar stream. The stream fails when git does, so a cut-off archive is never
-   * taken for a whole one. */
-  archive(house: House, commit: string, signal: AbortSignal): Readable;
+  /** That commit's files as a tar stream, written by the worker from git's objects (house-context.ts). The
+   * stream fails when git does or the context is not one the worker writes, so a cut-off context is
+   * never taken for a whole one. */
+  context(house: House, commit: string, signal: AbortSignal): Readable;
 }
 export function houseSource(options: {
   /** The worker's own directory for mirrors: under its state directory, which is private to its user. */
@@ -118,6 +126,8 @@ export function houseSource(options: {
   started?: (pid: number) => () => void;
   /** How many mirrors to keep, for a test that cannot make nine repositories cheaply. */
   kept?: number;
+  /** A context's limits, for a test that cannot make a gigabyte cheaply. */
+  limits?: ContextLimits;
 }): HouseSource {
   const start = options.spawn ?? native, protocols = options.protocols ?? ['https'];
   const mirrorOf = (repository: string) => join(options.directory, `${createHash('sha256').update(repository).digest('hex').slice(0, MIRROR_DIGITS)}.git`);
@@ -139,7 +149,7 @@ export function houseSource(options: {
   });
   // One fetch at a time into one mirror: the commit read back is the one this fetch brought.
   const busy = new Map<string, Promise<unknown>>();
-  // Mirrors being read from just now: never removed under an archive.
+  // Mirrors being read from just now: never removed under a context being written.
   const reading = new Map<string, number>();
   return {
     fetch(house, credential, signal) {
@@ -164,7 +174,8 @@ export function houseSource(options: {
           const now = new Date(); utimesSync(mirror, now, now);
           const others = readdirSync(options.directory).filter(name => MIRROR.test(name)).map(name => join(options.directory, name))
             .filter(path => path !== mirror && !busy.has(path) && !reading.has(path)).map(path => ({ path, used: statSync(path).mtimeMs })).sort((one, other) => other.used - one.used);
-          for (const { path } of others.slice(Math.max(0, (options.kept ?? HOUSE_MIRRORS_KEPT) - 1))) rmSync(path, { recursive: true, force: true });
+          // Removed beside the work, not in its way: a large mirror takes a while, and reports must go out meanwhile.
+          for (const { path } of others.slice(Math.max(0, (options.kept ?? HOUSE_MIRRORS_KEPT) - 1))) await rm(path, { recursive: true, force: true });
         } catch { /* a mirror left over is found again next time */ }
         return commit;
       });
@@ -172,27 +183,16 @@ export function houseSource(options: {
       void next.catch(() => {}).finally(() => { if (busy.get(mirror) === next) busy.delete(mirror); });
       return next;
     },
-    archive(house, commit, signal) {
-      const out = new PassThrough();
-      if (!houseAddress(house.repository, protocols) || !COMMIT.test(commit) || signal.aborted) { out.destroy(new HouseSourceError('House is not one this worker fetches')); return out; }
-      let child: ChildProcess; const mirror = mirrorOf(house.repository);
-      try { child = start(['--git-dir', mirror, 'archive', '--format=tar', commit], environment(options.directory, protocols), 'pipe'); }
-      catch { out.destroy(new HouseSourceError('git could not be run')); return out; }
-      const forget = child.pid ? options.started?.(child.pid) : undefined;
+    context(house, commit, signal) {
+      if (!houseAddress(house.repository, protocols) || !COMMIT.test(commit)) return Readable.from((async function* (): AsyncGenerator<Buffer> { throw new HouseSourceError('House is not one this worker fetches'); })());
+      const mirror = mirrorOf(house.repository), env = environment(options.directory, protocols);
+      // The mirror is not removed while it is being read from.
       reading.set(mirror, (reading.get(mirror) ?? 0) + 1);
       let counted = true;
       const done = () => { if (!counted) return; counted = false; const left = (reading.get(mirror) ?? 1) - 1; if (left > 0) reading.set(mirror, left); else reading.delete(mirror); };
-      const kill = () => end(child);
-      signal.addEventListener('abort', kill, { once: true });
-      // Whoever stops reading (a failed build) ends git too.
-      out.once('close', () => { if (child.exitCode === null) kill(); });
-      child.stdout?.pipe(out, { end: false });
-      child.once('error', () => { done(); out.destroy(new HouseSourceError('git could not be run')); });
-      child.once('close', code => {
-        signal.removeEventListener('abort', kill); forget?.(); done();
-        if (code === 0 && !signal.aborted) out.end(); else out.destroy(new HouseSourceError('git failed'));
-      });
-      return out;
+      const written = houseContext((args, input) => start(['--git-dir', mirror, ...args], env, 'pipe', input), commit, signal, { started: options.started, limits: options.limits });
+      written.once('close', done);
+      return written;
     },
   };
 }

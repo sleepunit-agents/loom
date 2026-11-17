@@ -39,12 +39,12 @@ const configSchema = z.object({
   /** For a worker whose bodies are processes: the command that builds, and one runner for each harness.
    * A worker with container bodies takes neither (WorkerStop 'retired'): it builds each house itself. */
   build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),
-  /** How many jobs the worker runs side by side. Left out: 4 with container bodies, 1 with process bodies. */
+  /** How many jobs the worker runs side by side. Left out: HOUSE_SLOTS_DEFAULT with container bodies, one with process bodies. */
   slots: z.number().int().min(1).max(SLOTS_MAX).optional(),
-  /** How many of those may be bodies on one account at once. Left out: 4, or `slots` when that is fewer.
-   * 1 runs an account's bodies one after the other. Never more than `slots`. */
+  /** How many of those may be bodies on one account at once. Left out: ACCOUNT_SLOTS_DEFAULT, or `slots`
+   * when that is fewer. One runs an account's bodies one after the other. Never more than `slots`. */
   accountSlots: z.number().int().min(1).max(SLOTS_MAX).optional(),
-  /** The longest a build may take. Left out: 5 minutes for a build command, 30 for a house's image. */
+  /** The longest a build may take. Left out: each kind of build's own default (worker-limits.ts). */
   buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   /** A sign-in directory for each account id, then harness, mounted into that job's container and no

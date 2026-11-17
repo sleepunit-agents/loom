@@ -230,7 +230,7 @@ it('stops a worker with container bodies on a machine that has no git, with its 
   const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('git'); });
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(54);
-  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: git 2.39.1 or later, which fetches each house\'s repository, could not be run on this machine\n'); expect(f.run).not.toHaveBeenCalled();
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: git 2.32.0 or later, which fetches each house\'s repository, could not be run on this machine\n'); expect(f.run).not.toHaveBeenCalled();
 });
 for (const gone of ['build', 'runners'] as const) it(`still needs ${gone} for a worker whose bodies are processes`, async () => {
   const f = fixture(), { [gone]: _left, ...rest } = config;

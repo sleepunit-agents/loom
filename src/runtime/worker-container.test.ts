@@ -44,7 +44,7 @@ function fixture() {
   const attach = vi.fn(async (_id: string, _signal: AbortSignal): Promise<Duplex> => socket);
   const whole: DockerEngine = { attach, build, json: (method, path, body, signal) => path.startsWith('/images/') || path.startsWith('/build/') ? images(method, path, body, signal) : json(method, path, body, signal) };
   const source = { fetch: vi.fn(async (_house: WorkerAssignment['house'], _credential: Uint8Array | undefined, _signal: AbortSignal) => commit),
-    archive: vi.fn((_house: WorkerAssignment['house'], _commit: string, _signal: AbortSignal) => { const tar = new PassThrough(); tar.end('tar'); return tar; }) };
+    context: vi.fn((_house: WorkerAssignment['house'], _commit: string, _signal: AbortSignal) => { const tar = new PassThrough(); tar.end('tar'); return tar; }) };
   const config = { box: 'box', container: { socket: engineSock, setupTimeoutMs: 100, cleanupTimeoutMs: 50 } };
   const deps = { engine: whole, source, program: programDirectory };
   const executor = containerWorkerExecutor(config, { ...deps, name: () => 'unique' });
@@ -63,7 +63,7 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   // The job's own house, with no credential when loom sent none; the image was there, so nothing was built.
   expect(f.source.fetch).toHaveBeenCalledExactlyOnceWith(job.house, undefined, expect.any(AbortSignal));
   expect(f.engine.images.mock.calls.map(call => `${call[0]} ${call[1]}`)).toEqual([`GET /images/${built}/json`, `GET /images/${built}/json`]);
-  expect(f.engine.build).not.toHaveBeenCalled(); expect(f.source.archive).not.toHaveBeenCalled();
+  expect(f.engine.build).not.toHaveBeenCalled(); expect(f.source.context).not.toHaveBeenCalled();
   expect(f.engine.attach).toHaveBeenCalledWith(id, expect.any(AbortSignal));
   expect(f.engine.json.mock.calls.map(call => call[1])).toEqual(['/containers/create?name=loom-unique', `/containers/${id}/json`, `/containers/${id}/start`, `/containers/${id}/wait?condition=not-running`]);
   expect(control.started).toHaveBeenCalledWith('job', built); expect(f.writes).toEqual([]);
@@ -518,11 +518,11 @@ const once = (f: ReturnType<typeof fixture>, control: ReturnType<typeof controlF
 it('builds a house that is not on the engine from the commit\'s own files and its Housefile, then removes what is no longer needed', async () => {
   const f = fixture(); await unbuilt(f);
   expect(await f.executor.build(job, f.abort.signal)).toBe(built); await flush();
-  expect(f.source.archive).toHaveBeenCalledExactlyOnceWith(job.house, commit, expect.any(AbortSignal));
+  expect(f.source.context).toHaveBeenCalledExactlyOnceWith(job.house, commit, expect.any(AbortSignal));
   expect(f.engine.build).toHaveBeenCalledOnce();
   const [path, context] = f.engine.build.mock.calls[0];
   expect(Object.fromEntries(new URL(path, 'http://engine').searchParams)).toEqual({ t: built, dockerfile: 'house/Housefile', q: '1', rm: '1', forcerm: '1' });
-  expect(context).toBe(f.source.archive.mock.results[0].value);
+  expect(context).toBe(f.source.context.mock.results[0].value);
   // Asked whether it is there, built, asked again, and then the old ones and the leftovers are seen to.
   expect(f.engine.images.mock.calls.map(call => `${call[0]} ${decodeURIComponent(call[1])}`)).toEqual([`GET /images/${built}/json`, `GET /images/${built}/json`,
     'GET /images/json?filters={"reference":["localhost/loom-house-*"]}', 'POST /images/prune?filters={"dangling":["true"],"until":["24h"]}', 'POST /build/prune?filters={"until":["168h"]}']);
@@ -555,7 +555,7 @@ it('gives the repository\'s secret to the fetch and to nothing the engine is tol
   const control = { ...controlFor(job), repositoryInput: vi.fn(async () => secret) };
   const run = once(f, control); await flush();
   expect(f.source.fetch).toHaveBeenCalledExactlyOnceWith(job.house, secret, expect.any(AbortSignal));
-  expect(JSON.stringify([f.engine.json.mock.calls, f.engine.images.mock.calls, f.engine.build.mock.calls.map(call => call[0]), f.source.archive.mock.calls])).not.toMatch(/repository-secret-value|cmVwb3NpdG9yeS1zZWNyZXQ/);
+  expect(JSON.stringify([f.engine.json.mock.calls, f.engine.images.mock.calls, f.engine.build.mock.calls.map(call => call[0]), f.source.context.mock.calls])).not.toMatch(/repository-secret-value|cmVwb3NpdG9yeS1zZWNyZXQ/);
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); expect(await run).toBe('finished');
   // workOnce wipes the bytes once the build has settled.
   expect([...secret].every(byte => byte === 0)).toBe(true);
@@ -881,3 +881,62 @@ it('asks the engine to forget what builds left behind only when no other build i
   expect(engine.gate.leftovers).toBe(2);
   expect(f.engine.images.mock.calls.filter(call => call[0] === 'POST').map(call => call[1].split('?')[0])).toEqual(['/images/prune', '/build/prune']);
 });
+it('does not remove the image it has just built, though no job holds it any longer and it is the oldest there is', async () => {
+  const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, removed: string[] = [];
+  // A branch moved back: the commit being built is older than everything on the engine, by the engine's own clock.
+  const building = at('1'), others = [at('7'), at('8'), at('9')]; let made = false;
+  const listing = deferred<void>();
+  f.engine.images.mockImplementation(async (method, path, body, signal) => {
+    if (method === 'GET' && path.startsWith('/images/json')) { await listing.promise; return [{ RepoTags: [building], Created: 1 }, ...others.map((name, index) => ({ RepoTags: [name], Created: 10 + index }))]; }
+    if (method === 'DELETE') { removed.push(path.slice('/images/'.length)); return undefined; }
+    if (method === 'GET' && path.includes(building) && !made) throw gone;
+    return there(method, path, body, signal);
+  });
+  f.engine.build.mockImplementation(async (_path, context) => { context.resume(); made = true; });
+  // Its one job is cancelled while the build runs: nobody holds the image, and the build goes on for the next that asks.
+  const cancel = new AbortController(); f.source.fetch.mockResolvedValueOnce('1'.repeat(40));
+  const wanted = f.executor.build({ ...job, id: 'gone' }, cancel.signal).catch(error => error as Error);
+  cancel.abort(); expect(await wanted).toBeInstanceOf(Error); await flush();
+  // The upkeep that follows the build lists it as the oldest of four. It stays; the one beyond the two newest of the others goes.
+  listing.resolve(); await flush();
+  expect(removed).toEqual([at('7')]);
+});
+it('does not remove an image another upkeep finds on the engine while its build is still being finished', async () => {
+  const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, removed: string[] = [];
+  // Two builds. The first has made its image on the engine and has not yet been told so; the second finishes and looks after the disk.
+  const finishing = at('1'), second = at('9'), checked = deferred<void>(); const made = new Set<string>();
+  f.engine.images.mockImplementation(async (method, path, body, signal) => {
+    if (method === 'GET' && path.startsWith('/images/json')) return [{ RepoTags: [finishing], Created: 1 }, { RepoTags: [at('7')], Created: 7 }, { RepoTags: [at('8')], Created: 8 }, { RepoTags: [second], Created: 9 }];
+    if (method === 'DELETE') { removed.push(path.slice('/images/'.length)); return undefined; }
+    const name = decodeURIComponent(path.slice('/images/'.length, -'/json'.length));
+    if (!made.has(name)) throw gone;
+    // The engine has the first image; the answer that says so is still on its way.
+    if (name === finishing) await checked.promise;
+    return there(method, path, body, signal);
+  });
+  f.engine.build.mockImplementation(async (path, context) => { context.resume(); made.add(new URL(path, 'http://engine').searchParams.get('t')!); });
+  const cancel = new AbortController(); f.source.fetch.mockResolvedValueOnce('1'.repeat(40));
+  const first = f.executor.build({ ...job, id: 'first' }, cancel.signal).catch(error => error as Error);
+  await flush(); cancel.abort(); expect(await first).toBeInstanceOf(Error);
+  // Nobody holds the first image now, it is the oldest by the engine's clock, and it is not this upkeep's own.
+  f.source.fetch.mockResolvedValueOnce('9'.repeat(40)); await f.executor.build({ ...job, id: 'second' }, f.abort.signal); await flush();
+  expect(removed).toEqual([at('7')]); expect(removed).not.toContain(finishing);
+  checked.resolve(); await flush();
+});
+it('fails only that job, as a failed build, when the house\'s files cannot be written into a context', async () => {
+  const f = fixture(), gone = await missingImage();
+  f.engine.images.mockImplementation(async method => { if (method === 'GET') throw gone; return undefined; });
+  // The engine reads what it is given; a context that fails part of the way fails the build.
+  f.engine.build.mockImplementation((_path, context) => new Promise<void>((_resolve, reject) => { context.once('error', () => reject(new Error('Docker build failed'))); context.resume(); }));
+  f.source.context.mockImplementation(() => { const tar = new PassThrough(); queueMicrotask(() => tar.destroy(new Error('House has a file that is too large: private-name'))); return tar; });
+  const control = controlFor(job);
+  expect(await once(f, control)).toBe('finished');
+  expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 22, 'Worker could not start the body: build failed', 'worker');
+});
+it('is not made when its body program is a link to one outside the directory it mounts', () => {
+  const f = fixture(), elsewhere = houseDirectory('elsewhere/dist'); writeFileSync(join(elsewhere, 'body.js'), '');
+  const linkedFile = install('broken/linked-body', path => { rmSync(join(path, 'dist', 'body.js')); symlinkSync(join(elsewhere, 'body.js'), join(path, 'dist', 'body.js')); });
+  const linkedDirectory = install('broken/linked-dist', path => { rmSync(join(path, 'dist'), { recursive: true }); symlinkSync(elsewhere, join(path, 'dist')); });
+  for (const program of [linkedFile, linkedDirectory]) expect(() => containerWorkerExecutor(f.config, { ...f.deps, program })).toThrow(expect.objectContaining({ stage: 'program' }));
+});
+

@@ -32,12 +32,12 @@ it('fetches the job\'s branch into its own mirror, names the commit and hands th
   const origin = repository('origin', { 'house/Housefile': 'FROM scratch\n', 'notes.txt': 'first words\n' });
   const source = local('mirrors'), house = { repository: origin.address, file: 'house/Housefile', branch: 'main' };
   expect(await source.fetch(house, undefined, never())).toBe(origin.first);
-  const tar = (await all(source.archive(house, origin.first, never()))).toString('latin1');
+  const tar = (await all(source.context(house, origin.first, never()))).toString('latin1');
   expect(tar).toContain('house/Housefile'); expect(tar).toContain('FROM scratch'); expect(tar).toContain('first words');
   // The branch moves: the next fetch names the new commit, and the old one can still be handed out.
   const second = origin.commit({ 'notes.txt': 'second words\n' });
   expect(await source.fetch(house, undefined, never())).toBe(second);
-  expect((await all(source.archive(house, second, never()))).toString('latin1')).toContain('second words');
+  expect((await all(source.context(house, second, never()))).toString('latin1')).toContain('second words');
   // Another branch of the same repository, in the same mirror.
   git(origin.path, 'checkout', '--quiet', '-b', 'next'); const next = origin.commit({ 'notes.txt': 'next words\n' });
   expect(await source.fetch({ ...house, branch: 'next' }, undefined, never())).toBe(next);
@@ -60,27 +60,6 @@ it('writes nothing of where a repository is, or of its secret, anywhere in the m
   expect(kept).not.toContain(origin.path); expect(kept).not.toContain('unnamed-origin');
   expect(kept).not.toMatch(/a-secret-token|YS1zZWNyZXQtdG9rZW4|extraheader/i);
   expect(existsSync(join(root, 'unnamed', mirror, 'FETCH_HEAD'))).toBe(false);
-});
-it('archives what the commit\'s own attributes say to archive, and runs nothing they name', async () => {
-  // git reads a commit's .gitattributes when it archives it. This is all of what a pusher gets from that:
-  // which files go, text put in for a placeholder, line endings. The pusher decides the same and more in
-  // the Housefile. What a pusher does not get is a program run on this machine.
-  const marker = join(root, 'attribute-ran');
-  const origin = repository('attributes', {
-    'Housefile': 'FROM scratch\n', 'left-out.txt': 'not in the archive\n', 'stamped.txt': 'commit $Format:%H$\n', 'windows.txt': 'one\ntwo\n', 'filtered.txt': 'through a filter\n',
-    '.gitattributes': 'left-out.txt export-ignore\nstamped.txt export-subst\nwindows.txt text eol=crlf\nfiltered.txt filter=run diff=run merge=run\n',
-    // A repository cannot configure git by carrying files that look like configuration.
-    '.gitconfig': `[filter "run"]\n\tsmudge = sh -c 'touch ${marker}; cat'\n\tclean = sh -c 'touch ${marker}; cat'\n[diff "run"]\n\ttextconv = sh -c 'touch ${marker}; cat'\n`,
-    '.git-config': `[filter "run"]\n\tsmudge = touch ${marker}\n`,
-  });
-  const source = local('attributes-mirror'), house = { repository: origin.address, file: 'Housefile', branch: 'main' };
-  const tar = (await all(source.archive(house, await source.fetch(house, undefined, never()), never()))).toString('latin1');
-  expect(tar).toContain('Housefile'); expect(tar).not.toContain('not in the archive');
-  expect(tar).toContain(`commit ${origin.first}`); expect(tar).toContain('one\r\ntwo\r\n'); expect(tar).toContain('through a filter');
-  expect(existsSync(marker)).toBe(false);
-  // The same attributes do run a program when git is given a configuration that names one: the check is not vacuous.
-  execFileSync('git', ['-c', `filter.run.smudge=sh -c 'touch ${marker}; cat'`, 'archive', '--format=tar', origin.first], { cwd: origin.path, env: quiet, stdio: 'ignore' });
-  expect(existsSync(marker)).toBe(true);
 });
 it('keeps one mirror per repository and writes neither the address nor a remote into it', async () => {
   const one = repository('one', { Housefile: 'FROM scratch\n' }), two = repository('two', { Housefile: 'FROM scratch\n' });
@@ -111,7 +90,7 @@ it('runs git with none of the machine user\'s configuration: no rewrite, no help
   vi.stubEnv('GIT_DIR', private_.path + '/.git'); vi.stubEnv('GIT_SSH_COMMAND', `touch ${marker}`);
   const source = local('stranger'), house = { repository: wanted.address, file: 'Housefile', branch: 'main' };
   expect(await source.fetch(house, undefined, never())).toBe(wanted.first);
-  const tar = (await all(source.archive(house, wanted.first, never()))).toString('latin1');
+  const tar = (await all(source.context(house, wanted.first, never()))).toString('latin1');
   expect(tar).toContain('public'); expect(tar).not.toContain('private repository');
   expect(existsSync(marker)).toBe(false);
 });
@@ -127,7 +106,7 @@ it.each([
   const spawned = vi.fn(), source = houseSource({ directory: join(root, 'unused'), spawn: spawned });
   const house = { repository: address as string, file: 'Housefile', branch: 'main' };
   await expect(source.fetch(house, undefined, never())).rejects.toThrow(HouseSourceError);
-  await expect(all(source.archive(house, 'a'.repeat(40), never()))).rejects.toThrow(HouseSourceError);
+  await expect(all(source.context(house, 'a'.repeat(40), never()))).rejects.toThrow(HouseSourceError);
   expect(spawned).not.toHaveBeenCalled(); expect(existsSync(join(root, 'unused'))).toBe(false);
 });
 it.each([
@@ -150,7 +129,7 @@ function recorded(answers: (args: readonly string[]) => { code?: number; out?: s
   const calls: { args: readonly string[]; env: Readonly<Record<string, string>> }[] = [];
   const start: GitSpawn = (args, env) => {
     calls.push({ args, env });
-    const child = Object.assign(new EventEmitter(), { pid: undefined, exitCode: null as number | null, stdout: new PassThrough(), kill: () => true });
+    const child = Object.assign(new EventEmitter(), { pid: undefined, exitCode: null as number | null, stdout: new PassThrough(), stdin: new PassThrough(), kill: () => true });
     const answer = answers(args);
     queueMicrotask(() => { child.stdout.end(answer.out ?? ''); child.exitCode = answer.code ?? 0; setImmediate(() => child.emit('close', answer.code ?? 0)); });
     return child as unknown as ChildProcess;
@@ -166,14 +145,14 @@ it('gives the repository\'s secret to the one fetch, as a header for the reposit
   const git = recorded(answering), source = houseSource({ directory: join(root, 'secret'), spawn: git.start });
   const house = { repository: 'https://git.example.com:8443/org/house.git', file: 'Housefile', branch: 'main' };
   expect(await source.fetch(house, new TextEncoder().encode('tok-en-123\n'), never())).toBe(commit);
-  await all(source.archive(house, commit, never()));
+  await all(source.context(house, commit, never()));
   const basic = Buffer.from('x-access-token:tok-en-123').toString('base64');
-  expect(git.calls.map(call => call.args.find(arg => ['init', 'fetch', 'rev-parse', 'archive'].includes(arg)))).toEqual(['init', 'fetch', 'rev-parse', 'archive']);
-  const [init, fetch, parse, archive] = git.calls;
+  expect(git.calls.map(call => call.args.find(arg => ['init', 'fetch', 'rev-parse', 'ls-tree', 'cat-file'].includes(arg)))).toEqual(['init', 'fetch', 'rev-parse', 'ls-tree', 'cat-file']);
+  const [init, fetch, parse, ...reading] = git.calls;
   expect(settings(fetch.env)['http.https://git.example.com:8443/.extraHeader']).toBe(`Authorization: Basic ${basic}`);
   // No argument of any call carries it, in any form; no other call's environment does.
   expect(JSON.stringify(git.calls.map(call => call.args))).not.toMatch(new RegExp(`tok-en-123|${basic}`));
-  for (const call of [init, parse, archive]) expect(JSON.stringify(call.env)).not.toMatch(new RegExp(`tok-en-123|${basic}|extraHeader`));
+  for (const call of [init, parse, ...reading]) expect(JSON.stringify(call.env)).not.toMatch(new RegExp(`tok-en-123|${basic}|extraHeader`));
   // The address is an argument of the fetch alone, after `--`, and the refspec is the worker's own.
   expect(fetch.args.slice(fetch.args.indexOf('--'))).toEqual(['--', house.repository, '+refs/heads/main:refs/loom/fetched']);
   expect(fetch.args).toEqual(expect.arrayContaining(['--no-tags', '--depth=1', '--no-recurse-submodules', '--no-write-fetch-head']));
@@ -182,6 +161,8 @@ it('gives the repository\'s secret to the one fetch, as a header for the reposit
     expect(Object.keys(call.env).filter(key => !/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)).sort())
       .toEqual(['GIT_ALLOW_PROTOCOL', 'GIT_ATTR_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', 'HOME', 'LC_ALL', 'PATH']);
     expect(call.env).toMatchObject({ GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https', HOME: join(root, 'secret') });
+    // git is not asked to check what it fetches: that reads a commit's .gitmodules, and nothing here checks out.
+    expect(Object.keys(settings(call.env)).some(key => /fsck/i.test(key))).toBe(false);
     expect(settings(call.env)).toMatchObject({ 'credential.helper': '', 'core.hooksPath': '/dev/null', 'http.followRedirects': 'false', 'protocol.allow': 'never', 'protocol.https.allow': 'always' });
     expect(JSON.stringify(call.env)).not.toMatch(/ambient-private|agent\.sock|\/usr\/bin\/leak/);
   }
@@ -205,8 +186,8 @@ it('fails in its own words when git fails, a branch is missing or the commit it 
   expect(failed).toBeInstanceOf(HouseSourceError); expect(failed.message).toBe('git failed'); expect(failed.message).not.toContain(root);
   // A mirror that failed once fetches again.
   expect(await source.fetch({ ...house, branch: 'main' }, undefined, never())).toBe(origin.first);
-  await expect(all(source.archive({ ...house, branch: 'main' }, 'd'.repeat(40), never()))).rejects.toThrow('git failed');
-  await expect(all(source.archive({ ...house, branch: 'main' }, 'HEAD', never()))).rejects.toThrow(HouseSourceError);
+  await expect(all(source.context({ ...house, branch: 'main' }, 'd'.repeat(40), never()))).rejects.toThrow('git failed');
+  await expect(all(source.context({ ...house, branch: 'main' }, 'HEAD', never()))).rejects.toThrow(HouseSourceError);
   const lying = houseSource({ directory: join(root, 'lying'), spawn: recorded(args => args.includes('rev-parse') ? { out: '--not-a-commit\n' } : {}).start });
   await expect(lying.fetch({ repository: 'https://example.com/house.git', file: 'Housefile', branch: 'main' }, undefined, never())).rejects.toThrow('git failed');
   const missing = houseSource({ directory: join(root, 'no-git'), spawn: () => { throw new Error('ENOENT /private/path'); } });
@@ -227,14 +208,13 @@ it('ends git when the job is cancelled, and tells the worker which processes it 
 });
 it('says whether this machine has a git it can run, new enough to fetch without writing the address down', () => {
   expect(gitAvailable()).toBe(true);
-  expect([...GIT_MINIMUM]).toEqual([2, 39, 1]);
-  expect(['git version 2.39.1', 'git version 2.39.5', 'git version 2.40.0', 'git version 2.47.3', 'git version 3.0.0', 'git version 2.39.5 (Apple Git-154)', 'git version 2.45.1.windows.1'].every(gitNewEnough)).toBe(true);
-  // Older than any one of what the worker needs: settings by environment (2.31), no global file (2.32), no
-  // FETCH_HEAD (2.29), and attribute handling without the faults mended in 2.39.1.
-  expect(['git version 2.39.0', 'git version 2.38.9', 'git version 2.32.0', 'git version 2.30.2', 'git version 2.29.0', 'git version 1.9.5', 'git version 2.39', 'git version 2', 'not git', ''].some(gitNewEnough)).toBe(false);
+  expect([...GIT_MINIMUM]).toEqual([2, 32, 0]);
+  expect(['git version 2.32.0', 'git version 2.34.1', 'git version 2.39.5', 'git version 2.47.3', 'git version 3.0.0', 'git version 2.39.5 (Apple Git-154)', 'git version 2.45.1.windows.1'].every(gitNewEnough)).toBe(true);
+  // Older than what the fetch needs: no FETCH_HEAD (2.29), settings by environment (2.31), no per-user file (2.32).
+  expect(['git version 2.31.8', 'git version 2.30.2', 'git version 2.29.0', 'git version 1.9.5', 'git version 2.32', 'git version 2', 'not git', ''].some(gitNewEnough)).toBe(false);
   vi.stubEnv('PATH', join(root, 'empty')); expect(gitAvailable()).toBe(false);
   // An old git on the path is no git for this.
-  const old = join(root, 'old-git'); mkdirSync(old); writeFileSync(join(old, 'git'), '#!/bin/sh\necho git version 2.39.0\n', { mode: 0o755 });
+  const old = join(root, 'old-git'); mkdirSync(old); writeFileSync(join(old, 'git'), '#!/bin/sh\necho git version 2.31.8\n', { mode: 0o755 });
   vi.stubEnv('PATH', old); expect(gitAvailable()).toBe(false);
 });
 

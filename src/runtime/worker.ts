@@ -188,9 +188,10 @@ export async function workOnce(input: {
         if(abort.signal.aborted)return 'abandoned';
         build = repositoryInput?await executor.build(assignment,abort.signal,repositoryInput):await executor.build(assignment,abort.signal);
       } finally { repositoryInput?.fill(0); }
+      // The executor's to hear of from here, whatever comes next: a cancel can land as the build is handed over.
+      unused = build.trim() ? build : undefined;
       if (abort.signal.aborted) return 'abandoned';
       if (!build.trim()) throw new Error('Build returned no artifact');
-      unused = build;
       stage = 'launch';
       // Built: now the job waits its turn, reported as starting all the while. A Stop or a worker stop ends the wait.
       if (input.turns) giveUp = await input.turns.take(turnsOf(assignment), abort.signal);

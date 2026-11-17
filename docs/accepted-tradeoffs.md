@@ -409,23 +409,18 @@ Entries are grouped by the part of the program they belong to.
   engine's builder lets it do; with a rootless engine that is bounded by the worker's own user, who can
   read the sign-in directories and the worker's token.
 - **Where.** `buildHouse` in `src/runtime/house-image.ts`; `houseSource` in `src/runtime/house-source.ts`.
-- **What git reads on the host.** The commit's files go to the engine as `git archive` makes them, and
-  for that git reads the commit's own `.gitattributes`: a file anyone who can push writes, parsed on this
-  machine as the worker's user. Its effect is on that commit's own archive only (files left out, a
-  placeholder replaced, line endings). A fault in git's code for it is a fault a pusher can reach, which
-  is why the worker runs no git older than 2.39.1, where the two known ones are mended.
+- **What git reads on the host.** Objects: the pack a fetch brings, and the commit and tree objects that
+  say which files a commit has. No file of a repository is interpreted, by git or by the worker: the
+  worker writes the build context itself from the tree, file by file.
 - **What is enforced.** Only loom's assignment names a house, and only an agent's owners set it, for an
   agent allowed on the machine. The worker fetches `https` addresses only, with `git` run under none of
-  the machine user's configuration or credentials, so no program a repository names is run (a filter or
-  a diff driver needs configuration the worker does not give). The worker itself never reads, unpacks or
-  runs anything from a repository: the commit's files go to the engine as a tar stream. It adds no build argument, secret,
+  the machine user's configuration or credentials. Neither the worker nor git reads, unpacks or runs
+  anything from a repository: the commit's files go to the engine as a tar stream the worker writes. It adds no build argument, secret,
   host path, socket or privilege to a build. The repository's secret goes to the fetch alone.
 - **Why the rest is accepted.** Running an agent's house is the point: whoever may set an agent's house
   already decides what that agent's bodies run. A build is the engine's to confine, as a container is.
 - **What would change the answer.** An engine whose builds run with no network and in a sandbox of their
-  own, asked for by name; or building on a machine that holds nothing else. For the attributes: the
-  worker writing the archive itself from the commit's tree and files, so that git parses no file of a
-  repository at all.
+  own, asked for by name; or building on a machine that holds nothing else.
 
 ### A worker treats its engine's unnamed leftovers as its own to remove
 
