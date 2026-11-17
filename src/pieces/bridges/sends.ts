@@ -4,6 +4,8 @@ import { bridgeConnections, bridgeIncoming, bridgeSends } from '../../core/data/
 import { BridgeReplyNotSent, postReply } from './outbound.js';
 
 export type BridgeSend = typeof bridgeSends.$inferSelect;
+/** How long an unsent reply waits before the next attempt. The daemon flushes at least this often. */
+export const RETRY_UNSENT = 5000;
 export interface SendTransport {
   /** Whether a post for this connection can be attempted now. A reply waits,
    * unclaimed, while this is false. Absent means always. */
@@ -21,6 +23,11 @@ export class BridgeSends {
   private draining?: Promise<void>;
   private again=false;
   private closed = false;
+  /** Replies that came back unsent, and when each may be tried again. Its own
+   * write wakes the daemon, which flushes: without this wait a transport that
+   * keeps refusing would be asked again at once, for ever. Memory only: a new
+   * process starts with a new transport. */
+  private readonly notBefore = new Map<string, number>();
 
   constructor(private db: DataDatabase, private transport: SendTransport,
     private now: () => string, private changed: () => void = () => {},
@@ -85,6 +92,8 @@ export class BridgeSends {
     const pending = this.db.select().from(bridgeSends).where(eq(bridgeSends.state, 'pending')).all();
     for (const send of pending) {
       if (this.closed) return;
+      if ((this.notBefore.get(send.id) ?? 0) > Date.parse(this.now())) continue;
+      this.notBefore.delete(send.id);
       const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, send.connection)).get();
       if (!connection?.enabled) { this.transition(send.id, 'pending', 'held'); continue; }
       // A reconnect can resume a pending send; it has not crossed the network yet.
@@ -108,6 +117,7 @@ export class BridgeSends {
         // refusal before the first request says the reply is still wholly unsent.
         if (error instanceof BridgeReplyNotSent) notSent = error;
       }
+      if (notSent?.again) this.notBefore.set(send.id, Date.parse(this.now()) + RETRY_UNSENT);
       // Unsent goes back to wait for the connection, or to a person when waiting cannot help.
       const state = postedId ? 'sent' : notSent ? (notSent.again ? 'pending' : 'held') : 'uncertain';
       this.commit(()=>this.db.update(bridgeSends).set({ state, postedId: postedId ?? null })

@@ -152,6 +152,8 @@ export class SharedBridges {
     this.lives.set(row.id,life);this.state(row.id,'connecting');
     this.track(this.connect(life));
    }
+   // Each pass also retries replies that were claimed but could not be sent.
+   if(!this.closed)this.track(this.sends.flush());
   }).catch(()=>this.report()).finally(()=>{
    this.syncing=undefined;
    if(!this.closed)this.cancelRetry=this.options.clock.at(this.options.clock.now()+5000,()=>{void this.reconcile();});

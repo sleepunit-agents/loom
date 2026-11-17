@@ -144,6 +144,10 @@ describe('approved bridge reply queue', () => {
     await f.sends.flush();
     // Refused before any request: not uncertain, which could only be dismissed.
     expect(f.read()).toMatchObject({ state: 'pending', postedId: null });
+    // Its own write must not make it spin: the next attempt waits a little.
+    await f.sends.flush();
+    expect(f.post).toHaveBeenCalledTimes(1);
+    for (let second = 0; second < 5; second++) f.advance();
     await f.sends.flush();
     expect(f.read()).toMatchObject({ state: 'sent', postedId: 'posted' });
     expect(f.post).toHaveBeenCalledTimes(2);
