@@ -307,6 +307,12 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: str
     && (r.agent === undefined || maySee(v, { agent: r.agent }, s));
 }
 
+/** A member named by a request, asked about as a reader: "could the person this is addressed to see
+ * it?". A door asks this so that nothing is sent to someone about a record they may not read. The answer
+ * may only ever narrow what the caller is allowed. It is never the caller's own authority: nothing is
+ * granted, read or done as this viewer, and a viewer for any other purpose comes from authentication. */
+export const addressee = (member: string): Viewer => ({ kind: 'member', id: member });
+
 /** May one agent hand work to another in the open, outside any member's private thread? Both must be
  * agents of the household now. In a project, both must be in it. Outside one, some current member must
  * have both on their own list. A removed member is nobody here too: the agents left on their list are

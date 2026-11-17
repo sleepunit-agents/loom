@@ -20,6 +20,17 @@ it('allows current private context but refuses the same member registry outside 
  expect((await f.call('digest',question('missing'),'unknown')).status).toBe(403);
  expect((await f.call('digest',{summary:'Work',question:{to:'alice',answers:'yes-no',words:'Continue?',waitsOnId:task.id}},'unpaired')).status).toBe(400);
 });
+it('links a task raised in this conversation whenever its member may read it by the tasks rule, with no rule of its own',async()=>{
+ const f=await bodyFixture(clean);
+ // Raised from this thread, and owned by another agent Alice has: hers to read by the tasks rule, though not this agent's task.
+ f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run());
+ const task=f.root.services.tasks.create({title:'Mark task',goal:'Do',why:'Because',owner:{kind:'agent',id:'mark'}},{kind:'member',id:'alice'});
+ f.root.writes.run(()=>f.db.update(s.tasks).set({sourceKind:'conversation',sourceId:f.thread.conversation}).where(eq(s.tasks.id,task.id)).run());
+ expect((await f.call('digest',question(task.id),'readable')).status).toBe(200);
+ // Once the tasks rule no longer shows it to her, the same link is refused.
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());
+ expect((await f.call('digest',question(task.id),'unreadable')).status).toBe(403);
+});
 it('rechecks source authority after encryption and on receipt replay',async()=>{
  const f=await bodyFixture(clean),task=f.root.services.tasks.create({title:'Private task',goal:'Do',why:'Because',owner:{kind:'member',id:'alice'}},{kind:'member',id:'alice'});
  f.root.writes.run(()=>f.db.update(s.tasks).set({sourceKind:'conversation',sourceId:f.thread.conversation}).where(eq(s.tasks.id,task.id)).run());

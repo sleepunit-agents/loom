@@ -1,7 +1,7 @@
 /** Outside Tasks policy. Trusted taskService/dispatcher carry no policy.
  * Every decision here is the tasks rule from policy.ts, read for one task. */
 import { eq } from 'drizzle-orm';
-import { holds, inHousehold, rules, type Viewer } from './policy.js';
+import { addressee, holds, inHousehold, rules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, members, tasks, inbox } from './core/data/schema.js';
@@ -39,7 +39,7 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
     case 'move': return command.before === null || !!visibleTask(command.before);
     // The person asked must be able to see the task themselves; someone removed sees nothing.
-    case 'ask': return !!visibleTask(command.id, { kind: 'member', id: command.input.to.id });
+    case 'ask': return !!visibleTask(command.id, addressee(command.input.to.id));
     default: return true;
   }
 }
