@@ -511,9 +511,11 @@ Entries are grouped by the part of the program they belong to.
   (`refreshAccountWindows`) and when a worker reports a failed read (`runtime.accountUnavailable` in
   `src/shared-account-reports.ts`). `currentAccountCapacity` reads both facts: the stored `has_room` and the
   windows as they have aged.
+  A new account's row is made by `src/shared-model-account-admin.ts` with no usage read and no room, so
+  nothing is placed on it before its first successful read.
 - **Why accepted.** Admission reads the summary for every placement and the app shows it; both read one row.
   The failed-read fact has no column of its own because closing admission is all it is used for.
-- **What would change the answer.** A third writer of either table, or anything that needs to tell "no room"
+- **What would change the answer.** Another writer of the summary columns or of the windows, or anything that needs to tell "no room"
   from "the last read failed": then the failed read gets its own column, in a schema step.
 
 ### Each agent's `memories.db` still has four unused conversation tables
