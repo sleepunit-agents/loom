@@ -14,6 +14,7 @@ import {MEMORY_CONTENT_MAX,OBSERVATIONS} from './backends/types.js';
 import {MAX_PAGE_BODY_LENGTH} from './backends/knowledge-verification.js';
 import {STATUSES} from './backends/projects.js';
 import {approvals,inbox,tasks} from './core/data/schema.js';
+import {TASK_MOVE_MAX} from './apps/task-command.js';
 
 type Variables=Record<string,string|number|null>;
 type QueryReply={data?:Record<string,unknown>|null;errors?:readonly unknown[]|null};
@@ -269,7 +270,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
 
  // Tasks: the household's work queue, as far as you may see it.
  const taskId=z.string().regex(/^t-[1-9][0-9]*$/);
- type TaskRow={id:string;title:string;type:string;status:string;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
+ type TaskRow={id:string;title:string;type:string;status:string;isShelved?:boolean;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
   taskCommentsByTask?:{seq:number;actor:string;at:string;text:string}[];taskLinksByTask?:{dependsOn:string;type:string}[]};
  const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
  tool('task_ready','List the tasks ready to pick up, most urgent first. Pass project to narrow it.',
@@ -282,9 +283,9 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('task','Read one task with its comments and what it depends on.',
   z.object({id:taskId}).strict(),
   async input=>{
-   const data=await read<{tasks:TaskRow[]}>('query($id:String!){tasks(where:{id:{eq:$id}}){id title type status priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason taskCommentsByTask{seq actor at text} taskLinksByTask{dependsOn type}}}',{id:input.id});
+   const data=await read<{tasks:TaskRow[]}>('query($id:String!){tasks(where:{id:{eq:$id}}){id title type status isShelved priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason taskCommentsByTask{seq actor at text} taskLinksByTask{dependsOn type}}}',{id:input.id});
    const task=data.tasks[0];if(!task)return 'No task '+input.id+' that you may see.';
-   const lines=['# '+task.title,'_'+task.id+' · '+task.type+' · '+task.status+' · P'+task.priority+(task.project?' · '+task.project:'')+' · owner '+(task.owner??task.ownerKind)+(task.assignee?' · held by '+task.assignee:'')+'_','','**Goal:** '+task.goal,'**Why:** '+task.why];
+   const lines=['# '+task.title,'_'+task.id+' · '+task.type+' · '+(task.isShelved?'shelved with its retired project, was '+task.status:task.status)+' · P'+task.priority+(task.project?' · '+task.project:'')+' · owner '+(task.owner??task.ownerKind)+(task.assignee?' · held by '+task.assignee:'')+'_','','**Goal:** '+task.goal,'**Why:** '+task.why];
    if(task.doneWhen)lines.push('**Done when:** '+task.doneWhen);
    if(task.description)lines.push('',task.description);
    if(task.ask)lines.push('','**Question waiting:** '+task.ask);
@@ -300,6 +301,13 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
   z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
+ tool('task_move_to_project','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge. To be let onto a project yourself: propose projectJoin. A retired project takes no task; tasks may be moved out of one.',
+  z.object({ids:z.array(taskId).min(1).max(TASK_MOVE_MAX),project:z.string().min(1).max(100).nullable()}).strict(),
+  async input=>{
+   const value=await run('tasks.command',{action:'moveToProject',ids:input.ids,project:input.project}) as {moved?:string[]};
+   const moved=value.moved??[],where=input.project===null?'out of every project':'to project '+input.project;
+   return moved.length?'Moved '+moved.join(', ')+' '+where+'.'+(moved.length<new Set(input.ids).size?' The rest were already there.':''):'Nothing moved: '+(input.project===null?'none of them is in a project.':'they are already in project '+input.project+'.');
+  });
  tool('task_claim','Claim an open task: it moves to in progress and you hold it. Pass release: true to hand it back.',
   z.object({id:taskId,release:z.boolean().optional()}).strict(),
   async input=>{await run('tasks.command',{action:input.release?'unclaim':'claim',id:input.id});return (input.release?'Released ':'Claimed ')+input.id;});
@@ -311,7 +319,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   async input=>{await run('tasks.command',{action:'comment',id:input.id,text:input.text});return 'Commented on '+input.id;});
 
  // Asking a person: proposals, the approvals that result, and what waits in your inbox.
- tool('propose','Ask a household owner to allow a change you cannot make yourself. Nothing changes until an owner allows it. Filing says nothing about what is there now or whether the change can be made: the owner is told that, and answers. change names what: '+householdChanges.filter(change=>!dangerous.has(change)).join(', ')+'; or a dangerous action an owner must also confirm: '+[...dangerous].join(', ')+'. input is that change\'s own fields: loom_commands({name:"household.propose"}) lists them.',
+ tool('propose','Ask a household owner to allow a change you cannot make yourself. Nothing changes until an owner allows it. Filing says nothing about what is there now or whether the change can be made: the owner is told that, and answers. The one exception: asking to join a project you are already on is refused, with no card. change names what: '+householdChanges.filter(change=>!dangerous.has(change)).join(', ')+'; or a dangerous action an owner must also confirm: '+[...dangerous].join(', ')+'. input is that change\'s own fields: loom_commands({name:"household.propose"}) lists them.',
   z.object({change:z.enum(householdChanges),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
   async input=>{const value=await run('household.propose',input) as {id:string;state:string};return value.state==='pending'?'Filed approval '+value.id+'. It waits for a household owner.':'Approval '+value.id+' was answered by a standing rule and the change is made.';});
  tool('approvals','List approvals you may see, newest first. state narrows it: '+approvals.state.enumValues.join(', ')+'.',

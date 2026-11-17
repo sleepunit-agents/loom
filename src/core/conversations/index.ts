@@ -92,6 +92,14 @@ export class Conversations {
     return row;
   }
 
+  /** An item filed under its source's labels holds a copy of them (send). When the source's own labels
+   * change, whoever filed the item gives it the new ones here, in the same write. Its words, state and
+   * answer are untouched; its changed time is set, so a reader that follows changes sees it move. */
+  relabel(id: string, labels: Partial<Pick<Item, 'project' | 'agent' | 'member'>>): void {
+    this.item(id);
+    this.db.update(inbox).set({ ...labels, changedAt: this.now() }).where(eq(inbox.id, id)).run();
+  }
+
   /** Work-source facts keep their own scope. Their reply to an agent in a
    * private conversation must carry that conversation's current labels. A
    * different member's private source can never be relabelled into it. */
@@ -239,4 +247,13 @@ export class Conversations {
       return digest;
     });
   }
+}
+
+/** Every conversation, and every inbox item, filed under one project is filed under another: for a merge of
+ * the two (shared-projects.ts). The two go together, so an item still carries its conversation's project. */
+export function refileConversations(db: DataDatabase, from: string, into: string): void {
+  db.update(conversations).set({ project: into }).where(eq(conversations.project, from)).run();
+}
+export function refileInbox(db: DataDatabase, from: string, into: string): void {
+  db.update(inbox).set({ project: into }).where(eq(inbox.project, from)).run();
 }

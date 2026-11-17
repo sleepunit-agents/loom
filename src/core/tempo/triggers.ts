@@ -364,3 +364,8 @@ export class TriggerEngine {
   }
   close() { this.closed = true; this.cancel?.(); }
 }
+
+/** Every trigger filed under one project is filed under another: for a merge of the two (shared-projects.ts). */
+export function refileTriggers(db: DataDatabase, from: string, into: string): void {
+  db.update(triggers).set({ project: into }).where(eq(triggers.project, from)).run();
+}

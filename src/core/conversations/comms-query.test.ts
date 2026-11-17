@@ -245,7 +245,7 @@ it('executes the shipped Work queries against the generated current-policy task 
   }
   const schema = withQueryFields(dataQueries(f.db.$client, { tables: ['tasks'], visibility: { tasks: fields => eq(fields.owner, 'alice') } }), conversationWorkFields(f.db));
   const source = await graphql({ schema, source: sourceQuery, variableValues: { conversation: f.thread.conversation, offset: 0 }, contextValue: {viewer:alice} });
-  expect(source.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(source.data))).toEqual({ tasks: [{ id:'t-10', title:'t-10', status:'open' }], conversationMadeChanges:[] });
+  expect(source.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(source.data))).toEqual({ tasks: [{ id:'t-10', title:'t-10', status:'open', isShelved:false }], conversationMadeChanges:[] });
   const mentioned = await graphql({ schema, source: taskQuery, variableValues: { id: 't-11' } });
   expect(mentioned.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(mentioned.data))).toEqual({ tasks: [] });
 });
@@ -335,7 +335,7 @@ it('pages the actual source-work query past fifty rows after current visibility 
   const first=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:0},contextValue:{viewer:alice}});
   expect(first.errors).toBeUndefined(); expect((first.data?.tasks as unknown[]).length).toBe(51);
   const next=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:50},contextValue:{viewer:alice}});
-  expect(next.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(next.data))).toEqual({tasks:[{id:'t-050',title:'Task 50',status:'open'}],conversationMadeChanges:[]});
+  expect(next.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(next.data))).toEqual({tasks:[{id:'t-050',title:'Task 50',status:'open',isShelved:false}],conversationMadeChanges:[]});
 });
 it('loads the mentioned pull-request card through current generated Changes visibility', async () => {
   const f=await fixture(), { changes, memberAgents }=await import('../data/schema.js');

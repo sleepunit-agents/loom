@@ -1,8 +1,9 @@
-/** Household changes an agent asks for: a project, a member, an agent's
+/** Household changes an agent asks for: a project, retiring or reviving one, being let onto one, a member, an agent's
  * description, the household's own settings, a standing approval rule, or how
- * an agent treats outside people and which tools its body is not given. One
- * Three dangerous actions are proposed the same way: revoking a token, revoking
- * a machine, and signing out a browser. The agent files a card with the
+ * an agent treats outside people and which tools its body is not given.
+ * Four dangerous actions are proposed the same way: revoking a token, revoking
+ * a machine, signing out a browser, and merging one project into another.
+ * None of them can be put back, and an owner must also confirm each. The agent files a card with the
  * exact change it asks for. A household owner allows it through Approvals,
  * and only then does loom make the change. The agent never becomes an owner.
  *
@@ -20,7 +21,20 @@
  * made is found out when an owner allows it: the change is made as that owner,
  * and refused to them in the words of the rule it breaks. The card keeps a
  * keyed digest of what was there when it was filed, which says nothing to a
- * reader and lets Allow refuse a card whose ground has moved. */
+ * reader and lets Allow refuse a card whose ground has moved.
+ *
+ * One refusal is made at filing, and it tells the asker nothing it may not
+ * read: an agent that asks to be let onto a project it is already on is told
+ * so, and no card is filed. An agent reads the projects it is on (policy.ts,
+ * rule `project`), so that is its own to know. A body working for a member
+ * who is not on the project does not read it, so it is not told: its card is
+ * filed, and refused to the owner as already so. A project that is removed or
+ * not there is still filed like anything else. A household owner, who may
+ * file that one change too and reads the whole household, is told at filing
+ * everything that stands against it.
+ *
+ * A standing approval rule may answer a card as it is filed, except the kinds
+ * in `alwaysAsks`, which wait for an owner's own answer every time. */
 import {randomBytes} from 'node:crypto';
 import {and,asc,eq,isNull,like} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
@@ -50,11 +64,18 @@ import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
 import {householdService,HouseholdError,memberInput,agentInput,settingsInput,removable,GITHUB_LOGIN} from './apps/household.js';
 import {householdSettings} from './core/data/household-settings.js';
-import {projectInput,type sharedProjects} from './shared-projects.js';
+import {alreadyOnProject,projectInput,projectJoinInput,projectMergeInput,projectStateInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
 const operation='household.change';
-const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
+const kinds={project:projectInput,
+ // One project emptied into another and removed. Its records cannot be told apart again afterwards.
+ projectMerge:projectMergeInput,
+ // A project set aside whole, and brought back. Either can be undone by the other, so each is a setting.
+ projectRetire:projectStateInput,projectRevive:projectStateInput,
+ // One agent let onto one project: what an agent asks when it is told to work somewhere it is not.
+ projectJoin:projectJoinInput,
+ member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
  // Secrets: a standing answer for one secret, the household's default, and what an agent's house is handed at start.
  secretRule:secretRuleInput,secretDefault:z.object({answer:secretAnswer}).strict(),houseSecrets:houseSecretsInput,
  // A Discord or Slack connection, who answers in a channel, and which member an outside user is.
@@ -81,6 +102,7 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  browserSignOut:z.object({member:householdId,device:z.string().trim().min(1).max(200)}).strict()};
 // The dangerous actions: none can be put back. Each card says so, and Approvals asks the owner to confirm.
 const danger={
+ projectMerge:{verb:'Merge',done:'merged',yes:'Everything filed under the first project is filed under the second, whose people and agents then see all of it. The first project\'s members, agents and repositories join the second, and the first is removed. This cannot be undone: restoring the first puts back an empty project.',no:'Both projects stay as they are.'},
  tokenRevoke:{verb:'Revoke',done:'revoked',yes:'The token stops working at once. This cannot be undone.',no:'The token keeps working.'},
  boxRevoke:{verb:'Revoke',done:'revoked',yes:'The machine can no longer run agents or report. This cannot be undone.',no:'The machine stays.'},
  browserSignOut:{verb:'Sign out',done:'signed out',yes:'That browser is signed out at once and its notifications stop. This cannot be undone.',no:'The browser stays signed in.'},
@@ -112,22 +134,41 @@ const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?
  :value.change==='bridge'?[value.input.action,...('id' in value.input?[value.input.id]:'channel' in value.input?[value.input.platform,value.input.workspace,value.input.channel]:[value.input.platform,value.input.workspace,value.input.user])].join(' ')
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
- :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member:value.input.id;
-const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
+ :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member
+ :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' onto project '+value.input.project
+ :value.change==='projectRetire'||value.change==='projectRevive'?value.input.project:value.input.id;
+const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
 const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:(value.change==='restore'?'remove':value.change)+':'+name(value));
 // The card's own words, for everyone who may read it: the change asked for, never what it would replace.
-const said=(value:Proposal)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
+const mergeWords=(value:Proposal)=>'Merge '+label(value)+'. Everything filed under the first is filed under the second, and the first is removed.';
+const joinWords=(value:Proposal)=>value.change==='projectJoin'?'Let '+value.input.agent+' work on project '+value.input.project:'';
+const stateWords=(value:Proposal)=>value.change==='projectRetire'?'Retire project '+name(value)+'. Everything in it stays and stays readable; its unfinished tasks are shelved until it is revived.'
+ :'Revive project '+name(value)+'. Its shelved tasks are work again, as they were.';
+const isState=(value:Proposal):value is Extract<Proposal,{change:'projectRetire'|'projectRevive'}>=>value.change==='projectRetire'||value.change==='projectRevive';
+const said=(value:Proposal)=>isState(value)?stateWords(value):value.change==='projectMerge'?mergeWords(value):value.change==='projectJoin'?joinWords(value)+'. Nothing else about the project changes.':value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
  :label(value)+': '+JSON.stringify(sorted(value.input));
 // The same with what it would replace, for a household owner.
-const summary=(value:Proposal,before:unknown)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
+const summary=(value:Proposal,before:unknown)=>isState(value)?stateWords(value)+' As it stands: '+JSON.stringify(before):value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
 const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+ :value.change==='projectRetire'?{ask:'Retire project '+name(value)+'?',ifYes:'Nothing is deleted or closed, and who reads it does not change. Its unfinished tasks are shelved: not ready, not counted as open work, and none can be claimed; one already held keeps who holds it. No new task is filed under it. Reviving it brings everything back as it was.',ifNo:'It stays in use.'}
+ :value.change==='projectRevive'?{ask:'Revive project '+name(value)+'?',ifYes:'Its shelved tasks are work again, each as it was left.',ifNo:'It stays retired.'}
+ :value.change==='projectJoin'?{ask:joinWords(value)+'?',ifYes:value.input.agent+' is added to project '+value.input.project+' and sees what is filed under it. Nothing else about the project changes.',ifNo:value.input.agent+' stays off the project.'}
  :value.change==='remove'?{ask:'Remove '+label(value)+'?',ifYes:'It is taken out of use. Its history stays, and it can be restored.',ifNo:'It stays as it is.'}
  :value.change==='restore'?{ask:'Restore '+label(value)+'?',ifYes:'It is put back in use.',ifNo:'It stays removed.'}
  :{ask:'Change '+label(value)+'?',ifYes:'Make the change shown on this card.',ifNo:'Leave it as it is.'};
+/** The kinds no standing rule answers: each card waits for a household owner's own answer.
+ *  - `rule`: a rule cannot widen the rules.
+ *  - `projectJoin`: being on a project lets an agent read what is filed under it. A blanket rule for
+ *    settings is not an owner saying this agent may read that project, so it never answers for one. The
+ *    card is still a setting: one plain Allow, with nothing more to confirm.
+ *  - `projectMerge`: a merge cannot be undone, and it shows each project's people the other's records. A
+ *    rule for dangerous actions, set for revocations, is not an owner looking at these two projects: the
+ *    owner allows and confirms each merge by hand. */
+export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge']);
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
@@ -146,6 +187,12 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // What the change would replace, in the same shape as the input, or null when it would be new.
  const before=(value:Proposal):unknown=>{
   if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);return row?sorted({id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
+  if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
+  if(isState(value)){const project=projects.describe(value.input.project);return sorted({project:project&&{id:project.id,removed:project.removed,retired:project.retired}});}
+  // A join card is sealed on what it changes and nothing more: that the project and the agent are in use, and
+  // whether that agent is on it. Another agent let onto the same project meanwhile does not move its ground.
+  if(value.change==='projectJoin'){const project=projects.describe(value.input.project),agent=db.select({id:agents.id,removedAt:agents.removedAt}).from(agents).where(eq(agents.id,value.input.agent)).get();
+   return sorted({project:project&&{id:project.id,removed:project.removed},agent:agent?{id:agent.id,removed:!!agent.removedAt}:null,on:!!project?.agents.includes(value.input.agent)});}
   if(value.change==='member'){const row=household.members().find(row=>row.id===value.input.id);return row?sorted({id:row.id,role:row.role,fullOwner:row.fullOwner,agents:row.agents}):null;}
   if(value.change==='agent'){const row=db.select().from(agents).where(eq(agents.id,value.input.id)).get();return row?sorted({id:row.id,about:row.about,markBg:row.markBg,markFg:row.markFg,faceShape:row.faceShape,faceEyes:row.faceEyes}):null;}
   if(value.change==='rule'){const scope=ruleScope(value.input),row=rules.list().find(row=>row.kind===value.input.kind&&row.scope===scope&&row.person===value.input.person);return row?sorted({kind:row.kind,scope:row.scope,person:row.person,tier:row.tier}):null;}
@@ -190,6 +237,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const change=(value:Proposal,by:string)=>{
   try{
    if(value.change==='project')projects.save(value.input);
+   else if(value.change==='projectMerge')projects.merge(value.input);
+   else if(value.change==='projectJoin')projects.join(value.input);
+   else if(isState(value))projects.setRetired(value.input,value.change==='projectRetire');
    else if(value.change==='member')household.setMember(value.input);
    else if(value.change==='agent')household.setAgent(value.input);
    else if(value.change==='settings')household.setSettings(value.input);
@@ -224,7 +274,10 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Why the change cannot be made on what is there now, in the words of the rule it breaks; nothing when it can.
  // These depend on what the asker may not read, so they are an owner's to hear: never the asker's.
  const refusal=(value:Proposal,was:unknown)=>
-  value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
+  value.change==='projectMerge'?projects.mergeRefusal(value.input)
+  :value.change==='projectJoin'?projects.joinRefusal(value.input)
+  :isState(value)?projects.stateRefusal(value.input,value.change==='projectRetire')
+  :value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
   :value.change==='boxSettings'&&was===null?new OperationError('not-found','No live machine has that id')
   :value.change in danger&&was===null?new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser')
   :value.change==='rule'&&was===null&&value.input.tier===null?new OperationError('invalid','There is no such rule to remove')
@@ -271,7 +324,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
 
  /** File the card. Installed code may call this directly; from outside it is household.propose.
   * Nothing here answers differently for what is in the household now: see the file header. */
- const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null})=>{
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string)=>{
   const value=proposal.parse({change:raw.change,input:raw.input});
   // The asker's own waiting card for the same thing; another agent's card is not the asker's to know of.
   if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
@@ -279,13 +332,13 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   const nonce=randomBytes(16).toString('hex');
   const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),seal:{nonce,digest:seal(value,nonce,before(value))}}),changeSummary:said(value),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
-   askedFrom:where?.conversation??'terminal',actingFor:where?.member??'unknown',what:said(value),why:raw.why,...cardWords(value)});
+   askedFrom:where?.conversation??(owner?'household owner':'terminal'),actingFor:where?.member??owner??'unknown',what:said(value),why:raw.why,...cardWords(value)});
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
   // acting for, on a matching target, unless the last answer to this same thing was a deny. A card with no
-  // known person behind it always asks. A card that changes a rule always asks: a rule cannot widen the rules.
+  // known person behind it always asks. Some kinds always ask, whatever rule there is: `alwaysAsks`.
   // The change is then made on the word of the owner who set the rule, with nobody answering now. That is
   // the rule's purpose and is accepted: docs/accepted-tradeoffs.md, "A standing approval rule answers ...".
-  if(value.change==='rule')return card;
+  if(alwaysAsks.has(value.change))return card;
   const rule=lastApprovalAnswer(db,card.agent,card.kind,card.target)?.event==='deny'?undefined:rules.resolve({kind:card.kind,target:card.target,project:card.project,actingFor:card.actingFor});
   if(!rule||rule.tier==='ask')return card;
   // When the change cannot be made on the rule's word (its owner may not make it, or it cannot be made at
@@ -300,13 +353,27 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   committed(changed:()=>void){const applied=[...appliedCards].some(id=>db.select().from(approvals).where(eq(approvals.id,id)).get()?.state==='used');appliedCards.clear();if(applied)changed();},
   register(operations:Operations,service:ReturnType<typeof approvalService>,current?:ReturnType<typeof conversationBodyScope>){
    // An agent in the household now may propose for itself. Proposing changes nothing: see the file header.
-   const agent=(viewer:Viewer)=>holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
+   // One change may also be asked for by a household owner, and by an agent only about itself: letting an
+   // agent onto a project (policy.ts, rule `asksToJoin`).
+   const agent=(viewer:Viewer,input:z.infer<typeof asked>)=>input.change==='projectJoin'
+    ?holds(policyRules.asksToJoin,viewer,{agent:input.input.agent},sharedSharing(db))
+    :holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
     input:asked,output:z.object({id:z.string(),state:z.string()}).strict(),may:agent,
     run(ctx,raw){
+     if(raw.change==='projectJoin'){
+      // A household owner reads the household, so is told at once what stands against it. An agent is told
+      // only what it reads for itself: that it is already on a project it is on. Anything else is filed, and
+      // is the owner's to hear, as for every other change (see the file header).
+      const refused=ctx.viewer.kind==='member'?projects.joinRefusal(raw.input)
+       :holds(policyRules.project,ctx.viewer,{id:raw.input.project},sharedSharing(db))?alreadyOnProject(raw.input):undefined;
+      if(refused)throw refused;
+     }
      const found=current?.(ctx.viewer);
-     // Provenance is set here from the authenticated caller, never taken from input.
-     const card=file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
+     // Provenance is set here from the authenticated caller, never taken from input. A card an owner files
+     // is about the agent it names, and is recorded as asked by that owner.
+     const card=ctx.viewer.kind==='member'&&raw.change==='projectJoin'?file(service,raw.input.agent,raw,undefined,ctx.viewer.id)
+      :file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id,state:card.state};
     },
    });

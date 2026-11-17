@@ -142,7 +142,7 @@ export function sharedRoot(options: {
   let measuringReady: ReturnType<typeof installMeasuring> | undefined;
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
-  const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
+  const householdSettings = householdService(db, now), projectSettings = sharedProjects(db, now), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
   // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
   const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume'] } = {};
   // The household's own key when it has one. Without one (a program run with no Comms) the key lasts as long

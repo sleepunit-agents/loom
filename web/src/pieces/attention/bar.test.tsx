@@ -154,6 +154,10 @@ it('updates generated task counts independently and clears retained readiness in
  f.tasks={status:'live',data:{inProgress:[{id:'a'},{id:'b'}],readyTasks:[]}};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  expect(tasks().text).toBe('Tasks · 2 in progress · 0 ready');
+ // A task held in a retired project is shelved: it is not counted as work in progress.
+ f.tasks={status:'live',data:{inProgress:[{id:'a',isShelved:false},{id:'b',isShelved:true},{id:'c',isShelved:true}],readyTasks:[{id:'d'}]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tasks().text).toBe('Tasks · 1 in progress · 1 ready');
  for(const status of ['loading','offline','denied']){
   f.tasks={...f.tasks,status};
   await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));

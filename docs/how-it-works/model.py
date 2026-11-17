@@ -40,7 +40,8 @@ area("people", "People, agents and projects",
   T("projects", "One row per project.", [
     ("id", "id", "The project's short name, such as pond.", ""),
     ("name", "text", "The name people see.", ""),
-    ("removed_at", "time", "When the project was removed, if it has been. Its tasks and conversations stay.", "")]),
+    ("removed_at", "time", "When the project was removed, if it has been. Its tasks and conversations stay.", ""),
+    ("retired_at", "time", "When the project was retired, if it is. Everything stays readable; its unfinished tasks are shelved until it is revived.", "")]),
   T("project_members", "Who is on a project.", [
     ("project", "id", "The project.", "projects"),
     ("member", "id", "A person with access to it.", "members")]),

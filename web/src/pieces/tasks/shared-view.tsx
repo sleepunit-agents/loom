@@ -11,6 +11,8 @@ export interface SharedTask {
   goal: string; why: string; doneWhen: string; description: string;
   ask: string | null; ifYes: string | null; ifNo: string | null; closeReason: string | null;
   sourceKind: string | null; sourceId: string | null;
+  /** Unfinished, in a retired project: shown under its project marked shelved, and counted nowhere as open work. */
+  isShelved?: boolean;
 }
 export interface SharedTaskLink { task: string; dependsOn: string; type: 'blocks' | 'parent-child' }
 export interface SharedTaskComment { task: string; seq: number; actorKind: 'member' | 'agent'; actor: string; at: string; text: string }
@@ -36,7 +38,8 @@ export interface SharedTasksProps {
 }
 const labels: Record<TaskAction, string> = {create:'Create task',claim:'Claim',unclaim:'Unclaim',close:'Close',reopen:'Reopen',comment:'Comment',edit:'Edit',priority:'Priority',project:'Project',parent:'Parent',link:'Blockers',ask:'Ask a person'};
 function actions(task: Task): TaskAction[] {
-  return [ ...(task.status === 'closed' ? ['reopen' as const] : [ ...(!task.ask ? [task.status === 'open' ? 'claim' as const : 'unclaim' as const] : []), 'close' as const, 'ask' as const]), 'comment','edit','priority','project','parent','link'];
+  // A shelved task cannot be claimed; moving it to another project (Project) is how one is taken up.
+  return [ ...(task.status === 'closed' ? ['reopen' as const] : [ ...(!task.ask && !(task.isShelved && task.status === 'open') ? [task.status === 'open' ? 'claim' as const : 'unclaim' as const] : []), 'close' as const, 'ask' as const]), 'comment','edit','priority','project','parent','link'];
 }
 /** Shared-schema presentation only. Root owns reads, authorization, routing and writes. */
 export function SharedTasks(props: SharedTasksProps) {
@@ -48,6 +51,9 @@ export function SharedTasks(props: SharedTasksProps) {
   const inFolder = (task: Task, id: string) => {
     if (id === 'closed') return task.status === 'closed';
     if (task.status === 'closed') return false;
+    // Shelved with its retired project: under Shelved, its project and its epic, and in no list of open work.
+    if (id === 'shelved') return !!task.isShelved;
+    if (task.isShelved && ['ready','progress','questions','open'].includes(id)) return false;
     if (id === 'ready') return props.ready.includes(task.id);
     if (id === 'progress') return task.status === 'in_progress';
     if (id === 'questions') return task.assigneeKind === 'member' && task.assignee === props.questionFor && !!task.ask;
@@ -56,7 +62,7 @@ export function SharedTasks(props: SharedTasksProps) {
     return true;
   };
   const folders: SplitFolder[] = [
-    ...[['ready','Ready'],['progress','In progress'],['questions',`Needs ${props.questionFor}`],['open','All open'],['closed','Closed']].map(([id,label]) => ({id,label,count:tasks.filter(t => inFolder(t,id)).length})),
+    ...[['ready','Ready'],['progress','In progress'],['questions',`Needs ${props.questionFor}`],['open','All open'],['shelved','Shelved'],['closed','Closed']].map(([id,label]) => ({id,label,count:tasks.filter(t => inFolder(t,id)).length})),
     {heading:'Projects'}, ...[...new Set(tasks.flatMap(t => t.project ? [t.project] : []))].sort().map(project => ({id:`project:${project}`,label:project})),
     {heading:'Epics'}, ...tasks.filter(t => t.type === 'epic' && t.status !== 'closed').map(t => ({id:`epic:${t.id}`,label:t.title})),
   ];
@@ -70,10 +76,10 @@ export function SharedTasks(props: SharedTasksProps) {
   return <Split label="Tasks" className="h-full" folders={folders} folder={folder} onFolder={setFolder}
     search={<label>Search tasks<Input type="search" value={query} onChange={e => setQuery(e.target.value)}/></label>}
     listTitle="Tasks" listMeta={shown.length} listTop={<Button disabled={props.status !== 'live' || !props.act} onClick={() => props.act?.('create')}>Create task</Button>}
-    list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : props.status !== 'live' ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : <><List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.closeReason === 'cancelled' && t.status === 'closed' ? 'cancelled' : t.status.replace('_',' ')}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List>{!shown.length && <Empty title="No tasks here" text="Choose another folder or change your search."/>}</>}
+    list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : props.status !== 'live' ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : <><List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.closeReason === 'cancelled' && t.status === 'closed' ? 'cancelled' : t.isShelved ? `shelved · was ${t.status.replace('_',' ')}` : t.status.replace('_',' ')}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List>{!shown.length && <Empty title="No tasks here" text="Choose another folder or change your search."/>}</>}
     open={!!props.selected} onBack={() => props.select()} backLabel="Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}
     reader={selected ? <article className="grid gap-5 p-5">
-      <header><p>{selected.id} · {selected.type}</p><h1>{selected.title}</h1><p>{selected.status.replace('_',' ')} · P{selected.priority}{selected.project && ` · ${selected.project}`}</p></header>
+      <header><p>{selected.id} · {selected.type}</p><h1>{selected.title}</h1><p>{selected.isShelved ? `shelved with its project · was ${selected.status.replace('_',' ')}` : selected.status.replace('_',' ')} · P{selected.priority}{selected.project && ` · ${selected.project}`}</p></header>
       <p>Owner: {selected.ownerKind === 'household' ? 'Household' : `${selected.ownerKind} ${selected.owner}`}</p>
       {selected.assignee && <p>Assigned to {selected.assigneeKind} {selected.assignee}</p>}
       {props.act && <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actions(selected).map(action => <Button variant="outline" key={action} onClick={() => props.act?.(action,selected)}>{labels[action]}</Button>)}</div>}

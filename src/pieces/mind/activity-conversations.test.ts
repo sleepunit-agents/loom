@@ -106,7 +106,7 @@ it('shows what a run needs of the viewer by the Inbox rule: not once the record 
  const dg=f.service.digest({conversation:cv.id,run:'run-1',summary:'Asked about the hose',items:[],question:{to:'teammate',words:'Order it?',answers:'yes-no',waitsOnKind:'task',waitsOnId:task.id}});
  expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({needs:'Order it?',needsForMember:'teammate'});
  // The task leaves the project and is its owner's alone. The conversation is still the teammate's to read; the question is not.
- taskService(f.db).edit(task.id,{project:null});
+ taskService(f.db).edit(task.id,{project:null},{kind:'member',id:'owner'});
  expect(f.reader.read(teammate,'fiction','digest',dg.id)).toMatchObject({summary:'Asked about the hose'});
  expect(f.reader.read(teammate,'fiction','digest',dg.id)).not.toHaveProperty('needs');
  expect(f.reader.list(teammate,f.query).rows[0]).not.toHaveProperty('needs');

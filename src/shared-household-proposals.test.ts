@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
+import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -474,4 +474,275 @@ it('takes what a card would replace off the cards an earlier version filed, and 
   await root.close();
   const second = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, startupNote: line => notes.push(line) }); clean.push(() => second.close());
   expect(notes).toHaveLength(1); expect(db.select().from(approvals).all()).toEqual(rewritten);
+});
+it('merges one project into another only when an owner allows the card, and the card is the record of it', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }, { id: 'shut', name: 'Shut', removedAt: at }]).run();
+  f.db.insert(projectMembers).values([{ project: 'pond', member: 'lee' }]).run();
+  f.db.insert(projectAgents).values([{ project: 'pond', agent: 'art' }, { project: 'garden', agent: 'mark' }]).run();
+  const task = f.root.services.tasks.create({ title: 'Clean filter', goal: 'Clean', why: 'Green water', owner: { kind: 'agent', id: 'art' }, project: 'pond' }, { kind: 'agent', id: 'art' });
+  const ask = (input: unknown) => f.call('household/propose', { change: 'projectMerge', input, why: 'The first sort put pond work in two places' }, 'art');
+  const filed = await ask({ from: 'pond', into: 'garden' });
+  expect(filed).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+  const id = filed.body.value!.id;
+  // The card says what is asked, in words that name both projects. Nothing has moved.
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'dangerous', state: 'pending', agent: 'art', target: 'household:projectMerge:pond into garden', ask: 'Merge project pond into garden?',
+    changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.', why: 'The first sort put pond work in two places', decidedBy: null });
+  expect(JSON.parse(f.db.select().from(approvals).where(eq(approvals.id, id)).get()!.details)).toMatchObject({ change: 'projectMerge', after: { from: 'pond', into: 'garden' } });
+  expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
+  // An owner is shown both projects as they stand. Nobody else is, and nobody else allows it.
+  expect(await look(f, id)).toEqual({ summary: expect.stringContaining('As they stand: {"from":{"id":"pond","name":"Pond","removed":false,"retired":false,"members":["lee"],"agents":["art"],"repositories":[]},"into":{"id":"garden"'), problem: null });
+  for (const actor of ['lee', 'art'] as const) expect((await f.call('approvals/answer', { id, answer: 'allow' }, actor)).status).toBe(403);
+  expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
+  // It cannot be undone, so the card is a dangerous one: the owner's Allow must also confirm.
+  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(false);
+  expect(f.db.select().from(tasks).get()).toMatchObject({ project: 'pond' });
+  expect(await f.call('approvals/answer', { id, answer: 'allow', confirm: true }, 'sam')).toMatchObject({ status: 200, body: { ok: true } });
+  // Made: the task is garden's, pond's people and agents are garden's, pond is kept and removed.
+  expect(f.db.select().from(tasks).where(eq(tasks.id, task.id)).get()).toMatchObject({ project: 'garden' });
+  expect(f.root.services.projects.describe('garden')).toMatchObject({ members: ['lee'], agents: ['art', 'mark'], removed: false });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'pond')).get()!.removedAt).not.toBeNull();
+  // The record: the card, with who asked, who allowed it and what changed. No comment is left on the task.
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ state: 'used', agent: 'art', decidedBy: 'sam', operation: 'household.change',
+    changeSummary: 'Merge project pond into garden. Everything filed under the first is filed under the second, and the first is removed.' });
+  expect(f.db.select().from(approvalRecord).where(eq(approvalRecord.approval, id)).all().map(row => row.event)).toEqual(expect.arrayContaining(['request', 'allow', 'use']));
+  expect(f.root.services.tasks.get(task.id).comments).toEqual([]);
+
+  // What cannot be merged is filed like anything else, and refused to the owner in plain words when they look and when they allow.
+  for (const [input, problem] of [[{ from: 'garden', into: 'garden' }, 'A project cannot be merged into itself'], [{ from: 'pond', into: 'garden' }, 'Project pond is removed'],
+    [{ from: 'garden', into: 'shut' }, 'Project shut is removed'], [{ from: 'nowhere', into: 'garden' }, 'No project has the id nowhere']] as const) {
+    const hopeless = await ask(input);
+    expect(hopeless).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+    expect((await look(f, hopeless.body.value!.id)).problem).toBe(problem);
+    expect((await f.call('approvals/answer', { id: hopeless.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body).toMatchObject({ ok: false, message: problem });
+    expect((await f.call('approvals/answer', { id: hopeless.body.value!.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  }
+  expect(f.db.select().from(tasks).where(eq(tasks.id, task.id)).get()).toMatchObject({ project: 'garden' });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'garden')).get()!.removedAt).toBeNull();
+  // A card whose projects have changed since it was filed is refused, and has to be asked for again.
+  f.db.insert(projects).values({ id: 'shed', name: 'Shed' }).run();
+  const stale = await ask({ from: 'shed', into: 'garden' });
+  f.db.insert(projectMembers).values({ project: 'shed', member: 'lee' }).run();
+  expect((await f.call('approvals/answer', { id: stale.body.value!.id, answer: 'allow', confirm: true }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed; ask for a fresh card' });
+  expect(f.db.select().from(projects).where(eq(projects.id, 'shed')).get()!.removedAt).toBeNull();
+});
+
+it('lets no standing rule answer a merge card, not one for dangerous actions either: an owner allows and confirms it by hand', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }]).run();
+  f.db.insert(conversations).values({ id: 'cv-sam', agent: 'art', member: 'sam', venue: 'loom', place: 'th', label: 'Sam', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const where = { conversation: 'cv-sam', member: 'sam', project: null };
+  const ask = (change: string, input: unknown) => f.root.writes.run(() => f.root.services.setup.propose('art', { change, input, why: 'Asked in conversation' }, where)).value;
+  // The widest rule there is for dangerous actions, set by the owner the agent is working for.
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'dangerous', scope: '*', person: '', tier: 'do' }, 'sam'));
+  // It answers a revocation as the card is filed, as before. A merge waits to be seen.
+  expect(ask('tokenRevoke', { label: 'lee' })).toMatchObject({ state: 'used', kind: 'dangerous', decidedBy: 'sam' });
+  const card = ask('projectMerge', { from: 'pond', into: 'garden' });
+  expect(card).toMatchObject({ state: 'pending', kind: 'dangerous', decidedBy: null });
+  expect(f.db.select().from(projects).all().map(row => row.removedAt)).toEqual([null, null]);
+  // By hand: Allow alone is refused, Allow with the confirmation makes it.
+  expect((await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'sam')).body.ok).toBe(false);
+  expect((await f.call('approvals/answer', { id: card.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(projects).where(eq(projects.id, 'pond')).get()!.removedAt).not.toBeNull();
+});
+
+it('does not let a standing rule for settings answer a merge card', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }]).run();
+  f.db.insert(conversations).values({ id: 'cv-sam', agent: 'art', member: 'sam', venue: 'loom', place: 'th', label: 'Sam', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const where = { conversation: 'cv-sam', member: 'sam', project: null };
+  const ask = (change: string, input: unknown) => f.root.writes.run(() => f.root.services.setup.propose('art', { change, input, why: 'Asked in conversation' }, where)).value;
+  // The widest rule there is for settings, set by an owner, for the owner the agent is working for.
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: '*', person: '', tier: 'do' }, 'sam'));
+  // It answers a settings card as it is filed. A merge is not a setting: its card waits to be seen.
+  expect(ask('settings', { commsDays: 9 })).toMatchObject({ state: 'used', kind: 'setting' });
+  expect(ask('projectMerge', { from: 'pond', into: 'garden' })).toMatchObject({ state: 'pending', kind: 'dangerous' });
+  expect(f.db.select().from(projects).all().map(row => row.removedAt)).toEqual([null, null]);
+});
+
+it('lets an agent ask to be let onto a project; allowing it adds that one agent and tells it so where it asked', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'shut', name: 'Shut', removedAt: at }]).run();
+  f.db.insert(projectMembers).values({ project: 'pond', member: 'lee' }).run();
+  f.db.insert(projectAgents).values({ project: 'pond', agent: 'art' }).run();
+  f.db.insert(projectRepositories).values({ project: 'pond', repository: 'github:fixture/pond' }).run();
+  // Another project in use, with people, an agent and a repository of its own: it takes no part.
+  f.db.insert(projects).values({ id: 'garden', name: 'Garden' }).run();
+  f.db.insert(projectMembers).values({ project: 'garden', member: 'sam' }).run();
+  f.db.insert(projectAgents).values({ project: 'garden', agent: 'art' }).run();
+  f.db.insert(projectRepositories).values({ project: 'garden', repository: 'github:fixture/garden' }).run();
+  const others = () => [f.root.services.projects.describe('garden'), f.root.services.projects.describe('shut')];
+  const untouched = others();
+  // mark is told in a room to work on pond, and asks from there.
+  f.db.insert(conversations).values({ id: 'cv-room', agent: 'mark', venue: 'slack', place: 'room', label: 'Room', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const card = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'pond', agent: 'mark' }, why: 'Sam asked me to work on pond and I am not on it' },
+    { conversation: 'cv-room', member: null, project: null })).value;
+  // The card says plainly who wants onto which project, and why. It is a setting, and nothing has changed.
+  expect(card).toMatchObject({ kind: 'setting', state: 'pending', agent: 'mark', conversation: 'cv-room', target: 'household:projectJoin:mark onto project pond', ask: 'Let mark work on project pond?',
+    changeSummary: 'Let mark work on project pond. Nothing else about the project changes.', why: 'Sam asked me to work on pond and I am not on it' });
+  const before = f.root.services.projects.describe('pond');
+  expect(before).toMatchObject({ agents: ['art'] });
+  expect(await look(f, card.id)).toEqual({ summary: expect.stringContaining('Let mark work on project pond. As it stands: '), problem: null });
+  expect((await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'lee')).status).toBe(403);
+  expect(await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'sam')).toMatchObject({ status: 200, body: { ok: true } });
+  // That one agent is on that one project. Its name, people, other agents and repositories are as they were.
+  expect(f.root.services.projects.describe('pond')).toEqual({ ...before, agents: ['art', 'mark'] });
+  expect(others()).toEqual(untouched);
+  expect(f.db.select().from(projects).all().map(row => [row.id, row.name, row.removedAt === null])).toEqual([['pond', 'Pond', true], ['shut', 'Shut', false], ['garden', 'Garden', true]]);
+  expect(f.db.select().from(approvals).where(eq(approvals.id, card.id)).get()).toMatchObject({ state: 'used', decidedBy: 'sam' });
+  // The answer is mail to mark in the conversation it asked from, waiting for its next body there.
+  expect(f.db.select().from(inbox).where(eq(inbox.toKind, 'agent')).all()).toMatchObject([{ to: 'mark', conversation: 'cv-room', source: 'answer', fromKind: 'person', fromId: 'sam', state: 'waiting',
+    words: 'Allow\nLet mark work on project pond?\nmark is added to project pond and sees what is filed under it. Nothing else about the project changes.' }]);
+  // A deny reaches it the same way, and changes nothing.
+  const denied = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'shut', agent: 'mark' }, why: 'Again' }, { conversation: 'cv-room', member: null, project: null })).value;
+  expect((await look(f, denied.id)).problem).toBe('Project shut is removed');
+  expect((await f.call('approvals/answer', { id: denied.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'Project shut is removed' });
+  expect((await f.call('approvals/answer', { id: denied.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(inbox).where(eq(inbox.toKind, 'agent')).all().at(-1)).toMatchObject({ to: 'mark', conversation: 'cv-room', words: expect.stringMatching(/^Deny\nLet mark work on project shut\?\nmark stays off the project\.$/) });
+  expect(f.db.select().from(projectAgents).all()).toHaveLength(3);
+  expect(others()).toEqual(untouched);
+});
+
+it('never lets a standing rule answer a request to join a project: every one waits for an owner', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
+  // mark's body is working in sam's own thread, and sam, a household owner, has the widest rule for settings.
+  f.db.insert(conversations).values({ id: 'cv-sam', agent: 'mark', member: 'sam', venue: 'loom', place: 'th', label: 'Sam', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const where = { conversation: 'cv-sam', member: 'sam', project: null };
+  const ask = (change: string, input: unknown) => f.root.writes.run(() => f.root.services.setup.propose('mark', { change, input, why: 'Asked in conversation' }, where)).value;
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: '*', person: '', tier: 'do' }, 'sam'));
+  // The rule answers a settings card as it is filed. Being let onto a project is not the rule's to give.
+  expect(ask('settings', { commsDays: 9 })).toMatchObject({ state: 'used', kind: 'setting' });
+  const card = ask('projectJoin', { project: 'pond', agent: 'mark' });
+  expect(card).toMatchObject({ state: 'pending', kind: 'setting', decidedBy: null });
+  expect(f.root.services.projects.describe('pond')).toMatchObject({ agents: [] });
+  // Nor a rule that names this very card. The owner's own plain Allow, with nothing to confirm, is what lets it on.
+  f.db.insert(projects).values({ id: 'garden', name: 'Garden' }).run();
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: 'household:projectJoin:*', person: '', tier: 'do' }, 'sam'));
+  expect(ask('projectJoin', { project: 'garden', agent: 'mark' })).toMatchObject({ state: 'pending' });
+  expect(f.root.services.projects.describe('garden')).toMatchObject({ agents: [] });
+  expect(await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'sam')).toMatchObject({ status: 200, body: { ok: true } });
+  expect(f.root.services.projects.describe('pond')).toMatchObject({ agents: ['mark'] });
+});
+
+it('allows two agents onto the same project in turn: one card does not make the other stale', async () => {
+  const f = fixture();
+  f.db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
+  const ask = (agent: string) => f.root.writes.run(() => f.root.services.setup.propose(agent, { change: 'projectJoin', input: { project: 'pond', agent }, why: 'To work on it' })).value;
+  const arts = ask('art'), marks = ask('mark');
+  expect((await f.call('approvals/answer', { id: arts.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: true });
+  expect((await look(f, marks.id)).problem).toBeNull();
+  expect((await f.call('approvals/answer', { id: marks.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: true });
+  expect(f.root.services.projects.describe('pond')).toMatchObject({ agents: ['art', 'mark'] });
+  // What a card is about still makes it stale: the project is removed after the card is filed.
+  f.db.insert(projects).values({ id: 'garden', name: 'Garden' }).run();
+  const late = ask('art');
+  expect(late).toMatchObject({ target: 'household:projectJoin:art onto project pond' });
+  const gardens = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'garden', agent: 'mark' }, why: 'x' })).value;
+  f.db.update(projects).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(projects.id, 'garden')).run();
+  expect((await f.call('approvals/answer', { id: gardens.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed; ask for a fresh card' });
+  // And a card for an agent that is already on the project is refused as that.
+  expect((await f.call('approvals/answer', { id: late.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'art is already on project pond' });
+});
+
+it('takes a request to join a project from the agent itself or a household owner, and from nobody else', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }, { id: 'shut', name: 'Shut', removedAt: at }]).run();
+  f.db.insert(projectAgents).values({ project: 'pond', agent: 'art' }).run();
+  f.db.insert(agents).values({ id: 'old', ...visual, removedAt: at }).run();
+  const ask = (input: unknown, actor: keyof typeof credentials) => f.call('household/propose', { change: 'projectJoin', input, why: 'To work on it' }, actor);
+  const cards = () => f.db.select().from(approvals).all().length;
+  // An agent asks for itself. Not for another agent; and a member who is not a household owner asks for nobody.
+  expect((await ask({ project: 'garden', agent: 'mark' }, 'art')).status).toBe(403);
+  expect((await ask({ project: 'garden', agent: 'art' }, 'lee')).status).toBe(403);
+  expect(cards()).toBe(0);
+  // Already on it: said so, and no card is filed.
+  expect((await ask({ project: 'pond', agent: 'art' }, 'art')).body).toMatchObject({ ok: false, code: 'invalid', message: 'art is already on project pond' });
+  expect(cards()).toBe(0);
+  // What an agent may not read is not told to it: a project that is removed or not there is filed like any
+  // other, and the owner is told why it cannot be allowed.
+  for (const [project, problem] of [['shut', 'Project shut is removed'], ['nowhere', 'No project has the id nowhere']] as const) {
+    const filed = await ask({ project, agent: 'art' }, 'art');
+    expect(filed).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+    expect((await look(f, filed.body.value!.id)).problem).toBe(problem);
+    expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: problem });
+    expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  }
+  expect(await ask({ project: 'garden', agent: 'art' }, 'art')).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+  expect(f.db.select().from(approvals).all().at(-1)).toMatchObject({ agent: 'art', askedFrom: 'terminal', actingFor: 'unknown' });
+  // A household owner asks for any agent, is told at once what stands against it, and the card is the agent's.
+  for (const [input, message] of [[{ project: 'pond', agent: 'art' }, 'art is already on project pond'], [{ project: 'shut', agent: 'mark' }, 'Project shut is removed'],
+    [{ project: 'nowhere', agent: 'mark' }, 'No project has the id nowhere'], [{ project: 'pond', agent: 'nobody' }, 'No agent has the id nobody'], [{ project: 'pond', agent: 'old' }, 'Agent old is removed']] as const)
+    expect((await ask(input, 'sam')).body).toMatchObject({ ok: false, message });
+  const before = cards();
+  const owners = await ask({ project: 'pond', agent: 'mark' }, 'sam');
+  expect(owners).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+  expect(cards()).toBe(before + 1);
+  expect(f.db.select().from(approvals).where(eq(approvals.id, owners.body.value!.id)).get()).toMatchObject({ agent: 'mark', kind: 'setting', actingFor: 'sam', askedFrom: 'household owner', ask: 'Let mark work on project pond?' });
+  expect((await f.call('approvals/answer', { id: owners.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200);
+  expect(f.root.services.projects.describe('pond')).toMatchObject({ agents: ['art', 'mark'] });
+  // Only projectJoin is an owner's to file: every other change is still asked by an agent.
+  expect((await f.call('household/propose', { change: 'settings', input: { commsDays: 9 }, why: 'x' }, 'sam')).status).toBe(403);
+});
+
+it('retires and revives a project by a card an owner answers; its tasks leave every list of work and come back as they were', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'phasecraft', name: 'Phasecraft' }, { id: 'pond', name: 'Pond' }, { id: 'shut', name: 'Shut', removedAt: at }]).run();
+  f.db.insert(projectMembers).values([{ project: 'phasecraft', member: 'lee' }, { project: 'pond', member: 'lee' }]).run();
+  f.db.insert(projectAgents).values([{ project: 'phasecraft', agent: 'art' }, { project: 'pond', agent: 'art' }]).run();
+  const make = (title: string, project: string) => f.root.writes.run(() => f.root.services.tasks.create({ title, goal: 'Done', why: 'Needed', owner: { kind: 'agent', id: 'art' }, project }, { kind: 'agent', id: 'art' })).value;
+  const open = make('Open', 'phasecraft'), held = make('Held', 'phasecraft'), asked = make('Asked', 'phasecraft'), other = make('Other', 'pond');
+  f.root.writes.run(() => { f.root.services.tasks.claim(held.id, { kind: 'agent', id: 'art' }); f.root.services.tasks.ask(asked.id, { to: { kind: 'member', id: 'lee' }, ask: 'Spend?', ifYes: 'Buy', ifNo: 'Wait' }, { kind: 'agent', id: 'art' }); });
+  const read = async (query: string, actor: keyof typeof credentials) => { const reply = (await (await f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + credentials[actor] }, body: JSON.stringify({ query }) })).json() as { data: Record<string, unknown>; errors?: unknown }); expect(reply.errors, JSON.stringify(reply.errors)).toBeUndefined(); return reply.data; };
+  const work = async (actor: keyof typeof credentials = 'art') => {
+    const data = await read('{ readyTasks { id } tasks(orderBy: {id: {direction: asc, priority: 0}}) { id status isReady isShelved } }', actor) as { readyTasks: { id: string }[]; tasks: { id: string; status: string; isReady: boolean; isShelved: boolean }[] };
+    return { ready: data.readyTasks.map(row => row.id).sort(), tasks: data.tasks.map(row => [row.id, row.status, row.isReady, row.isShelved]) };
+  };
+  const before = { work: await work(), lee: await work('lee') };
+  expect(before.work).toEqual({ ready: [open.id, asked.id, other.id].sort(), tasks: [[open.id, 'open', true, false], [held.id, 'in_progress', false, false], [asked.id, 'open', true, false], [other.id, 'open', true, false]] });
+
+  const ask = (change: string, input: unknown) => f.call('household/propose', { change, input, why: 'Set aside for now' }, 'art');
+  const filed = await ask('projectRetire', { project: 'phasecraft' });
+  const id = filed.body.value!.id;
+  expect(f.db.select().from(approvals).where(eq(approvals.id, id)).get()).toMatchObject({ kind: 'setting', state: 'pending', target: 'household:projectRetire:phasecraft', ask: 'Retire project phasecraft?',
+    changeSummary: 'Retire project phasecraft. Everything in it stays and stays readable; its unfinished tasks are shelved until it is revived.' });
+  expect(await work()).toEqual(before.work);
+  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'lee')).status).toBe(403);
+  expect((await f.call('approvals/answer', { id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  // Retired: everything is still read by who read it, each task as it was stored, marked shelved; none is ready.
+  const retired = await work();
+  expect(retired.ready).toEqual([other.id]);
+  expect(retired.tasks).toEqual([[open.id, 'open', false, true], [held.id, 'in_progress', false, true], [asked.id, 'open', false, true], [other.id, 'open', true, false]]);
+  expect((await work('lee')).tasks.map(row => row[0])).toEqual(before.lee.tasks.map(row => row[0]));
+  // Nothing is claimed, created in it or moved into it; a task is moved out.
+  expect((await f.call('tasks/command', { action: 'claim', id: open.id }, 'art')).body).toMatchObject({ ok: false, message: 'Project phasecraft is retired: its tasks are shelved until it is revived' });
+  expect((await f.call('tasks/command', { action: 'create', input: { title: 'New', goal: 'Done', why: 'Needed', owner: { kind: 'agent', id: 'art' }, project: 'phasecraft' } }, 'art')).status).toBe(403);
+  expect((await f.call('tasks/command', { action: 'moveToProject', ids: [other.id], project: 'phasecraft' }, 'art')).status).toBe(403);
+  // Refused to the owner in plain words: already retired, removed, not there; and reviving what is not retired.
+  for (const [change, project, problem] of [['projectRetire', 'phasecraft', 'Project phasecraft is already retired'], ['projectRetire', 'shut', 'Project shut is removed'], ['projectRetire', 'nowhere', 'No project has the id nowhere'], ['projectRevive', 'pond', 'Project pond is not retired']] as const) {
+    const hopeless = await ask(change, { project });
+    expect(hopeless).toMatchObject({ status: 200, body: { ok: true, value: { state: 'pending' } } });
+    expect((await look(f, hopeless.body.value!.id)).problem).toBe(problem);
+    expect((await f.call('approvals/answer', { id: hopeless.body.value!.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: problem });
+    expect((await f.call('approvals/answer', { id: hopeless.body.value!.id, answer: 'deny' }, 'sam')).body.ok).toBe(true);
+  }
+  // Revived by the mirror card: everything is work again exactly as it was, the claim and the question included.
+  const revive = await ask('projectRevive', { project: 'phasecraft' });
+  expect(f.db.select().from(approvals).where(eq(approvals.id, revive.body.value!.id)).get()).toMatchObject({ kind: 'setting', ask: 'Revive project phasecraft?' });
+  expect((await f.call('approvals/answer', { id: revive.body.value!.id, answer: 'allow' }, 'sam')).body.ok).toBe(true);
+  expect(await work()).toEqual(before.work);
+  expect(f.root.services.tasks.get(held.id)).toMatchObject({ status: 'in_progress', assignee: 'art' });
+});
+
+it('lets a standing rule for settings answer a retire and a revive: each is undone by the other', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values({ id: 'phasecraft', name: 'Phasecraft' }).run();
+  f.db.insert(conversations).values({ id: 'cv-sam', agent: 'art', member: 'sam', venue: 'loom', place: 'th', label: 'Sam', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const where = { conversation: 'cv-sam', member: 'sam', project: null };
+  const ask = (change: string) => f.root.writes.run(() => f.root.services.setup.propose('art', { change, input: { project: 'phasecraft' }, why: 'Asked in conversation' }, where)).value;
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: '*', person: '', tier: 'do' }, 'sam'));
+  expect(ask('projectRetire')).toMatchObject({ state: 'used', kind: 'setting', decidedBy: 'sam' });
+  expect(f.root.services.projects.describe('phasecraft')).toMatchObject({ retired: true });
+  expect(ask('projectRevive')).toMatchObject({ state: 'used', kind: 'setting' });
+  expect(f.root.services.projects.describe('phasecraft')).toMatchObject({ retired: false });
 });

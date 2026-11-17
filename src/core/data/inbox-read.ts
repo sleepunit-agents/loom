@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
 import { inbox } from './schema.js';
 import { commsKeepDays } from './comms-days.js';
+import { waitsOnShelvedTask } from './project-in-use.js';
 
 type Item=typeof inbox.$inferSelect;
 /** A bounded read set for one Inbox selection, never a cross-request cache.
@@ -47,12 +48,15 @@ export type InboxReadSet=ReturnType<typeof readInboxSet>;
 export function readInboxFolders(db: DataDatabase, allowed: SQL) {
   const rows = db.query.inbox.findMany({
     columns: { agent: true, state: true, source: true, answers: true },
+    // A question about a shelved task is counted as mail and not as needing anyone (project-in-use.ts).
+    // Wrapped so the relational builder does not rewrite the task columns inside it as the inbox's own.
+    extras: { shelved: sql<number>`${{ getSQL: () => waitsOnShelvedTask(inbox) }}`.as('waits_on_shelved') },
     where: () => sql`${{ getSQL: () => allowed }}`, orderBy: f => asc(f.agent),
   }).sync();
   const totals = { needs: 0, alerts: 0, answered: 0, fyi: 0, all: rows.length };
   const agents = new Map<string, { id: string; count: number; needs: number }>();
   for (const row of rows) {
-    const needs = row.state === 'waiting' && row.answers !== null;
+    const needs = row.state === 'waiting' && row.answers !== null && !row.shelved;
     if (needs) totals.needs++;
     if (row.state === 'waiting' && row.answers === null) {
       totals.fyi++;

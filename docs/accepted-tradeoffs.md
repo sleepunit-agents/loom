@@ -22,7 +22,11 @@ Entries are grouped by the part of the program they belong to.
   and that scope. The change is applied as the owner who set the rule: the card records them as
   `decidedBy`, run settings are checked against what that owner may offer, and a rule whose setter is no
   longer an owner answers nothing. A card with nobody known behind it (a terminal session, a room) always
-  asks. A card that changes a rule always asks, so a rule cannot widen the rules. If the last answer to the
+  asks. Three kinds of card always ask, whatever rule there is (`alwaysAsks` in
+  `src/shared-household-proposals.ts`): one that changes a rule, so a rule cannot widen the rules; a request
+  to let an agent onto a project (`projectJoin`), since that lets the agent read what is filed under it and
+  a blanket rule is not an owner saying so for that project; and a merge of two projects (`projectMerge`),
+  which cannot be undone and shows each project's people the other's records. If the last answer to the
   same thing was a deny, it asks again. If the change cannot be made on the rule's word (its setter may not
   make that change, or it cannot be made at all), the rule has answered nothing and the card waits for an
   owner. An agent whose card a rule answers is told the card's state, so it learns whether its change was

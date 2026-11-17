@@ -1,4 +1,5 @@
 import { readAll } from '../data/execution.js';
+import { waitsOnShelvedTask } from '../data/project-in-use.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
@@ -22,6 +23,7 @@ type Item = typeof inbox.$inferSelect;
 type Projected=Item&{[projected]?:Record<string,unknown>};
 const display=(row:Projected,name:string,read:()=>unknown)=>row[projected]&&Object.hasOwn(row[projected],name)?row[projected][name]:read();
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
+
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
 export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; conversation?: string; limit?: number; offset?: number; search?: string };
 
@@ -106,7 +108,9 @@ export class InboxQueries {
     return rows;
   }
   private folderWhere(folder?: InboxFilter['folder']) {
-    if (folder === 'needs') return and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers))!;
+    // A question about a shelved task does not ask for attention: it is out of "needs you" while its project
+    // is retired, and back when the project is revived. Nothing about the item is changed.
+    if (folder === 'needs') return and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers), sql`not ${waitsOnShelvedTask(inbox)}`)!;
     if (folder === 'alerts') return and(eq(inbox.state, 'waiting'), eq(inbox.source, 'notice'), isNull(inbox.answers))!;
     if (folder === 'fyi') return and(eq(inbox.state, 'waiting'), isNull(inbox.answers))!;
     if (folder === 'answered') return inArray(inbox.state, ['answered', 'resolved', 'done']);

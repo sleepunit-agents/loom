@@ -369,3 +369,9 @@ export function agentMailAdmission(jobs: Jobs, changed: () => void): AdmitInbox 
     return admitted > 0 && admitted === conversations.size;
   };
 }
+
+/** Every job filed under one project is filed under another: for a merge of the two (shared-projects.ts).
+ * A job keeps the labels of its conversation, which is refiled in the same write. */
+export function refileJobs(db: DataDatabase, from: string, into: string): void {
+  db.update(jobs).set({ project: into }).where(eq(jobs.project, from)).run();
+}

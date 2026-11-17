@@ -26,7 +26,8 @@ const everything = (client: Database.Database) => client.prepare('SELECT type, n
 
 describe('upgrading a household database', () => {
   it('has the installation SQL of every shipped schema number, the newest being today\'s', () => {
-    expect(readdirSync(shapes).sort()).toEqual(numbers.map(number => `${number}.sql`));
+    // Both lists in the same order: names sort as words, so 10.sql comes before 2.sql.
+    expect(readdirSync(shapes).sort()).toEqual(numbers.map(number => `${number}.sql`).sort());
     // A change to the schema with no upgrade step fails here: the newest pinned shape is no longer what is installed.
     expect(shipped(dataSchemaNumber)).toBe(installation);
   });
@@ -190,6 +191,36 @@ describe('upgrading a household database', () => {
     old.prepare("INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', ?)").run(at);
     upgradeDataSchema(old);
     expect(old.prepare('SELECT max(number) AS n FROM migrations').get()).toEqual({ n: dataSchemaNumber });
+  });
+
+  it('adds the time a project was retired in step 10, empty on every project there is, and touches no row', () => {
+    const old = household(9);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO projects (id, name, removed_at) VALUES ('pond', 'Pond', NULL), ('shut', 'Shut', '${at}');
+      INSERT INTO project_members (project, member) VALUES ('pond', 'sam');
+      INSERT INTO project_agents (project, agent) VALUES ('pond', 'art');
+      INSERT INTO tasks (id, title, owner_kind, project, status, assignee_kind, assignee, created_by_kind, created_by, created_at, changed_at) VALUES ('t-1', 'Pump', 'household', 'pond', 'in_progress', 'agent', 'art', 'member', 'sam', '${at}', '${at}')`);
+    // Every table there is, projects first, so a step that touched any other row is seen. The schema number's own marks are the step's to add.
+    const names = (old.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('projects', 'migrations') ORDER BY name").all() as { name: string }[]).map(row => row.name);
+    expect(names.length).toBeGreaterThan(80);
+    const rows = () => ['projects', ...names].map(table => old.prepare(`SELECT * FROM "${table}" ORDER BY 1`).all());
+    const before = rows();
+    expect(old.prepare("SELECT name FROM pragma_table_info('projects')").all()).not.toContainEqual({ name: 'retired_at' });
+    upgradeDataSchema(old, () => '2026-11-18T00:00:00.000Z');
+    // The one new column, empty: no project is retired by upgrading, a removed one included.
+    expect(old.prepare("SELECT name FROM pragma_table_info('projects') ORDER BY name").all().map(row => (row as { name: string }).name)).toEqual(['id', 'name', 'removed_at', 'retired_at']);
+    expect(old.prepare('SELECT id, name, removed_at, retired_at FROM projects ORDER BY id').all()).toEqual([{ id: 'pond', name: 'Pond', removed_at: null, retired_at: null }, { id: 'shut', name: 'Shut', removed_at: at, retired_at: null }]);
+    // Every row that was there is as it was: the projects without the new column, and what hangs off them whole.
+    const after = rows();
+    expect(after[0].map(row => { const { retired_at: _new, ...rest } = row as Record<string, unknown>; return rest; })).toEqual(before[0]);
+    expect(after.slice(1)).toEqual(before.slice(1));
+    // It takes a UTC time or nothing, like removed_at; a project can be both retired and removed.
+    expect(() => old.prepare("UPDATE projects SET retired_at = 'yesterday' WHERE id = 'pond'").run()).toThrow('CHECK');
+    old.prepare("UPDATE projects SET retired_at = ? WHERE id IN ('pond', 'shut')").run(at);
+    old.prepare("UPDATE projects SET retired_at = NULL WHERE id = 'pond'").run();
+    expect(old.prepare('SELECT id, retired_at FROM projects ORDER BY id').all()).toEqual([{ id: 'pond', retired_at: null }, { id: 'shut', retired_at: at }]);
+    expect(recogniseDataSchema(old)).toBe(dataSchemaNumber);
   });
 
   it('refuses a database from a newer program', () => {

@@ -2,7 +2,7 @@
   "page": "tools",
   "title": "Tools for agents",
   "ownerTask": "t-2190",
-  "sourceSha256": "1c60f1836311b83bdf218e07d2d0ebd41b4fa6945a42f593a65c09a0ecc108e1",
+  "sourceSha256": "266a382f00a252a71c7dbbf92f7997cf40828b1b68303937dff656960cdb6da7",
   "promises": [
     {
       "id": "tools-001",
@@ -96,7 +96,7 @@
     },
     {
       "id": "tools-019",
-      "promise": "Tasks: see what is ready, read one, create, edit, claim or hand back, comment, close or reopen.",
+      "promise": "Tasks: see what is ready, read one, create, edit, move to another project, claim or hand back, comment, close or reopen.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
@@ -111,46 +111,56 @@
     },
     {
       "id": "tools-022",
-      "promise": "Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser. Loom carries it out.",
+      "promise": "Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser, merging one project into another. Loom carries it out.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-023",
-      "promise": "See the approvals it may see, and which are still waiting.",
+      "promise": "Ask to be let onto a project it is not on. A household owner answers each such card; no standing rule does.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-024",
-      "promise": "Changes: read pull requests and who each is waiting on. Merge under an approval.",
+      "promise": "Propose that a project be retired, or revived. A retired project keeps everything; its unfinished tasks are shelved, not work, until it is revived.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-025",
-      "promise": "Tempo: set a trigger, stop it, or run it now.",
+      "promise": "See the approvals it may see, and which are still waiting.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-026",
-      "promise": "Discord and Slack: reply to an incoming message.",
+      "promise": "Changes: read pull requests and who each is waiting on. Merge under an approval.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-027",
-      "promise": "Discord and Slack: read the attachments a message carried.",
+      "promise": "Tempo: set a trigger, stop it, or run it now.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-028",
-      "promise": "Secrets: request one with a reason and a length of time, and check on the request.",
+      "promise": "Discord and Slack: reply to an incoming message.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-029",
-      "promise": "Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, a standing approval rule, how an agent treats outside people, the household's own settings. A person allows it.",
+      "promise": "Discord and Slack: read the attachments a message carried.",
       "source": "docs/how-it-works/site/tools.html"
     },
     {
       "id": "tools-030",
+      "promise": "Secrets: request one with a reason and a length of time, and check on the request.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-031",
+      "promise": "Propose a change to any setting a person can change: tempo timings, a bridge, a secret's rule, a machine, how an agent runs, its models, measuring, people and projects, a standing approval rule, how an agent treats outside people, the household's own settings. A person allows it.",
+      "source": "docs/how-it-works/site/tools.html"
+    },
+    {
+      "id": "tools-032",
       "promise": "Read anything it may see, naming the fields it wants: tasks, conversations, the inbox, approvals, changes, triggers, machines, models, the measuring store.",
       "source": "docs/how-it-works/site/tools.html"
     }

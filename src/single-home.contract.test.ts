@@ -38,7 +38,7 @@ import { PRIVATE_SECRET_TIMEOUT_MS, privateSecretClient } from './pieces/secrets
 import { secretAnswer, secretRuleInput } from './pieces/secrets/requests.js';
 import { householdService } from './apps/household.js';
 import { AgentFiles } from './pieces/mind/sources.js';
-import { dangerousHouseholdChanges, householdChanges } from './shared-household-proposals.js';
+import { alwaysAsks, dangerousHouseholdChanges, householdChanges } from './shared-household-proposals.js';
 import { householdMemorySources } from './shared-memory.js';
 import { householdSettings } from './core/data/household-settings.js';
 import { secretRules } from './core/data/schema.js';
@@ -338,7 +338,12 @@ it('lists the kinds of household change once', () => {
   expect(text('src/shared-mcp-named.ts')).toContain('z.enum(householdChanges)');
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
-  expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'tokenRevoke']);
+  // The kinds no standing rule answers are named once, and filing asks that one list.
+  expect([...alwaysAsks].sort()).toEqual(['projectJoin', 'projectMerge', 'rule']);
+  expect(text('src/shared-household-proposals.ts')).toContain('if(alwaysAsks.has(value.change))return card;');
+  expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin|projectMerge)'\)return card/);
+  // What cannot be put back: three revocations, and a merge of two projects.
+  expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'projectMerge', 'tokenRevoke']);
 });
 
 it('states how long a secret grant may last, and what an agent sends to ask for one, once', () => {
@@ -638,6 +643,53 @@ it('reads a review of a held reply with one shape at the door and in the service
   expect(bridgeSetting.options).toContain(bridgeReview);
   // The id is the reply's own: taken as sent, so the reply the door asked about is the one the service changes.
   expect(bridgeReview.parse({ action: 'review', id: ' held ', decision: 'release' }).id).toBe(' held ');
+});
+
+it('asks policy.ts who may move a task to another project, at the one door that takes the move', () => {
+  // The door reads the rule for each task named and states none of its own.
+  const door = text('src/shared-task-access.ts');
+  expect(door).toContain('holds(rules.moveTask, viewer, { ...row, to }, sharing)');
+  expect(door).not.toMatch(/householdOwner|isHouseholdOwner|inProject|\.members\.includes|\.agents\.includes/);
+  // The rule is written in policy.ts and in no other file; the trusted service and the dispatcher carry no policy.
+  expect(sources('src').filter(file => /\bmoveTask\b\s*[:=]/.test(text(file)))).toEqual(['src/policy.ts']);
+  for (const file of ['src/apps/tasks.ts', 'src/apps/task-command.ts']) expect(text(file), file).not.toMatch(/from '\.\.\/policy\.js'/);
+  // That a task's project must be one in use is written once, with one set of refusal words; the door and the service call it.
+  expect(sources('src').filter(file => /'No project has the id '|' is removed'/.test(text(file))).sort()).toEqual(['src/core/data/project-in-use.ts', 'src/shared-projects.ts']);
+  // shared-projects.ts says that of an agent only; what is said of a project is in the one file, which tasks, joins and merges all call.
+  expect(text('src/shared-projects.ts')).not.toMatch(/'Project '|'No project /);
+  expect(text('src/shared-projects.ts').split('projectRefusal(db,').length).toBe(3);
+  expect(text('src/apps/tasks.ts')).toContain('projectRefusal(db, project, use)?.message');
+  expect(sources('src').filter(file => /projects\.removedAt\b/.test(text(file)) && /Refusal/.test(text(file)))).toEqual(['src/core/data/project-in-use.ts']);
+  expect(door.split('taskProjectRefusal(db, ').length).toBe(3);
+  expect(door).not.toMatch(/hasOwn\(sharing\.projects/);
+});
+
+it('holds a new question and a move that carries one to the one rule about who may be asked', () => {
+  // Putting a question to a person, and moving a task with an unanswered one, both ask policy.ts; the
+  // rule is written there and nowhere else, and nothing is handled when the answer comes.
+  const door = text('src/shared-task-access.ts');
+  expect(door.split('mayBeAskedAbout(').length).toBe(3);
+  // A body's question to a person about a task is the third door, and asks the same rule for the person asked.
+  expect(text('src/shared-conversation-questions.ts')).toContain("mayBeAskedAbout(q.to,");
+  expect(sources('src').filter(file => /mayBeAskedAbout\(/.test(text(file))).sort()).toEqual(['src/policy.ts', 'src/shared-conversation-questions.ts', 'src/shared-task-access.ts']);
+  expect(sources('src').filter(file => /function mayBeAskedAbout\b/.test(text(file)))).toEqual(['src/policy.ts']);
+  expect(text('src/shared-task-commands.ts')).toContain('strandedQuestion(db, command)');
+});
+
+it('reads whether a project is retired, and whether a task is shelved, in one place', () => {
+  // The column is read in the one file. The projects' owner writes it, in one statement, and reads it nowhere.
+  const named = sources('src').filter(file => /retiredAt|retired_at/.test(text(file)) && !['src/core/data/schema.ts', 'src/core/data/database.ts'].includes(file)).sort();
+  expect(named).toEqual(['src/core/data/project-in-use.ts', 'src/shared-projects.ts']);
+  expect(text('src/shared-projects.ts').match(/retiredAt/g)).toEqual(['retiredAt']);
+  expect(text('src/shared-projects.ts')).toContain('.set({retiredAt:retire?now():null})');
+  // Nor does it read whether a project is removed: what state a project is in is asked of the one file.
+  expect(text('src/shared-projects.ts')).not.toMatch(/row\.removedAt|project\.removedAt|projects\.removedAt/);
+  // Every reader that picks work asks the one filter: the ready queue, readiness in the data door, the sweep, the hub.
+  for (const file of ['src/apps/tasks.ts', 'src/core/data/queries.ts', 'src/core/tempo/work-sweep.ts', 'src/shared-memory-projects.ts']) expect(text(file), file).toContain('taskShelved(');
+  for (const file of ['src/core/conversations/inbox-query.ts', 'src/core/data/inbox-read.ts']) expect(text(file), file).toContain('waitsOnShelvedTask(inbox)');
+  // The app is told; it does not look at a project to decide.
+  for (const file of sourcesOf('web/src', /\.tsx?$/)) expect(text(file), file).not.toMatch(/retiredAt|retired_at/);
+  expect(text('web/src/pieces/tasks/query.ts')).toContain('isReady isShelved');
 });
 
 it('asks policy.ts which agents Home shows', () => {

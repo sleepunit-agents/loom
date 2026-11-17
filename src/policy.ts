@@ -145,12 +145,28 @@ const bridgeConnection: Rule = any(householdOwner, agentOwners);
  * from anybody else. So every reply awaiting review has someone who can see it and decide. Never an agent. */
 const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seenWith('bridgeIncoming', 'incoming'),
   any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true))));
-/** A task shares by project first. Without a project it is its owner's: a member's own, or an agent's owners'. */
-const task: Rule = any(householdOwner, first([
-  [set('project'), inProject('project')],
+/** Whose a task is when it has no project: a member's own, or an agent's owners' and the agent's. The household's
+ * own task has nobody of that kind. */
+const taskOwner: Rule = first([
   [equal('ownerKind', 'member'), self('owner')],
   [equal('ownerKind', 'agent'), ownsAgent('owner')],
-], never));
+], never);
+/** A task shares by project first. Without a project it is its owner's: a member's own, or an agent's owners'. */
+const task: Rule = any(householdOwner, first([[set('project'), inProject('project')]], taskOwner));
+/** Who may move a task to another project, or out of every project. The row is the task's labels as they
+ * are now, with `to`: the project it would go to, or null for none.
+ *
+ * The mover must be able to act on the task where it is (rule `task`), and must be someone who could have
+ * filed it where it is going:
+ *  - into a project: a member or agent on that project, or a household owner;
+ *  - out of every project, where it becomes its owner's alone: that owner (`taskOwner`), or a household owner.
+ * So moving a task shows it to nobody the mover could not already have shown it to by filing it there
+ * themselves. Being in the destination is not enough to pull a task in, and being in the task's project is
+ * not enough to push it somewhere else, or to make it private to its owner.
+ *
+ * That `to` names a project in use is asked beside this rule, as it is for a new task's project
+ * (apps/tasks.ts, `taskProjectRefusal`): a removed project is nobody's destination, a household owner's included. */
+const moveTask: Rule = all(task, any(householdOwner, first([[set('to'), inProject('to')]], taskOwner)));
 /** The roster: who an agent is, what it reports it is doing, whether it is paused and which models it
  * prefers. Its owners, the agent itself, and anyone who shares a project with it. */
 const agentRoster = (field: string): Rule => any(householdOwner, ownsAgent(field), { is: 'sharesProjectWithAgent', field });
@@ -196,6 +212,11 @@ const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('age
  * name, reading the state of its own request or of a secret handed to its own job. Asking grants nothing:
  * who answers a request is the household owners' (rule for `secretRequests`) or a secret rule they set. */
 const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
+/** Who may ask for an agent to be let onto a project: the agent itself, for itself, or a household owner
+ * for any agent. Another agent, and a member who is not a household owner, may not ask for it. Asking
+ * grants nothing: a household owner allows the card, and only then is the agent on the project. No standing
+ * approval rule answers such a card (shared-household-proposals.ts, `alwaysAsks`). */
+const asksToJoin: Rule = any(agentItself, householdOwner);
 /** Using a secret. Secrets are the household owners' (tableRules.secrets): no other member reads one, sets
  * one or answers for one. An agent uses a secret on a household owner's word, and that word comes two ways:
  *  - a standing answer: a secret rule, the household default, or a grant made for the agent and no one job;
@@ -231,7 +252,7 @@ const ownNotice: Rule = all(currentMember, self('member'));
  * and the household owners' (ownedByMember('owner'), asked by the same read). */
 const accountSummary: Rule = currentViewer;
 
-export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
+export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, moveTask, asksToJoin, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */
@@ -505,6 +526,17 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing): boolean {
  * may only ever narrow what the caller is allowed. It is never the caller's own authority: nothing is
  * granted, read or done as this viewer, and a viewer for any other purpose comes from authentication. */
 export const addressee = (member: string): Viewer => ({ kind: 'member', id: member });
+
+/** May a question about a task be put to this person, or stay with them: only if they could read the task
+ * themselves, by the tasks rule, on the labels given. Asked at three doors with the one answer: when a
+ * question is put on a task (shared-task-access.ts), when a body puts one to a person about a task from a
+ * conversation (shared-conversation-questions.ts), both on the task's labels now; and when a task that
+ * carries an unanswered question would move, on its labels as they would be. So nobody is asked to do something on a project they are not on, and no move leaves
+ * a question with someone who can no longer see what it is about. A household owner reads every project,
+ * so one can always be asked. Nothing is granted or read as this person (see `addressee`). */
+export function mayBeAskedAbout(member: string, taskLabels: Row, s: Sharing): boolean {
+  return holds(task, addressee(member), taskLabels, s);
+}
 
 /** May one agent hand work to another in the open, outside any member's private thread? Both must be
  * agents of the household now. In a project, both must be in it. Outside one, some current member must

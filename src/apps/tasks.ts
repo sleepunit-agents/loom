@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { Conversations } from '../core/conversations/index.js';
-import { and, asc, eq, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { tasks, taskComments, taskLinks } from '../core/data/schema.js';
+import { tasks, taskComments, taskLinks, inbox } from '../core/data/schema.js';
+import { projectRefusal, projectRetired, taskShelved, type ProjectUse } from '../core/data/project-in-use.js';
 import { taskId } from '../slug.js';
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
@@ -36,13 +37,17 @@ export interface TaskService {
   get(id: string): TaskDetail;
   ready(): TaskRow[];
   list(status?: TaskRow['status']): TaskRow[];
-  edit(id: string, input: Partial<Pick<TaskRow, keyof typeof summary>>): TaskRow;
+  /** `actor` is who is making the edit. A change of project is a move (moveToProject) and needs one. */
+  edit(id: string, input: Partial<Pick<TaskRow, keyof typeof summary>>, actor?: TaskActor): TaskRow;
   claim(id: string, actor: TaskActor): TaskRow;
   unclaim(id: string): TaskRow;
   close(id: string, reason: string): TaskRow;
   reopen(id: string): TaskRow;
   /** Place a task just before another in the household's hand-kept order, or last. */
   move(id: string, before: string | null): TaskRow;
+  /** Move tasks to another project, or to none. Every task named is moved or none is; the answer is the
+   * ones that were not already there. */
+  moveToProject(ids: readonly string[], project: string | null, actor: TaskActor): string[];
   comment(id: string, text: string, actor: TaskActor): void;
   link(id: string, dependsOn: string, type: TaskLinkType): void;
   unlink(id: string, dependsOn: string, type: TaskLinkType): void;
@@ -73,6 +78,23 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
   const filedFor = (task: TaskRow, conversation: { id: string; member: string | null } | null, person: string) =>
     conversation && (reads ? reads(person, conversation.id) : conversation.member === person) ? { conversation: conversation.id } : { conversation: null, ...labels(task) };
   const mail = new Conversations(db, now);
+  /** The labels a stored item about a task took from the task when it was sent, read again from the task as
+   * it is now; nothing for an item that carries its conversation's labels instead. This is the other half
+   * of `filedFor` and of how `answer` files what it sends: what they copy from the task, this gives again
+   * once the task's own labels have changed. A change to how either files mail is a change here. */
+  const takenFromTask = (task: TaskRow, item: typeof inbox.$inferSelect) =>
+    // Outside any thread: a person's mail carries all of the task's labels, an agent's its project.
+    item.conversation === null ? item.toKind === 'person' ? labels(task) : { project: task.project }
+    // In the thread of the agent that asked: the thread's labels, with the task's project, unless the thread is a member's own.
+    : item.source === 'answer' && item.toKind === 'agent' && !mail.conversation(item.conversation).member ? { project: task.project } : undefined;
+  /** Mail about a task that this service sent: its questions, and the answers sent on from them. Other mail
+   * that only names the task is not the task's. */
+  const mailAbout = (id: string) => {
+    const questions = db.select().from(inbox).where(and(eq(inbox.source, 'task'), eq(inbox.waitsOnKind, 'task'), eq(inbox.waitsOnId, id))).all();
+    const answers = db.select().from(inbox).where(and(eq(inbox.source, 'answer'),
+      or(like(inbox.sourceId, `${id}:%`), questions.length ? inArray(inbox.sourceId, questions.map(question => question.id)) : undefined))).all();
+    return [...questions, ...answers];
+  };
   const row = (id: string): TaskRow => {
     const found = db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!found) throw new Error('Task not found');
@@ -107,10 +129,25 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     if (type === 'parent-child' && !db.select().from(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).get()) throw new Error('A task can have only one parent');
     touch(id, {});
   };
+  /** The trusted layer's own guard: a task goes nowhere a task may not be (`taskProjectRefusal`). */
+  const requireUsable = (project: string | null) => { const refused = taskProjectRefusal(db, project); if (refused) throw new Error(refused); };
+  /** The one place a task changes project, inside the caller's transaction. Says whether it moved: a task
+   * already there is left alone, with no comment. */
+  const moveOne = (id: string, project: string | null, actor: TaskActor): boolean => {
+    const from = row(id).project;
+    if (from === project) return false;
+    const task = touch(id, { project });
+    // Everything that took its labels from the task goes with it. Links and comments stay as they are.
+    for (const item of mailAbout(id)) { const taken = takenFromTask(task, item); if (taken) mail.relabel(item.id, taken); }
+    const named = (value: string | null) => value === null ? 'no project' : `project ${value}`;
+    addComment(id, `Moved from ${named(from)} to ${named(project)}`, actor);
+    return true;
+  };
   return {
     create(input, actor) {
       const value = taskCreateSchema.parse(input); person.parse(actor);
       return db.transaction(() => {
+        requireUsable(value.project);
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
         const n = db.select({ n: sql<number>`coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0) + 1` }).from(tasks).get()!.n;
         const at = now(), id = taskId(n);
@@ -128,12 +165,32 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     ready() {
       const blocked = db.select({ id: taskLinks.task }).from(taskLinks).innerJoin(tasks, eq(tasks.id, taskLinks.dependsOn))
         .where(and(eq(taskLinks.type, 'blocks'), ne(tasks.status, 'closed')));
-      return db.select().from(tasks).where(and(eq(tasks.status, 'open'), ne(tasks.type, 'epic'), sql`${tasks.id} not in (${blocked})`))
+      // A shelved task is not work (core/data/project-in-use.ts).
+      return db.select().from(tasks).where(and(eq(tasks.status, 'open'), ne(tasks.type, 'epic'), sql`${tasks.id} not in (${blocked})`, sql`not ${taskShelved(tasks)}`))
         .orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all();
     },
     list(status) { return db.select().from(tasks).where(status ? eq(tasks.status, status) : undefined).orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all(); },
-    edit(id, input) { const patch = taskEditSchema.parse(input); return db.transaction(() => touch(id, patch)); },
-    claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
+    edit(id, input, actor) {
+      const { project, ...patch } = taskEditSchema.parse(input);
+      return db.transaction(() => {
+        // A task changes project one way: an edit that names another project is a move, with its record and its mail.
+        if (project !== undefined && project !== row(id).project) {
+          if (!actor) throw new Error('A change of project needs to say who made it');
+          requireUsable(project); moveOne(id, project, person.parse(actor));
+        }
+        return touch(id, patch);
+      });
+    },
+    claim(id, actor) {
+      person.parse(actor);
+      return db.transaction(() => {
+        const task = row(id);
+        if (projectRetired(db, task.project)) throw new Error(`Project ${task.project} is retired: its tasks are shelved until it is revived`);
+        if (task.ask) throw new Error('Answer the outstanding question first');
+        if (task.status !== 'open') throw new Error('Only open work can be claimed');
+        return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() });
+      });
+    },
     unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
     close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
     move(id, before) {
@@ -146,6 +203,10 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         if (before !== null) db.update(tasks).set({ position: sql`${tasks.position} + 1` }).where(sql`${tasks.position} >= ${target} and ${tasks.id} <> ${id}`).run();
         return touch(id, { position: target });
       });
+    },
+    moveToProject(ids, project, actor) {
+      person.parse(actor);
+      return db.transaction(() => { requireUsable(project); return [...new Set(ids)].filter(id => moveOne(id, project, actor)); });
     },
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
@@ -189,4 +250,19 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       });
     },
   };
+}
+
+/** A task may have no project, or one that is in use (core/data/project-in-use.ts, where that is stated).
+ * The outside door asks this for a new task, an edit and a move (shared-task-access.ts), and the service
+ * asks it again before it files or moves anything. A new task and a task moved in `enter` the project, which
+ * must not be retired; a task edited where it is `stand`s, and a retired project will do. The answer is why not, in the words a caller is told, or nothing
+ * when the project will do. */
+export function taskProjectRefusal(db: DataDatabase, project: string | null, use: ProjectUse = 'enter'): string | undefined {
+  return project === null ? undefined : projectRefusal(db, project, use)?.message;
+}
+
+/** Every task filed under one project is filed under another: for a merge of the two (shared-projects.ts).
+ * Nothing else about a task changes, and no comment is left: the household change card is the record. */
+export function refileTasks(db: DataDatabase, from: string, into: string): void {
+  db.update(tasks).set({ project: into }).where(eq(tasks.project, from)).run();
 }
