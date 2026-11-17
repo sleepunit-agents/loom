@@ -36,6 +36,9 @@ A retired project takes no task: `create` with it, and a move into it, are
 refused. Its unfinished tasks are shelved: `ready` does not list them and `claim`
 is refused, until the project is revived (`household.propose` with
 `change: "projectRevive"`). A task is taken up again by moving it out.
+`list`, `show` and `search` print `isShelved` for each task; its `status` is the
+stored one, unchanged, so a shelved task reads `"status": "open", "isReady":
+false, "isShelved": true`.
 
 To split a project: make the new project (a household owner, or an agent through
 `household.propose` with `change: "project"`), then `moveToProject` the chosen

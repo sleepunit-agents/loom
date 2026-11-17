@@ -528,9 +528,10 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing): boolean {
 export const addressee = (member: string): Viewer => ({ kind: 'member', id: member });
 
 /** May a question about a task be put to this person, or stay with them: only if they could read the task
- * themselves, by the tasks rule, on the labels given. Asked twice with the one answer: when a question is
- * put (the task's labels now), and when a task that carries an unanswered question would move (its labels
- * as they would be). So nobody is asked to do something on a project they are not on, and no move leaves
+ * themselves, by the tasks rule, on the labels given. Asked at three doors with the one answer: when a
+ * question is put on a task (shared-task-access.ts), when a body puts one to a person about a task from a
+ * conversation (shared-conversation-questions.ts), both on the task's labels now; and when a task that
+ * carries an unanswered question would move, on its labels as they would be. So nobody is asked to do something on a project they are not on, and no move leaves
  * a question with someone who can no longer see what it is about. A household owner reads every project,
  * so one can always be asked. Nothing is granted or read as this person (see `addressee`). */
 export function mayBeAskedAbout(member: string, taskLabels: Row, s: Sharing): boolean {

@@ -48,7 +48,13 @@ it('retires and revives a project by one column of its own row, and changes noth
   f.service.ask(asked.id, { to: sam, ask: 'Spend?', ifYes: 'Buy', ifNo: 'Wait' }, art);
   f.service.link(open.id, held.id, 'parent-child');
   const before = f.everything();
+  const viewers: Viewer[] = [sam, { kind: 'member', id: 'lee' }, art, { kind: 'agent', id: 'art', workingFor: 'lee' }, { kind: 'member', id: 'owner' }, { kind: 'member', id: 'ghost' }, { kind: 'agent', id: 'nobody' }];
+  const readers = () => viewers.map(viewer => [holds(rules.task, viewer, f.db.select().from(tasks).where(eq(tasks.id, open.id)).get()!, sharedSharing(f.db)), holds(tableRules.projects, viewer, { id: 'phasecraft' }, sharedSharing(f.db))]);
+  const readBefore = readers();
+  expect(readBefore.map(row => row[0])).toEqual([true, true, true, true, true, false, false]);
   expect(f.projects.setRetired({ project: 'phasecraft' }, true)).toEqual({ id: 'phasecraft' });
+  // Who reads the task and the project is exactly who did, for every one of these viewers.
+  expect(readers()).toEqual(readBefore);
   expect(f.db.select().from(projects).all()).toEqual([{ id: 'phasecraft', name: 'phasecraft', removedAt: null, retiredAt: later }, { id: 'pond', name: 'pond', removedAt: null, retiredAt: null }, { id: 'shut', name: 'shut', removedAt: at, retiredAt: null }]);
   // No task, comment, link, question, member, agent or repository is touched: not deleted, closed or rewritten.
   expect(f.everything()).toEqual(before);
@@ -131,10 +137,9 @@ it('takes no new task into a retired project, by creating, moving or merging; ta
   expect(f.service.moveToProject([inside.id], 'pond', sam)).toEqual([inside.id]);
   expect(f.service.ready().map(task => task.id)).toEqual([inside.id, outside.id]);
   // A merge into a retired project is refused; a merge from one is allowed, and its tasks are work in the other.
-  const left = f.make.bind(null);
   expect(refused(() => f.projects.merge({ from: 'pond', into: 'phasecraft' }))).toEqual(['invalid', words]);
   f.projects.setRetired({ project: 'phasecraft' }, false);
-  const parked = left('Parked');
+  const parked = f.make('Parked');
   f.projects.setRetired({ project: 'phasecraft' }, true);
   expect(f.service.ready().map(task => task.id)).not.toContain(parked.id);
   expect(f.projects.merge({ from: 'phasecraft', into: 'pond' })).toEqual({ id: 'pond' });

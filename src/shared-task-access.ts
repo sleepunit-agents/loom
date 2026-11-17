@@ -19,8 +19,8 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
   // The labels a task would carry: its project must be one in use (apps/tasks.ts, `taskProjectRefusal`), and the
   // task so labelled must be one the caller sees.
   // A new task enters its project, which must be in use. A task edited where it is stands: retired will do.
-  const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>, entering: 'enter' | 'stand' = 'enter'): boolean =>
-    !taskProjectRefusal(db, task.project, entering) && holds(rules.task, viewer, task, sharing);
+  const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>, use: 'enter' | 'stand' = 'enter'): boolean =>
+    !taskProjectRefusal(db, task.project, use) && holds(rules.task, viewer, task, sharing);
   if (command.action === 'create') {
     const input = command.input, person = input.owner;
     // A new task's owner must be in the household now: someone removed owns nothing new.

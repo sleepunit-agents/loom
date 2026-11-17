@@ -632,7 +632,7 @@ it('asks policy.ts who may move a task to another project, at the one door that 
   // shared-projects.ts says that of an agent only; what is said of a project is in the one file, which tasks, joins and merges all call.
   expect(text('src/shared-projects.ts')).not.toMatch(/'Project '|'No project /);
   expect(text('src/shared-projects.ts').split('projectRefusal(db,').length).toBe(3);
-  expect(text('src/apps/tasks.ts')).toContain('projectRefusal(db, project, to)?.message');
+  expect(text('src/apps/tasks.ts')).toContain('projectRefusal(db, project, use)?.message');
   expect(sources('src').filter(file => /projects\.removedAt\b/.test(text(file)) && /Refusal/.test(text(file)))).toEqual(['src/core/data/project-in-use.ts']);
   expect(door.split('taskProjectRefusal(db, ').length).toBe(3);
   expect(door).not.toMatch(/hasOwn\(sharing\.projects/);
@@ -643,13 +643,21 @@ it('holds a new question and a move that carries one to the one rule about who m
   // rule is written there and nowhere else, and nothing is handled when the answer comes.
   const door = text('src/shared-task-access.ts');
   expect(door.split('mayBeAskedAbout(').length).toBe(3);
+  // A body's question to a person about a task is the third door, and asks the same rule for the person asked.
+  expect(text('src/shared-conversation-questions.ts')).toContain("mayBeAskedAbout(q.to,");
+  expect(sources('src').filter(file => /mayBeAskedAbout\(/.test(text(file))).sort()).toEqual(['src/policy.ts', 'src/shared-conversation-questions.ts', 'src/shared-task-access.ts']);
   expect(sources('src').filter(file => /function mayBeAskedAbout\b/.test(text(file)))).toEqual(['src/policy.ts']);
   expect(text('src/shared-task-commands.ts')).toContain('strandedQuestion(db, command)');
 });
 
 it('reads whether a project is retired, and whether a task is shelved, in one place', () => {
-  // The column is read in the one file and written by the projects' owner; nobody else works it out.
-  expect(sources('src').filter(file => /retiredAt|retired_at/.test(text(file)) && !['src/core/data/schema.ts', 'src/core/data/database.ts'].includes(file)).sort()).toEqual(['src/core/data/project-in-use.ts', 'src/shared-projects.ts']);
+  // The column is read in the one file. The projects' owner writes it, in one statement, and reads it nowhere.
+  const named = sources('src').filter(file => /retiredAt|retired_at/.test(text(file)) && !['src/core/data/schema.ts', 'src/core/data/database.ts'].includes(file)).sort();
+  expect(named).toEqual(['src/core/data/project-in-use.ts', 'src/shared-projects.ts']);
+  expect(text('src/shared-projects.ts').match(/retiredAt/g)).toEqual(['retiredAt']);
+  expect(text('src/shared-projects.ts')).toContain('.set({retiredAt:retire?now():null})');
+  // Nor does it read whether a project is removed: what state a project is in is asked of the one file.
+  expect(text('src/shared-projects.ts')).not.toMatch(/row\.removedAt|project\.removedAt|projects\.removedAt/);
   // Every reader that picks work asks the one filter: the ready queue, readiness in the data door, the sweep, the hub.
   for (const file of ['src/apps/tasks.ts', 'src/core/data/queries.ts', 'src/core/tempo/work-sweep.ts', 'src/shared-memory-projects.ts']) expect(text(file), file).toContain('taskShelved(');
   for (const file of ['src/core/conversations/inbox-query.ts', 'src/core/data/inbox-read.ts']) expect(text(file), file).toContain('waitsOnShelvedTask(inbox)');

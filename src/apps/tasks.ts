@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { tasks, taskComments, taskLinks, inbox } from '../core/data/schema.js';
-import { projectRefusal, projectRetired, taskShelved } from '../core/data/project-in-use.js';
+import { projectRefusal, projectRetired, taskShelved, type ProjectUse } from '../core/data/project-in-use.js';
 import { taskId } from '../slug.js';
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
@@ -181,7 +181,16 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         return touch(id, patch);
       });
     },
-    claim(id, actor) { person.parse(actor); return db.transaction(() => { if (projectRetired(db, row(id).project)) throw new Error(`Project ${row(id).project} is retired: its tasks are shelved until it is revived`); if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
+    claim(id, actor) {
+      person.parse(actor);
+      return db.transaction(() => {
+        const task = row(id);
+        if (projectRetired(db, task.project)) throw new Error(`Project ${task.project} is retired: its tasks are shelved until it is revived`);
+        if (task.ask) throw new Error('Answer the outstanding question first');
+        if (task.status !== 'open') throw new Error('Only open work can be claimed');
+        return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() });
+      });
+    },
     unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
     close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
     move(id, before) {
@@ -248,8 +257,8 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
  * asks it again before it files or moves anything. A new task and a task moved in `enter` the project, which
  * must not be retired; a task edited where it is `stand`s, and a retired project will do. The answer is why not, in the words a caller is told, or nothing
  * when the project will do. */
-export function taskProjectRefusal(db: DataDatabase, project: string | null, to: 'enter' | 'stand' = 'enter'): string | undefined {
-  return project === null ? undefined : projectRefusal(db, project, to)?.message;
+export function taskProjectRefusal(db: DataDatabase, project: string | null, use: ProjectUse = 'enter'): string | undefined {
+  return project === null ? undefined : projectRefusal(db, project, use)?.message;
 }
 
 /** Every task filed under one project is filed under another: for a merge of the two (shared-projects.ts).

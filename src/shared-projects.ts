@@ -1,5 +1,5 @@
 import { readSharing } from './core/data/sharing.js';
-import { projectRefusal, projectStateRefusal } from './core/data/project-in-use.js';
+import { projectRefusal, projectState, projectStateRefusal } from './core/data/project-in-use.js';
 import { repoId } from './pieces/changes/model.js';
 import { reprojectChanges } from './apps/changes.js';
 import { refileTasks } from './apps/tasks.js';
@@ -83,7 +83,7 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
   /** One project as it stands, removed or not, or null when there is none: what a merge card is sealed on. */
   describe(project:string){
    const row=db.select().from(projects).where(eq(projects.id,project)).get();if(!row)return null;
-   return{id:row.id,name:row.name,removed:!!row.removedAt,retired:!!row.retiredAt,
+   return{id:row.id,name:row.name,...projectState(db,project)!,
     members:db.select().from(projectMembers).where(eq(projectMembers.project,project)).all().map(link=>link.member).sort(),
     agents:db.select().from(projectAgents).where(eq(projectAgents.project,project)).all().map(link=>link.agent).sort(),
     repositories:db.select().from(projectRepositories).where(eq(projectRepositories.project,project)).all().map(link=>link.repository).sort()};

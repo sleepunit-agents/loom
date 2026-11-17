@@ -201,7 +201,10 @@ describe('upgrading a household database', () => {
       INSERT INTO project_members (project, member) VALUES ('pond', 'sam');
       INSERT INTO project_agents (project, agent) VALUES ('pond', 'art');
       INSERT INTO tasks (id, title, owner_kind, project, status, assignee_kind, assignee, created_by_kind, created_by, created_at, changed_at) VALUES ('t-1', 'Pump', 'household', 'pond', 'in_progress', 'agent', 'art', 'member', 'sam', '${at}', '${at}')`);
-    const rows = () => ['projects', 'project_members', 'project_agents', 'tasks'].map(table => old.prepare(`SELECT * FROM ${table} ORDER BY 1, 2`).all());
+    // Every table there is, projects first, so a step that touched any other row is seen. The schema number's own marks are the step's to add.
+    const names = (old.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('projects', 'migrations') ORDER BY name").all() as { name: string }[]).map(row => row.name);
+    expect(names.length).toBeGreaterThan(80);
+    const rows = () => ['projects', ...names].map(table => old.prepare(`SELECT * FROM "${table}" ORDER BY 1`).all());
     const before = rows();
     expect(old.prepare("SELECT name FROM pragma_table_info('projects')").all()).not.toContainEqual({ name: 'retired_at' });
     upgradeDataSchema(old, () => '2026-11-18T00:00:00.000Z');

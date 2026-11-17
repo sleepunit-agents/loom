@@ -183,6 +183,12 @@ it('files, reads, claims, comments on and closes a task through the named tools'
   expect((await art.call('task_move_to_project',{ids:[id],project:'fictional-pond'})).text).toBe('Moved '+id+' to project fictional-pond.');
   expect((await art.call('task_move_to_project',{ids:[id],project:'fictional-pond'})).text).toBe('Nothing moved: they are already in project fictional-pond.');
   const movedTask=(await art.call('task',{id})).text;expect(movedTask).toContain('· fictional-pond ·');expect(movedTask).toContain('**art** ');expect(movedTask).toContain('Moved from no project to project fictional-pond');
+  // Its project retired, the task reads as shelved with what it was, and is not ready.
+  p.composition.writes.run(()=>p.composition.services.projects.setRetired({project:'fictional-pond'},true));
+  expect((await art.call('task',{id})).text).toContain('shelved with its retired project, was open');
+  expect((await art.call('task_ready',{})).text).toBe('Nothing is ready.');
+  p.composition.writes.run(()=>p.composition.services.projects.setRetired({project:'fictional-pond'},false));
+  expect((await art.call('task',{id})).text).not.toContain('shelved');
   expect((await art.call('task_move_to_project',{ids:[id],project:null})).text).toBe('Moved '+id+' out of every project.');
  }finally{await art.client.close();await p.close();}
 },30_000);

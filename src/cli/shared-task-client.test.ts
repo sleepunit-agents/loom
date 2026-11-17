@@ -161,3 +161,13 @@ it('moves tasks to a project with the same command, and prints the ones that mov
  const refused=await f.invoke(['command',JSON.stringify({action:'moveToProject',ids:[mine.id,hidden.id],project:null})]);
  expect(refused.code).toBe(1);expect(f.app.services.tasks.get(mine.id).project).toBe('pond');
 });
+it('marks a shelved task in list and show with a field of its own, and leaves its stored status as it is',async()=>{
+ const f=await fixture(),parked=f.create('Parked'),live=f.create('Live');
+ f.app.writes.run(()=>{f.db.insert(projects).values({id:'phasecraft',name:'Phasecraft'}).run();f.db.insert(projectMembers).values({project:'phasecraft',member:'alice'}).run();f.app.services.tasks.edit(parked.id,{project:'phasecraft'},{kind:'member',id:'alice'});});
+ const listed=async()=>Object.fromEntries((JSON.parse((await f.invoke(['list'])).out).tasks as {id:string;status:string;isReady:boolean;isShelved:boolean}[]).map(row=>[row.id,[row.status,row.isReady,row.isShelved]]));
+ expect(await listed()).toEqual({[parked.id]:['open',true,false],[live.id]:['open',true,false]});
+ f.app.writes.run(()=>f.app.services.projects.setRetired({project:'phasecraft'},true));
+ expect(await listed()).toEqual({[parked.id]:['open',false,true],[live.id]:['open',true,false]});
+ expect(JSON.parse((await f.invoke(['show',parked.id])).out).task).toMatchObject({id:parked.id,status:'open',isShelved:true});
+ expect(JSON.parse((await f.invoke(['ready'])).out).entries.map((row:{id:string})=>row.id)).toEqual([live.id]);
+});

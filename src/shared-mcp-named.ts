@@ -272,7 +272,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  const taskId=z.string().regex(/^t-[1-9][0-9]*$/);
  type TaskRow={id:string;title:string;type:string;status:string;isShelved?:boolean;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
   taskCommentsByTask?:{seq:number;actor:string;at:string;text:string}[];taskLinksByTask?:{dependsOn:string;type:string}[]};
- const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.isShelved?' (shelved)':task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
+ const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
  tool('task_ready','List the tasks ready to pick up, most urgent first. Pass project to narrow it.',
   z.object({project:z.string().min(1).max(100).optional(),limit:z.number().int().min(1).max(100).optional()}).strict(),
   async input=>{

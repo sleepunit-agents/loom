@@ -11,12 +11,14 @@ import type { ClientRuntime } from './io.js';
 const query=`query Taskstore {
  tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){
   id title type status priority position ownerKind owner project assigneeKind assignee
-  goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady
+  goal why doneWhen description ask ifYes ifNo closeReason sourceKind sourceId isReady isShelved
  }
 }`;
 const textField=z.string().nullable().optional();
 const taskReply=z.object({data:z.object({tasks:z.array(z.object({
  id:z.string(),title:z.string(),isReady:z.boolean(),
+ // Unfinished, in a retired project. A field of its own: the stored status is printed as it is.
+ isShelved:z.boolean().optional(),
  type:textField,status:textField,priority:z.number().optional(),position:z.number().optional(),
  ownerKind:textField,owner:textField,project:textField,assigneeKind:textField,assignee:textField,
  goal:textField,why:textField,doneWhen:textField,description:textField,ask:textField,ifYes:textField,ifNo:textField,
