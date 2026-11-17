@@ -79,7 +79,6 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
    * given one, and by the program's periodic sweep (the returned `expire`), so an answered code is
    * blanked within one sweep of its request running out even when no worker polls and nobody asks. */
   const sweep = (at: string) => { for (const row of db.select().from(accountSignins).where(inArray(accountSignins.state, [...open])).all()) if (lapsed(row, at)) end(row, 'failed', 'It ran out of time', at); };
-  // (The receipts runtime.signInCode left when it was a write were removed by schema step 8.)
   db.transaction(() => sweep(now()));
   // The one writer of which machines an account is signed in on, with the rule that follows each change.
   const signIns = accountBoxes(db);
