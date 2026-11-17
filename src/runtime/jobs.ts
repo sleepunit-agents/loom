@@ -190,6 +190,9 @@ export class Jobs {
     return this.db.transaction(() => {
       const job = this.get(id);
       if (!active.includes(job.state as typeof active[number])) throw new Error('Job has ended');
+      // A Comms Stop still waiting for this job has nothing left to stop. Left set, it would stop the next job in the thread.
+      const asked = this.stopAsked(job);
+      if (asked) new Threads(this.db, this.now).takeStop(asked.thread);
       return this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
     });
   }
@@ -226,7 +229,8 @@ export class Jobs {
       const detached=this.db.update(conversations).set({job:null})
         .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();
       // This exact body has ended. Clear its working indicator in the same
-      // transaction; an unobserved Stop and the last reported agent state stay.
+      // transaction; the last reported agent state stays. (A Stop asked of this job
+      // was taken before it ended: see endIfStopAsked and stop.)
       if(detached)this.db.update(threads).set({working:false,workingSince:null,workingBeat:null})
         .where(eq(threads.conversation,detached.id)).run();
     }

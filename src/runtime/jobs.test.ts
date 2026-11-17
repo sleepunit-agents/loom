@@ -275,3 +275,14 @@ it('preserves full multiline public mail in the same admission with a dim item',
   f.db.update(inbox).set({ volume: 'dim', words: 'Dim first\nDim second' }).where(eq(inbox.id, dim.id)).run();
   expect(f.runtime.admit(f.conversation.id)?.brief).toBe('Full first\nFull second\n\nDim first');
 });
+it('takes a waiting Comms Stop with the job when the owner ends it by hand, so it cannot stop the next one', () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  f.db.insert(threadRows).values({ id: 'th', conversation: f.conversation.id, title: 'Reply', titledBy: 'member', pinned: false, openedAt: f.now(), lastAt: f.now(), readSeq: 0, working: true, workingSince: f.now(), workingBeat: f.now(), stopRequested: true }).run();
+  expect(f.runtime.stop(job.id, 'owner', 'reset')).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'reset' });
+  expect(f.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
+  f.send(); const next = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(next.id, 'worker'); f.runtime.started(next.id, 'worker', 'image');
+  expect(f.runtime.takeStop(next.id)).toBeUndefined();
+  expect(f.runtime.finish(next.id, 'worker', 0).job.state).toBe('done');
+});
