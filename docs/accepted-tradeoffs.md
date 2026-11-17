@@ -75,10 +75,12 @@ Entries are grouped by the part of the program they belong to.
   agent's own and are not narrowed by the member: the household's shared knowledge files (`maySee`, the
   `knowledge` clause); the agent's own memory, which is labelled with the agent and with no project, so it
   follows the agent for as long as the member has the agent at all; the days of timing measurements (`tableRules.timingDays`); and which machines the
-  agent itself may run on (`tableRules.boxAgents`, the agent case). A member who is not an owner reads none
-  of these directly. Secrets are not among them: see "A standing answer about a secret does not serve a
-  member's private work".
-- **Why accepted.** They are what the agent knows and where it runs, not records of another person's work.
+  agent itself may run on (`tableRules.boxAgents`, the agent case). A member who has the agent reads its
+  memory, notes and cards directly as well (`maySee`, the `memory` type). The agent's secrets are the
+  same: see "A secret an owner gave an agent is the agent's to use, whoever it works for".
+- **Why accepted.** The household's owner ruled it (2026-11-17): what an agent shares with the person it is
+  working for is the agent's judgment, sized to who that person is, and not a wall on what it may read.
+  They are what the agent knows and where it runs, not records of another person's work.
   An agent that forgot its memory or its machines when working for one of its members could not do the work.
   Timing days hold request names and durations, no words. What an agent chose to remember from one
   member's private thread is in its memory for its next piece of work, whoever that is for: that is what an
@@ -86,41 +88,35 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A record of one member's private work becoming readable through any of
   the four. Then that table needs a member label and a rule that reads it.
 
-### A standing answer about a secret does not serve a member's private work
+### A secret an owner gave an agent is the agent's to use, whoever it works for
 - **What.** A secret rule, the household default and a grant made for the agent and no one job are
-  standing answers about the agent. They serve the agent's own work (a terminal session, a job for no
-  member) and a body working for a household owner. A body doing the private work of a member who is not
-  a household owner is served by none of them: a request for the agent and no one job is refused, a rule
-  or the default that would allow a request asks the household owners instead, and the body is handed a
-  secret only on a grant a household owner gave for that very job. This holds for the secrets a house is
-  given at start too, so each job such a member starts with an agent whose house lists a secret files one
-  card per secret, and "always" on that card writes the standing rule, which does not serve the next job.
-  The card names the member the work is for, which is all an owner learns of that thread from it.
+  standing answers about the agent. They serve every body of that agent: its own work, work for a
+  household owner, and the private work of a member who is not one. A body whose member has left the
+  household or no longer has the agent is served nothing (`agentItself`).
 - **Where.** `standingSecretAnswerServes` in `src/policy.ts`; asked by `secrets.request`
   (`src/shared-secret-agent-commands.ts`) and by the private routes (`src/shared-secret-inputs.ts`);
   carried as `standing` into `src/pieces/secrets/requests.ts` and `private-inputs.ts`.
-- **One hand-off is not narrowed.** A worker fetches the house's repository with the agent's repository
-  secret while the job is starting, before any body runs, whoever the job is for. That hand-off has a
-  request of its own (`repositoryRequestId` in `src/pieces/secrets/requests.ts`), settled by a rule or by
-  an owner on a card that does not name the member. The grant it leaves serves that hand-off and nothing
-  else: no body's read counts it (`SecretRequests.grantFor`), whoever allowed it and whoever the job is
-  for. A secret that is both the repository secret and one of the house's startup secrets is asked for
-  twice, once for each.
-- **Why accepted.** Secrets are the household owners' records and no other member may use one. A body
-  reaches no further than the member it works for, and nothing stored says which members an owner lets
-  use which secret, so the only word that can cover such work is an owner's answer for the job itself.
-  Asking each time is the cost of having no such list.
-- **What would change the answer.** A stored list of the members a secret rule covers (a member column on
-  `secret_rule_agents`, or a table beside it). Then a rule that names the member serves that member's work
-  and the card is asked once.
+- **The worker's hand-off is still its own.** A worker fetches the house's repository with the agent's
+  repository secret while the job is starting, before any body runs. That hand-off has a request of its
+  own (`repositoryRequestId` in `src/pieces/secrets/requests.ts`), and the grant it leaves serves that
+  hand-off: no body's read counts it (`SecretRequests.grantFor`). A secret that is both the repository
+  secret and one of the house's startup secrets is asked for twice, once for each.
+- **Why accepted.** The owner's ruling, 2026-11-17: "you have permission to have the key, the ask is
+  different: can I perform this task for allison. the secret part isn't really the permissions issue."
+  A secret is given to the agent. Whether the agent should do a piece of work for a person is a separate
+  question, to be asked of the work and the person, and nothing asks it through a secret. An earlier
+  version filed one card per secret for every job a non-owner member started, which asked the owner the
+  wrong question many times.
+- **What would change the answer.** A way to ask "may this agent do this for this person" becoming part
+  of the program. That check belongs where work is given, not where a secret is read.
 
 ### Work a member schedules for an agent is that member's private work
 - **What.** A trigger that puts an agent to work is the whole agent's when the agent set it for itself (in
   a terminal session, a job for no member, or work for a household owner) or a household owner set it. One
   set by a member who is not a household owner, or by a body doing that member's private work, is recorded
   as that member's (`ownerKind` member) whatever owner the request named, and every firing is private work
-  for them: the conversation and the job carry the member, so the body reaches no further than they do
-  and is served no standing answer about a secret. Four things follow, and are accepted:
+  for them: the conversation and the job carry the member, so the body reaches no further than they do.
+  Four things follow, and are accepted:
   - Such a member cannot reword the agent's own triggers, or schedule the sweep (or any operation) for it:
     both would run with the agent's whole reach on their word.
   - The firing's job keeps no brief and no log tail, like any private conversation's
@@ -177,8 +173,7 @@ Entries are grouped by the part of the program they belong to.
   and not the one a worker was given to fetch the repository
   (`SecretPrivateInputs.dispatch`); a startup secret must be an alias in that job's startup plan with a
   current grant, and still map to the same secret; the repository secret must still be the one the agent's
-  run settings name. For a body in the private work of a member who is not a household owner, the grant
-  must be one an owner gave for that job (the entry above).
+  run settings name.
 - **What would change the answer.** An operation result path that is never stored or logged. Then `confirm`
   could become an operation at once, and `read` with it.
 

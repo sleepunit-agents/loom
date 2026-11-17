@@ -102,7 +102,7 @@ it('lets a body working for a member ask, and read its own request, only while t
  expect((await f.call('requestStatus',{id:mine},raw.other)).status).toBe(200);
 });
 
-it('asks the household owners, for that job, whatever a rule says, when the body works for a member who is not one',async()=>{
+it('lets a rule answer for the agent whoever its body works for, and gives nothing to a body whose member lost the agent',async()=>{
  const f=fixture(),ask=(scope:'agent'|'job',credential=raw.body)=>f.call('request',{id:randomUUID(),secret:'TOKEN',why:'Use it',minutes:5,scope},credential);
  f.db.insert(members).values({id:'lee',role:'member',joinedAt:f.at}).run();f.db.insert(memberAgents).values([{member:'lee',agent:'art'},{member:'owner',agent:'art'}]).run();
  f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'auto',minutes:5,agents:[{agent:'art',when:'on_request'}]}));
@@ -110,13 +110,15 @@ it('asks the household owners, for that job, whatever a rule says, when the body
  expect((await ask('job',raw.other)).body).toMatchObject({value:{state:'allowed'}});expect((await ask('agent',raw.agent)).body).toMatchObject({value:{state:'allowed'}});
  f.db.update(jobs).set({member:'owner'}).where(eq(jobs.id,'job')).run();
  expect((await ask('job')).body).toMatchObject({value:{state:'allowed'}});expect((await ask('agent')).body).toMatchObject({value:{state:'allowed'}});
- // For lee, who is not a household owner, it does not: no grant for the agent alone, and the owners are asked.
+ // And for lee, who is not a household owner: the secret is the agent's to use, whoever the work is for.
  f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'job')).run();
- expect((await ask('agent')).status).toBe(403);
- const asked=await ask('job');expect(asked.body).toMatchObject({value:{state:'pending'}});
- expect(f.db.select().from(secretGrants).where(eq(secretGrants.request,asked.body.value.id)).all()).toEqual([]);
- expect(f.db.select().from(inbox).where(eq(inbox.sourceId,asked.body.value.id)).all().map(row=>[row.to,row.words])).toEqual([['owner','Allow art to use TOKEN for 5 minutes, in its private work for lee?']]);
- await f.allow(asked.body.value.id);expect(f.db.select().from(secretGrants).where(eq(secretGrants.request,asked.body.value.id)).get()).toMatchObject({job:'job',grantedBy:'owner'});
+ expect((await ask('agent')).body).toMatchObject({value:{state:'allowed'}});
+ const asked=await ask('job');expect(asked.body).toMatchObject({value:{state:'allowed'}});
+ expect(f.db.select().from(inbox).where(eq(inbox.sourceId,asked.body.value.id)).all()).toEqual([]);
+ // A body whose member no longer has the agent gets nothing.
+ f.db.delete(memberAgents).where(eq(memberAgents.member,'lee')).run();
+ expect((await ask('job')).status).toBe(403);expect((await ask('agent')).status).toBe(403);
+ f.db.insert(memberAgents).values({member:'lee',agent:'art'}).run();
  // A rule that says never still refuses.
  f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'never',minutes:5,agents:[{agent:'art',when:'on_request'}]}));
  expect((await ask('job')).body).toMatchObject({value:{state:'denied'}});

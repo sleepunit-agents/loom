@@ -7,9 +7,9 @@
  * job a body's credential is bound to: a request for one job, and a hand-off's state, need that job.
  *
  * Asking for the agent and no one job is asking for a standing answer, and whether a rule or the household
- * default may answer a request is the same question: policy.ts, standingSecretAnswerServes. A body doing
- * the private work of a member who is not a household owner is refused the first and is always asked of
- * the household owners for the second. */
+ * default may answer a request is the same question: policy.ts, standingSecretAnswerServes. It holds for
+ * every body of the agent whoever its work is for, and fails only for a body whose member has left the
+ * household or lost the agent. */
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';

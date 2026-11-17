@@ -2,8 +2,9 @@
  * Settings ownership before invoking answer/setRule/revoke. No value enters it.
  *
  * `standing` is the door's answer to one question of policy.ts (standingSecretAnswerServes): may a
- * standing answer serve this work? Where it may not, a rule or the household default never allows a
- * request (it can still refuse one), and only a grant a household owner gave for that very job counts. */
+ * standing answer serve this work? It may for every body of the agent (the secret is the agent's to use).
+ * Where the door says it may not, a rule or the household default never allows a request (it can still
+ * refuse one), and only a grant a household owner gave for that very job counts. */
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, ne, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';

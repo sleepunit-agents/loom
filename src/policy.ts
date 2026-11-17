@@ -200,18 +200,17 @@ const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent
  * one or answers for one. An agent uses a secret on a household owner's word, and that word comes two ways:
  *  - a standing answer: a secret rule, the household default, or a grant made for the agent and no one job;
  *  - an owner's own answer to a request for one job.
- * A standing answer is about the agent, so it serves the agent's own work (a terminal session, a job that
- * is for no member) and work it does for a household owner. It does not serve a body doing the private
- * work of a member who is not a household owner: that member may not use the secret themselves, and the
- * body reaches no further than they do (Viewer.workingFor). There, a rule or the default never allows a
- * request, a request for the agent and no one job is refused, and the only grant that counts is one a
- * household owner gave for that very job, on a card that names the member. A rule that says never still
- * refuses. A body whose member has left the household or lost the agent gets nothing (agentItself).
+ * A standing answer is about the agent: a secret a household owner has said the agent may have is the
+ * agent's to use, in its own work and in work it does for anyone. Whether the agent may do a piece of work
+ * for a person is a separate question, and it is not asked through the secret (the owner's ruling,
+ * 2026-11-17: "you have permission to have the key, the ask is different: can I perform this task for
+ * allison"). So a rule or the household default answers a request from any of the agent's bodies.
+ * A body whose member has left the household or lost the agent gets nothing (agentItself).
  *
- * One hand-off is not the body's and is not narrowed: a worker fetches the house's repository with the
- * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). What
- * the worker is granted for that is asked for apart and serves no body, in anyone's work. */
-const usesSecretsOnStandingWord: Rule = all(agentItself, any(equal('workingFor', null), { is: 'forItsMember', rule: householdOwner }));
+ * The worker's own hand-off is asked for apart: a worker fetches the house's repository with the agent's
+ * repository secret before any body runs (shared-secret-inputs.ts, the `repository` read), and what it is
+ * granted for that serves no body. */
+const usesSecretsOnStandingWord: Rule = agentItself;
 export function standingSecretAnswerServes(v: Viewer, s: Sharing): boolean {
   return v.kind === 'agent' && holds(usesSecretsOnStandingWord, v, { agent: v.id, workingFor: v.workingFor ?? null }, s);
 }

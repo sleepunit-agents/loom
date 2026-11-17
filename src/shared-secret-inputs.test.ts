@@ -190,28 +190,21 @@ it('publishes the private audit before source IO and never publishes an aborted 
  }finally{spy.mockRestore();}
 });
 
-it('hands a body in a member\'s private work only a secret a household owner allowed for that very job',async()=>{
+it('hands a body the agent\'s secrets whoever its work is for, and nothing once its member lost the agent',async()=>{
  const f=fixture(),read=(secret='TOKEN')=>f.post('read',{kind:'request',id:randomUUID(),secret});
  f.db.insert(members).values({id:'lee',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'lee',agent:'art'}).run();
  f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();
  // A grant for the agent and no one job, which an owner allowed in other work: a standing answer.
  const agentWide=f.root.writes.run(()=>{const id=randomUUID();f.root.services.secrets.requests.request({id,secret:'TOKEN',agent:'art',why:'Other work',minutes:5});f.root.services.secrets.requests.answer(id,'owner',true);return id;}).value;
- expect((await read()).status).toBe(403);
- // A grant for this job that a rule settled.
- f.rule('REPO');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(200);
- f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'build')).run();
- f.root.writes.run(()=>f.root.services.secrets.requests.grantAtStart('body',['REPO']));expect(f.db.select().from(secretGrants).where(eq(secretGrants.job,'body')).get()).toMatchObject({secret:'REPO',grantedBy:'rule'});
- expect((await read('REPO')).status).toBe(403);
+ // lee is not a household owner. The secret is the agent's to use, so the standing grant serves this work too.
+ expect((await read()).status).toBe(200);
+ // So does a grant a rule made for this job.
+ f.rule('REPO');f.root.writes.run(()=>f.root.services.secrets.requests.grantAtStart('body',['REPO']));expect(f.db.select().from(secretGrants).where(eq(secretGrants.job,'body')).get()).toMatchObject({secret:'REPO',grantedBy:'rule'});
+ expect((await read('REPO')).status).toBe(200);
  f.db.delete(secretGrants).where(eq(secretGrants.job,'body')).run();
- // A secret the house is given at start by a rule: the body is not handed it, and the owners are asked for this job.
- f.rule();expect(await(await f.post('startup',{})).json()).toEqual({aliases:[],pending:true});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(403);
- expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting').map(row=>[row.to,row.words])).toEqual([['owner','Allow art to use TOKEN for 5 minutes, in its private work for lee?']]);
- expect(f.source.read).toHaveBeenCalledOnce();
- // The owner's own answer for this job is what counts.
- const start='q-start-'+createHash('sha256').update(JSON.stringify(['body','TOKEN'])).digest('hex');f.root.writes.run(()=>f.root.services.secrets.requests.answer(start,'owner',true));
- expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
- // Working for a household owner, or for no member, the standing answers serve as before.
- f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(jobs).set({member:'owner'}).where(eq(jobs.id,'body')).run();expect((await read()).status).toBe(200);
+ // A secret the house is given at start by a rule is handed to the body, and nobody is asked.
+ f.rule();expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting')).toEqual([]);
  f.root.writes.run(()=>f.root.services.secrets.requests.revoke(agentWide));
  // A body whose member no longer has the agent is handed nothing and confirms nothing.
  f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();const use=f.db.select().from(secretUses).all().find(row=>row.state==='started')!.id;
@@ -239,10 +232,10 @@ it('keeps what a worker was granted to fetch the repository from every body, who
  // Nor is a body in the agent's own work: a rule that lists the agent at start does not answer what a body asks for.
  f.db.update(jobs).set({member:null}).where(eq(jobs.id,'body')).run();
  expect((await read()).status).toBe(403);expect(f.source.read).toHaveBeenCalledOnce();
- // The same secret listed for the house too is asked for apart, on a card that names the member.
+ // The same secret listed for the house too is asked for apart, on its own card.
  f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'REPO_TOKEN',secret:'REPO'}).run();
  expect(await(await f.post('startup',{})).json()).toEqual({aliases:[],pending:true});
- expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting').map(row=>row.words)).toEqual(['Allow art to use REPO for 5 minutes, in its private work for lee?']);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting').map(row=>row.words)).toEqual(['Allow art to use REPO for 5 minutes?']);
 });
 
 it('leaves a stored alias no body could take out of the startup plan, so the others still arrive',async()=>{
