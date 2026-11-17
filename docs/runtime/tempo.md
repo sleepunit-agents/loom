@@ -15,6 +15,14 @@ or the clock jumped. What happens then depends on what the trigger is for.
 - **A once-only trigger** (lifespan `once`) is a thing that is meant to happen
   once. It fires late, however late, as soon as it can, and is never dropped.
 
+A step of the server's wall clock while loom runs (a resume from suspend, an
+unpaused machine, a time correction) is judged by the same rule. loom reads the
+wall clock again at least every 30 seconds (`STEP_CHECK_MS` in
+`src/core/clock.ts`), so a time that comes after a forward step fires at its
+time: it came due while loom was running and able to fire. A time the step
+passed over is found behind at the next look and is fired or skipped as above,
+as if loom had been down for that long.
+
 Two other ways a time passes are not misses:
 
 - A trigger that is off has no times. Turning it on, or changing its times,

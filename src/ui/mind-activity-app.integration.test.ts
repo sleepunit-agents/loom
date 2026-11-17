@@ -1,5 +1,4 @@
 /** One opt-in hosted browser test, two windows, six screenshots. */
-import {touched} from '../core/touched/index.js';
 import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import {expect,it} from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
@@ -58,9 +57,9 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   await b.getByRole('button',{name:'Show everything',exact:true}).click();await b.getByRole('button',{name:'Earlier',exact:true}).click();await expect.poll(()=>row(b,'Earlier field notes').count()).toBe(1);
   await b.getByRole('combobox',{name:'Shown day',exact:true}).selectOption('2026-11-09');await expect.poll(()=>b.getByRole('button',{name:'6:00: 1 entries',exact:true}).count()).toBe(1);await b.getByRole('button',{name:'6:00: 1 entries',exact:true}).click();expect(await row(b,'Earlier field notes').evaluate(el=>el===document.activeElement)).toBe(true);
   await b.getByRole('combobox',{name:'Shown day',exact:true}).selectOption('2026-11-13');
-  add('m-new','Outside field update','2026-11-13T17:59:00Z');touched(join(home,'agents/art'),'memory','m-new');
+  add('m-new','Outside field update','2026-11-13T17:59:00Z');app.changed();
   await expect.poll(()=>row(a,'Outside field update').count()).toBe(1);await expect.poll(()=>row(b,'Outside field update').count()).toBe(1);await row(b,'Outside field update').click();await expect.poll(()=>b.getByRole('heading',{name:'Outside field update',exact:true}).count()).toBe(1);
   await b.getByRole('link',{name:'The memory',exact:true}).click();await expect.poll(()=>b.url().includes('/memory/art%3Am-new')).toBe(true);expect(await b.getByText('The field team has the release. Work continues on t-2207.',{exact:true}).count()).toBe(1);
-  db.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('m-new');touched(join(home,'agents/art'),'memory','m-new');await expect.poll(()=>b.getByText('This entry is no longer available',{exact:true}).count()).toBe(1);expect(errors).toEqual([]);
+  db.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('m-new');app.changed();await expect.poll(()=>b.getByText('This entry is no longer available',{exact:true}).count()).toBe(1);expect(errors).toEqual([]);
  }finally{await browser.close();await fixture.close();db.close();rmSync(home,{recursive:true,force:true});}
 },60000);

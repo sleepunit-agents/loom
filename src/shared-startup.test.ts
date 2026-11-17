@@ -17,7 +17,7 @@ import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 import * as startup from './shared-startup.js';
 import {serve as run,signin} from './index.js';
-import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
+import { KnowledgePages } from '../test/fixtures/knowledge-pages.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 const cleanups:Array<()=>unknown|Promise<unknown>>=[];
@@ -137,7 +137,7 @@ it('rechecks that the household has an owner after service adapters finish',asyn
 });
 it('keeps existing precious source bytes unchanged through failed and complete startup',async()=>{
  const f=await fixture(),sources=f.program.memory.sources;mkdirSync(sources.commons.directory,{recursive:true});mkdirSync(sources.agents[0].directory,{recursive:true});
- const knowledge=new SqliteKnowledgeBackend({dbPath:sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'PRECIOUS FICTIONAL WORDS'});knowledge.close();
+ const knowledge=new KnowledgePages({dbPath:sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'PRECIOUS FICTIONAL WORDS'});knowledge.close();
  new PeopleStore({dbPath:sources.commons.people}).close();new PeopleStore({dbPath:sources.agents[0].memories}).close();new ProjectsStore({dbPath:sources.agents[0].memories}).close();
  const paths=[sources.commons.knowledge,sources.commons.people,sources.agents[0].memories],before=paths.map(path=>readFileSync(path));
  const snapshots=()=>paths.map(path=>{const db=new Database(path,{readonly:true,fileMustExist:true});try{return db.serialize();}finally{db.close();}}),initial=snapshots();

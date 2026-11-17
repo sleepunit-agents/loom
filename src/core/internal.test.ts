@@ -16,7 +16,7 @@ function fixture() {
   closes.push(() => { operations.close(); client.close(); });
   return { operations };
 }
-const sharing = { members: {}, projects: {}, services: {} };
+const sharing = { members: {}, projects: {}};
 it('lets an installed module call another without permission, including private projections', () => {
   const app = fixture(), module = app.operations.internal('changes'), may = vi.fn(() => false);
   app.operations.register({ name: 'tasks.private', input: z.object({}), output: z.boolean(), may,

@@ -1,8 +1,8 @@
 /** The knowledge store's writes of a page row, a page's words and a citation, each stated once.
  * Synchronous, on the caller's connection and inside the caller's transaction, like the verification
- * and revision primitives beside this file. The store's own methods (sqlite-knowledge.ts) and the
- * door's page actions (pieces/mind/actions.ts) both write through these, so a rule added here
- * (a cap, a derived column) reaches every way a page is made or changed. */
+ * and revision primitives beside this file. The door's page actions (pieces/mind/actions.ts) are the
+ * program's only writer of pages and write through these, so a rule added here (a cap, a derived
+ * column) reaches every way a page is made or changed. */
 import { randomUUID } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
 import { deriveSlaClass, enforcePageBodyCap } from './knowledge-verification.js';

@@ -16,7 +16,7 @@ const T0 = Date.parse('2026-10-19T12:00:00.000Z');
 /** The agent's memory store in the same file, opened as the memory commands open it; each text gets its own vector. */
 function memoryStore(dir: string): SqliteVecBackend {
   const vector = (text: string) => Array.from({ length: 4 }, (_, i) => text.charCodeAt(i % text.length) + i);
-  return new SqliteVecBackend({ dbPath: join(dir, 'memories.db'), notifyWrites: false },
+  return new SqliteVecBackend({ dbPath: join(dir, 'memories.db') },
     { dimensions: 4, embed: async (text) => vector(text), embedBatch: async (texts) => texts.map(vector) });
 }
 

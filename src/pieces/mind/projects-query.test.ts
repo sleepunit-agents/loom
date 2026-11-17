@@ -21,7 +21,7 @@ function fixture(roles: { notes?: ProjectSectionRole; conversations?: ProjectSec
  const shared = new Database(':memory:'); closes.push(() => shared.close()); createDataSchema(shared);
  const store = new ProjectsStore({ dbPath: join(home, 'fiction.db'), now: () => clock.now() }); closes.push(() => store.close());
  const other = new ProjectsStore({ dbPath: join(home, 'other.db') }); closes.push(() => other.close());
- let sharing: Sharing = { members: { owner: { owner: true, agents: [] }, member: { owner: false, agents: ['fiction'] }, peer: { owner: false, agents: [] } }, projects: { team: { members: ['peer'], agents: ['fiction'] } }, services: {} };
+ let sharing: Sharing = { members: { owner: { owner: true, agents: [] }, member: { owner: false, agents: ['fiction'] }, peer: { owner: false, agents: [] } }, projects: { team: { members: ['peer'], agents: ['fiction'] } }};
  const database = new Database(join(home, 'fiction.db')); closes.push(() => database.close());
  const missing = join(home, 'absent.db');
  const installed = createProjectsReader(clock, { agents: [{ agent: 'fiction', memories: join(home, 'fiction.db') }, { agent: 'other', memories: join(home, 'other.db') }, { agent: 'missing', memories: missing }], sharing: () => sharing, ...roles });

@@ -19,7 +19,7 @@ function home(){const path=mkdtempSync(join(tmpdir(),'people-query-'));homes.pus
 function store(path:string){const s=new PeopleStore({dbPath:path,actor:'fiction'});closes.push(()=>s.close());return s;}
 function fixture(directory:string,agents:Array<{agent:string;memories:string}>,conversations?:PeopleConversations) {
  let now=Date.parse('2026-11-14T18:00:00Z');
- const sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:['fiction']}},services:{}};
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:['fiction']}}};
  const fields=peopleQueryFields({directory,agents,sharing:()=>sharing,now:()=>now,conversations});closes.push(fields.close);
  const db=new Database(':memory:');closes.push(()=>db.close());createDataSchema(db);const generated=dataQueries(db,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...fields.fields}})});
@@ -121,7 +121,7 @@ it('isolates inaccessible source failures from healthy authorized cards',async()
 it('opens supplied stores readonly and returns typed project references',async()=>{
  const h=home(),a=store(join(h,'a.db'));a.write({slug:'friend',name:'Friend',where:{pond:{value:'maintainer'}}});
  const projects=new ProjectsStore({dbPath:a.database.name});closes.push(()=>projects.close());projects.write({slug:'pond',name:'Fictional pond'});
- const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{},services:{}};
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{}};
  const reader=peopleReader({agents:[{agent:'fiction',memories:a.database.name}],sharing:()=>sharing,now:()=>0});closes.push(reader.close);
  expect(()=>reader.sources.get('fiction')!.prepare("UPDATE people SET name='Changed'").run()).toThrow(/readonly/);
  const f=fixture(join(h,'absent.db'),[{agent:'fiction',memories:a.database.name}]);
@@ -137,7 +137,7 @@ it('finds all current contact and evidence deadlines without querying private co
  s.database.exec("CREATE TABLE memories(created TEXT,category TEXT,title TEXT,content TEXT,metadata TEXT,archived INTEGER,expires_at TEXT)");
  const put=s.database.prepare("INSERT INTO memories VALUES('2026-11-14T00:00:00Z','feedback','Fiction','Words',?, ?, ?)");
  put.run('{"person":"friend"}',0,new Date(now+2000).toISOString());put.run('{"person":"friend"}',1,new Date(now+1).toISOString());put.run('{}',0,new Date(now+2).toISOString());put.run('{"person":"friend"}',0,'invalid');
- const reader=peopleReader({agents:[{agent:'fiction',memories:path}],sharing:()=>({members:{},projects:{},services:{}}),now:()=>at});closes.push(reader.close);
+ const reader=peopleReader({agents:[{agent:'fiction',memories:path}],sharing:()=>({members:{},projects:{}}),now:()=>at});closes.push(reader.close);
  expect(reader.nextDeadline()).toBe(now+1001);at=now+1001;expect(reader.nextDeadline()).toBe(now+2000);at=now+2000;expect(reader.nextDeadline()).toBeUndefined();
  reader.close();expect(reader.nextDeadline()).toBeUndefined();
 });

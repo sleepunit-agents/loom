@@ -1,5 +1,6 @@
 /** The normalized Change contract, ported from loom-changes. No forge writes. */
 import { z } from 'zod';
+import { TASK_ID, taskId } from '../../slug.js';
 export const week = 7 * 86400_000;
 export const repoId = (raw: string): string => {
   const value = raw.startsWith('github:') ? raw.slice(7) : raw;
@@ -52,10 +53,13 @@ export function stateLine(c: Change, words: string) {
   if (!parts.some(p => p.toLowerCase() === words.toLowerCase()) && !(words === 'CI red' && c.checks.state === 'failing')) parts.push(words);
   return parts.join(', ') || words;
 }
+/** A task id standing by itself in words: not the tail of another word, and not cut short of its number. */
+const CITED_TASK = new RegExp(`(?<![A-Za-z0-9])${TASK_ID}(?![0-9])`, 'g');
 export function tasksCited(c: Change): string[] {
   const ids = new Set<string>();
-  for (const text of [c.title,c.head.ref,c.body]) for (const m of text.matchAll(/(?<![A-Za-z0-9])t-([0-9]{1,7})(?![0-9])/g)) ids.add(`t-${m[1]}`);
-  for (const m of c.head.ref.matchAll(/(?:^|\/)t-?([0-9]{2,7})(?=[-_/]|$)/g)) ids.add(`t-${m[1]}`);
+  for (const text of [c.title,c.head.ref,c.body]) for (const m of text.matchAll(CITED_TASK)) ids.add(m[0]);
+  // A branch may also name its task loosely, with no dash: `t123-fix`, `fix/t123`.
+  for (const m of c.head.ref.matchAll(/(?:^|\/)t([0-9]{2,})(?=[-_/]|$)/g)) ids.add(taskId(m[1]));
   return [...ids].slice(0,20);
 }
 export function citations(text: string): string[] {

@@ -1,4 +1,3 @@
-import { notifyWrites } from '../core/touched/writes.js';
 /**
  * SQLite + sqlite-vec memory backend.
  *
@@ -75,8 +74,6 @@ function slugify(text: string): string {
 export interface SqliteVecConfig {
   /** Absolute path to the SQLite database file */
   dbPath: string;
-  /** An independently owned command connection publishes only after its receipt. */
-  notifyWrites?: boolean;
   busyTimeout?: number;
   /** A source command includes lazy schema work in its effect transaction. */
   deferSchema?: boolean;
@@ -136,6 +133,8 @@ export class SqliteVecBackend implements MemoryBackend {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
     try{
+    // Whatever this connection goes on to do, reads that leave a mark included: not on a newer program's file.
+    refuseNewerStore(this.db);
     if(!config.deferSchema)this.db.pragma('journal_mode = WAL');
     // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
     // their own connection. A brief write-lock window (checkpoint, concurrent
@@ -144,7 +143,6 @@ export class SqliteVecBackend implements MemoryBackend {
     this.db.pragma(`busy_timeout = ${config.busyTimeout ?? 5000}`);
     sqliteVec.load(this.db);
     if(!config.deferSchema)this.initSchema();
-    if(config.notifyWrites!==false)notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
     }catch(error){this.db.close();throw error;}
   }
 
@@ -1128,7 +1126,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
   /**
    * Insert a content snapshot into memory_revisions and prune beyond the per-memory
-   * cap. Mirrors the knowledge wing's snapshotRevision() in sqlite-knowledge.ts.
+   * cap, as snapshotKnowledgeRevision (knowledge-revisions.ts) does for a knowledge page.
    */
   private snapshotRevision(
     memoryId: number,

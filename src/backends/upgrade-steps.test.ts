@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import { MIGRATIONS, runMigrations } from './migrations.js';
-import { SqliteKnowledgeBackend } from './sqlite-knowledge.js';
+import { KnowledgePages } from '../../test/fixtures/knowledge-pages.js';
 
 let directory: string;
 beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'loom-upgrade-steps-')); });
@@ -47,7 +47,7 @@ it('leaves an older knowledge store as it was when its upgrade fails midway', ()
     old.prepare("INSERT INTO pages (uuid, slug, title, domain, body, created, freshness_anchor) VALUES ('u', 'price', 'Price', 'fiction', 'words', '2026-01-01T00:00:00.000Z', 'v2.1')").run();
     old.exec("CREATE TRIGGER refuse_backfill BEFORE UPDATE ON pages BEGIN SELECT RAISE(ABORT, 'fictional interruption'); END");
   } finally { old.close(); }
-  expect(() => new SqliteKnowledgeBackend({ dbPath: path })).toThrow('fictional interruption');
+  expect(() => new KnowledgePages({ dbPath: path })).toThrow('fictional interruption');
   const after = new BetterSqlite3(path);
   try {
     // No column of the upgrade stays, so the next open does all of it, backfill included.
@@ -55,7 +55,7 @@ it('leaves an older knowledge store as it was when its upgrade fails midway', ()
     expect(columns(after, 'pages')).not.toContain('verified_at');
     after.exec('DROP TRIGGER refuse_backfill');
   } finally { after.close(); }
-  const store = new SqliteKnowledgeBackend({ dbPath: path });
+  const store = new KnowledgePages({ dbPath: path });
   store.close();
   const done = new BetterSqlite3(path);
   try { expect(done.prepare("SELECT sla_class FROM pages WHERE slug = 'price'").get()).not.toEqual({ sla_class: 'default' }); } finally { done.close(); }

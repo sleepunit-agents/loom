@@ -1,9 +1,7 @@
-import {listenForTouchSources} from './core/touched/group.js';
-import {listenForTouches} from './core/touched/index.js';
 import {prepareSharedMemorySources,validateSharedMemoryOptions} from './shared-memory.js';
 import {sharedWeb} from './shared-web.js';
 import { measureResponse } from './core/measuring/response.js';
-/** Production HTTP/socket owner for the fresh shared composition. The caller
+/** Production HTTP owner for the fresh shared composition. The caller
  * supplies the initialized connection and closes it only after this listener. */
 import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
@@ -29,30 +27,24 @@ export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { 
     socket.once('close', () => sockets.delete(socket));
   });
   let detach: (() => void) | undefined;
-  let stopTouches:(()=>Promise<void>)|undefined;
-  const laterTouches:Array<Promise<(()=>Promise<void>)|undefined>>=[];
   let closing: Promise<void> | undefined;
   const close = () => {
     if (closing) return closing;
     let resolve!: () => void, reject!: (error: unknown) => void;
     closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
     void (async () => {
-      const touchesStopped=Promise.all([stopTouches?.(),...laterTouches.splice(0).map(async listening=>(await listening)?.())]);
       const stopped = root.close();
       detach?.();
       const listening = new Promise<void>(done => server.close(() => done()));
       server.closeAllConnections();
       for (const socket of sockets) socket.destroy();
-      try { await Promise.all([stopped,touchesStopped]); } finally { await listening; }
+      try { await stopped; } finally { await listening; }
     })().then(resolve, reject);
     return closing;
   };
   try {
     await root.ready;
     meter = await root.measuring;
-    stopTouches=await listenForTouchSources(root.operations,root.memory.touches);
-    // An agent added while the program runs gets its listener when its files are made (shared-memory.ts).
-    root.memory.onTouchSource(source=>{if(!closing)laterTouches.push(listenForTouches(root.operations,source).catch(error=>{options.reportError(error);return undefined;}));});
     detach = root.attach(server);
     // Only GraphQL upgrades are installed on this listener.
     server.on('upgrade',(request,socket)=>{if(new URL(request.url??'/', 'http://localhost').pathname!=='/graphql')socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');});

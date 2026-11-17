@@ -396,6 +396,19 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** Storing the zone each next time was worked out in, which is a schema
   change.
 
+### A custom runner's exit code can read as one of loom's
+
+- **What.** A job's row keeps its exit code and not who chose it. loom's body program, the worker and loom
+  use the numbers 1, 10 to 29 and 31, and job history shows each with its stage ("body harness", "worker
+  build", "body killed"). A machine's own `{job, build}` runner that exits by itself with one of those
+  numbers is shown with that stage too, though its number means something of its own.
+- **Where.** `exitStage` in `src/runtime/job-exit.ts`, shown by `src/runtime/job-summary.ts`.
+- **Why accepted.** Telling them apart needs the row to say whose code it is, which is a new column. The
+  stage is a label beside the number and decides nothing: retries and mail follow the number being zero or
+  not. A body a signal ended is told apart without it (29, set by the worker).
+- **What would change the answer.** A household that runs custom runners and reads their codes. Then the
+  column (`jobs.exit_by`: body, worker, loom or runner), set where the worker reports the job.
+
 ## Bridges and conversations
 
 ### Mail is delivered at least once
@@ -570,11 +583,14 @@ Entries are grouped by the part of the program they belong to.
   without anyone adding the person again.
 
 ### Only `loom.db` and `knowledge.db` are checked for being the right kind of file
-- **What.** `memories.db`, `people.db` and `notes.db` are refused when a newer program has changed them (their
-  version number in the file header), but a wrong SQLite file at one of those paths is not recognised as
-  wrong: the store's tables would be created in it.
-- **Where.** `refuseNewerStore` in `src/backends/migrations.ts`, the constructor in `src/notes.ts`; compare
-  `recogniseDataSchema` in `src/core/data/database.ts`.
+- **What.** `memories.db`, `people.db`, `notes.db` and the secret holder's `holder.db` are refused when a
+  newer program has changed them (their version number in the file header, checked at every start), but a
+  wrong SQLite file at one of those paths is not recognised as wrong: the store's tables would be created
+  in it.
+- **Where.** `refuseNewerStore` in `src/backends/migrations.ts`, the constructor in `src/notes.ts`,
+  `openHolderStore` in `src/pieces/secrets/holder-store.ts`, all run for the Memory files by
+  `prepareSharedMemorySources` in `src/shared-memory.ts`; compare `recogniseDataSchema` in
+  `src/core/data/database.ts` and `recogniseKnowledgeStore` in `src/backends/sqlite-knowledge.ts`.
 - **Why accepted.** The commons paths come from `program.json`, which the program writes at first install, and
   each agent's files are in `<home>/agents/<agent>` (`householdMemorySources` in `src/shared-memory.ts`);
   nothing else chooses a path. Several modules legitimately make their own tables in `memories.db` first (cards, receipts,
@@ -583,11 +599,27 @@ Entries are grouped by the part of the program they belong to.
   in full.
 - **What would change the answer.** A way to choose these paths by hand, or an importer that writes them.
 
+### A Memory file the program did not make is not given its retry tables
+- **What.** A start brings every Memory file's own tables up to date. The door's bookkeeping tables
+  (`mind_operation_receipts`, and in a `memories.db` the command and card tables) are made with a fresh
+  file and kept up to date in a file that has them. A file that was already there and never had them, such
+  as one copied in from an older home, is not given them: it is read as it is, and each command that would
+  write there is refused as unavailable.
+- **Where.** `prepare` in `src/shared-memory.ts`; `upgradeMindReceipts` in
+  `src/pieces/mind/receipt-schema.ts`, `checkSemanticMemory` in `src/pieces/mind/semantic-schema.ts`;
+  refused per command by `mindReceiptsReady`, `semanticMemoryReady` and `semanticCardsReady`.
+- **Why accepted.** It is the stricter of the two answers and was the tested one before starts upgraded
+  anything. Bringing an older home's files in is the data move's job, and the move decides when a file is
+  this program's to write.
+- **What would change the answer.** The owner deciding that any file at a declared path is the program's:
+  then `prepare` runs the same preparation for an existing file as for a fresh one.
+
 ### The memory and knowledge tables are defined in their own stores, with no pinned shapes
 - **What.** `memories`, `pages` and the tables beside them are created by the store that owns them and brought
-  up to date by steps that read the file's shape. Nothing compares an upgraded file with a fresh one column by
-  column, as `src/core/data/upgrade.test.ts` does for the household database.
-- **Where.** `src/backends/sqlite-vec.ts`, `src/backends/migrations.ts`, `src/backends/sqlite-knowledge.ts`.
+  up to date, at every start, by steps that read the file's shape. Nothing compares an upgraded file with a
+  fresh one column by column, as `src/core/data/upgrade.test.ts` does for the household database.
+- **Where.** `src/backends/sqlite-vec.ts`, `src/backends/migrations.ts`, `src/backends/sqlite-knowledge.ts`,
+  run at start by `src/shared-memory.ts` (`src/shared-startup-stores.test.ts` starts on an older file).
   `src/core/data/schema.ts` describes `loom.db` and nothing else (`docs/architecture.md`, "Where every table
   lives").
 - **Why accepted.** These files predate the household database and already hold people's memories; every
@@ -694,9 +726,9 @@ Entries are grouped by the part of the program they belong to.
 
 ### Retry receipts are kept in the file whose write they protect
 - **What.** There is more than one receipt table: `operation_results` in `loom.db`, `mind_operation_receipts`
-  in each memory, knowledge and people file, and `memory_command_receipts` in each `memories.db`.
+  in each memory, notes, knowledge and people file, and `memory_command_receipts` in each `memories.db`.
 - **Where.** `src/core/data/operation-results.ts`, `src/pieces/mind/receipt-schema.ts`,
-  `src/pieces/mind/semantic-commands.ts`.
+  `src/pieces/mind/semantic-commands.ts`, `src/shared-notes.ts`.
 - **Why accepted.** A receipt has to commit with the effect it answers for, and these effects are in different
   files. `memory_command_receipts` differs from the other memory table because a memory command reserves its
   id in one short transaction and commits its answer in a later one, around an embedding that takes time.

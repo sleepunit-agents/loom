@@ -133,9 +133,12 @@ shows the stage name beside the number (`JobRecord.exitStage`).
 | 26 | worker reap | The body's process could not be watched or reaped to its end. |
 | 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"). |
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
+| 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 
-Any other code is the runner's own (a builder or a custom runner). A job swept
+Any other code is the runner's own (a builder or a custom runner); a custom runner
+that exits with one of the numbers above is shown with that number's stage
+(`docs/accepted-tradeoffs.md`). A job swept
 as lost has no exit code; its log tail says in which state it went silent. When
 a body ends by itself before the worker could hand it its input, the job carries
 the body's own code (for example 16), not the worker's 25.

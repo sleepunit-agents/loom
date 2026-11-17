@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNotNull, max, ne, or, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, conversationPeople, turns, inbox, inboxRefs, inboxReads, digests, digestItems, jobs } from '../data/schema.js';
+import { conversationId } from '../../slug.js';
 
 type Conversation = typeof conversations.$inferSelect;
 type Item = typeof inbox.$inferSelect;
@@ -36,7 +37,7 @@ export class Conversations {
     return this.db.transaction(() => {
       const existing = this.db.select().from(conversations).where(and(eq(conversations.agent, input.agent), eq(conversations.venue, input.venue), eq(conversations.place, input.place))).get();
       if (existing) return existing;
-      return this.db.insert(conversations).values({ ...input, id: `cv-${randomUUID()}`, startedAt: at, lastAt: at, turnCount: 0 }).returning().get();
+      return this.db.insert(conversations).values({ ...input, id: conversationId(randomUUID()), startedAt: at, lastAt: at, turnCount: 0 }).returning().get();
     });
   }
 

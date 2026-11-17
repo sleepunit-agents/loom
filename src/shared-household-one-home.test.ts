@@ -10,7 +10,6 @@ import {FakeClock} from './core/clock.js';
 import {dataDatabase} from './core/data/database.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
 import {notesDbPath} from './notes.js';
-import {hasTouchedListener} from './core/touched/index.js';
 import {startSharedHome} from './shared-startup.js';
 import {serve} from './index.js';
 import {Readable} from 'node:stream';
@@ -64,11 +63,9 @@ it('gives an agent added to a running household its Memory, notes and cards at o
  expect(recalled.result).toMatchObject({ok:true,value:{ids:remembered.result.value.ids}});
  expect((await f.call('memory/noteWrite',{path:'plans/first',body:'A note of the second agent',lifespan:'keep'},{token})).result).toEqual({ok:true,value:{saved:true}});
  const card=await f.call('memory/projectWrite',{slug:'pond',name:'Pond'},{token});expect(card.result).toMatchObject({ok:true});expect(card.result.value.ids[0]).toMatch(/^second:project:/);
- // Both files were made whole: under their real names, private, with nothing left beside them. Outside
- // writers in the new directory are heard from now on too.
+ // Both files were made whole: under their real names, private, with nothing left beside them.
  for(const file of [join(directory,'memories.db'),notesDbPath(directory)])expect(statSync(file).mode&0o777,file).toBe(0o600);
  expect(readdirSync(directory).filter(name=>name.endsWith('.preparing'))).toEqual([]);
- await vi.waitFor(()=>expect(hasTouchedListener(directory)).toBe(true));
  // The owner reads what the new agent wrote, through the same readers that were opened before it existed.
  const seen=await fetch(f.url()+'/graphql',{method:'POST',headers:{cookie:owner.cookie,'content-type':'application/json'},body:JSON.stringify({query:`{memoryProject(id:"${card.result.value.ids[0]}"){id card{name}} memoryNote(agent:"second",path:"plans/first"){body}}`})});
  expect(await seen.json()).toEqual({data:{memoryProject:{id:'second:pond',card:{name:'Pond'}},memoryNote:{body:'A note of the second agent'}}});

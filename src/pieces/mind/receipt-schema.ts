@@ -4,14 +4,17 @@ import { OperationError } from '../../core/operations/index.js';
 const migrations = [{ number: 1, sql: `CREATE TABLE mind_operation_receipts (
   viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL,
   result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))` }];
-/** Startup and recovery only inspect prepared metadata; they never upgrade a
- * precious source. Preparation belongs to the making of a fresh file (`prepareSharedMemorySources`). */
+/** What a command asks before it writes: are this file's receipt tables the ones this program knows.
+ * It never changes the file. The tables are made with the file and brought up to date at each start
+ * (`prepareSharedMemorySources`). */
 export function mindReceiptsReady(db:Database){
   const has=(name:string)=>!!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name);
   if(!has('mind_source_migrations')||!has('mind_operation_receipts'))return false;
   const applied=db.prepare('SELECT number,sql FROM mind_source_migrations ORDER BY number').all() as Array<{number:number;sql:string}>;
   return applied.length===migrations.length&&applied.every((row,index)=>row.number===migrations[index].number&&row.sql===migrations[index].sql);
 }
+/** The numbered steps this file has not had, when a file is made and at each later start
+ * (`upgradeMindReceipts`). A file whose recorded steps are not this program's is refused, unaltered. */
 export function migrateMindReceipts(db: Database) {
   db.transaction(() => {
     db.exec('CREATE TABLE IF NOT EXISTS mind_source_migrations (number INTEGER PRIMARY KEY, sql TEXT NOT NULL)');
@@ -25,6 +28,14 @@ export function migrateMindReceipts(db: Database) {
       db.prepare('INSERT INTO mind_source_migrations (number, sql) VALUES (?, ?)').run(migration.number, migration.sql);
     }
   }).immediate();
+}
+
+/** At each start, for a file that was there before it. One that has had these steps gets the ones it
+ * lacks, and is refused if its steps are not this program's. One that never had them is left exactly
+ * as it is, and commands that need a receipt there are refused one by one (`mindReceiptsReady`):
+ * docs/accepted-tradeoffs.md, "A Memory file the program did not make is not given its retry tables". */
+export function upgradeMindReceipts(db: Database) {
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='mind_source_migrations'").get()) migrateMindReceipts(db);
 }
 
 /** Which operation a receipt answers: the caller, its operation id, and what it asked for. */

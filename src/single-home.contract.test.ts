@@ -3,6 +3,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
+import { refsIn } from './pieces/mind/activity-model.js';
+import { refsIn as conversationRefs } from './core/conversations/refs.js';
+import { tasksCited } from './pieces/changes/model.js';
 import { agentInput, settingsInput } from './apps/household.js';
 import { COMMIT, mergeTargetFor, parseMergeTarget } from './apps/merge-target.js';
 import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
@@ -22,7 +25,7 @@ import { isDiscordId } from './pieces/bridges/discord-id.js';
 import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
 import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
-import { HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, householdId, scopedStoreId, slug } from './slug.js';
+import { CONVERSATION_ID, HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, TASK_ID, conversationId, householdId, scopedStoreId, slug, taskId } from './slug.js';
 import { MEMORY_CATEGORIES } from './categories.js';
 import { DAY } from './core/day.js';
 import { BODY_REQUEST_MAX_MS, BODY_REQUEST_MS, validBodyRequestMs } from './runtime/body-request-time.js';
@@ -330,7 +333,7 @@ it('takes a secret\'s standing answers from the columns, and writes the househol
   expect(secretAnswer.options).toEqual([...household.secretsDefault.enumValues]);
   expect(secretAnswer.options).toEqual([...secretRules.answer.enumValues]);
   expect(sources('src').filter(file => file !== 'src/core/data/schema.ts' && /'ask',\s*'auto',\s*'never'/.test(text(file)))).toEqual([]);
-  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set:\s*\{\s*secretsDefault/.test(text(file)))).toEqual(['src/apps/household.ts']);
+  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set(?::\s*|\()\{\s*secretsDefault/.test(text(file)))).toEqual(['src/apps/household.ts']);
   const client = new Database(':memory:');
   try {
     const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z'), requests = householdService(db, () => '2026-11-16T00:00:00.000Z');
@@ -398,4 +401,25 @@ it('takes a choice the database also checks from the column, and states the othe
   expect(holders(/'confirm',\s*'contradict'/)).toEqual(['src/backends/types.ts']);
   expect(holders(/'member',\s*'agent',\s*'project',\s*'bridge'/)).toEqual(['src/apps/household.ts']);
   expect(holders(/'blocks',\s*'parent-child'/)).toEqual(['src/apps/tasks.ts']);
+});
+
+it('writes the shape of a task id and of a conversation id once, where each is made', () => {
+  // A literal `t-` or `cv-` followed by a digit pattern, a character class or an interpolation is a second copy.
+  const copy = /\bt-(?:\\d|\[0-9|\$\{)|\bcv-(?:\[|\\|\(\?|\$\{)/;
+  expect(sources('src').filter(file => copy.test(text(file)))).toEqual(['src/slug.ts']);
+  // The makers use the same file's builders, and what they make is what the patterns find.
+  expect(text('src/apps/tasks.ts')).toContain('id = taskId(n)');
+  expect(text('src/core/conversations/index.ts')).toContain('id: conversationId(randomUUID())');
+  const task = new RegExp(`^${TASK_ID}$`), conversation = new RegExp(`^${CONVERSATION_ID}$`);
+  // No length is given to a task's number: Changes and Activity once disagreed at seven digits.
+  for (const n of [1, 509, 1234567, 12345678901]) expect(task.test(taskId(n)), String(n)).toBe(true);
+  for (const bad of ['t-', 't-x', 'x-1', 't-1a']) expect(task.test(bad), bad).toBe(false);
+  expect(conversation.test(conversationId('123e4567-e89b-42d3-a456-426614174000'))).toBe(true);
+  expect(conversation.test('cv-0123456789ab')).toBe(true);
+  for (const bad of ['cv-', 'cv-0123456789a', 'cv-123e4567', 'th-123e4567-e89b-42d3-a456-426614174000']) expect(conversation.test(bad), bad).toBe(false);
+  // The readers that find an id in words agree at every length.
+  const long = taskId(12345678);
+  expect(refsIn(`See ${long}.`, undefined).tasks).toEqual([long]);
+  expect(conversationRefs(`See ${long}.`)).toEqual([long]);
+  expect(tasksCited({ title: `Fix ${long}`, body: '', head: { ref: 'fix/t77-pond' } } as Parameters<typeof tasksCited>[0])).toEqual([long, 't-77']);
 });

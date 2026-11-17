@@ -1,9 +1,9 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
 import { agents, household, inbox, members, triggerEdits, triggerLog, triggers } from '../data/schema.js';
-import { FakeClock } from '../clock.js';
+import { FakeClock, clock as realClock, STEP_CHECK_MS } from '../clock.js';
 import { MISSED_GRACE_MS, MISSED_ROWS, TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
 import { nextTime } from './calendar.js';
 const stops: (() => void)[] = [];
@@ -388,4 +388,27 @@ it('works its times out again when the household moves to another timezone', () 
   expect(f.row(once.id).nextDueAt).toBe('2026-11-14T20:00:00.000Z');
   expect(f.db.select().from(triggerLog).where(andTrigger(lane.id)).all().map(l => l.event)).toEqual(['set', 'rezoned']);
   expect(f.items()).toEqual([]);
+});
+
+// A forward step of the host's wall clock while the program runs. A time that comes after the step is
+// reached by the clock while the engine is looking, so it fires at its time. A time the step passed over
+// never came on this program's clock: it meets the missed-time rule like any other time found behind.
+it('fires a standing time that comes due after the wall clock was stepped forward, and skips one the step passed over', () => {
+  const f = fixture(), start = Date.parse('2026-11-14T18:00:00Z'), minute = 60_000;
+  f.engine.close();
+  vi.useFakeTimers(); vi.setSystemTime(start); stops.push(() => vi.useRealTimers());
+  const engine = new TriggerEngine(f.db, realClock, f.effects); stops.push(() => engine.close());
+  // 19:00 and 21:00 UTC, in the household's zone.
+  const lane = engine.set({ ...f.base, times: '13:00,15:00', days: null, lifespan: 'until-stopped' });
+  const events = () => f.db.select().from(triggerLog).where(eq(triggerLog.trigger, lane.id)).all().map(row => row.event).filter(event => event === 'fired' || event === 'missed');
+  vi.advanceTimersByTime(5 * minute);
+  // Set forward by 45 minutes, to 18:50: the 19:00 time is still ahead.
+  vi.setSystemTime(start + 50 * minute);
+  vi.advanceTimersByTime(10 * minute + STEP_CHECK_MS);
+  expect(events()).toEqual(['fired']); expect(f.items()).toHaveLength(1);
+  expect(Date.now() - (start + 60 * minute)).toBeLessThanOrEqual(STEP_CHECK_MS + 1);
+  // Set forward again, from just after 19:00 to 21:30: the 21:00 time was passed over, half an hour ago.
+  vi.setSystemTime(start + 210 * minute);
+  vi.advanceTimersByTime(STEP_CHECK_MS);
+  expect(events()).toEqual(['fired', 'missed']); expect(f.items()).toHaveLength(1);
 });

@@ -82,9 +82,9 @@ it('constrains the single SQL read before fetching rows and never reads machine 
 });
 it('names the stage a failed job failed in from its exit code, and nothing for a runner\'s own code', async () => {
   const f = fixture();
-  f.add('a-build', 'failed', { exitCode: 22 }); f.add('b-harness', 'failed', { exitCode: 14 }); f.add('c-own', 'failed', { exitCode: 2 }); f.add('d-done', 'done', { exitCode: 0 });
+  f.add('a-build', 'failed', { exitCode: 22 }); f.add('b-harness', 'failed', { exitCode: 14 }); f.add('c-own', 'failed', { exitCode: 2 }); f.add('c-killed', 'failed', { exitCode: 29 }); f.add('d-done', 'done', { exitCode: 0 });
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: jobSummaryFields(f.summaries) }) });
   const result = await graphql({ schema, source: '{jobHistory(agent:"art"){id exitCode exitStage}}' });
-  expect(result.data?.jobHistory).toEqual([{ id: 'd-done', exitCode: 0, exitStage: null }, { id: 'c-own', exitCode: 2, exitStage: null },
+  expect(result.data?.jobHistory).toEqual([{ id: 'd-done', exitCode: 0, exitStage: null }, { id: 'c-own', exitCode: 2, exitStage: null }, { id: 'c-killed', exitCode: 29, exitStage: 'body killed' },
     { id: 'b-harness', exitCode: 14, exitStage: 'body harness' }, { id: 'a-build', exitCode: 22, exitStage: 'worker build' }]);
 });

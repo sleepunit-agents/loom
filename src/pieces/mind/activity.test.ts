@@ -11,7 +11,7 @@ const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
 const dir=()=>{const h=mkdtempSync(join(tmpdir(),'activity-'));homes.push(h);return h;};
 afterEach(async()=>{for(const fn of closes.splice(0).reverse())await fn();for(const h of homes.splice(0))rmSync(h,{recursive:true,force:true});});
 const now=Date.parse('2026-11-13T18:00:00Z'),owner:Viewer={kind:'member',id:'owner'},partial:Viewer={kind:'member',id:'partial'};
-const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}},services:{'conversation-reader':{types:['conversation'],operations:[]},'memory-reader':{types:['memory'],operations:[]}}};
+const sharing:Sharing={members:{owner:{owner:true,agents:[]},partial:{owner:false,agents:['art']},outsider:{owner:false,agents:[]}},projects:{pond:{members:['outsider'],agents:[]}}};
 function source(path=join(dir(),'memories.db')){const db=new BetterSqlite3(path);db.exec('CREATE TABLE memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');closes.push(()=>db.close());return {path,db,add(ref:string,input:Record<string,unknown>={}){const row={ref,title:ref,content:'A complete story mentioning t-12 and sleepunit-agents/loom#941.',created:'2026-11-13T17:00:00Z',project:null,metadata:'{"where":"terminal"}',expires_at:null,category:'episode',archived:0,...input};db.prepare('INSERT OR REPLACE INTO memories VALUES(@ref,@title,@content,@created,@project,@metadata,@expires_at,@category,@archived)').run(row);}};}
 const conv=(id='cv-111111111111',input:Partial<ActivityConversation>={}):ActivityConversation=>({id,agent:'art',venue:'terminal',place:'terminal',label:'Build the household',people:['owner'],...input});
 const run=(key:string,input:Partial<ActivityRun>={}):ActivityRun=>({kind:'digest',key,at:'2026-11-13T17:10:00Z',conversation:conv(),summary:'Shipped Activity. The full story follows.',asked:['Show what happened'],decided:['Use the new role'],tasks:['t-2207'],links:[],more:[],...input});
@@ -103,13 +103,11 @@ it('rereads outside writes and clears expired and archived entries',async()=>{
  a.db.prepare('UPDATE memories SET archived=1 WHERE ref=?').run('m-two');expect(read(app,'e~art~m-two')).toBeUndefined();
 });
 
-it('authorizes conversation-only and memory-only services independently and passes the original viewer to every role method',async()=>{
+it('passes the original viewer to every role method',async()=>{
  const a=source();a.add('m-later',{created:'2026-11-13T14:00:00Z'});a.add('m-named',{created:'2026-11-13T14:00:00Z',metadata:'{"conversation":"cv-111111111111","where":"terminal"}'});
  const calls:Array<{method:string;viewer:Viewer}>=[],base=role([run('dg-one')]);
  const original:ActivityConversations={list(v,q){calls.push({method:'list',viewer:v});return base.list(v,q);},read(v,a,k,id){calls.push({method:'read',viewer:v});return base.read(v,a,k,id);},conversation(v,a,id){calls.push({method:'conversation',viewer:v});return base.conversation(v,a,id);}};
- const app=await fixture(a.path,undefined,original),v:Viewer={kind:'service',id:'conversation-reader'},memory:Viewer={kind:'service',id:'memory-reader'};
- expect(list(app,v).entries.map(e=>e.id)).toEqual(['d~art~dg-one']);expect(read(app,'d~art~dg-one',v)).toBeDefined();expect(read(app,'e~art~m-later',v)).toBeUndefined();
- expect(list(app,memory).entries.map(e=>e.id)).toEqual(['e~art~m-later']);expect(read(app,'d~art~dg-one',memory)).toBeUndefined();
+ const app=await fixture(a.path,undefined,original);
  calls.splice(0);list(app,partial);read(app,'d~art~dg-one',partial);read(app,'e~art~m-named',partial);expect(new Set(calls.map(c=>c.method))).toEqual(new Set(['list','read','conversation']));for(const c of calls)expect(c.viewer).toBe(partial);
 });
 it('reports reader failures and absent owners separately from missing, retaining healthy episodes beside corrupt databases',async()=>{
@@ -180,7 +178,7 @@ it('derives the earliest episode deadline without visibility or list caps and cl
  reader.close();expect(reader.nextDeadline()).toBeUndefined();
 });
 it('opens the entries of an agent whose id starts with a digit or is long, as the household allows',()=>{
- const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{},services:{}};
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{}};
  for(const agent of ['2fast','a'.repeat(100)]){
   const a=source();a.add('m-one',{title:`You are ${agent}, in a conversation on wake: Daily review.`,metadata:'{"where":"terminal"}'});
   const reader=createActivityReader(new FakeClock(now),{agents:[{agent,memories:a.path}],sharing:()=>sharing,timezone:'America/Chicago'});closes.push(reader.close);

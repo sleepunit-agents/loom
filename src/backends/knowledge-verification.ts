@@ -110,7 +110,7 @@ export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, 
  *   2. device-domain: domain starts with a known device-domain prefix → 'device' (7d)
  *   3. else → 'default' (30d)
  *
- * Callers may override with KnowledgePageInput.sla_class.
+ * Callers may override with NewKnowledgePage.sla_class.
  */
 const DEVICE_DOMAIN_PREFIXES: readonly string[] = ['music/gear', 'monitor/hardware'];
 const RE_SLA_VERSION = /v?\d+\.\d+/i;

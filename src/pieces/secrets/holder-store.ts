@@ -13,6 +13,14 @@ import { assertPrivateDirectory, privateBytes } from './local-holder.js';
 import { secretName } from './input.js';
 
 const unavailable = () => new Error('Secret holder storage unavailable');
+/** The holder store's version, kept in the file header (PRAGMA user_version). A change to its tables raises
+ * it and adds a step where the store is opened. A file made before the number was kept reads 0 and has
+ * this same shape, so it is marked and nothing else. */
+const HOLDER_VERSION = 1;
+/** The one failure here that says why: it names two numbers and nothing the store holds. */
+class NewerHolderStore extends Error {
+  constructor(version: number) { super(`Secret holder storage is from a newer program (version ${version}; this program knows ${HOLDER_VERSION})`); }
+}
 const context = z.object({member: z.string().min(1).max(256), writeId: z.uuid()}).strict();
 /** Passed by trusted composition after authenticating the member and checking
  * current household permission. Never take this object directly from a request.
@@ -85,6 +93,9 @@ export async function openHolderStore(directory: string, identityFile: string, f
       try { assertPrivateFile(fd); } finally { closeSync(fd); }
     }
     db = new Database(path, {timeout: 0});
+    // Before anything is created or written: a store a newer program has changed is left as it is.
+    const version = db.pragma('user_version', {simple: true}) as number;
+    if (version > HOLDER_VERSION) throw new NewerHolderStore(version);
     db.pragma('journal_mode = WAL'); db.pragma('synchronous = FULL');
     const binding = (key: Buffer, recipient: string) => createHmac('sha256', key)
       .update(JSON.stringify(['holder-store-v1', recipient])).digest('hex');
@@ -115,6 +126,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
         .run(JSON.stringify(updated));
       db!.prepare('INSERT OR IGNORE INTO holder_generation (id, generation) VALUES (1,?)').run(randomUUID());
     }).immediate();
+    if (version !== HOLDER_VERSION) db.pragma(`user_version = ${HOLDER_VERSION}`);
     const store = db;
     let closed = false;
     const check = () => { if (closed) throw unavailable(); };
@@ -214,5 +226,5 @@ export async function openHolderStore(directory: string, identityFile: string, f
       },
       close() { if (!closed) { closed = true; for (const key of keys) key.fill(0); store.close(); } },
     };
-  } catch { for (const key of keys) key.fill(0); db?.close(); throw unavailable(); }
+  } catch (error) { for (const key of keys) key.fill(0); db?.close(); throw error instanceof NewerHolderStore ? error : unavailable(); }
 }

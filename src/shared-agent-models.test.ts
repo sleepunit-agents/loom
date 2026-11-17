@@ -5,7 +5,6 @@ import { eq, asc } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns } from './core/data/schema.js';
-import { registerBuiltinService } from './core/services.js';
 import { sharedRoot } from './shared-root.js';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import { httpWorkerControl } from './runtime/worker-http.js';

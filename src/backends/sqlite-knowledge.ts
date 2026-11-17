@@ -1,70 +1,14 @@
-import { snapshotKnowledgeRevision } from './knowledge-revisions.js';
-import { verifyKnowledgePages, deriveSlaClass, enforcePageBodyCap } from './knowledge-verification.js';
-import { enforceExcerptCap, insertKnowledgeCitation, insertKnowledgePage, setKnowledgePageBody } from './knowledge-writes.js';
-export { deriveSlaClass } from './knowledge-verification.js';
-import { notifyWrites } from '../core/touched/writes.js';
-/**
- * SQLite knowledge backend — isolated from the memory wing.
- *
- * This backend opens a separate knowledge.db file, never loads sqlite-vec,
- * and never touches memories.db. It follows the frozen v1 schema (§B) from
- * the hardened design: pages + citations tables, PRAGMA user_version = 1,
- * WAL mode, close-in-finally pattern.
- */
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { retryWrite } from './retry.js';
-import type {
-  KnowledgeBackend,
-  KnowledgePageInput,
-  KnowledgeCitationInput,
-  KnowledgePage,
-  KnowledgeCitation,
-  KnowledgePageWithCitations,
-  KnowledgeQueryInput,
-  KnowledgeWriteResult,
-  KnowledgeArchiveInput,
-  KnowledgeArchiveResult,
-  KnowledgeRestoreInput,
-  KnowledgeRestoreResult,
-  KnowledgeSupersededInput,
-  KnowledgeSupersededResult,
-  KnowledgeMoveInput,
-  KnowledgeMoveResult,
-  KnowledgeMovedPageRecord,
-  KnowledgeMergeInput,
-  KnowledgeMergeResult,
-  KnowledgePurgeInput,
-  KnowledgePurgeResult,
-  KnowledgeVerifyInput,
-  KnowledgeVerifyResult,
-  KnowledgeVerificationRecord,
-  KnowledgeRevision,
-  KnowledgeRevisionMeta,
-  KnowledgeRevisionRestoreInput,
-  KnowledgeRevisionRestoreResult,
-  KnowledgeAccessStat,
-} from './types.js';
-
-/** Identity attributed to a stamped access when the caller doesn't pass one. */
-const UNKNOWN_IDENTITY = 'unknown';
-
-export interface SqliteKnowledgeConfig {
-  /** Absolute path to the knowledge SQLite database file */
-  dbPath: string;
-  /**
-   * SQLite busy_timeout in ms — how long to retry a locked write before
-   * surfacing SQLITE_BUSY. Defaults to 5000; pass a small value in tests
-   * that exercise the SQLITE_BUSY path so they don't wait the full window.
-   */
-  busyTimeoutMs?: number;
-}
+/** The knowledge store's file (`commons/knowledge.db`): its tables, its version, and the one check and
+ * upgrade every start runs on it. Pages are written by the door's page actions
+ * (pieces/mind/actions.ts) through knowledge-writes.ts, knowledge-revisions.ts and
+ * knowledge-verification.ts, and read by pieces/mind/knowledge-query.ts. */
+import type { Database } from 'better-sqlite3';
+import { deriveSlaClass } from './knowledge-verification.js';
 
 /** The knowledge store's version, kept in the file header (PRAGMA user_version). */
 const KNOWLEDGE_VERSION = 1;
 /** Before anything is written: an empty file or a knowledge store this program knows, and nothing else.
- * initSchema creates and alters tables and backfills rows on whatever it is given, so a store a newer
+ * The upgrade creates and alters tables and backfills rows on whatever it is given, so a store a newer
  * program has changed, or some other SQLite file, has to be turned away here. */
 function recogniseKnowledgeStore(db: Database): void {
   const at = db.pragma('user_version', { simple: true }) as number;
@@ -73,1046 +17,147 @@ function recogniseKnowledgeStore(db: Database): void {
   if (has() && !has('pages')) throw new Error('This file is not a knowledge store');
 }
 
-export class SqliteKnowledgeBackend implements KnowledgeBackend {
-  private db: Database | null = null;
-
-  constructor(private readonly config: SqliteKnowledgeConfig) {
-    mkdirSync(dirname(config.dbPath), { recursive: true });
-    // Open in constructor for schema init; caller closes after use.
-    this.db = new BetterSqlite3(config.dbPath);
-    try { recogniseKnowledgeStore(this.db); } catch (error) { this.db.close(); this.db = null; throw error; }
-    this.db.pragma('journal_mode = WAL');
-    // busy_timeout: concurrent sleeves retry brief write-lock windows rather
-    // than failing immediately — see sqlite-vec.ts for the full rationale.
-    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
-    this.db.pragma(`user_version = ${KNOWLEDGE_VERSION}`);
-    this.initSchema();
-    notifyWrites(this, config.dbPath, 'knowledge', ['writePage', 'archivePage', 'restorePage', 'supersedePage', 'movePage', 'mergePages', 'purgePages', 'verifyPages', 'restoreRevision', 'addCitations'], ['slug', 'slugs', 'old_slug', 'new_slug', 'target_slug', 'source_slugs']);
+/** Creates a new store's tables and adds what an older store lacks. Each change is found pending from the
+ * table's columns, so the caller runs this in one transaction: a change that stopped between adding a
+ * column and filling it would never be finished. */
+function createAndUpgrade(db: Database): void {
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS pages (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid          TEXT NOT NULL UNIQUE,
+      slug          TEXT NOT NULL UNIQUE,
+      title         TEXT NOT NULL,
+      domain        TEXT NOT NULL,
+      body          TEXT NOT NULL,
+      sourcing      TEXT NOT NULL DEFAULT 'sourced',
+      provenance    TEXT,
+      status        TEXT NOT NULL DEFAULT 'active',
+      created       TEXT NOT NULL,
+      updated       TEXT,
+      last_accessed TEXT,
+      hit_count     INTEGER NOT NULL DEFAULT 0,
+      verified_at   TEXT,
+      freshness_anchor TEXT,
+      sla_class     TEXT NOT NULL DEFAULT 'default'
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain)`,
+    `CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug)`,
+    `CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status)`,
+    `CREATE TABLE IF NOT EXISTS citations (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      claim          TEXT NOT NULL,
+      source_kind    TEXT NOT NULL,
+      source_locator TEXT,
+      excerpt        TEXT NOT NULL,
+      retrieved_at   TEXT NOT NULL,
+      created        TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_citations_page ON citations(page_id)`,
+    `CREATE TABLE IF NOT EXISTS supersessions (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      old_slug  TEXT NOT NULL,
+      new_slug  TEXT NOT NULL,
+      note      TEXT,
+      created   TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_supersessions_old ON supersessions(old_slug)`,
+    `CREATE INDEX IF NOT EXISTS idx_supersessions_new ON supersessions(new_slug)`,
+    `CREATE TABLE IF NOT EXISTS page_revisions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      slug        TEXT NOT NULL,
+      body        TEXT NOT NULL,
+      op          TEXT NOT NULL,
+      replaced_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_page_revisions_page ON page_revisions(page_id)`,
+    // Actor attribution (t-675): who verified a page, when, and what they
+    // found. Additive to pages.verified_at (which stays the fast single-
+    // column freshness stamp everything else queries/sorts on) — this
+    // table is the attributed audit trail underneath it.
+    `CREATE TABLE IF NOT EXISTS verifications (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      page_id          INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      verifier         TEXT,
+      verified_at      TEXT NOT NULL,
+      outcome          TEXT NOT NULL DEFAULT 'confirmed',
+      citation_checked INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_verifications_page ON verifications(page_id)`,
+    // Per-identity read attribution (t-677) — additive to pages.hit_count/
+    // last_accessed, never a replacement. Written by the program that kept this file before; read by nothing now.
+    `CREATE TABLE IF NOT EXISTS knowledge_access (
+      page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      identity      TEXT NOT NULL,
+      hit_count     INTEGER NOT NULL DEFAULT 0,
+      last_accessed TEXT,
+      PRIMARY KEY (page_id, identity)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_knowledge_access_page ON knowledge_access(page_id)`,
+  ];
+  for (const sql of statements) {
+    db.prepare(sql).run();
   }
-
-  // ── KnowledgeBackend interface ──
-
-  writePage(input: KnowledgePageInput): Promise<KnowledgeWriteResult> {
-    try {
-      enforcePageBodyCap(input.body);
-
-      const db = this.ensureOpen();
-      const timestamp = new Date().toISOString();
-
-      // Title and domain follow the write — the page is addressed by slug,
-      // so a differing title/domain on upsert is an intentional revision.
-      const title: string = input.title;
-      const sourcing: string = input.sourcing ?? 'sourced';
-
-      // Set inside the transaction, read after it commits. Every one of these
-      // is derived from the existing-page read, so all of them are re-derived
-      // on a SQLITE_BUSY retry rather than carried over from the losing attempt.
-      let uuid = '';
-      let appliedMode: 'create' | 'replace' | 'append' = 'create';
-      let pageId = 0;
-
-      // Validate all citations before opening the transaction.
-      if (input.citations && input.citations.length > 0) {
-        for (const cit of input.citations) {
-          enforceExcerptCap(cit.excerpt);
-        }
-      }
-
-      let citationsAdded = 0;
-      let citationsDeduped = 0;
-
-      // An exact duplicate of a citation the page already has is skipped (insertKnowledgeCitation):
-      // re-sending a page's citations on upsert must not multiply them.
-
-      // ── Single transaction: read + snapshot + page write + citations ─────────
-      // All sub-operations must commit atomically — a crash between any two
-      // leaves a partial state: a page with no citations, or a snapshot with no
-      // corresponding page update. Every other mutating method uses db.transaction;
-      // writePage — the hottest path — now does too (t-329).
-      //
-      // The existing-page read is INSIDE the span, and the span is IMMEDIATE:
-      // writePage is state-dependent (mode, body, uuid, and the snapshot's
-      // pre-image all follow from what it read), so an atomic write over a read
-      // taken outside the lock protects nothing. A second process committing in
-      // that window used to be silently overwritten — an append dropped the
-      // contribution it never saw, and a replace snapshotted a body that was no
-      // longer the one it displaced, losing it with no revision to recover from.
-      // BEGIN IMMEDIATE takes the write lock before the read, so the read/write
-      // sequence is serialized: the loser is told SQLITE_BUSY and retries the
-      // whole thing — re-reading — instead of writing over what it missed.
-      // (Mark, 2026-09-06, reviewing #92.)
-      //
-      // Counter variables (citationsAdded, citationsDeduped) are reset at the top
-      // of the callback so a SQLITE_BUSY retry never double-counts.
-      const tx = db.transaction(() => {
-        citationsAdded = 0;
-        citationsDeduped = 0;
-
-        const existing = db.prepare(
-          'SELECT id, uuid, title, body, freshness_anchor FROM pages WHERE slug = ?',
-        ).get(input.slug) as { id: number; uuid: string; title: string; body: string; freshness_anchor: string | null } | undefined;
-
-        uuid = existing?.uuid ?? '';
-        pageId = existing?.id ?? 0;
-        appliedMode = existing ? (input.bodyMode ?? 'replace') : 'create';
-        const newBody: string = (existing && appliedMode === 'append')
-          ? `${existing.body}\n\n${input.body}`
-          : input.body;
-        if (existing) enforcePageBodyCap(newBody);
-
-        // Derive sla_class from the final anchor + domain; caller may override.
-        const finalAnchor = input.freshness_anchor ?? existing?.freshness_anchor ?? null;
-        const slaClass: string = input.sla_class ?? deriveSlaClass(finalAnchor, input.domain);
-
-        if (existing) {
-          // Replace-writes destroy the stored body — snapshot it first so the
-          // page is recoverable (the 2026-06-01 verify run stomped 13 bodies
-          // with no recovery path other than transcript archaeology).
-          if (appliedMode === 'replace' && newBody !== existing.body) {
-            snapshotKnowledgeRevision(db, pageId, input.slug, existing.body, 'write-replace', timestamp, input.actor ?? null);
-          }
-
-          // verified_at is a verification stamp, not a write stamp: an update
-          // only moves it when the writer explicitly claims verification.
-          // (Creation still stamps write time — the page was just synthesized
-          // against its sources.)
-          // created_by / version are preserved across upserts when omitted.
-          // author is deliberately absent from this UPDATE — it is the
-          // identity that wrote v1 and is never changed by a later upsert.
-          // sla_class is always re-derived from the final anchor + domain.
-          db.prepare(
-            `UPDATE pages SET title = ?, domain = ?, body = ?, sourcing = ?, verified_at = COALESCE(?, verified_at), freshness_anchor = COALESCE(?, freshness_anchor), created_by = COALESCE(?, created_by), version = COALESCE(?, version), sla_class = ?, updated = ? WHERE id = ?`,
-          ).run(title, input.domain, newBody, sourcing, input.verified_at ?? null, input.freshness_anchor ?? null, input.created_by ?? null, input.version ?? null, slaClass, timestamp, pageId);
-        } else {
-          ({ id: pageId, uuid } = insertKnowledgePage(db, {
-            slug: input.slug, title, domain: input.domain, body: newBody, sourcing,
-            provenance: input.provenance, verified_at: input.verified_at, freshness_anchor: input.freshness_anchor,
-            sla_class: slaClass, created_by: input.created_by, version: input.version, actor: input.actor,
-          }, timestamp));
-        }
-
-        if (input.citations && input.citations.length > 0) {
-          for (const cit of input.citations!) {
-            if (insertKnowledgeCitation(db, pageId, cit, timestamp, { skipDuplicate: true })) citationsAdded++;
-            else citationsDeduped++;
-          }
-        }
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve({
-        uuid,
-        slug: input.slug,
-        title,
-        citationsAdded,
-        citationsDeduped,
-        created: appliedMode === 'create',
-        bodyMode: appliedMode,
-      });
-    } catch (e) {
-      return Promise.reject(e);
-    }
+  // Idempotent migrations for existing DBs (ALTER ADD COLUMN has no IF NOT EXISTS).
+  const pageCols = (db.prepare('PRAGMA table_info(pages)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!pageCols.includes('verified_at')) {
+    db.prepare('ALTER TABLE pages ADD COLUMN verified_at TEXT').run();
   }
-
-  getPage(slug: string, opts?: { stampAccess?: boolean; identity?: string }): Promise<KnowledgePageWithCitations | null> {
-    try {
-      const db = this.ensureOpen();
-
-      const page = db.prepare(
-        'SELECT * FROM pages WHERE slug = ?',
-      ).get(slug) as KnowledgePage | undefined;
-
-      if (!page) return Promise.resolve(null);
-
-      if (opts?.stampAccess) {
-        const now = new Date().toISOString();
-        this.recordAccess(db, [page.id], opts.identity ?? UNKNOWN_IDENTITY, now);
-        page.last_accessed = now;
-        page.hit_count += 1;
-      }
-
-      const citations = db.prepare(
-        'SELECT * FROM citations WHERE page_id = ? ORDER BY id',
-      ).all(page.id) as KnowledgeCitation[];
-
-      return Promise.resolve({ ...page, citations });
-    } catch (e) {
-      return Promise.reject(e);
-    }
+  if (!pageCols.includes('freshness_anchor')) {
+    db.prepare('ALTER TABLE pages ADD COLUMN freshness_anchor TEXT').run();
   }
-
-  listPages(input?: KnowledgeQueryInput): Promise<KnowledgePageWithCitations[]> {
-    try {
-      const db = this.ensureOpen();
-      const limit = input?.limit ?? 50;
-
-      const clauses: string[] = [];
-      const params: unknown[] = [];
-
-      if (input?.excludeStatus) {
-        clauses.push('status != ?');
-        params.push(input.excludeStatus);
-      }
-
-      if (input?.domain) {
-        // Prefix filter INCLUDING the exact domain itself — 'music/gear'
-        // must match pages in 'music/gear' as well as 'music/gear/elektron'.
-        clauses.push('(domain = ? OR domain LIKE ?)');
-        params.push(input.domain, `${input.domain}/%`);
-      }
-
-      const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-      params.push(limit);
-
-      const rows = db.prepare(
-        `SELECT * FROM pages ${where} ORDER BY updated DESC, created DESC LIMIT ?`,
-      ).all(...params) as KnowledgePage[];
-
-      return Promise.resolve(rows.map((page) => ({
-        ...page,
-        citations: this.fetchCitationsForPage(db, page.id),
-      })));
-    } catch (e) {
-      return Promise.reject(e);
-    }
+  if (!pageCols.includes('tombstone_note')) {
+    db.prepare('ALTER TABLE pages ADD COLUMN tombstone_note TEXT').run();
   }
-
-  queryPages(input: KnowledgeQueryInput): Promise<KnowledgePageWithCitations[]> {
-    try {
-      const db = this.ensureOpen();
-      const limit = input.limit ?? 10;
-
-      const clauses: string[] = [];
-      const params: unknown[] = [];
-
-      if (input.query) {
-        // Split into tokens on whitespace. Never filter by token length —
-        // single-letter tokens like 'I' and roman numerals like 'II' are
-        // semantically meaningful (e.g. "Digitakt I" vs "Digitakt II") and
-        // must never be stopworded or dropped.
-        const tokens = input.query.trim().split(/\s+/).filter((t) => t.length > 0);
-        for (const token of tokens) {
-          const likePattern = `%${token}%`;
-          clauses.push('(title LIKE ? OR body LIKE ? OR domain LIKE ?)');
-          params.push(likePattern, likePattern, likePattern);
-        }
-      }
-
-      if (input.domain) {
-        // Prefix filter INCLUDING the exact domain itself — 'music/gear'
-        // must match pages in 'music/gear' as well as 'music/gear/elektron'.
-        clauses.push('(domain = ? OR domain LIKE ?)');
-        params.push(input.domain, `${input.domain}/%`);
-      }
-
-      if (input.excludeStatus) {
-        clauses.push('status != ?');
-        params.push(input.excludeStatus);
-      }
-
-      const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-      params.push(limit);
-
-      // Stale-first ordering for the verification engine: never-verified
-      // pages first (NULL sorts lowest in SQLite ASC), then oldest-verified.
-      const orderBy = input.sortByVerified
-        ? 'ORDER BY verified_at ASC NULLS FIRST, updated ASC'
-        : 'ORDER BY hit_count DESC, updated DESC, created DESC';
-
-      const rows = db.prepare(
-        `SELECT * FROM pages ${where} ${orderBy} LIMIT ?`,
-      ).all(...params) as KnowledgePage[];
-
-      // Stamp last_accessed + increment hit_count in a single transaction for all hits.
-      // This is the usage signal the Phase-4 expansion engine depends on.
-      // Callers doing index-style browsing pass stampAccess: false — a page
-      // appearing in a listing is not a read.
-      if (rows.length > 0 && input.stampAccess !== false) {
-        const now = new Date().toISOString();
-        this.recordAccess(db, rows.map((r) => r.id), input.identity ?? UNKNOWN_IDENTITY, now);
-      }
-
-      return Promise.resolve(rows.map((page) => ({
-        ...page,
-        citations: this.fetchCitationsForPage(db, page.id),
-      })));
-    } catch (e) {
-      return Promise.reject(e);
-    }
+  // ours/ class metadata (t-81, 2026-08-31).
+  if (!pageCols.includes('created_by')) {
+    db.prepare('ALTER TABLE pages ADD COLUMN created_by TEXT').run();
   }
-
-  archivePage(input: KnowledgeArchiveInput): Promise<KnowledgeArchiveResult> {
-    try {
-      const db = this.ensureOpen();
-      const timestamp = new Date().toISOString();
-
-      const page = db.prepare(
-        "SELECT id, status FROM pages WHERE slug = ?",
-      ).get(input.slug) as { id: number; status: string } | undefined;
-
-      if (!page || page.status === 'archived') {
-        return Promise.resolve({ slug: input.slug, archived: false });
-      }
-
-      retryWrite(() =>
-        db.prepare(
-          "UPDATE pages SET status = 'archived', tombstone_note = ?, updated = ? WHERE slug = ?",
-        ).run(input.note ?? null, timestamp, input.slug),
-      );
-
-      return Promise.resolve({ slug: input.slug, archived: true });
-    } catch (e) {
-      return Promise.reject(e);
-    }
+  if (!pageCols.includes('version')) {
+    db.prepare('ALTER TABLE pages ADD COLUMN version TEXT').run();
   }
-
-  restorePage(input: KnowledgeRestoreInput): Promise<KnowledgeRestoreResult> {
-    try {
-      const db = this.ensureOpen();
-      const timestamp = new Date().toISOString();
-
-      const page = db.prepare(
-        "SELECT id, status FROM pages WHERE slug = ?",
-      ).get(input.slug) as { id: number; status: string } | undefined;
-
-      if (!page || page.status !== 'archived') {
-        return Promise.resolve({ slug: input.slug, restored: false });
-      }
-
-      retryWrite(() =>
-        db.prepare(
-          "UPDATE pages SET status = 'active', tombstone_note = NULL, updated = ? WHERE slug = ?",
-        ).run(timestamp, input.slug),
-      );
-
-      return Promise.resolve({ slug: input.slug, restored: true });
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  supersedePage(input: KnowledgeSupersededInput): Promise<KnowledgeSupersededResult> {
-    try {
-      const db = this.ensureOpen();
-
-      const oldPage = db.prepare(
-        "SELECT id, status FROM pages WHERE slug = ?",
-      ).get(input.old_slug) as { id: number; status: string } | undefined;
-
-      if (!oldPage) {
-        return Promise.reject(new Error(`supersedePage: old page not found: ${input.old_slug}`));
-      }
-
-      const newPage = db.prepare(
-        "SELECT id FROM pages WHERE slug = ?",
-      ).get(input.new_slug) as { id: number } | undefined;
-
-      if (!newPage) {
-        return Promise.reject(new Error(`supersedePage: new (canonical) page not found: ${input.new_slug}`));
-      }
-
-      if (oldPage.status === 'archived') {
-        return Promise.resolve({ old_slug: input.old_slug, new_slug: input.new_slug, archived: false });
-      }
-
-      const timestamp = new Date().toISOString();
-      const tombstoneNote = input.note
-        ? `Superseded by ${input.new_slug}. ${input.note}`
-        : `Superseded by ${input.new_slug}.`;
-
-      const tx = db.transaction(() => {
-        // Archive the old page with a tombstone.
-        db.prepare(
-          "UPDATE pages SET status = 'archived', tombstone_note = ?, updated = ? WHERE slug = ?",
-        ).run(tombstoneNote, timestamp, input.old_slug);
-
-        // Record the supersession.
-        db.prepare(
-          "INSERT INTO supersessions (old_slug, new_slug, note, created) VALUES (?, ?, ?, ?)",
-        ).run(input.old_slug, input.new_slug, input.note ?? null, timestamp);
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve({
-        old_slug: input.old_slug,
-        new_slug: input.new_slug,
-        archived: oldPage.status !== 'archived',
-      });
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  movePage(input: KnowledgeMoveInput): Promise<KnowledgeMoveResult> {
-    try {
-      const db = this.ensureOpen();
-      const timestamp = new Date().toISOString();
-
-      // ── Batch by domain prefix substitution ──────────────────────────────────
-      if (input.from_domain_prefix !== undefined) {
-        if (!input.to_domain_prefix) {
-          return Promise.reject(new Error('movePage: to_domain_prefix is required when from_domain_prefix is set'));
+  // sla_class: machine-readable freshness SLA class (t-434, 2026-09-25).
+  // DEFAULT 'default' covers all rows created before this migration.
+  // Backfill then upgrades rows whose anchor or domain implies a non-default class.
+  if (!pageCols.includes('sla_class')) {
+    db.prepare("ALTER TABLE pages ADD COLUMN sla_class TEXT NOT NULL DEFAULT 'default'").run();
+    // Backfill: re-derive for every existing row.
+    const rows = db.prepare(
+      "SELECT id, freshness_anchor, domain FROM pages",
+    ).all() as Array<{ id: number; freshness_anchor: string | null; domain: string }>;
+    const update = db.prepare("UPDATE pages SET sla_class = ? WHERE id = ?");
+    const backfill = db.transaction(() => {
+      for (const row of rows) {
+        const klass = deriveSlaClass(row.freshness_anchor, row.domain);
+        if (klass !== 'default') {
+          update.run(klass, row.id);
         }
-        if (input.from_domain_prefix === input.to_domain_prefix) {
-          return Promise.reject(new Error('movePage: from_domain_prefix and to_domain_prefix must differ'));
-        }
-
-        const affected = db.prepare(
-          `SELECT slug, domain FROM pages WHERE domain = ? OR domain LIKE ?`,
-        ).all(input.from_domain_prefix, `${input.from_domain_prefix}/%`) as Array<{ slug: string; domain: string }>;
-
-        const pages: KnowledgeMovedPageRecord[] = [];
-
-        const tx = db.transaction(() => {
-          for (const p of affected) {
-            const newDomain = input.to_domain_prefix! + p.domain.slice(input.from_domain_prefix!.length);
-            db.prepare('UPDATE pages SET domain = ?, updated = ? WHERE slug = ?').run(newDomain, timestamp, p.slug);
-            pages.push({ slug: p.slug, old_domain: p.domain, new_domain: newDomain });
-          }
-        });
-        retryWrite(() => tx.immediate());
-
-        return Promise.resolve({ moved: pages.length, pages, pointers_written: 0 });
-      }
-
-      // ── Batch by explicit slug list (re-domain only) ──────────────────────────
-      if (input.slugs && input.slugs.length > 0) {
-        if (!input.new_domain) {
-          return Promise.reject(new Error('movePage: new_domain is required when slugs list is provided'));
-        }
-
-        const pages: KnowledgeMovedPageRecord[] = [];
-
-        const tx = db.transaction(() => {
-          for (const slug of input.slugs!) {
-            const page = db.prepare(
-              'SELECT domain FROM pages WHERE slug = ?',
-            ).get(slug) as { domain: string } | undefined;
-
-            if (!page) {
-              throw new Error(`movePage: page not found: ${slug}`);
-            }
-
-            db.prepare('UPDATE pages SET domain = ?, updated = ? WHERE slug = ?').run(
-              input.new_domain!, timestamp, slug,
-            );
-            pages.push({ slug, old_domain: page.domain, new_domain: input.new_domain! });
-          }
-        });
-        retryWrite(() => tx.immediate());
-
-        return Promise.resolve({ moved: pages.length, pages, pointers_written: 0 });
-      }
-
-      // ── Single-page mode ──────────────────────────────────────────────────────
-      if (!input.slug) {
-        return Promise.reject(new Error('movePage: slug is required for single-page mode'));
-      }
-      if (!input.new_slug && !input.new_domain) {
-        return Promise.reject(new Error('movePage: at least one of new_slug or new_domain is required'));
-      }
-      if (input.new_slug && input.new_slug === input.slug) {
-        return Promise.reject(new Error('movePage: new_slug must differ from the current slug'));
-      }
-
-      const page = db.prepare(
-        'SELECT domain FROM pages WHERE slug = ?',
-      ).get(input.slug) as { domain: string } | undefined;
-
-      if (!page) {
-        return Promise.reject(new Error(`movePage: page not found: ${input.slug}`));
-      }
-
-      // Slug-collision check — must happen before the transaction.
-      if (input.new_slug) {
-        const collision = db.prepare(
-          'SELECT id FROM pages WHERE slug = ?',
-        ).get(input.new_slug) as { id: number } | undefined;
-
-        if (collision) {
-          return Promise.reject(new Error(
-            `movePage: slug '${input.new_slug}' already exists — use knowledge_merge instead of knowledge_move to consolidate pages.`,
-          ));
-        }
-      }
-
-      const oldSlug = input.slug;
-      const oldDomain = page.domain;
-      const leavePointer = input.leave_pointer !== false; // default true
-      let pointersWritten = 0;
-
-      const tx = db.transaction(() => {
-        if (input.new_slug) {
-          db.prepare('UPDATE pages SET slug = ?, updated = ? WHERE slug = ?').run(
-            input.new_slug, timestamp, oldSlug,
-          );
-          if (leavePointer) {
-            db.prepare(
-              'INSERT INTO supersessions (old_slug, new_slug, note, created) VALUES (?, ?, ?, ?)',
-            ).run(oldSlug, input.new_slug, 'slug rename via knowledge_move', timestamp);
-            pointersWritten = 1;
-          }
-        }
-        if (input.new_domain) {
-          // Address the row by its current slug after the possible rename.
-          const currentSlug = input.new_slug ?? oldSlug;
-          db.prepare('UPDATE pages SET domain = ?, updated = ? WHERE slug = ?').run(
-            input.new_domain, timestamp, currentSlug,
-          );
-        }
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve({
-        moved: 1,
-        pages: [{
-          slug: input.new_slug ?? oldSlug,
-          old_slug: input.new_slug ? oldSlug : undefined,
-          old_domain: oldDomain,
-          new_domain: input.new_domain ?? oldDomain,
-        }],
-        pointers_written: pointersWritten,
-      });
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  mergePages(input: KnowledgeMergeInput): Promise<KnowledgeMergeResult> {
-    try {
-      const db = this.ensureOpen();
-
-      if (!input.source_slugs || input.source_slugs.length === 0) {
-        return Promise.reject(new Error('mergePages: source_slugs must not be empty'));
-      }
-
-      type PageRow = { id: number; body: string; verified_at: string | null; freshness_anchor: string | null; domain: string };
-      type SourceRow = PageRow & { slug: string };
-
-      const targetRow = db.prepare(
-        'SELECT id, body, verified_at, freshness_anchor, domain FROM pages WHERE slug = ?',
-      ).get(input.target_slug) as PageRow | undefined;
-
-      if (!targetRow) {
-        return Promise.reject(new Error(`mergePages: target page not found: ${input.target_slug}`));
-      }
-
-      const sourceRows: SourceRow[] = [];
-      for (const slug of input.source_slugs) {
-        if (slug === input.target_slug) {
-          return Promise.reject(new Error(
-            `mergePages: source_slug '${slug}' is the same as target_slug — cannot merge a page into itself`,
-          ));
-        }
-        const row = db.prepare(
-          'SELECT id, slug, body, verified_at, freshness_anchor FROM pages WHERE slug = ?',
-        ).get(slug) as SourceRow | undefined;
-        if (!row) {
-          return Promise.reject(new Error(`mergePages: source page not found: ${slug}`));
-        }
-        sourceRows.push(row);
-      }
-
-      const timestamp = new Date().toISOString();
-
-      // MAX(verified_at) across all pages; null when all are unverified.
-      const allVerifiedAts = [targetRow.verified_at, ...sourceRows.map((r) => r.verified_at)]
-        .filter((v): v is string => v != null);
-      const maxVerifiedAt: string | null = allVerifiedAts.length > 0
-        ? allVerifiedAts.reduce((max, v) => (v > max ? v : max))
-        : null;
-
-      // freshness_anchor: keep target's; fall back to first non-null source's.
-      let freshnessAnchor = targetRow.freshness_anchor;
-      if (!freshnessAnchor) {
-        for (const row of sourceRows) {
-          if (row.freshness_anchor) {
-            freshnessAnchor = row.freshness_anchor;
-            break;
-          }
-        }
-      }
-
-      // Capture loser bodies before the transaction (returned in result).
-      const losers = sourceRows.map((r) => ({ slug: r.slug, body: r.body }));
-
-      let citationsMoved = 0;
-      let citationsDeduped = 0;
-
-      const tx = db.transaction(() => {
-        for (const source of sourceRows) {
-          // Count total source citations before dedup. (Within the transaction,
-          // reads are consistent with the write lock we hold.)
-          const before = (db.prepare(
-            'SELECT COUNT(*) as count FROM citations WHERE page_id = ?',
-          ).get(source.id) as { count: number }).count;
-
-          // Delete source citations that are identical to existing target citations.
-          db.prepare(`
-            DELETE FROM citations
-            WHERE page_id = ?
-              AND EXISTS (
-                SELECT 1 FROM citations c2
-                WHERE c2.page_id = ?
-                  AND c2.claim = citations.claim
-                  AND c2.source_kind = citations.source_kind
-                  AND COALESCE(c2.source_locator, '') = COALESCE(citations.source_locator, '')
-                  AND c2.excerpt = citations.excerpt
-              )
-          `).run(source.id, targetRow.id);
-
-          const after = (db.prepare(
-            'SELECT COUNT(*) as count FROM citations WHERE page_id = ?',
-          ).get(source.id) as { count: number }).count;
-
-          citationsDeduped += before - after;
-
-          // Re-parent remaining source citations to target.
-          db.prepare('UPDATE citations SET page_id = ? WHERE page_id = ?').run(targetRow.id, source.id);
-          citationsMoved += after;
-        }
-
-        // Update target: verified_at, freshness_anchor, sla_class, updated.
-        const mergedSlaClass = deriveSlaClass(freshnessAnchor ?? null, targetRow.domain);
-        db.prepare(
-          'UPDATE pages SET verified_at = ?, freshness_anchor = ?, sla_class = ?, updated = ? WHERE id = ?',
-        ).run(maxVerifiedAt, freshnessAnchor ?? null, mergedSlaClass, timestamp, targetRow.id);
-
-        // Optionally append loser bodies to target body.
-        if (input.append_loser_bodies) {
-          let appendedBody = targetRow.body;
-          for (const loser of losers) {
-            appendedBody += `\n\n--- merged from ${loser.slug} ---\n\n${loser.body}`;
-          }
-          enforcePageBodyCap(appendedBody);
-          db.prepare('UPDATE pages SET body = ? WHERE id = ?').run(appendedBody, targetRow.id);
-        }
-
-        // Archive each source and record the supersession.
-        for (const source of sourceRows) {
-          const tombstoneNote = input.note
-            ? `Merged into ${input.target_slug}. ${input.note}`
-            : `Merged into ${input.target_slug}.`;
-
-          db.prepare(
-            "UPDATE pages SET status = 'archived', tombstone_note = ?, updated = ? WHERE id = ?",
-          ).run(tombstoneNote, timestamp, source.id);
-
-          db.prepare(
-            'INSERT INTO supersessions (old_slug, new_slug, note, created) VALUES (?, ?, ?, ?)',
-          ).run(source.slug, input.target_slug, input.note ?? null, timestamp);
-        }
-
-        // hard_delete_losers: archive first (supersession pointer written above), then DELETE.
-        // Citations cascade via FK ON DELETE CASCADE; supersession rows survive (plain TEXT refs, no FK).
-        if (input.hard_delete_losers) {
-          for (const source of sourceRows) {
-            db.prepare('DELETE FROM pages WHERE id = ?').run(source.id);
-          }
-        }
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve({
-        target_slug: input.target_slug,
-        sources_merged: sourceRows.length,
-        citations_moved: citationsMoved,
-        citations_deduped: citationsDeduped,
-        verified_at: maxVerifiedAt,
-        losers,
-      });
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  purgePages(input: KnowledgePurgeInput): Promise<KnowledgePurgeResult> {
-    try {
-      const db = this.ensureOpen();
-
-      if (!input.slugs || input.slugs.length === 0) {
-        return Promise.reject(new Error('purgePages: slugs must not be empty'));
-      }
-
-      if (input.confirm !== true) {
-        return Promise.reject(new Error('purgePages: confirm must be explicitly true'));
-      }
-
-      // Validate all slugs before touching the database.
-      type PageRow = { id: number; status: string };
-      const rows: Array<{ id: number; slug: string }> = [];
-      for (const slug of input.slugs) {
-        const page = db.prepare(
-          'SELECT id, status FROM pages WHERE slug = ?',
-        ).get(slug) as PageRow | undefined;
-
-        if (!page) {
-          return Promise.reject(new Error(`purgePages: page not found: ${slug}`));
-        }
-        if (page.status !== 'archived') {
-          return Promise.reject(new Error(
-            `purgePages: page '${slug}' is not archived — archive it first before purging`,
-          ));
-        }
-        rows.push({ id: page.id, slug });
-      }
-
-      // All checks passed — delete in a single transaction.
-      // Citations cascade via FK ON DELETE CASCADE.
-      // Supersession rows survive (plain TEXT refs, no FK).
-      const tx = db.transaction(() => {
-        for (const row of rows) {
-          db.prepare('DELETE FROM pages WHERE id = ?').run(row.id);
-        }
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve({ purged: input.slugs.length, slugs: input.slugs });
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  verifyPages(input: KnowledgeVerifyInput): Promise<KnowledgeVerifyResult> {
-    try {
-      return Promise.resolve(verifyKnowledgePages(this.ensureOpen(), input, Date.now()));
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  getVerifications(slug: string): Promise<KnowledgeVerificationRecord[]> {
-    try {
-      const db = this.ensureOpen();
-
-      const page = db.prepare('SELECT id FROM pages WHERE slug = ?').get(slug) as
-        | { id: number }
-        | undefined;
-      if (!page) {
-        return Promise.reject(new Error(`getVerifications: page not found: ${slug}`));
-      }
-
-      const rows = db.prepare(
-        `SELECT id, page_id, verifier, verified_at, outcome, citation_checked
-         FROM verifications WHERE page_id = ? ORDER BY id DESC`,
-      ).all(page.id) as Array<{
-        id: number;
-        page_id: number;
-        verifier: string | null;
-        verified_at: string;
-        outcome: string;
-        citation_checked: number;
-      }>;
-
-      return Promise.resolve(rows.map((r) => ({ ...r, citation_checked: r.citation_checked !== 0 })));
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  listRevisions(slug: string): Promise<KnowledgeRevisionMeta[]> {
-    try {
-      const db = this.ensureOpen();
-
-      const page = db.prepare('SELECT id FROM pages WHERE slug = ?').get(slug) as
-        | { id: number }
-        | undefined;
-      if (!page) {
-        return Promise.reject(new Error(`listRevisions: page not found: ${slug}`));
-      }
-
-      const rows = db.prepare(
-        `SELECT id, page_id, slug, op, replaced_at, actor, LENGTH(body) AS body_length
-         FROM page_revisions WHERE page_id = ? ORDER BY id DESC`,
-      ).all(page.id) as KnowledgeRevisionMeta[];
-
-      return Promise.resolve(rows);
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  getRevision(revisionId: number): Promise<KnowledgeRevision | null> {
-    try {
-      const db = this.ensureOpen();
-      const row = db.prepare(
-        'SELECT id, page_id, slug, op, replaced_at, actor, body FROM page_revisions WHERE id = ?',
-      ).get(revisionId) as KnowledgeRevision | undefined;
-      return Promise.resolve(row ?? null);
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  restoreRevision(input: KnowledgeRevisionRestoreInput): Promise<KnowledgeRevisionRestoreResult> {
-    try {
-      const db = this.ensureOpen();
-      const timestamp = new Date().toISOString();
-
-      const page = db.prepare(
-        'SELECT id, body FROM pages WHERE slug = ?',
-      ).get(input.slug) as { id: number; body: string } | undefined;
-      if (!page) {
-        return Promise.reject(new Error(`restoreRevision: page not found: ${input.slug}`));
-      }
-
-      const revision = db.prepare(
-        'SELECT id, page_id, body FROM page_revisions WHERE id = ?',
-      ).get(input.revision_id) as { id: number; page_id: number; body: string } | undefined;
-      if (!revision) {
-        return Promise.reject(new Error(`restoreRevision: revision not found: ${input.revision_id}`));
-      }
-      if (revision.page_id !== page.id) {
-        return Promise.reject(new Error(
-          `restoreRevision: revision ${input.revision_id} belongs to a different page than '${input.slug}'`,
-        ));
-      }
-
-      let snapshotId = 0;
-      const tx = db.transaction(() => {
-        // The body being displaced is itself preserved — a restore must
-        // never be the second irreversible overwrite in the story.
-        snapshotId = snapshotKnowledgeRevision(db, page.id, input.slug, page.body, 'history-restore', timestamp, input.actor ?? null);
-        setKnowledgePageBody(db, page.id, revision.body, timestamp);
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve({
-        slug: input.slug,
-        revision_id: input.revision_id,
-        restored: true,
-        snapshot_id: snapshotId,
-      });
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  addCitations(slug: string, citations: KnowledgeCitationInput[]): Promise<number> {
-    try {
-      const db = this.ensureOpen();
-
-      const page = db.prepare(
-        'SELECT id FROM pages WHERE slug = ?',
-      ).get(slug) as { id: number } | undefined;
-
-      if (!page) {
-        throw new Error(`addCitations: page not found: ${slug}`);
-      }
-
-      const timestamp = new Date().toISOString();
-      let added = 0;
-
-      const tx = db.transaction(() => {
-        for (const cit of citations) {
-          if (insertKnowledgeCitation(db, page.id, cit, timestamp)) added++;
-        }
-      });
-      retryWrite(() => tx.immediate());
-
-      return Promise.resolve(added);
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  getAccessStats(pageId: number): Promise<KnowledgeAccessStat[]> {
-    try {
-      const db = this.ensureOpen();
-      const rows = db.prepare(
-        `SELECT identity, hit_count, last_accessed FROM knowledge_access
-         WHERE page_id = ? ORDER BY last_accessed DESC`,
-      ).all(pageId) as KnowledgeAccessStat[];
-      return Promise.resolve(rows);
-    } catch (e) {
-      return Promise.reject(e);
-    }
-  }
-
-  close(): void {
-    if (this.db) {
-      this.db.close();
-      this.db = null;
-    }
-  }
-
-  // ── Internals ──
-
-  /**
-   * Stamp a real read on each page id: bump the shared pages.hit_count /
-   * last_accessed aggregate (unchanged legacy behavior — this is what
-   * knowledge_maintain's cold/expansion ranking reads) AND upsert the
-   * per-identity row in knowledge_access (t-677 attribution). Both updates
-   * happen in one transaction so a crash between them can't desync the
-   * aggregate from the per-reader breakdown.
-   */
-  private recordAccess(db: Database, pageIds: number[], identity: string, now: string): void {
-    const bumpPage = db.prepare(
-      'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
-    );
-    const upsertAccess = db.prepare(
-      `INSERT INTO knowledge_access (page_id, identity, hit_count, last_accessed)
-       VALUES (?, ?, 1, ?)
-       ON CONFLICT(page_id, identity) DO UPDATE SET
-         hit_count = hit_count + 1,
-         last_accessed = excluded.last_accessed`,
-    );
-    const tx = db.transaction((ids: number[]) => {
-      for (const id of ids) {
-        bumpPage.run(now, id);
-        upsertAccess.run(id, identity, now);
       }
     });
-    retryWrite(() => tx(pageIds));
+    backfill();
   }
+  // Actor attribution (t-675): identity that wrote v1 of the page. Set
+  // only at creation (insertKnowledgePage) — never backfilled, since there is no
+  // way to recover who actually wrote pre-existing rows.
+  if (!pageCols.includes('author')) {
+    db.prepare('ALTER TABLE pages ADD COLUMN author TEXT').run();
+  }
+  const revisionCols = (db.prepare('PRAGMA table_info(page_revisions)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!revisionCols.includes('actor')) {
+    db.prepare('ALTER TABLE page_revisions ADD COLUMN actor TEXT').run();
+  }
+}
 
-  private ensureOpen(): Database {
-    if (!this.db) {
-      throw new Error('KnowledgeBackend is already closed');
-    }
-    return this.db;
-  }
-
-  private fetchCitationsForPage(db: Database, pageId: number): KnowledgeCitation[] {
-    return db.prepare(
-      'SELECT * FROM citations WHERE page_id = ? ORDER BY id',
-    ).all(pageId) as KnowledgeCitation[];
-  }
-
-  /** Creates a new store's tables and brings an older store up to date, all in one transaction: each
-   * change is found pending from the table's columns, so one that stopped between adding a column
-   * and filling it would never be finished. The transaction takes the write lock only at its first
-   * real change, so opening a store that is already up to date waits for no other writer. */
-  private initSchema(): void {
-    this.db!.transaction(() => this.createAndUpgrade())();
-  }
-
-  private createAndUpgrade(): void {
-    const statements = [
-      `CREATE TABLE IF NOT EXISTS pages (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        uuid          TEXT NOT NULL UNIQUE,
-        slug          TEXT NOT NULL UNIQUE,
-        title         TEXT NOT NULL,
-        domain        TEXT NOT NULL,
-        body          TEXT NOT NULL,
-        sourcing      TEXT NOT NULL DEFAULT 'sourced',
-        provenance    TEXT,
-        status        TEXT NOT NULL DEFAULT 'active',
-        created       TEXT NOT NULL,
-        updated       TEXT,
-        last_accessed TEXT,
-        hit_count     INTEGER NOT NULL DEFAULT 0,
-        verified_at   TEXT,
-        freshness_anchor TEXT,
-        sla_class     TEXT NOT NULL DEFAULT 'default'
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain)`,
-      `CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug)`,
-      `CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status)`,
-      `CREATE TABLE IF NOT EXISTS citations (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-        claim          TEXT NOT NULL,
-        source_kind    TEXT NOT NULL,
-        source_locator TEXT,
-        excerpt        TEXT NOT NULL,
-        retrieved_at   TEXT NOT NULL,
-        created        TEXT NOT NULL
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_citations_page ON citations(page_id)`,
-      `CREATE TABLE IF NOT EXISTS supersessions (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        old_slug  TEXT NOT NULL,
-        new_slug  TEXT NOT NULL,
-        note      TEXT,
-        created   TEXT NOT NULL
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_supersessions_old ON supersessions(old_slug)`,
-      `CREATE INDEX IF NOT EXISTS idx_supersessions_new ON supersessions(new_slug)`,
-      `CREATE TABLE IF NOT EXISTS page_revisions (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-        slug        TEXT NOT NULL,
-        body        TEXT NOT NULL,
-        op          TEXT NOT NULL,
-        replaced_at TEXT NOT NULL
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_page_revisions_page ON page_revisions(page_id)`,
-      // Actor attribution (t-675): who verified a page, when, and what they
-      // found. Additive to pages.verified_at (which stays the fast single-
-      // column freshness stamp everything else queries/sorts on) — this
-      // table is the attributed audit trail underneath it.
-      `CREATE TABLE IF NOT EXISTS verifications (
-        id               INTEGER PRIMARY KEY AUTOINCREMENT,
-        page_id          INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-        verifier         TEXT,
-        verified_at      TEXT NOT NULL,
-        outcome          TEXT NOT NULL DEFAULT 'confirmed',
-        citation_checked INTEGER NOT NULL DEFAULT 0
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_verifications_page ON verifications(page_id)`,
-      // Per-identity read attribution (t-677) — additive to pages.hit_count/
-      // last_accessed, never a replacement. See getAccessStats/recordAccess.
-      `CREATE TABLE IF NOT EXISTS knowledge_access (
-        page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-        identity      TEXT NOT NULL,
-        hit_count     INTEGER NOT NULL DEFAULT 0,
-        last_accessed TEXT,
-        PRIMARY KEY (page_id, identity)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_knowledge_access_page ON knowledge_access(page_id)`,
-    ];
-    for (const sql of statements) {
-      this.db!.prepare(sql).run();
-    }
-    // Idempotent migrations for existing DBs (ALTER ADD COLUMN has no IF NOT EXISTS).
-    const pageCols = (this.db!.prepare('PRAGMA table_info(pages)').all() as Array<{ name: string }>).map((c) => c.name);
-    if (!pageCols.includes('verified_at')) {
-      this.db!.prepare('ALTER TABLE pages ADD COLUMN verified_at TEXT').run();
-    }
-    if (!pageCols.includes('freshness_anchor')) {
-      this.db!.prepare('ALTER TABLE pages ADD COLUMN freshness_anchor TEXT').run();
-    }
-    if (!pageCols.includes('tombstone_note')) {
-      this.db!.prepare('ALTER TABLE pages ADD COLUMN tombstone_note TEXT').run();
-    }
-    // ours/ class metadata (t-81, 2026-08-31).
-    if (!pageCols.includes('created_by')) {
-      this.db!.prepare('ALTER TABLE pages ADD COLUMN created_by TEXT').run();
-    }
-    if (!pageCols.includes('version')) {
-      this.db!.prepare('ALTER TABLE pages ADD COLUMN version TEXT').run();
-    }
-    // sla_class: machine-readable freshness SLA class (t-434, 2026-09-25).
-    // DEFAULT 'default' covers all rows created before this migration.
-    // Backfill then upgrades rows whose anchor or domain implies a non-default class.
-    if (!pageCols.includes('sla_class')) {
-      this.db!.prepare("ALTER TABLE pages ADD COLUMN sla_class TEXT NOT NULL DEFAULT 'default'").run();
-      // Backfill: re-derive for every existing row.
-      const rows = this.db!.prepare(
-        "SELECT id, freshness_anchor, domain FROM pages",
-      ).all() as Array<{ id: number; freshness_anchor: string | null; domain: string }>;
-      const update = this.db!.prepare("UPDATE pages SET sla_class = ? WHERE id = ?");
-      const backfill = this.db!.transaction(() => {
-        for (const row of rows) {
-          const klass = deriveSlaClass(row.freshness_anchor, row.domain);
-          if (klass !== 'default') {
-            update.run(klass, row.id);
-          }
-        }
-      });
-      backfill();
-    }
-    // Actor attribution (t-675): identity that wrote v1 of the page. Set
-    // only at creation (writePage) — never backfilled, since there is no
-    // way to recover who actually wrote pre-existing rows.
-    if (!pageCols.includes('author')) {
-      this.db!.prepare('ALTER TABLE pages ADD COLUMN author TEXT').run();
-    }
-    const revisionCols = (this.db!.prepare('PRAGMA table_info(page_revisions)').all() as Array<{ name: string }>).map((c) => c.name);
-    if (!revisionCols.includes('actor')) {
-      this.db!.prepare('ALTER TABLE page_revisions ADD COLUMN actor TEXT').run();
-    }
-  }
+/**
+ * Brings a knowledge store to this program's version, or refuses it: every program that opens the
+ * file for writing calls this first, at each start (`prepareSharedMemorySources`). A file a newer
+ * program has changed, or one that is not a knowledge store, throws and is left as it is. An up to
+ * date file is not written to: the transaction takes the write lock only at its first real change.
+ */
+export function upgradeKnowledgeStore(db: Database): void {
+  recogniseKnowledgeStore(db);
+  db.pragma('journal_mode = WAL');
+  db.transaction(() => createAndUpgrade(db))();
+  if (db.pragma('user_version', { simple: true }) !== KNOWLEDGE_VERSION) db.pragma(`user_version = ${KNOWLEDGE_VERSION}`);
 }

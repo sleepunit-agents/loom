@@ -1,5 +1,3 @@
-import { touched } from '../core/touched/index.js';
-import { dirname } from 'node:path';
 /**
  * Person cards — the condensed current state of a human the agent works with
  * (docs/specs/person-cards.md, t-1376).
@@ -15,9 +13,8 @@ import { dirname } from 'node:path';
  *
  * Storage is the memory database (memories.db), opened raw like
  * proposals.ts — no embedder. Every mutation is one BEGIN IMMEDIATE
- * transaction (read, merge, validate, snapshot, write, prune), the pattern of
- * SqliteKnowledgeBackend.writePage: loom's one-writer rule is about *who*
- * writes, so the transaction is what serializes concurrent bodies.
+ * transaction (read, merge, validate, snapshot, write, prune): loom's
+ * one-writer rule is about *who* writes, so the transaction is what serializes concurrent bodies.
  */
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { refuseNewerStore, runMigrationSteps } from './migrations.js';
@@ -389,7 +386,7 @@ export class PeopleStore {
     this.holdsPeople = hasTable(this.db, 'people');
     this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
     this.holdsMerges = hasTable(this.db, 'person_merges');
-    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, 'dbPath' in config ? slug => touched(dirname(config.dbPath), 'person', slug) : undefined, !this.ownsDatabase);
+    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null, !this.ownsDatabase);
   }
 
   close(): void {
