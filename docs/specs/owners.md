@@ -183,6 +183,49 @@ Each step ships on its own and leaves everything working.
    agent owner's clock and lanes for their agents), subscriptions, shuttle.
    Each records `by: <who>`.
 
+## Moving a task, and merging or splitting projects
+
+*Added 2026-11-17, for the move of old tasks into loom: they are sorted into projects by a first guess, and
+the household needs the tools to put right what lands in the wrong place.*
+
+A task belongs to a project, and everyone on that project sees it. A task with no project is its owner's
+alone. Three things change where work is filed.
+
+- **Move a task** (`tasks.command`, action `move`, with `ids` and `project`; the named tool `task_move`).
+  Up to 500 tasks go to another project, or with `project: null` out of every project.
+  - *Who may.* The mover must be able to act on each task where it is now, and must be someone who could
+    have filed a task where it is going: a member or agent on that project, or a household owner. Out of
+    every project a task becomes its owner's alone, so only its owner or a household owner may do that. So
+    nobody gains sight of a task by a move who could not already have been given it. The rule is `moveTask`
+    in `src/policy.ts`, with the other task rules.
+  - *All or nothing.* If one task named cannot be moved, none is. A project that is removed, or is not
+    there, is refused.
+  - *What goes with the task.* Its own project, and the labels of mail that was filed under the task's
+    labels: a question put to a person about it, and the answer sent on from one. Mail filed in a
+    conversation keeps that conversation's labels.
+  - *What stays.* Links stay: a parent and its children may be in different projects. Comments stay.
+  - *The record.* One comment on each moved task, by the mover, saying from where to where. A task already
+    in the project is left alone and gets no comment.
+  - The same action name with one `id` and `before` still places a task in the hand-kept order.
+- **Merge two projects** (a household change, `projectMerge`, with `from` and `into`). An agent proposes it
+  and a household owner allows the card, as for every household change. In one write:
+  - every record filed under `from` is filed under `into`: its tasks, conversations, inbox items, approval
+    cards, triggers, jobs and pull requests. `projectLabelled` in `src/shared-projects.ts` lists every table
+    that names a project and what the merge does with it, and a test fails when a table is missing from it;
+  - the members and agents of `from` are added to `into`, and its repositories move to `into`, since a
+    repository has one project;
+  - `from` is marked removed. Its row is kept, like any removed project, with its own lists of people and
+    agents, which grant nothing while it is removed.
+
+  It is refused for a project merged into itself, for one that is removed or not there, and when a
+  repository would be left with two projects. The card is the record: who asked, who allowed it, and the
+  two projects. Tasks get no comment. A merge is not undone by restoring `from`, which puts back an empty
+  project. A standing approval rule whose scope is `project:<from>` is not carried over: it stays an
+  owner's word about that one project.
+- **Split a project.** There is no command for it. It is two steps that already exist:
+  1. make the new project (a household owner in the app, or an agent with `propose` and `change: "project"`);
+  2. `move` the chosen tasks into it.
+
 ## What the tests must pin
 
 - A household with only `"owner": "x"` behaves exactly as today, and the full

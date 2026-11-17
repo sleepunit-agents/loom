@@ -43,6 +43,11 @@ agent what happened. Nothing puts them together as *a project*.
 4. **A card has no edges.** Its `links` are *selectors* the hub reads with. loom validates their syntax at write and
    never resolves them as references: archiving a project touches nothing else.
 
+A project card is not where a task's sharing is decided. Who sees a task follows the household's project it is
+filed under. Moving a task to another of those, merging two of them, and splitting one (make the new project,
+then move the chosen tasks into it) are in [owners.md](owners.md), "Moving a task, and merging or splitting
+projects". None of them touches a card.
+
 ## Vocabulary (to be added to CONTEXT.md)
 
 **Project**:

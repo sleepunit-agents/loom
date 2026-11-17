@@ -69,8 +69,11 @@ can be read with `memoryProjectMemory(id:){title content}`. For Notes, use
 agent's declared source, never a caller-supplied directory.
 
 Knowledge uses `mind.knowledgeAdd` and the existing Knowledge queries. Tasks use
-`tasks.command` for create, claim, comment and close, and the generated Tasks
-queries for reads. The terminal receives no current-worker authority: job and
+`tasks.command` for create, claim, comment, close and move, and the generated Tasks
+queries for reads. `task_move` moves tasks to another project, all of them or
+none; `propose` with `projectMerge` asks a household owner to merge two projects.
+Splitting a project is those two steps: propose the new project, then move the
+tasks into it (`docs/specs/owners.md`, "Moving a task, and merging or splitting projects"). The terminal receives no current-worker authority: job and
 conversation controls still require their existing bound credentials.
 
 Private query responses retain the original credential, sharing and selected-word
