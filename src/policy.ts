@@ -164,8 +164,8 @@ const task: Rule = any(householdOwner, first([[set('project'), inProject('projec
  * themselves. Being in the destination is not enough to pull a task in, and being in the task's project is
  * not enough to push it somewhere else, or to make it private to its owner.
  *
- * That `to` names a project in use is asked beside this rule, where a new task's project is
- * (shared-task-access.ts): a removed project is nobody's destination, a household owner's included. */
+ * That `to` names a project in use is asked beside this rule, as it is for a new task's project
+ * (apps/tasks.ts, `taskProjectRefusal`): a removed project is nobody's destination, a household owner's included. */
 const moveTask: Rule = all(task, any(householdOwner, first([[set('to'), inProject('to')]], taskOwner)));
 /** The roster: who an agent is, what it reports it is doing, whether it is paused and which models it
  * prefers. Its owners, the agent itself, and anyone who shares a project with it. */

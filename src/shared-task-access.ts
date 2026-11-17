@@ -6,7 +6,7 @@ import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { tasks, inbox } from './core/data/schema.js';
 import type { TaskCommand } from './apps/task-command.js';
-import type { TaskRow } from './apps/tasks.js';
+import { taskProjectRefusal, type TaskRow } from './apps/tasks.js';
 
 export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: TaskCommand,
   conversationVisible: (viewer: Viewer, id: string) => boolean): boolean {
@@ -16,9 +16,10 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
     const row = db.select().from(tasks).where(eq(tasks.id, id)).get();
     return row && holds(rules.task, who, row, sharing) ? row : undefined;
   };
-  // The labels a task would carry: its project must exist, and the task so labelled must be one the caller sees.
+  // The labels a task would carry: its project must be one in use (apps/tasks.ts, `taskProjectRefusal`), and the
+  // task so labelled must be one the caller sees.
   const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>): boolean =>
-    (!task.project || Object.hasOwn(sharing.projects, task.project)) && holds(rules.task, viewer, task, sharing);
+    !taskProjectRefusal(db, task.project) && holds(rules.task, viewer, task, sharing);
   if (command.action === 'create') {
     const input = command.input, person = input.owner;
     // A new task's owner must be in the household now: someone removed owns nothing new.
@@ -30,7 +31,7 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
   // A move to another project, however it is asked for. The destination must be a project in use, as a new
   // task's must, and the task must be one this caller may move there (policy.ts, rule `moveTask`).
   const mayMove = (row: TaskRow | undefined, to: string | null): boolean =>
-    !!row && (to === null || Object.hasOwn(sharing.projects, to)) && holds(rules.moveTask, viewer, { ...row, to }, sharing);
+    !!row && !taskProjectRefusal(db, to) && holds(rules.moveTask, viewer, { ...row, to }, sharing);
   // Every task named must pass: one that does not, or is not there, refuses them all.
   if (command.action === 'moveToProject') return command.ids.every(id => mayMove(db.select().from(tasks).where(eq(tasks.id, id)).get(), command.project));
   const task = visibleTask(command.id);

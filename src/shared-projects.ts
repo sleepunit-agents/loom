@@ -7,7 +7,7 @@ import { refileConversations, refileInbox } from './core/conversations/index.js'
 import { refileTriggers } from './core/tempo/triggers.js';
 import { refileJobs } from './runtime/jobs.js';
 /** Project sharing is plain household metadata, checked only at the outside door. */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from './policy.js';
@@ -93,7 +93,7 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
    if(project.removedAt)return new OperationError('invalid','Project '+value.project+' is removed');
    if(!agent)return new OperationError('not-found','No agent has the id '+value.agent);
    if(agent.removedAt)return new OperationError('invalid','Agent '+value.agent+' is removed');
-   if(db.select().from(projectAgents).all().some(row=>row.project===value.project&&row.agent===value.agent))return alreadyOnProject(value);
+   if(db.select().from(projectAgents).where(and(eq(projectAgents.project,value.project),eq(projectAgents.agent,value.agent))).get())return alreadyOnProject(value);
    return undefined;
   },
   /** Add one agent to one project. Nothing else about the project changes: not its name, its people, its

@@ -128,13 +128,8 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     if (type === 'parent-child' && !db.select().from(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).get()) throw new Error('A task can have only one parent');
     touch(id, {});
   };
-  /** A task can go to no project, or to one that is in use. */
-  const destination = (project: string | null) => {
-    if (project === null) return;
-    const found = db.select({ removedAt: projects.removedAt }).from(projects).where(eq(projects.id, project)).get();
-    if (!found) throw new Error('Project not found');
-    if (found.removedAt) throw new Error('That project is removed');
-  };
+  /** The trusted layer's own guard: a task goes nowhere a task may not be (`taskProjectRefusal`). */
+  const destination = (project: string | null) => { const refused = taskProjectRefusal(db, project); if (refused) throw new Error(refused); };
   /** The one place a task changes project, inside the caller's transaction. Says whether it moved: a task
    * already there is left alone, with no comment. */
   const moveOne = (id: string, project: string | null, actor: TaskActor): boolean => {
@@ -243,6 +238,16 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
       });
     },
   };
+}
+
+/** A task's project must be one in use: a task may have no project, or one that is there and not removed.
+ * Stated here once. The outside door asks it for a new task, an edit and a move (shared-task-access.ts), and
+ * the service asks it again before it moves anything. The answer is why not, in the words a caller is told,
+ * or nothing when the project will do. */
+export function taskProjectRefusal(db: DataDatabase, project: string | null): string | undefined {
+  if (project === null) return undefined;
+  const found = db.select({ removedAt: projects.removedAt }).from(projects).where(eq(projects.id, project)).get();
+  return !found ? 'Project not found' : found.removedAt ? 'That project is removed' : undefined;
 }
 
 /** Every task filed under one project is filed under another: for a merge of the two (shared-projects.ts).

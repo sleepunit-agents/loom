@@ -527,6 +527,25 @@ it('merges one project into another only when an owner allows the card, and the 
   expect(f.db.select().from(projects).where(eq(projects.id, 'shed')).get()!.removedAt).toBeNull();
 });
 
+it('lets no standing rule answer a merge card, not one for dangerous actions either: an owner allows and confirms it by hand', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }]).run();
+  f.db.insert(conversations).values({ id: 'cv-sam', agent: 'art', member: 'sam', venue: 'loom', place: 'th', label: 'Sam', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const where = { conversation: 'cv-sam', member: 'sam', project: null };
+  const ask = (change: string, input: unknown) => f.root.writes.run(() => f.root.services.setup.propose('art', { change, input, why: 'Asked in conversation' }, where)).value;
+  // The widest rule there is for dangerous actions, set by the owner the agent is working for.
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'dangerous', scope: '*', person: '', tier: 'do' }, 'sam'));
+  // It answers a revocation as the card is filed, as before. A merge waits to be seen.
+  expect(ask('tokenRevoke', { label: 'lee' })).toMatchObject({ state: 'used', kind: 'dangerous', decidedBy: 'sam' });
+  const card = ask('projectMerge', { from: 'pond', into: 'garden' });
+  expect(card).toMatchObject({ state: 'pending', kind: 'dangerous', decidedBy: null });
+  expect(f.db.select().from(projects).all().map(row => row.removedAt)).toEqual([null, null]);
+  // By hand: Allow alone is refused, Allow with the confirmation makes it.
+  expect((await f.call('approvals/answer', { id: card.id, answer: 'allow' }, 'sam')).body.ok).toBe(false);
+  expect((await f.call('approvals/answer', { id: card.id, answer: 'allow', confirm: true }, 'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(projects).where(eq(projects.id, 'pond')).get()!.removedAt).not.toBeNull();
+});
+
 it('does not let a standing rule for settings answer a merge card', async () => {
   const f = fixture(), at = new Date(f.clock.now()).toISOString();
   f.db.insert(projects).values([{ id: 'pond', name: 'Pond' }, { id: 'garden', name: 'Garden' }]).run();
@@ -559,7 +578,7 @@ it('lets an agent ask to be let onto a project; allowing it adds that one agent 
   const card = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'pond', agent: 'mark' }, why: 'Sam asked me to work on pond and I am not on it' },
     { conversation: 'cv-room', member: null, project: null })).value;
   // The card says plainly who wants onto which project, and why. It is a setting, and nothing has changed.
-  expect(card).toMatchObject({ kind: 'setting', state: 'pending', agent: 'mark', conversation: 'cv-room', target: 'household:projectJoin:mark work on project pond', ask: 'Let mark work on project pond?',
+  expect(card).toMatchObject({ kind: 'setting', state: 'pending', agent: 'mark', conversation: 'cv-room', target: 'household:projectJoin:mark onto project pond', ask: 'Let mark work on project pond?',
     changeSummary: 'Let mark work on project pond. Nothing else about the project changes.', why: 'Sam asked me to work on pond and I am not on it' });
   const before = f.root.services.projects.describe('pond');
   expect(before).toMatchObject({ agents: ['art'] });
@@ -618,7 +637,7 @@ it('allows two agents onto the same project in turn: one card does not make the 
   // What a card is about still makes it stale: the project is removed after the card is filed.
   f.db.insert(projects).values({ id: 'garden', name: 'Garden' }).run();
   const late = ask('art');
-  expect(late).toMatchObject({ target: 'household:projectJoin:art work on project pond' });
+  expect(late).toMatchObject({ target: 'household:projectJoin:art onto project pond' });
   const gardens = f.root.writes.run(() => f.root.services.setup.propose('mark', { change: 'projectJoin', input: { project: 'garden', agent: 'mark' }, why: 'x' })).value;
   f.db.update(projects).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(projects.id, 'garden')).run();
   expect((await f.call('approvals/answer', { id: gardens.id, answer: 'allow' }, 'sam')).body).toMatchObject({ ok: false, message: 'This has changed since the card was filed; ask for a fresh card' });

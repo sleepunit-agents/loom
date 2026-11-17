@@ -3,7 +3,7 @@
  * an agent treats outside people and which tools its body is not given.
  * Four dangerous actions are proposed the same way: revoking a token, revoking
  * a machine, signing out a browser, and merging one project into another.
- * None of them can be put back. The agent files a card with the
+ * None of them can be put back, and an owner must also confirm each. The agent files a card with the
  * exact change it asks for. A household owner allows it through Approvals,
  * and only then does loom make the change. The agent never becomes an owner.
  *
@@ -131,7 +131,7 @@ const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
  :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member
- :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' work on project '+value.input.project:value.input.id;
+ :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' onto project '+value.input.project:value.input.id;
 const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
@@ -139,7 +139,7 @@ const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?
 const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:(value.change==='restore'?'remove':value.change)+':'+name(value));
 // The card's own words, for everyone who may read it: the change asked for, never what it would replace.
 const mergeWords=(value:Proposal)=>'Merge '+label(value)+'. Everything filed under the first is filed under the second, and the first is removed.';
-const joinWords=(value:Proposal)=>'Let '+name(value);
+const joinWords=(value:Proposal)=>value.change==='projectJoin'?'Let '+value.input.agent+' work on project '+value.input.project:'';
 const said=(value:Proposal)=>value.change==='projectMerge'?mergeWords(value):value.change==='projectJoin'?joinWords(value)+'. Nothing else about the project changes.':value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
  :label(value)+': '+JSON.stringify(sorted(value.input));
 // The same with what it would replace, for a household owner.
@@ -154,8 +154,11 @@ const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '
  *  - `rule`: a rule cannot widen the rules.
  *  - `projectJoin`: being on a project lets an agent read what is filed under it. A blanket rule for
  *    settings is not an owner saying this agent may read that project, so it never answers for one. The
- *    card is still a setting: one plain Allow, with nothing more to confirm. */
-export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin']);
+ *    card is still a setting: one plain Allow, with nothing more to confirm.
+ *  - `projectMerge`: a merge cannot be undone, and it shows each project's people the other's records. A
+ *    rule for dangerous actions, set for revocations, is not an owner looking at these two projects: the
+ *    owner allows and confirms each merge by hand. */
+export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge']);
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},

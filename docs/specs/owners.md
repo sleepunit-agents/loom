@@ -203,7 +203,8 @@ alone. Three things change where work is filed.
     there, is refused.
   - *What goes with the task.* Its own project, and the labels of mail that was filed under the task's
     labels: a question put to a person about it, and the answer sent on from one. Mail filed in a
-    conversation keeps that conversation's labels.
+    conversation keeps that conversation's labels, with one exception: an answer sent on to the agent that
+    asked, in a thread that is not a member's own, carries the task's project and so follows the task.
   - *What stays.* Links stay: a parent and its children may be in different projects. Comments stay.
   - *The record.* One comment on each moved task, by the mover, saying from where to where. A task already
     in the project is left alone and gets no comment.
@@ -212,7 +213,7 @@ alone. Three things change where work is filed.
     under the old project. `move` still means only a task's place in the hand-kept order.
 - **Merge two projects** (a household change, `projectMerge`, with `from` and `into`). An agent proposes it
   and a household owner allows the card. A merge cannot be undone, so the card is a dangerous one: the owner
-  must also confirm, and no standing rule for settings answers it. In one write:
+  must also confirm, and no standing approval rule answers it, not one for dangerous actions either. In one write:
   - every record filed under `from` is filed under `into`: its tasks, conversations, inbox items, approval
     cards, triggers, jobs and pull requests. `projectLabelled` in `src/shared-projects.ts` lists every table
     that names a project and what the merge does with it, and a test fails when a table is missing from it;

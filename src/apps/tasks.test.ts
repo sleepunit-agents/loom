@@ -244,6 +244,19 @@ it('takes the labels of mail filed under a task’s own labels with the task, an
   expect(labelsOf(inRoom.id)).toEqual({ project: 'shed', agent: 'art', member: null, conversation: room.id });
   expect(labelsOf(back.id)).toEqual({ project: null, agent: 'art', member: null, conversation: room.id });
   expect(labelsOf(mention.id).project).toBe('shed');
+
+  // A member's own thread with the agent: the answer sent on there carries the thread's labels, the member's
+  // among them, and none of the task's. It is private to that member wherever the task goes.
+  const own2 = mail.open({ agent: 'art', venue: 'loom', place: 'own', label: 'Own', project: 'shed', member: actor.id });
+  const privately = tasks.create({ title: 'Test water', goal: 'Tested', why: 'Cloudy', owner: asker, project: 'pond', source: { kind: 'conversation', id: own2.id } }, asker);
+  tasks.ask(privately.id, { to: actor, ask: 'Now?', ifYes: 'I test', ifNo: 'Later' }, asker);
+  const asked = db.select().from(inbox).where(eq(inbox.waitsOnId, privately.id)).get()!;
+  tasks.answer(privately.id, 'yes', '', actor);
+  const reply = db.select().from(inbox).where(eq(inbox.sourceId, asked.id)).get()!;
+  const threads = { project: 'shed', agent: 'art', member: actor.id, conversation: own2.id };
+  expect([labelsOf(asked.id), labelsOf(reply.id)]).toEqual([threads, threads]);
+  tasks.moveToProject([privately.id], null, actor);
+  expect([labelsOf(asked.id), labelsOf(reply.id)]).toEqual([threads, threads]);
 });
 
 it('changes a task’s project one way: an edit that names another project is the same move', () => {

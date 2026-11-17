@@ -337,9 +337,9 @@ it('lists the kinds of household change once', () => {
   expect(new Set(householdChanges).size).toBe(householdChanges.length);
   for (const kind of ['agent', 'order', 'secretDescription', 'remove', 'restore', ...dangerousHouseholdChanges]) expect(householdChanges, kind).toContain(kind);
   // The kinds no standing rule answers are named once, and filing asks that one list.
-  expect([...alwaysAsks].sort()).toEqual(['projectJoin', 'rule']);
+  expect([...alwaysAsks].sort()).toEqual(['projectJoin', 'projectMerge', 'rule']);
   expect(text('src/shared-household-proposals.ts')).toContain('if(alwaysAsks.has(value.change))return card;');
-  expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin)'\)return card/);
+  expect(text('src/shared-household-proposals.ts')).not.toMatch(/if\(value\.change==='(rule|projectJoin|projectMerge)'\)return card/);
   // What cannot be put back: three revocations, and a merge of two projects.
   expect([...dangerousHouseholdChanges].sort()).toEqual(['boxRevoke', 'browserSignOut', 'projectMerge', 'tokenRevoke']);
 });
@@ -627,6 +627,10 @@ it('asks policy.ts who may move a task to another project, at the one door that 
   // The rule is written in policy.ts and in no other file; the trusted service and the dispatcher carry no policy.
   expect(sources('src').filter(file => /\bmoveTask\b\s*[:=]/.test(text(file)))).toEqual(['src/policy.ts']);
   for (const file of ['src/apps/tasks.ts', 'src/apps/task-command.ts']) expect(text(file), file).not.toMatch(/from '\.\.\/policy\.js'/);
+  // That a task's project must be one in use is written once, with one set of refusal words; the door and the service call it.
+  expect(sources('src').filter(file => /'That project is removed'|'Project not found'/.test(text(file)))).toEqual(['src/apps/tasks.ts']);
+  expect(door.split('taskProjectRefusal(db, ').length).toBe(3);
+  expect(door).not.toMatch(/hasOwn\(sharing\.projects/);
 });
 
 it('asks policy.ts which agents Home shows', () => {

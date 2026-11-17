@@ -33,7 +33,7 @@ To split a project: make the new project (a household owner, or an agent through
 `household.propose` with `change: "project"`), then `moveToProject` the chosen
 tasks into it. To merge two projects, an agent proposes `change: "projectMerge"`
 with `{"from":"<id>","into":"<id>"}`, and a household owner allows and confirms
-the card: a merge cannot be undone.
+the card by hand: a merge cannot be undone, and no standing rule answers it.
 
 The server validates the action and supplies the authenticated actor. Each
 invocation uses one operation ID across transport retries. Results are JSON;
