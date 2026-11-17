@@ -36,11 +36,11 @@ import {
 } from './cards.js';
 
 export { CardError as ProjectCardError } from './cards.js';
+import { PROJECT_CARD_SLUG_MAX } from '../slug.js';
 
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
-/** ≤ 32 so that a name's field name (`-` → `_`) fits a `where` field name (person cards' 32). */
-export const MAX_PROJECT_SLUG = 32;
+export const MAX_PROJECT_SLUG = PROJECT_CARD_SLUG_MAX;
 const MAX_NAME = 80;
 const MAX_SUMMARY = 1200;
 const MAX_GOAL = 400;

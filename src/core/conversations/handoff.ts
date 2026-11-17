@@ -3,12 +3,13 @@ import {handoffPeersAssigned} from './handoff-access.js';
  * parent place come from its live conversation, never from caller claims. */
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
-import {agents,household,inbox} from '../data/schema.js';
+import {agents,inbox} from '../data/schema.js';
 import {operation,OperationError,type Operations} from '../operations/index.js';
 import {bodyOperationDefaults,conversationBodyScope,requireBodyScope,type BodyProof} from './body-scope.js';
 import type {CommsMessages} from './messages.js';
 import {sealHandoff} from './handoff-words.js';
 import {threadTitle} from './title.js';
+import { commsKeepDays } from '../data/comms-days.js';
 export function registerConversationHandoff(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean){
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
@@ -20,7 +21,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    if(found.cv.member!==null&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
    return found.cv.member!==null&&found.cv.project===null||handoffPeersAssigned(db,found.cv.agent,input.agent,found.cv.project);
   },
-  async prepare(input){return sealHandoff(service.key,input.words,service.now(),db.select({days:household.commsDays}).from(household).get()?.days??14);},
+  async prepare(input){return sealHandoff(service.key,input.words,service.now(),commsKeepDays(db));},
   run(ctx,input,prepared){
    const {job,cv}=requireCurrent(ctx.viewer),sourceId=JSON.stringify([job.id,input.clientId]);
    const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,input.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();

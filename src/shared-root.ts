@@ -71,6 +71,7 @@ import { approvalRulesService } from './apps/approval-rules.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
 import { sameRequestOrigin } from './core/data/origin.js';
+import { DOOR_REQUEST_BYTES } from './core/data/http.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { mayRunPrivateWork } from './policy.js';
@@ -343,7 +344,7 @@ export function sharedRoot(options: {
       body: request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, stream) {
           size += chunk.byteLength;
-          if (limited && size > 1024 * 1024) throw new BodyTooLarge();
+          if (limited && size > DOOR_REQUEST_BYTES) throw new BodyTooLarge();
           stream.enqueue(chunk);
         },
       }), { signal: abort.signal }), signal: abort.signal, duplex: 'half',

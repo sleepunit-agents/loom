@@ -2,6 +2,7 @@
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
 import {z} from 'zod';
+import {slug as slugOf,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX} from './slug.js';
 import {randomUUID} from 'node:crypto';
 import type {McpServer} from '@modelcontextprotocol/server';
 
@@ -157,8 +158,8 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  // Cards: what you know about a person, and a project's card. Each lives in your own store, addressed by slug.
- // Lengths match the commands: a person's slug is at most 64 characters, a project's 32.
- const slugOf=(max:number)=>z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(max),slug=slugOf(64),projectSlug=slugOf(32),facts=z.record(z.string(),z.unknown());
+ // Lengths are the commands' own (src/slug.ts): a person card's slug and a project card's have different caps.
+ const slug=slugOf(PERSON_CARD_SLUG_MAX),projectSlug=slugOf(PROJECT_CARD_SLUG_MAX),facts=z.record(z.string(),z.unknown());
  const shown=(value:CardValue|string|null|undefined)=>value==null?'':typeof value==='string'?value:value.text??(value.strings?value.strings.join(', '):value.number!=null?String(value.number):value.boolean!=null?String(value.boolean):'');
  tool('person','Read your card on one person by slug, or list the people you have cards on.',
   z.object({slug:slug.optional()}).strict(),

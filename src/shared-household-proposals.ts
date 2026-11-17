@@ -11,6 +11,7 @@
 import {and,asc,eq,isNull} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
+import {householdId} from './slug.js';
 import type {Viewer} from './policy.js';
 import {householdOwners} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
@@ -58,7 +59,7 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
  // A machine by the name people see; a signed-in browser by whose it is and its description.
  boxRevoke:z.object({name:z.string().trim().min(1).max(200)}).strict(),
- browserSignOut:z.object({member:z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),device:z.string().trim().min(1).max(200)}).strict()};
+ browserSignOut:z.object({member:householdId,device:z.string().trim().min(1).max(200)}).strict()};
 // The dangerous actions: none can be put back. Each card says so, and Approvals asks the owner to confirm.
 const danger={
  tokenRevoke:{verb:'Revoke',done:'revoked',yes:'The token stops working at once. This cannot be undone.',no:'The token keeps working.'},

@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
 import { inbox } from './schema.js';
+import { commsKeepDays } from './comms-days.js';
 
 type Item=typeof inbox.$inferSelect;
 /** A bounded read set for one Inbox selection, never a cross-request cache.
@@ -17,7 +18,7 @@ export function readInboxSet(db:DataDatabase,ids:string[],allowed:SQL,words=true
   const threadRows=db.query.threads.findMany({where:f=>threadIds.length?inArray(f.id,threadIds):sql`false`}).sync();
   const refs=db.query.inboxRefs.findMany({where:f=>allIds.length?inArray(f.item,allIds):sql`false`,orderBy:(f,{asc})=>asc(f.ref)}).sync();
   const reads=db.query.inboxReads.findMany({where:f=>allIds.length?inArray(f.item,allIds):sql`false`}).sync();
-  const days=db.query.household.findFirst({columns:{commsDays:true}}).sync()?.commsDays??14;
+  const days=commsKeepDays(db);
   const items=new Map(rows.map(row=>[row.id,row])),threadMap=new Map(threadRows.map(row=>[row.id,row]));
   const messageKey=(item:string|null,thread:string|null,seq:number|null)=>JSON.stringify([item,thread,seq]);
   const messageMap=new Map(messageRows.map(row=>[messageKey(row.inboxItem,row.thread,row.seq),row]));

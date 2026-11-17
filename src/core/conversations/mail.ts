@@ -7,9 +7,10 @@ import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from '
 import {prepareHistoryContext,type HistoryLine} from './history-context.js';
 import {prepareAnswerContext,type AnswerContext} from './answer-context.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { household, inbox, inboxRefs, messages, threads } from '../data/schema.js';
+import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import { mailWords } from './volume.js';
 import { CommsMessages } from './messages.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 type Item = typeof inbox.$inferSelect;
 export type Delivery = { item: Item; words: string | null; answerContext?:AnswerContext; history?:HistoryLine[] };
@@ -35,7 +36,7 @@ export class ConversationMail {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid mail batch size');
     const { db, key, now, threads: { conversations } } = this.comms;
     if (db.$client.inTransaction) throw new Error('Prepare mail outside a transaction');
-    const keepDays = () => db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const keepDays = () => commsKeepDays(db);
     const retained = (message: typeof messages.$inferSelect) => {
       const days = keepDays();
       return !!message.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14

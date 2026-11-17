@@ -6,13 +6,14 @@ import { randomUUID } from 'node:crypto';
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
+import { conversations, deletedThreads, inbox, inboxRefs, messages, threadRefs, threads, turns, digests } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
 import { acceptAnswer, type Answer } from './answer-rule.js';
 import type { DigestInput } from './index.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 type Message = typeof messages.$inferSelect;
 type TurnDetails = Partial<Pick<typeof turns.$inferInsert, 'model' | 'outcome' | 'latencyMs'>>;
@@ -42,7 +43,7 @@ export class CommsMessages {
 
   private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[], detail: TurnDetails = {}): Message {
     const { thread, cv } = this.context(input.thread), at = this.now();
-    const days = this.db.select().from(household).get()?.commsDays ?? 14;
+    const days = commsKeepDays(this.db);
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const seq = (this.db.select({ seq: max(messages.seq) }).from(messages).where(eq(messages.thread, thread.id)).get()?.seq ?? 0) + 1;
     const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: new Date(Date.parse(at) + days * 86400000).toISOString() }).returning().get();
@@ -143,7 +144,7 @@ export class CommsMessages {
     if(input.question&&cv.member&&!privateThread){
       const question=input.question;
       if(question.to!==cv.member)throw Error('Private question needs its member');
-      const words=await sealPrivateInbox(this.key,JSON.stringify({words:question.words,why:question.why??null,ifYes:question.ifYes??null,ifNo:question.ifNo??null,link:question.link??null}),this.now(),this.db.select({days:household.commsDays}).from(household).get()?.days??14);
+      const words=await sealPrivateInbox(this.key,JSON.stringify({words:question.words,why:question.why??null,ifYes:question.ifYes??null,ifNo:question.ifNo??null,link:question.link??null}),this.now(),commsKeepDays(this.db));
       return ()=>this.db.transaction(()=>{
         const kept=validate();if(kept)return kept;
         const item=cvs.send({conversation:cv.id,toKind:'person',to:question.to,source:'thread',sourceId:`digest:${randomUUID()}`,fromKind:'agent',fromId:cv.agent,words,answers:question.answers,waitsOnKind:question.waitsOnKind,waitsOnId:question.waitsOnId,refs:question.refs});
@@ -207,7 +208,7 @@ export class CommsMessages {
       return {item,cv,verdict:acceptAnswer(item,member,answer,text,true)};
     };
     const before=check();if(before.verdict==='repeat')return()=>check().item;
-    const words=await sealPrivateInbox(this.key,text?.trim()||answer,this.now(),this.db.select({days:household.commsDays}).from(household).get()?.days??14);
+    const words=await sealPrivateInbox(this.key,text?.trim()||answer,this.now(),commsKeepDays(this.db));
     return ()=>this.db.transaction(()=>{
       const live=check();if(live.verdict==='repeat')return live.item;
       if(JSON.stringify(live)!==JSON.stringify(before))throw Error('Question changed during preparation');
@@ -222,7 +223,7 @@ export class CommsMessages {
   /** Expired words stay unavailable even before the periodic sweep runs. */
   async words(thread: string, seq: number): Promise<string | null> {
     const row = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
-    const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const keepDays = () => commsKeepDays(this.db);
     const retained = (message: Message | undefined, days: number) => !!message?.words && !!message.keepUntil
       && Number.isInteger(days) && days >= 1 && days <= 14
       && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
@@ -235,7 +236,7 @@ export class CommsMessages {
   }
 
   expire(): number {
-    const days = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const days = commsKeepDays(this.db);
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
     let expired=0;

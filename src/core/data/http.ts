@@ -14,6 +14,9 @@ import type { DataDatabase } from './database.js';
 import { readRetained } from './read-lease.js';
 import { ExecutionDrain } from './execution.js';
 
+/** The most one request may carry through the door: a GraphQL request, a socket message or a command's body. */
+export const DOOR_REQUEST_BYTES = 1024 * 1024;
+
 /** Authenticated GraphQL HTTP door on the shared connection. Authentication is
  * supplied by the composition's session/token resolver, never a request viewer.
  * No credential, session, plumbing or service-only table enters this schema.
@@ -24,7 +27,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
   const app = new Hono();
   const executions = new ExecutionDrain();
   let stopping = false;
-  app.use('*', bodyLimit({ maxSize: 1024 * 1024 }));
+  app.use('*', bodyLimit({ maxSize: DOOR_REQUEST_BYTES }));
   app.use('*', async (c, next) => { await next(); c.res.headers.set('cache-control', 'no-store'); });
   app.onError(() => Response.json({ errors: [{ message: 'Data request could not complete' }] }, { status: 503, headers: { 'cache-control': 'no-store' } }));
   app.all('/graphql', async c => {

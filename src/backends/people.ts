@@ -30,12 +30,13 @@ import {
 } from './cards.js';
 
 export { SLUG_RE, RESERVED_KEYS, fieldState, type FieldState, type RevisionOp } from './cards.js';
+import { PERSON_CARD_SLUG_MAX } from '../slug.js';
 /** Every rejection the people surface makes. The message names the path. */
 export { CardError as PersonCardError } from './cards.js';
 
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
-export const MAX_SLUG = 64;
+export const MAX_SLUG = PERSON_CARD_SLUG_MAX;
 const MAX_NAME = 80;
 const MAX_SUMMARY = 1200;
 const MAX_FIELDS = 12;

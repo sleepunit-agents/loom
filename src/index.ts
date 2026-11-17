@@ -40,6 +40,9 @@ export function version(): string {
 export interface ServeIo { stdout(text: string): void; stderr(text: string): void }
 const processIo: ServeIo = { stdout: text => { process.stdout.write(text); }, stderr: text => { process.stderr.write(text); } };
 
+/** The household's data folder: `--home`, else LOOM_HOME, else ~/.config/loom. */
+const homeOf = (flag?: string) => resolve(flag ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);
+
 export async function serve(args: string[], io: ServeIo = processIo): Promise<number> {
   let values: { home?: string; host?: string; port?: string; program?: string };
   try {
@@ -48,7 +51,7 @@ export async function serve(args: string[], io: ServeIo = processIo): Promise<nu
       home: { type: 'string' }, host: { type: 'string' }, port: { type: 'string' }, program: { type: 'string' },
     } }));
   } catch (error) { io.stderr(`${error instanceof Error ? error.message : 'Bad arguments'}\n${USAGE}`); return 2; }
-  const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);
+  const home = homeOf(values.home);
   const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
   const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
   if (host.includes(',') || !Number.isInteger(port) || port < 0 || port > 65535) { io.stderr('Choose one --host and a valid --port\n'); return 2; }
@@ -75,7 +78,7 @@ export async function signin(args: string[], io: ServeIo = processIo): Promise<n
   let values: { home?: string; member?: string };
   try { ({ values } = parseArgs({ args, strict: true, allowPositionals: false, options: { home: { type: 'string' }, member: { type: 'string' } } })); }
   catch (error) { io.stderr(`${error instanceof Error ? error.message : 'Bad arguments'}\n${USAGE}`); return 2; }
-  const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom`);
+  const home = homeOf(values.home);
   const { requestLocalLink } = await import('./core/signin/operator.js');
   try {
     const link = await requestLocalLink(home, { request: 'link', label: 'Local sign-in', ...(values.member ? { member: values.member } : {}) });

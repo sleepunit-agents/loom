@@ -2,6 +2,7 @@
  * publish the complete directory atomically. Never roll back user pathnames. */
 import Database from 'better-sqlite3';
 import {householdService} from './apps/household.js';
+import {SLUG} from './slug.js';
 import {loadKey} from './pieces/comms/crypto.js';
 import {constants,openSync,closeSync,writeFileSync,fsyncSync,lstatSync,readdirSync,mkdirSync,mkdtempSync,renameSync} from 'node:fs';
 import {join,dirname,basename} from 'node:path';
@@ -25,7 +26,7 @@ export async function initializeSharedHome(home:string,clock:Clock){
   };
   publish('loom.db',new Uint8Array());client=new Database(join(stage,'loom.db'));client.pragma('journal_mode = WAL');
   const at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>at),username=userInfo().username;
-  const member=/^[a-z0-9]+(-[a-z0-9]+)*$/.test(username)?username:'owner';
+  const member=SLUG.test(username)?username:'owner';
   db.transaction(()=>{
    db.insert(members).values({id:member,role:'owner',fullOwner:true,joinedAt:at}).run();
    db.insert(agents).values({id:'assistant',about:'Help with the work you are given.',markBg:'#313244',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();

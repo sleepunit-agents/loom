@@ -3,7 +3,9 @@ import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { agents, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
-const id = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
+import { householdId } from '../slug.js';
+import { COMMS_DAYS_DEFAULT, COMMS_DAYS_MAX } from '../core/data/comms-days.js';
+const id = householdId;
 export const memberInput = z.object({
   id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
   agents: z.array(id).max(1000).transform(values => [...new Set(values)].sort()),
@@ -11,12 +13,13 @@ export const memberInput = z.object({
 export const agentInput = z.object({
   id, about: z.string().max(600), markBg: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   markFg: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  faceShape: z.enum(['pebble', 'trefoil', 'clover', 'drop']), faceEyes: z.enum(['dot', 'oval']),
+  // The choices are the schema's own (src/core/data/schema.ts), so a new shape is added in one place.
+  faceShape: z.enum(agents.faceShape.enumValues), faceEyes: z.enum(agents.faceEyes.enumValues),
 }).strict();
 const zone = z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Unknown time zone');
 /** A patch: only the named settings change. An empty backup target turns backups off. */
 export const settingsInput = z.object({
-  defaultAgent: id.nullable(), timezone: zone, commsDays: z.number().int().min(1).max(14),
+  defaultAgent: id.nullable(), timezone: zone, commsDays: z.number().int().min(1).max(COMMS_DAYS_MAX),
   githubOwner: z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9-]{0,38})?$/),
   backupTarget: z.string().trim().max(500), backupAt: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
   backupKeep: z.number().int().min(1).max(90),
@@ -82,7 +85,7 @@ export function householdService(db: DataDatabase, now: () => string) {
     },
     settings() {
       const row = db.select().from(household).get();
-      return { defaultAgent: row?.defaultAgent ?? null, timezone: row?.timezone ?? 'UTC', commsDays: row?.commsDays ?? 14, githubOwner: row?.githubOwner ?? '',
+      return { defaultAgent: row?.defaultAgent ?? null, timezone: row?.timezone ?? 'UTC', commsDays: row?.commsDays ?? COMMS_DAYS_DEFAULT, githubOwner: row?.githubOwner ?? '',
         secretsDefault: row?.secretsDefault ?? 'ask', backupTarget: row?.backupTarget ?? '', backupAt: row?.backupAt ?? '03:00', backupKeep: row?.backupKeep ?? 7,
         backupRecipients: db.select().from(backupRecipients).orderBy(asc(backupRecipients.recipient)).all().map(entry => entry.recipient) };
     },

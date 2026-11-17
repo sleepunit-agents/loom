@@ -6,9 +6,10 @@ import { isNotNull } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import type { DataWrites } from '../data/writes.js';
-import { household, messages } from '../data/schema.js';
+import { messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationHistory } from './history.js';
+import { commsKeepDays } from '../data/comms-days.js';
 export function conversationLifetime(db: DataDatabase, clock: Clock, service: CommsMessages, writes: DataWrites, reportError: (error: unknown) => void) {
   const history = new ConversationHistory(db, () => new Date(clock.now()).toISOString());
   let closed = false, cancel: (() => void) | undefined;
@@ -20,7 +21,7 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
   const schedule = () => {
     cancel?.(); cancel = undefined;
     if (closed) return;
-    const now = clock.now(), days = db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const now = clock.now(), days = commsKeepDays(db);
     let next = Date.parse(new Date(now + 86400000).toISOString().slice(0,10) + 'T00:00:00.000Z');
     for (const row of db.select({ at: messages.at, until: messages.keepUntil }).from(messages).where(isNotNull(messages.words)).all()) {
       const householdEnd = Date.parse(row.at) + days * 86400000, storedEnd = Date.parse(row.until ?? '');

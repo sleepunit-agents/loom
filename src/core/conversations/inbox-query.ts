@@ -11,10 +11,11 @@ import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { actionResults, household, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
+import { actionResults, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
 import { carriesDirectMessage } from '../data/bridge-secrets-visibility.js';
 import type { WordsKey } from './words.js';
+import { commsKeepDays } from '../data/comms-days.js';
 
 const projected=Symbol('Inbox display projection');
 type Item = typeof inbox.$inferSelect;
@@ -36,7 +37,7 @@ export class InboxQueries {
     if (!is(allowed, SQL)) throw new Error('SQL Inbox visibility required');
     return allowed;
   }
-  private keepDays() { if(this.readSet)return this.readSet.days; return this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14; }
+  private keepDays() { if(this.readSet)return this.readSet.days; return commsKeepDays(this.db); }
   private retainedMessage(message: typeof messages.$inferSelect | undefined, days: number): boolean {
     return !!message?.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
       && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
