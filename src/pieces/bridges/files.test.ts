@@ -55,7 +55,7 @@ it('keeps a file shared in a second message once and lists it under both, withou
   // Asked again (the frame is read again after a restart), nothing changes.
   expect(files.carry({ connection: 'slack', incoming: 'second', files: ['F1'] })).toEqual([]);
   expect(f.links()).toEqual(['F1@second', 'F1@slack']);
-  expect(() => files.carry({ connection: 'slack', incoming: 'discord', files: ['F1'] })).toThrow('Slack connection');
+  expect(() => files.carry({ connection: 'slack', incoming: 'discord', files: ['F1'] })).toThrow('does not belong to this connection');
   // The file goes fourteen days after its first fetch, with every listing of it.
   f.clock.advance(13 * DAY);
   expect(f.rows()).toEqual([]); expect(f.links()).toEqual([]);
@@ -75,11 +75,13 @@ it('sweeps expired files on startup, including timestamps with whole seconds', (
   files.close();
 });
 
-it('rejects cross-connection references and Discord files', () => {
+it('rejects a file for another connection\'s message, and keeps a Discord message\'s file as it keeps Slack\'s', () => {
   const f = fixture(), files = new BridgeFiles(f.db, f.clock);
-  expect(() => files.store({ ...f.input, incoming: 'discord' })).toThrow('Slack connection');
-  expect(() => files.store({ ...f.input, incoming: 'discord', connection: 'discord' })).toThrow('Slack connection');
+  expect(() => files.store({ ...f.input, incoming: 'discord' })).toThrow('does not belong to this connection');
+  expect(() => files.store({ ...f.input, connection: 'nowhere' })).toThrow('does not belong to this connection');
   expect(f.rows()).toEqual([]);
+  files.store({ ...f.input, incoming: 'discord', connection: 'discord' });
+  expect(f.rows()).toMatchObject([{ connection: 'discord', file: f.input.file }]);
   files.close();
 });
 

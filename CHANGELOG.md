@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Bridges: a body can open what was sent to it.** A delivered Discord message's attachments (the first five, up to 8 MB each) are fetched and kept like Slack files. A body with file tools is given the kept files of the messages it took, written into its scratch directory, with each path named in its input. The links stay in the words.
+
 - **Bridges: the bot says "Stopped here." where a stop word stopped a job**, through the send queue.
 
 - **Bridges: a channel's rule can name a brief.** The `channel` change takes `brief`, the name of a role page of the answering agent; the body of every conversation in that channel is given the page beside the venue's. With no such page the body works without it and the agent's owners get one notice in their Inbox. New body operations `bridges.brief` and `bridges.briefMissing`.

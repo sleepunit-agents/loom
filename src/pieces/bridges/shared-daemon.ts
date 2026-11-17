@@ -25,6 +25,7 @@ import { bridgeChannelApi } from './channel-api.js';
 import { discordGateway } from './discord-gateway.js';
 import { bridgeSlackSocket } from './slack-socket.js';
 import { BridgeFiles } from './files.js';
+import { discordFiles, fetchDiscordFiles, type DiscordFile } from './discord-files.js';
 type Connection=typeof bridgeConnections.$inferSelect;
 export interface SharedBridgeOptions {
  db:DataDatabase;clock:Clock;writes:DataWrites;
@@ -58,6 +59,8 @@ export class SharedBridges {
  private readonly lives=new Map<string,Life>();
  /** Channels whose details could not be classified, so each is reported once. */
  private readonly unclassified=new Set<string>();
+ /** Discord attachments that could not be fetched, so each is tried once in this process. */
+ private readonly unfetched=new Set<string>();
  private readonly active=new Set<Promise<unknown>>();
  private syncing?:Promise<void>;
  private settingsKey='';
@@ -238,11 +241,21 @@ export class SharedBridges {
     try{if(evidence)life.channels!.put(id,evidence,starter);}catch{const key=JSON.stringify([row.id,id]);if(!this.unclassified.has(key)){this.unclassified.add(key);this.report();}}
    }
    if(!current())return;
-   const pendingFiles=new Map<string,SlackFilesPermit['files']>();
+   const pendingFiles=new Map<string,SlackFilesPermit['files']>(),pendingDiscord=new Map<string,DiscordFile[]>();
    const changes=()=> (this.options.db.$client.prepare('SELECT total_changes() AS n').get() as {n:number}).n;
    const beforeChanges=changes();
    const before=this.options.db.select({row:sql<number>`coalesce(max(rowid),0)`}).from(inbox).get()!.row;
    try{more=this.receiver.drain(row.id,64,(incoming,raw)=>{
+    if(row.platform==='discord'){
+     // A Discord message's attachments are kept as a Slack message's are, so a body can be handed them as
+     // files. One that could not be fetched is not asked for again: its link is in the message's words.
+     const wanted=discordFiles(JSON.parse(raw.toString('utf8')).d).filter(file=>!this.unfetched.has(JSON.stringify([row.id,file.id])));
+     if(!wanted.length)return;
+     const unkept=new Set(this.files.carry({connection:row.id,incoming:incoming.id,files:wanted.map(file=>file.id)}));
+     const missing=wanted.filter(file=>unkept.has(file.id));
+     if(!missing.length)return;
+     pendingDiscord.set(incoming.id,missing);return false;
+    }
     if(row.platform!=='slack')return;
     const event=JSON.parse(raw.toString('utf8')).payload?.event;
     if(!Array.isArray(event?.files)||!event.files.length)return;
@@ -276,6 +289,18 @@ export class SharedBridges {
       .where(and(sql`${inbox}.rowid > ${before}`,eq(bridgeIncoming.connection,row.id))).all().map(item=>item.id);
      if(ids.length){try{this.options.inboxCommitted?.(ids);}catch{this.report();}}
     }
+   }
+   for(const [incoming,files] of pendingDiscord){
+    if(!current())return;
+    const message=this.options.db.select().from(bridgeIncoming).where(and(eq(bridgeIncoming.id,incoming),eq(bridgeIncoming.connection,row.id),eq(bridgeIncoming.state,'delivered'))).get();
+    if(!message)continue;
+    const fetched=await fetchDiscordFiles(files,current,this.options.request);
+    if(!current())return;
+    const still=this.options.db.select({state:bridgeIncoming.state,text:bridgeIncoming.text}).from(bridgeIncoming).where(eq(bridgeIncoming.id,incoming)).get();
+    // Words erased while the files were on their way (a direct message past its keep time) take the files with them.
+    if(still?.state==='delivered'&&still.text===message.text)for(const file of fetched)this.files.store({connection:row.id,file:file.id,incoming,name:file.name,contents:file.bytes});
+    for(const file of files)if(!fetched.some(got=>got.id===file.id)){if(this.unfetched.size>=4096)this.unfetched.clear();this.unfetched.add(JSON.stringify([row.id,file.id]));}
+    life.again=true;
    }
    // Frame and Inbox delivery have committed. Keep the original raw receipt
    // until cached files exist, so a restart can retry without a second spool.

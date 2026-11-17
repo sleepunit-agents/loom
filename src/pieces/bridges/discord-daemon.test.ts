@@ -7,7 +7,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
 import { eq } from 'drizzle-orm';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
+import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeFileMessages, bridgeFiles, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { STOP_WORD } from './incoming.js';
 import { TAKEN_REACTION, TYPING_EVERY_MS, workingOn } from './presence.js';
@@ -40,6 +40,7 @@ function discordFixture(overrides: Partial<SharedBridgeOptions> = {}) {
     calls.push({ method, path, ...(options?.body ? { body: JSON.parse(String(options.body)) } : {}) });
     const answer = answers.get(`${method} ${path}`);
     if (answer === undefined) return Response.json({ message: 'Not found' }, { status: 404 });
+    if (Buffer.isBuffer(answer)) return new Response(answer, { headers: { 'content-type': 'image/png' } });
     return answer === null ? new Response(null, { status: 204 }) : Response.json(answer);
   });
   const gateways: DiscordGatewayOptions[] = [];
@@ -203,4 +204,29 @@ it('shows nothing for mail whose job is not running, or on a connection that is 
   f.db.update(jobs).set({ state: 'running' }).run();
   f.db.update(bridgeConnections).set({ enabled: false }).run();
   expect(workingOn(f.db)).toEqual([]);
+});
+
+it('keeps a delivered Discord message\'s attachments, once, and leaves one it cannot fetch as a link', async () => {
+  const f = discordFixture(); await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const cat = 'https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1', gone = 'https://cdn.discordapp.com/attachments/1/2/gone.png?ex=1';
+  f.answers.set(`GET ${cat}`, Buffer.from('PNGDATA'));
+  const attachments = [{ id: '900000000000000001', filename: 'cat.png', size: 7, content_type: 'image/png', url: cat }, { id: '900000000000000002', filename: 'gone.png', size: 9, content_type: 'image/png', url: gone }];
+  const row = await f.say({ content: '', attachments });
+  f.clock.advance(1); await f.daemon.idle(); f.clock.advance(1); await f.daemon.idle();
+  // A picture alone is delivered, with both links in its words.
+  expect(row).toMatchObject({ state: 'delivered' });
+  expect(row.text).toBe(`[attachment: cat.png (image/png, 7 bytes) ${cat}]\n[attachment: gone.png (image/png, 9 bytes) ${gone}]`);
+  expect(f.db.select().from(bridgeFiles).all()).toMatchObject([{ connection: 'connection', file: '900000000000000001', name: 'cat.png', contents: Buffer.from('PNGDATA') }]);
+  expect(f.db.select().from(bridgeFileMessages).all()).toEqual([{ connection: 'connection', file: '900000000000000001', incoming: row.id }]);
+  // Each is asked for once: the one that is gone is not asked for again on every pass.
+  for (let n = 0; n < 3; n++) { f.clock.advance(5000); await f.daemon.idle(); }
+  expect(f.calls.filter(call => call.path === cat)).toHaveLength(1);
+  expect(f.calls.filter(call => call.path === gone)).toHaveLength(1);
+  // The fetch carries no credential: the link is Discord's own.
+  expect(f.request.mock.calls.find(([url]) => String(url) === cat)?.[1]?.headers).toBeUndefined();
+  // A stranger's attachment is not fetched: the message was dropped.
+  await f.say({ author: { id: '400000000000000099' }, content: 'x', attachments: [{ ...attachments[0], id: '900000000000000003', url: cat + '&other' }] });
+  expect(f.calls.filter(call => call.path === cat + '&other')).toHaveLength(0);
+  expect(f.errors).toEqual([]);
 });

@@ -614,17 +614,23 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: a household wanting an agent to ping a role. Then the roles it may ping are named on the
   connection, and only those are allowed.
 
-### A Discord attachment is a link in the message's words
+### A Discord attachment is a link in the words and a file in the body's scratch directory
 - What: a Discord message's attachments, ten at most, are listed after its words, one line each, with name,
-  type, size and Discord's own link. loom fetches and keeps none of them, so there is no size or type limit
-  of loom's; the link is signed by Discord and stops working after about a day. A link is passed on only
-  when it is on `cdn.discordapp.com` or `media.discordapp.net`. Slack files are fetched and kept as before.
-- Where: `discordWords` in `src/pieces/bridges/normalize.ts`.
-- Why: a message that is only a picture then has words and is answered, and a body can open what was sent.
-  The store loom has for attachments (`bridge_files`) is read by a body only as base64 text in a tool
-  result, which a model cannot look at and which does not fit its context.
-- Would change it: bodies being handed kept files as files in their working directory. Then Discord
-  attachments are fetched into `bridge_files` as Slack's are, with the same limits (25 MB, five a message).
+  type, size and Discord's own signed link (which stops working after about a day). The first five of a
+  delivered message, each up to 8 MB, are also fetched and kept as a Slack message's files are
+  (`bridge_files`, fourteen days, or the keep time for a direct conversation). A link is used only when it
+  is on `cdn.discordapp.com` or `media.discordapp.net`; an HTML page is never kept. Before its harness
+  starts, a body with file tools writes the kept files of the messages it took into its own scratch
+  directory (at most ten files and 32 MB a run, any type that was kept) and its input names each path.
+  A file that could not be fetched, or was not fetched yet when the body started, is only its link.
+- Where: `discordWords` in `src/pieces/bridges/normalize.ts`; `discord-files.ts` and the pump in
+  `shared-daemon.ts`; `files.ts` (`HANDED_FILE_BYTES`); the body's side is `src/runtime/body-attachments.ts`.
+- Why: a message that is only a picture has words and is answered, and a model can open the picture as a
+  file, which it cannot do with bytes in a tool result. The scratch directory is the body's alone and is
+  removed with it, so nothing sent to one conversation is left for another. The fetch is separate from
+  delivery so that a slow or failed download never holds a message back.
+- Would change it: bodies starting before a file has arrived often enough to matter. Then admission waits
+  for a message's files, or the body waits for them.
 
 ### Who a Discord thread hangs under is read once, from its starter message
 - What: a message in a thread, that is not itself a reply, answers whoever wrote the message the thread was

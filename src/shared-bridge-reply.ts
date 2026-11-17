@@ -14,6 +14,7 @@ import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.j
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
 import type { BridgeSends } from './pieces/bridges/sends.js';
+import { HANDED_FILE_BYTES } from './pieces/bridges/files.js';
 import { OperationError,type Operations } from './core/operations/index.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
 /** The most posts loom makes for the mail one job took: what the body says during its run and its reply. */
@@ -117,7 +118,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
  const messageRow=getTableColumns(bridgeIncoming);
  const readable=(viewer:Viewer,incoming:string)=>viewer.kind==='agent'?!!inConversation(viewer,incoming)
   :!!db.select({id:bridgeIncoming.id}).from(bridgeIncoming).where(and(eq(bridgeIncoming.id,incoming),bridgeSecretsVisibility(viewer).bridgeIncoming!(messageRow))).get();
- const MAX=8*1024*1024;
+ const MAX=HANDED_FILE_BYTES;
  operations.register({name:'bridges.file',write:false,doors:['http'],
   input:z.object({incoming:z.string().min(1).max(400),file:z.string().min(1).max(400).optional()}).strict(),
   output:z.object({files:z.array(z.object({file:z.string(),name:z.string(),bytes:z.number(),fetchedAt:z.string(),contents:z.string().optional()}).strict())}).strict(),

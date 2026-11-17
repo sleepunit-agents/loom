@@ -11,12 +11,13 @@ import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
-import type { HarnessRun } from './body-harness.js';
+import { BODY_SCRATCH, type HarnessRun } from './body-harness.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
+import {saveBodyAttachments} from './body-attachments.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
@@ -42,6 +43,8 @@ export async function bodyProgram(input: {
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
   /** Trusted in-process seam; production reads the current body's declared Memory. */
   loadMemory?: (agent:string,signal:AbortSignal)=>Promise<string|null>;
+  /** The same seam for the files sent with bridge messages. */
+  saveAttachments?: typeof saveBodyAttachments;
   /** The same seam for a bridge channel's brief. */
   loadBrief?: typeof bodyChannelBrief;
   error: (text: string) => void;
@@ -133,6 +136,10 @@ export async function bodyProgram(input: {
     // A brief that cannot be found is never a reason to fail: the work goes on and loom tells the owners.
     const brief=bridge?await (input.loadBrief??bodyChannelBrief)(memoryClient,job.agent):null;
     if(signal.aborted)throw new Error();
+    // What was sent with the messages, written where a body with file tools can open it (body-attachments.ts).
+    const sent=bridge&&plan.reach==='all'?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
+    if(signal.aborted)throw new Error();
+    if(sent)context.push(sent);
     if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
