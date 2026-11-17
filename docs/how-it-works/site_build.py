@@ -100,8 +100,9 @@ FACE_A = '<svg class="face a" viewBox="0 0 40 40"><path class="body" d="M20 3c9 
 FACE_B = '<svg class="face b" viewBox="0 0 40 40"><path class="body" d="M20 3c5 6 14 12 14 21a14 14 0 0 1-28 0C6 15 15 9 20 3z"/><ellipse class="eye" cx="15" cy="22" rx="2.2" ry="2.8"/><ellipse class="eye" cx="25" cy="22" rx="2.2" ry="2.8"/><path class="mouth" d="M17 30h6"/></svg>'
 
 # ───────────────────────── shared frame
-def page(idx, title, body):
-    """idx 0 is the front door; 1..N are the path."""
+def page(idx, title, body, beside=None):
+    """idx 0 is the front door; 1..N are the path. A page that is not on the path names the path page it
+    sits beside: it is shown as beside that page, and leads back to it."""
     dots = ['<li><a href="index.html" title="Start here"%s><span class="sr">Start here</span></a></li>' % (' aria-current="page"' if idx == 0 else "")]
     for i, (f, t, _, _) in enumerate(PATH, 1):
         if f:
@@ -111,12 +112,16 @@ def page(idx, title, body):
             dots.append(f'<li><span title="{i}. {e(t)} (coming)"><span class="sr">{i}. {e(t)}, coming</span></span></li>')
     where = "<b>Start here</b>" if idx == 0 else f"<b>{idx}</b> of {N} · {e(PATH[idx-1][1])}"
     go = []
-    if idx == 1:
+    if beside:
+        dots = [d.replace(' aria-current="page"', "") for d in dots]
+        where = f"beside <b>{idx}</b> · {e(beside)}"
+        go.append(f'<a href="{PATH[idx-1][0]}" rel="prev">‹ <span class="pl">{e(PATH[idx-1][1])}</span></a>')
+    elif idx == 1:
         go.append('<a href="index.html" rel="prev">‹ <span class="pl">Start</span></a>')
     elif idx > 1:
         f, t, _, _ = PATH[idx - 2]
         go.append(f'<a href="{f}" rel="prev">‹ <span class="pl">{e(t)}</span></a>')
-    if idx < N:
+    if idx < N and not beside:
         f, t, _, _ = PATH[idx]
         go.append(f'<a class="next" href="{f}" rel="next"><span class="pl">{e(t)}</span> ›</a>' if f
                   else f'<span><span class="pl">Next: {e(t)}, coming</span><span aria-hidden="true"> ›</span></span>')
@@ -283,7 +288,7 @@ def index():
         <li class="node t-pink"><i class="wire"></i>{key("Approvals")}<div class="node__body"><b><a href="{FILE["Approvals"]}">Approvals</a></b><span>An agent asks permission to do one specific thing.</span></div></li>
         <li class="node t-pink"><i class="wire"></i>{key("Changes")}<div class="node__body"><b><a href="{FILE["Changes"]}">Changes</a></b><span>Pull requests a thread mentions show up as cards.</span></div></li>
         <li class="node t-cyan"><i class="wire"></i>{key("Memory")}<div class="node__body"><b>{plink("Memory")}</b><span>What the agent remembers afterwards. The one thing loom treats as precious.</span></div></li>
-        <li class="node t-cyan"><i class="wire"></i>{key("Machines and jobs")}<div class="node__body"><b><a href="{FILE["Machines and jobs"]}">Machines and jobs</a></b><span>One job at a time does the work, on a machine with a worker.</span></div></li>
+        <li class="node t-cyan"><i class="wire"></i>{key("Machines and jobs")}<div class="node__body"><b><a href="{FILE["Machines and jobs"]}">Machines and jobs</a></b><span>Jobs do the work, on a machine with a worker. A worker runs several side by side.</span></div></li>
       </ul>
     </div>
     <div class="map__base">
