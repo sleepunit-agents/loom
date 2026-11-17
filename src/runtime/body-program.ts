@@ -31,6 +31,8 @@ import { BODY_START_BYTES } from './body-input-limit.js';
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
 // way the household's list of tools an agent's body is not given still applies.
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
+/** What a body file is, for whoever writes one: the core house's own are held to it. */
+export const bodyFileSchema = config;
 const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(BODY_TOKEN) }).strict(),
 }).strict();

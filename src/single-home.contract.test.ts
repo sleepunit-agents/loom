@@ -24,7 +24,7 @@ import { isHolderGeneration } from './pieces/secrets/role.js';
 import { isDiscordId } from './pieces/bridges/discord-id.js';
 import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
-import { CONTEXT_ENTRIES_MAX, CONTEXT_FILE_MAX, CONTEXT_MAX, CONTEXT_NAME_MAX, GIT_MINIMUM, ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
+import { CONTEXT_ENTRIES_MAX, CONTEXT_FILE_MAX, CONTEXT_MAX, CONTEXT_NAME_MAX, GIT_MINIMUM, ACCOUNT_SLOTS_BY_HARNESS, ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
 import { CONVERSATION_ID, HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, TASK_ID, conversationId, householdId, scopedStoreId, slug, taskId } from './slug.js';
 import { MEMORY_CATEGORIES } from './categories.js';
 import { DAY } from './core/day.js';
@@ -60,8 +60,10 @@ import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
 import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
 import { BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
 import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
-import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_BODY, HOUSE_LABEL_NODE, HOUSE_VERSION } from './runtime/house-image.js';
+import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_HARNESSES, HOUSE_VERSION } from './runtime/house-image.js';
 import { HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
+import { CORE_DIRECTORY } from './runtime/house-core.js';
+import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseLogin, houseMount } from './runtime/house-layout.js';
 import { WORKER_STOP } from './runtime/worker-stop.js';
 import { LISTING_MAX } from './runtime/docker-engine.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
@@ -633,9 +635,35 @@ it('says once where a body finds its program, what a house image must say, and h
   // Where the worker's own directory is in every container, and the body program in it.
   expect([BODY_PROGRAM_TARGET, BODY_PROGRAM]).toEqual(['/opt/loom', '/opt/loom/dist/body.js']);
   expect(sources('src').filter(file => text(file).includes('/opt/loom'))).toEqual(['src/runtime/worker-mounts.ts']);
-  expect(text('src/runtime/worker-container.ts')).toContain('Cmd: [BODY_PROGRAM, house.body]');
+  expect(text('src/runtime/worker-container.ts')).toContain('Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)]');
+  // The layout inside every house is written in one file: the home, the repository, node, the body files, the sign-in.
+  expect([HOUSE_HOME, HOUSE_REPOSITORY, HOUSE_NODE, houseBodyFile('claude'), houseLogin('claude'), houseMount('x')])
+    .toEqual(['/home/agent', '/home/agent/repo', '/usr/local/bin/node', '/etc/loom/body/claude.json', '/run/loom/login/claude', '/home/agent/x']);
+  expect(sources('src').filter(file => /\/home\/agent|\/run\/loom\/login|\/etc\/loom\/body|\/usr\/local\/bin\/node/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
+  // The worker never looks inside a sign-in directory: the one file that takes their paths asks the system
+  // only what each directory is (lstat, realpath), and reads, lists, writes and removes nothing.
+  expect(text('src/runtime/worker-mounts.ts')).toContain("import { lstatSync, realpathSync } from 'node:fs';");
+  expect(text('src/runtime/worker-mounts.ts')).not.toMatch(/from 'node:fs\/promises'|node:child_process/);
+  expect(sources('src').filter(file => /accountLogins/.test(text(file)))).toEqual(['src/runtime/job-exit.ts', 'src/runtime/worker-container.ts', 'src/runtime/worker-mounts.ts', 'src/runtime/worker-program.ts', 'src/runtime/worker-stop.ts']);
+  // The file that mounts them reads one file in all, its own package.json, and the file that holds them
+  // to one worker makes its names from their paths and opens nothing at them.
+  expect(text('src/runtime/worker-container.ts')).toContain("import { lstatSync, readFileSync, realpathSync } from 'node:fs';");
+  expect(text('src/runtime/worker-container.ts').match(/readFileSync\(/g)).toEqual(['readFileSync(']);
+  expect(text('src/runtime/worker-container.ts')).toContain("readFileSync(join(program, 'package.json'), 'utf8')");
+  expect(text('src/runtime/worker-alone.ts')).toContain("import { rmSync } from 'node:fs';");
+  expect(text('src/runtime/worker-alone.ts')).toContain("const file = join(tmpdir(), `${nameOf(path)}-${userInfo().uid}.sock`);");
+  // One worker for an engine and a sign-in directory: asked in one place, before anything is ended or built.
+  expect(sources('src').filter(file => /holdAlone\b/.test(text(file)))).toEqual(['src/runtime/worker-alone.ts', 'src/runtime/worker-container.ts']);
+  // The core house is defined in one directory of the install, and its image named in one file.
+  expect(CORE_DIRECTORY).toBe('house/core');
+  expect(sources('src').filter(file => /localhost\/loom-core/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
+  expect(sources('src').filter(file => /['"`]LOOM_CORE['"`]/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
+  // The names of what a body is told of its house are written once.
+  expect(sources('src').filter(file => /LOOM_HOUSE_(REPOSITORY|BRANCH|COMMIT)/.test(text(file)))).toEqual(['src/runtime/house-layout.ts']);
+  // A machine's configuration says where a sign-in directory is on the machine, and nothing of where it appears.
+  expect(text('src/runtime/worker-mounts.ts')).toContain('target: houseLogin(harness), readOnly: false');
   // The image contract's labels: written in the one file that reads them.
-  expect([HOUSE_LABEL, HOUSE_VERSION, HOUSE_LABEL_NODE, HOUSE_LABEL_BODY]).toEqual(['loom.house', '1', 'loom.house.node', 'loom.house.body.']);
+  expect([HOUSE_LABEL, HOUSE_VERSION, HOUSE_LABEL_HARNESSES]).toEqual(['loom.house', '2', 'loom.house.harnesses']);
   expect(sources('src').filter(file => /['"`]loom\.house/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
   // What is kept on the disk, and how long a build may take.
   expect([HOUSE_IMAGES_PER_HOUSE, HOUSE_IMAGES_KEPT, HOUSE_MIRRORS_KEPT, HOUSE_BUILD_DEFAULT_MS]).toEqual([2, 10, 8, 1_800_000]);
@@ -661,8 +689,12 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(text('src/runtime/house-image.ts')).toContain("import { houseFile, type House } from './house-source.js';");
   // How many jobs a worker runs side by side: the two numbers in one file, read by the schema and the program.
   expect([HOUSE_SLOTS_DEFAULT, SLOTS_MAX, ACCOUNT_SLOTS_DEFAULT]).toEqual([4, 16, 4]);
-  expect(text('src/runtime/worker-program.ts')).toContain('accountSlots: z.number().int().min(1).max(SLOTS_MAX).optional(),');
-  expect(text('src/runtime/worker-program.ts')).toContain('config.accountSlots ?? Math.min(ACCOUNT_SLOTS_DEFAULT, slots)');
+  expect(text('src/runtime/worker-program.ts')).toContain('const accountSlot = z.number().int().min(1).max(SLOTS_MAX);');
+  expect(text('src/runtime/worker-program.ts')).toContain('accountSlots: z.union([accountSlot, z.record(z.string().min(1), accountSlot)]).optional(),');
+  expect(text('src/runtime/worker-program.ts')).toContain('Math.min(own(ACCOUNT_SLOTS_BY_HARNESS, harness) ?? ACCOUNT_SLOTS_DEFAULT, slots)');
+  // Which harness's bodies run one at a time on an account by default is said in one place.
+  expect(ACCOUNT_SLOTS_BY_HARNESS).toEqual({ codex: 1 });
+  expect(sources('src').filter(file => /ACCOUNT_SLOTS_BY_HARNESS\b.*=/.test(text(file)))).toEqual(['src/runtime/worker-limits.ts']);
   expect(text('src/runtime/worker-program.ts')).toContain('slots: z.number().int().min(1).max(SLOTS_MAX).optional(),');
   expect(text('src/runtime/worker-program.ts')).toContain('config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1)');
   // What two bodies cannot have at once is named in one place, and the loop asks there.

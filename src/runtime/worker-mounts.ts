@@ -12,6 +12,8 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, posix, resolve } from 'node:path';
 import { UnservedJobError, type WorkerAssignment } from './worker.js';
 import { WorkerStop } from './worker-stop.js';
+import { relativeName } from './house-context.js';
+import { HARNESS_NAME, HOUSE_REPOSITORY, houseLogin, houseMount } from './house-layout.js';
 
 /** Where a body allowed nested containers finds the engine's socket. */
 export const NESTED_SOCKET_TARGET = '/var/run/docker.sock';
@@ -25,14 +27,20 @@ export const BODY_PROGRAM = `${BODY_PROGRAM_TARGET}/dist/body.js`;
 /** What a stop names when the program directory itself is at fault: it has no configuration key. */
 const PROGRAM_KEY = 'the directory the worker is installed in';
 /** A configuration key's part as it is printed: as it is when it is an ordinary name, quoted otherwise. */
-const named = (part: string) => /^[A-Za-z0-9_@.+-]+$/.test(part) ? part : JSON.stringify(part);
-/** A directory of this machine and the path a container sees it at. */
-export interface HostDirectory { source: string; target: string }
+export const keyPart = (part: string) => /^[A-Za-z0-9_@.+-]+$/.test(part) ? part : JSON.stringify(part);
+/** A directory of this machine. */
+export interface HostDirectory { source: string }
 /** A mount every body of one agent gets on this machine. Read-only unless it says otherwise. */
-export interface FixedMount extends HostDirectory { readOnly?: boolean }
+export interface FixedMount extends HostDirectory {
+  /** Where it lands in the container, as a path under the tenant's home (house-layout.ts): relative, and
+   * going nowhere but down. A machine's configuration names no other place inside a container. */
+  target: string;
+  readOnly?: boolean;
+}
 /** The fixed mounts of each agent, by agent id. A body gets its own agent's list and no other. */
 export type AgentMounts = Readonly<Record<string, readonly FixedMount[]>>;
-/** A sign-in directory for each account id, then harness. */
+/** A sign-in directory of this machine for each account id, then harness. Where it appears in a container
+ * is loom's to say and the same in every house (house-layout.ts), so an entry has no target. */
 export type AccountLogins = Readonly<Record<string, Readonly<Record<string, HostDirectory>>>>;
 /** One bind mount the worker asks the engine for, and expects to find when it inspects the container. */
 export interface BodyMount { readonly source: string; readonly target: string; readonly readOnly: boolean }
@@ -110,11 +118,15 @@ export function bodyMounts(config: {
   for (const [agent, mounts] of Object.entries(config.mounts ?? {})) {
     const own: BodyMount[] = [];
     for (const [index, mount] of mounts.entries()) {
-      const key = `container.mounts.${named(agent)}[${index}]`;
+      const key = `container.mounts.${keyPart(agent)}[${index}]`;
       if (!directory(mount.source)) stop(`${key}.source`);
-      if (!plainPath(mount.target)) stop(`${key}.target`);
+      // Under the tenant's home, and not the repository or a directory that holds it: a mount there would
+      // put the machine's files where the house's own are. Inside the repository is the agent's to ask for.
+      if (typeof mount.target !== 'string' || mount.target.includes('\0') || !relativeName(mount.target)) stop(`${key}.target`);
+      const target = houseMount(mount.target);
+      if (inside(HOUSE_REPOSITORY, target)) stop(`${key}.target`);
       // Read-only unless it says exactly `false`.
-      const made = Object.freeze({ source: mount.source, target: mount.target, readOnly: mount.readOnly !== false });
+      const made = Object.freeze({ source: mount.source, target, readOnly: mount.readOnly !== false });
       own.push(made); directories.push({ key, mount: made, agent });
     }
     fixed.set(agent, own);
@@ -122,12 +134,13 @@ export function bodyMounts(config: {
   for (const [account, harnesses] of Object.entries(config.accountLogins ?? {})) {
     const byHarness = new Map<string, BodyMount>();
     for (const [harness, login] of Object.entries(harnesses)) {
-      const key = `accountLogins.${named(account)}.${named(harness)}`;
+      const key = `accountLogins.${keyPart(account)}.${keyPart(harness)}`;
       if (!directory(login.source)) stop(`${key}.source`);
-      if (!plainPath(login.target)) stop(`${key}.target`);
+      // A harness's name is part of the place its sign-in is mounted at.
+      if (!HARNESS_NAME.test(harness)) stop(key);
       // Read-write: the provider's program rewrites its files when it renews the sign-in. Two bodies on
       // one account share it: docs/accepted-tradeoffs.md, "Two bodies on one account share one sign-in directory".
-      const mount = Object.freeze({ source: login.source, target: login.target, readOnly: false });
+      const mount = Object.freeze({ source: login.source, target: houseLogin(harness), readOnly: false });
       byHarness.set(harness, mount); directories.push({ key, mount, login: true });
     }
     logins.set(account, byHarness);

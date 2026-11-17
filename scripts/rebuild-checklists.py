@@ -46,7 +46,10 @@ ui={
 action_promises={('tasks','Lets a person or an agent claim work, comment on it, close it, and hand it back or reopen it.'):'taskLifecycle'}
 out=ROOT/'docs/rebuild-checklists'
 if not args.check: out.mkdir(exist_ok=True)
+# Pages put to the owner and not yet approved: on the site for reading, and no part of what the rebuild is measured against.
+proposed={'houses'}
 for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
+ if f.stem in proposed:continue
  p=Parser();p.feed(f.read_text());nodes=list(p.root.all());rows=[];seen=set()
  source_hash=hashlib.sha256(f.read_bytes()).hexdigest()
  previous_path=out/(f.stem+'.json')

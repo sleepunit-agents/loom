@@ -11,9 +11,11 @@ function asking(turns: ReturnType<typeof workerTurns>, keys: string[], signal = 
 }
 
 it('names what a job\'s body needs to itself: its account, and each port it publishes whatever the address', () => {
-  expect(turnsOf({ account: 'a' })).toEqual(['account:a']);
-  expect(turnsOf({ account: 'a', run: { gpu: false, nestedContainers: false, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }, { address: '0.0.0.0', port: 9000 }] } }))
-    .toEqual(['account:a', 'port:8080', 'port:9000']);
+  expect(turnsOf({ account: 'a', harness: 'claude' })).toEqual(['account:claude:a']);
+  // One account under two harnesses is two sign-ins: each has its own turn.
+  expect(turnsOf({ account: 'a', harness: 'codex' })).toEqual(['account:codex:a']);
+  expect(turnsOf({ account: 'a', harness: 'claude', run: { gpu: false, nestedContainers: false, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }, { address: '0.0.0.0', port: 9000 }] } }))
+    .toEqual(['account:claude:a', 'port:8080', 'port:9000']);
 });
 it('gives one account to one job at a time, and to the next when the first gives it up', async () => {
   const turns = workerTurns({ accounts: 1 }), first = asking(turns, ['account:a']), second = asking(turns, ['account:a']), other = asking(turns, ['account:b']);
@@ -65,3 +67,18 @@ it('lets a job that is stopped leave the wait, and lets those behind it move up'
   await expect(turns.take(['account:z'], dead.signal)).rejects.toThrow('Worker turn cancelled');
   const free = asking(turns, ['account:z']); await settle(); expect(free.given).toBe(true);
 });
+it('gives each harness its own number of bodies on one account, and holds one harness\'s bodies apart from another\'s', async () => {
+  const turns = workerTurns({ accounts: harness => harness === 'codex' ? 1 : 2 });
+  const key = (harness: string, account = 'a') => turnsOf({ account, harness });
+  const codex = [asking(turns, key('codex')), asking(turns, key('codex'))], claude = [asking(turns, key('claude')), asking(turns, key('claude')), asking(turns, key('claude'))];
+  const elsewhere = asking(turns, key('codex', 'b'));
+  await settle();
+  // One Codex body on the account at a time, two of Claude Code, and neither waits for the other: they share no sign-in.
+  expect(codex.map(one => one.given)).toEqual([true, false]); expect(claude.map(one => one.given)).toEqual([true, true, false]); expect(elsewhere.given).toBe(true);
+  codex[0].release(); await settle(); expect(codex[1].given).toBe(true); expect(claude[2].given).toBe(false);
+  claude[0].release(); await settle(); expect(claude[2].given).toBe(true);
+  // A number that is none, for the harness asked about, is refused when it is asked.
+  const broken = workerTurns({ accounts: () => 0 });
+  await expect(broken.take(key('claude'), never())).rejects.toThrow('Invalid account slots');
+});
+

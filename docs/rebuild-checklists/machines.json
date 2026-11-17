@@ -2,7 +2,7 @@
   "page": "machines",
   "title": "Machines and jobs",
   "ownerTask": "t-2241",
-  "sourceSha256": "9372329ba762280cdac36ea58ec154a00748cbcb87a51eb11201e4886857a408",
+  "sourceSha256": "69a52983b010c45a06977e7e27eeed200cf80e14f3b176a308e82bef4a8879c5",
   "promises": [
     {
       "id": "machines-001",
@@ -71,7 +71,7 @@
     },
     {
       "id": "machines-014",
-      "promise": "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given.",
+      "promise": "Each agent has run settings. The first preferred machine that is up is used. Settings also say how the agent treats each outside person and which tools its body is not given. How a house is defined and built is on the Houses page.",
       "source": "docs/how-it-works/site/machines.html#how-h"
     },
     {

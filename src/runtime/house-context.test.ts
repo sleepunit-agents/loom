@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, expect, it, vi } from 'vitest';
-import { CONTEXT_LIMITS, houseContext, HouseContextError, type ContextLimits, type ObjectStore } from './house-context.js';
+import { CONTEXT_LIMITS, houseContext, HouseContextError, plainContext, type ContextLimits, type ObjectStore } from './house-context.js';
 import { CONTEXT_ENTRIES_MAX, CONTEXT_FILE_MAX, CONTEXT_MAX, CONTEXT_NAME_MAX } from './worker-limits.js';
 
 // A real git, real repositories and the machine's own tar to read back what was written.
@@ -260,3 +260,45 @@ it('waits for a git that a signal ended, and fails', async () => {
   };
   await expect(all(houseContext(store, 'c'.repeat(40), never()))).rejects.toThrow('git failed');
 });
+
+// Files of the worker's own in a context.
+it.each([
+  ['an ignore file that lets through only what it names', '*\n!src\n'],
+  ['an ignore file that ignores everything', '*\n**\n'],
+  ['an ignore file that names the worker\'s own Housefile', 'Housefile\nHousefile*\nrepository\n'],
+  ['no ignore file', undefined],
+])('writes a house with no Housefile in two parts, so that nothing of the repository is at the context\'s top: %s', async (what, ignore) => {
+  // A repository with names the worker's own could meet, and whatever ignore file it has.
+  const files: Record<string, string | { link: string } | { executable: string }> = { 'README.md': 'a house with no Housefile\n', 'src/run': { executable: '#!/bin/sh\n' }, 'Housefile': 'the repository\'s own file of that name\n',
+    'repository/inner.txt': 'a directory of that name\n', 'link': { link: 'README.md' }, ...(ignore === undefined ? {} : { '.dockerignore': ignore }) };
+  const house = repository(`apart-${what.replaceAll(/[^a-z]/g, '-')}`, files);
+  const apart = { directory: 'repository', beside: { name: 'Housefile', data: Buffer.from('ARG LOOM_CORE\nFROM ${LOOM_CORE}\nCOPY repository/ /home/agent/repo/\n') } };
+  const into = unpacked(await all(houseContext(storeOf(house.path), house.commit, never(), { apart })), `apart-${what.replaceAll(/[^a-z]/g, '-')}`);
+  // At the top: the worker's Housefile and the one directory. A builder finds no ignore file there, so a copy of the directory leaves nothing out,
+  // and the Housefile is not in the directory, so it is in no copy of it: nothing depends on what the repository says or holds.
+  expect(readdirSync(into).sort()).toEqual(['Housefile', 'repository']);
+  expect(readFileSync(join(into, 'Housefile'), 'utf8')).toBe('ARG LOOM_CORE\nFROM ${LOOM_CORE}\nCOPY repository/ /home/agent/repo/\n');
+  // In the directory: every file of the commit, byte for byte, its own Housefile and ignore file among them as ordinary files.
+  expect(under(join(into, 'repository'))).toEqual([...(ignore === undefined ? [] : ['.dockerignore']), 'Housefile', 'README.md', 'link', 'repository/inner.txt', 'src/run'].sort());
+  expect(readFileSync(join(into, 'repository/Housefile'), 'utf8')).toBe('the repository\'s own file of that name\n');
+  if (ignore !== undefined) expect(readFileSync(join(into, 'repository/.dockerignore'), 'utf8')).toBe(ignore);
+  expect(readlinkSync(join(into, 'repository/link'))).toBe('README.md'); expect(lstatSync(join(into, 'repository/src/run')).mode & 0o111).toBe(0o111);
+});
+it('writes the directory of a house with no Housefile even for a commit with no files, and takes only plain names for the two parts', async () => {
+  const empty = join(root, 'apart-empty'); mkdirSync(empty); git(empty, ['init', '--quiet', '--initial-branch=main']); git(empty, ['commit', '--quiet', '--allow-empty', '--message', 'nothing']);
+  const apart = { directory: 'repository', beside: { name: 'Housefile', data: Buffer.from('FROM scratch\n') } };
+  const into = unpacked(await all(houseContext(storeOf(empty), git(empty, ['rev-parse', 'HEAD']), never(), { apart })), 'apart-empty');
+  expect(readdirSync(into).sort()).toEqual(['Housefile', 'repository']); expect(lstatSync(join(into, 'repository')).isDirectory()).toBe(true); expect(readdirSync(join(into, 'repository'))).toEqual([]);
+  for (const bad of [{ ...apart, directory: 'a/b' }, { ...apart, directory: '..' }, { ...apart, directory: '' }, { ...apart, directory: 'Housefile' }, { ...apart, beside: { ...apart.beside, name: 'a/Housefile' } }, { ...apart, beside: { ...apart.beside, name: '/Housefile' } }])
+    await expect(all(houseContext(storeOf(empty), git(empty, ['rev-parse', 'HEAD']), never(), { apart: bad }))).rejects.toThrow(HouseContextError);
+});
+it('writes files it holds in memory as a whole context', async () => {
+  const files = [{ name: 'Housefile', data: Buffer.from('FROM scratch\n') }, { name: 'body/claude.json', data: Buffer.from('{}\n') }, { name: 'bin/tool', data: Buffer.from('#!/bin/sh\n'), executable: true }, { name: 'empty', data: Buffer.alloc(0) }];
+  const into = unpacked(await all(plainContext(files)), 'plain');
+  expect(under(into)).toEqual(['Housefile', 'bin/tool', 'body/claude.json', 'empty']);
+  expect(readFileSync(join(into, 'body/claude.json'), 'utf8')).toBe('{}\n');
+  expect([lstatSync(join(into, 'bin/tool')).mode & 0o111, lstatSync(join(into, 'Housefile')).mode & 0o111]).toEqual([0o111, 0]);
+  for (const name of ['/etc/passwd', '../x', 'a//b', '']) expect(() => plainContext([{ name, data: Buffer.alloc(0) }])).toThrow(HouseContextError);
+  expect(() => plainContext([files[0], files[0]])).toThrow(HouseContextError);
+});
+

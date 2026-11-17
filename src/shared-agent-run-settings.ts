@@ -12,7 +12,11 @@ const repository=text(2048).refine(value=>{
  if(/[?#]/.test(value)||/^[^/@\s]+:[^/@\s]+@/.test(value))return false;
  try{const url=new URL(value,'https://repository.invalid/');return !url.password&&!url.search&&!url.hash&&(!url.username||url.protocol==='ssh:');}catch{return false;}
 },'Use a repository reference without credentials');
-export const agentRunSettingsInput=z.object({agent:text(200),houseRepository:repository,houseFile:text(512).refine(value=>!value.startsWith('/')&&!value.includes('\\')&&!value.split('/').includes('..')),
+/** The Housefile's path inside the repository. Empty is a house with no Housefile of its own: the core
+ * house loom provides, with the repository copied in (docs/runtime/worker.md, "The core house"). */
+// The same rule a worker holds a Housefile's path to (houseFile in runtime/house-source.ts): no part that is empty, `.` or `..`.
+const houseFile=z.string().trim().max(512).refine(value=>!hasControlCharacter(value)).refine(value=>value===''||!value.includes('\\')&&value.split('/').every(part=>part!==''&&part!=='.'&&part!=='..'));
+export const agentRunSettingsInput=z.object({agent:text(200),houseRepository:repository,houseFile:houseFile,
    houseBranch:text(200).refine(value=>!value.startsWith('-')),nestedContainers:z.boolean(),gpu:z.boolean(),
    boxes:z.array(text(200)).max(128).refine(values=>new Set(values).size===values.length),
    ports:z.array(z.object({address:z.ipv4().or(z.ipv6()).transform(value=>value.includes(':')?new URL('http://['+value+']/').hostname.slice(1,-1):value),port:z.number().int().min(1).max(65535)}).strict()).max(128).refine(values=>new Set(values.map(value=>JSON.stringify([value.address,value.port]))).size===values.length),
