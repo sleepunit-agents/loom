@@ -132,7 +132,7 @@ it.each(['discord', 'slack'] as const)('delivers later %s events while metadata 
   const later = Buffer.from((platform === 'discord' ? f.discord(2, 'later') : f.slack('ack2', 'ev2')).toString().replace('"room"', '"other"'));
   // Direct mentions let the later channel deliver without a default route.
   const parsed = JSON.parse(later.toString());
-  if (platform === 'discord') parsed.d.mentions = [{ id: 'bot' }];
+  if (platform === 'discord') { parsed.d.mentions = [{ id: 'bot' }]; parsed.d.content = '<@bot> ' + parsed.d.content; }
   else parsed.payload.event.text = '<@bot> Friday?';
   if (platform === 'discord') {
     f.receiver.discord(platform, first, f.checkpoint());
