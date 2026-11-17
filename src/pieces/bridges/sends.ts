@@ -115,16 +115,18 @@ export class BridgeSends {
       this.changed();
       // Go on from the parts an earlier attempt, in this run or one before it, had confirmed.
       const posted = this.db.select({ last: max(bridgeSendParts.part) }).from(bridgeSendParts).where(eq(bridgeSendParts.send, send.id)).get()?.last;
+      const post = async (text: string) => {
+        const current = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, connection.id)).get();
+        if (this.closed || !current?.enabled || current.state !== 'connected'
+          || current.platform !== connection.platform || current.workspace !== connection.workspace
+          || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new BridgeReplyNotSent(true);
+        return this.transport.post(current, { channel: send.channel, thread: send.thread }, text);
+      };
+      // On record before the next part is tried: a crash between two parts leaves exactly what is out.
+      const confirmed = (part: number, postedId: string) => { this.commit(() => this.db.insert(bridgeSendParts).values({ send: send.id, part, postedId }).run()); };
       let attempt: ReplyAttempt;
       try {
-        attempt = await postReply(connection.platform, send.text, posted === null || posted === undefined ? 0 : posted + 1, async text => {
-          const current = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, connection.id)).get();
-          if (this.closed || !current?.enabled || current.state !== 'connected'
-            || current.platform !== connection.platform || current.workspace !== connection.workspace
-            || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new BridgeReplyNotSent(true);
-          return this.transport.post(current, { channel: send.channel, thread: send.thread }, text);
-        // On record before the next part is tried: a crash between two parts leaves exactly what is out.
-        }, (part, postedId) => { this.commit(() => this.db.insert(bridgeSendParts).values({ send: send.id, part, postedId }).run()); });
+        attempt = await postReply(connection.platform, send.text, posted === null || posted === undefined ? 0 : posted + 1, post, confirmed);
       } catch {
         // No part could be made of this text, so nothing was posted and waiting cannot help.
         attempt = { parts: 0, done: false, refused: new BridgeReplyNotSent(false) };
