@@ -356,7 +356,8 @@ Entries are grouped by the part of the program they belong to.
 - What: mail a body took and accepted is handed to a body again if the first one's job is lost or fails
   before it answered. The agent can see the same outside message twice.
 - Where: `src/core/conversations/mail.ts` (`accept` settles nothing; `settle` and `confirm` do),
-  `src/runtime/jobs.ts` (a lost job's taken mail waits again, bound to the retry).
+  `src/runtime/jobs.ts` (mail a job took and did not settle waits again, bound to the retry, whether the
+  job was lost, failed, or reported success with none of its mail settled; first attempt plus three).
 - Why: the other choice is at most once, where a body that dies after taking a message leaves it answered
   by nobody. A message read twice costs a little work; a message never answered is a person ignored. An
   answer is still given once: the reply settles everything its job took, in the reply's own write.
@@ -500,6 +501,14 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** As for step 6: a step that removes data a household cannot get back
   needs the owner's say first.
 
+### Upgrade step 8 removed one kind of existing data
+- **What.** A household upgraded from schema 7 or earlier lost the retry receipts of `runtime.signInCode`
+  (rows of `operation_results`).
+- **Where.** Step 8 of `upgrades` in `src/core/data/database.ts`; `src/core/data/upgrade.test.ts` asserts it.
+- **Why accepted.** Those receipts held a one-time sign-in code, from when that operation was a write. It
+  is a read now and leaves none. The program already deleted them at every start; the step does it once.
+- **What would change the answer.** As for step 6.
+
 ### A new person is two commits, not one
 - **What.** `mind.personAdd` writes a person's card into two SQLite files (the directory's `people.db` and the
   adding agent's `memories.db`). A refusal or a failure on either side saves neither, but a process crash
@@ -538,35 +547,65 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A step that rebuilds or narrows a table. Pin the shapes before writing one.
 
 ### Some household tables are written by more than one module
-- **What.** A table has one module that owns its rows' life. A few other modules write single columns of
-  those rows, because the column records a fact that is theirs.
+- **What.** A table has one module that owns its rows' life: one file, or one directory whose files are one
+  part (`src/core/conversations/`, `src/core/signin/`, `src/pieces/bridges/`, `src/runtime/`). A few other
+  modules write single columns of those rows, or one kind of row, because the fact is theirs. This is every
+  such write. `src/stored-data.contract.test.ts` reads the writers of every table from the source and fails
+  on one that is not in its list and in this one.
 - **Where, and whose fact it is.**
   - `inbox.job`, `messages.delivery`, `threads.working`: `src/runtime/jobs.ts`. Which job holds a piece of
     mail, whether it was delivered to a body, and whether a body is working are facts about a job.
   - `inbox.volume`, `inbox.quiet_until`: `src/core/tempo/volume.ts`. Tempo owns how loudly an item is shown.
-  - `jobs.title`, `conversations.label`: `src/core/conversations/threads.ts`, the one place a title changes
-    (next entry).
-  - `jobs.model`, `jobs.account`, `jobs.harness`: `src/runtime/dispatcher.ts`, in the transaction of the
-    claim. Which model, account and harness a job is placed on is decided at placement and nowhere else.
-  - `inbox.words`, `bridge_sends.text`, `bridge_incoming.text`: `src/core/conversations/private-bridge-words.ts`
-    erases the words of private direct messages when they expire, across the three tables that hold them.
+  - `jobs.title`: `src/core/conversations/threads.ts`, the one place a title changes (next entry). It
+    changes `conversations.label` with it, in its own module.
+  - `inbox.words`, `bridge_sends.text`, `bridge_incoming.text`, and the rows of `bridge_file_messages` and
+    `bridge_files`: `src/core/conversations/private-bridge-words.ts` erases the words of private direct
+    messages when they expire, across the three tables that hold them, and removes their files with them.
   - `tokens.last_used_at`, `sessions.seen_at`: `src/shared-credentials.ts` stamps a credential when it is used.
-  - `tokens` (a job body's token): `src/shared-body-enrollment.ts` registers a fingerprint the body made, which
-    the issuing function cannot take, under stricter checks than issuing has.
-  - `operation_results`: `src/shared-account-signin.ts` deletes, once at start, the receipts of an operation
-    that used to keep a one-time code.
   - `approvals.state`, `changes.waiting_on`: `src/shared-work-lifetime.ts` expires an allowed card on the clock.
+  - `approvals.details`, `approvals.change_summary`, `approvals.what`: `src/shared-household-proposals.ts`,
+    for household cards an older version filed, once at start ("One rewrite of stored rows runs at start",
+    below).
   - `agents.sprite_version`: `src/desk-sprites.ts`, with the sprite it describes, in one transaction.
-  - `bridge_connections` (switched off): `src/apps/household.ts`, when the connection is removed.
+  - `bridge_connections` (switched off, and `removed_at`) and `projects.removed_at`: `src/apps/household.ts`.
+    Removing and restoring is one household action for a member, an agent, a project and a connection; a
+    removed connection is switched off in the same transaction.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
-  - `household.secrets_default`: `src/shared-root.ts`, the settings operation for that one answer.
-  - `boxes.last_seen_at`: `src/runtime/machines.ts`, on a machine's report.
+  - `boxes` has a writer for each fact about a machine. `src/shared-machine-registry.ts` makes the row
+    when a machine is enrolled. `src/shared-box-settings.ts` writes what its owner chose (`boxes.name`,
+    `hosts_any`, `report_only`, `always_on`). `src/runtime/machines.ts` writes `boxes.last_seen_at` on a
+    machine's report. `src/shared-root.ts` writes `boxes.revoked_at`, the one place a machine is revoked.
+  - `box_facts`: the owner's facts are written by `src/shared-box-settings.ts`, and the facts a machine
+    reports about itself by `src/runtime/machines.ts`. Each replaces only its own kind (`from_owner`).
+  - `action_results.read_at`: `src/core/conversations/operations.ts`. The notice of a person's own action is
+    written by `src/shared-action-results.ts`; marking it read is the inbox door's, with the other reads.
+  - `model_accounts` (`usage`, `usage_read_at`, `resets_at`, `has_room`): `src/runtime/account-windows.ts`
+    and `src/runtime/account-usage.ts` write the usage summary; the row is made and renamed by
+    `src/shared-model-account-admin.ts` ("An account's usage summary is stored beside the windows", below).
 - **Why accepted.** Each was read against its owner: none skips a check the owner makes, and each write is in
   the transaction of the fact it records. Routing them through the owner would give every owner a method per
   foreign fact and move no rule.
 - **What would change the answer.** A second writer that repeats or skips a rule of the owner (a second copy
   of how a machine is revoked, or of how the approval record is appended to). That is a defect, not this
-  pattern: the second writer calls the first.
+  pattern: the second writer calls the first. Three were: the household's answer for secrets and the listing
+  order of members and agents are now written by `src/apps/household.ts` alone, and which machines an
+  account is signed in on by `src/runtime/account-boxes.ts` alone.
+
+### One rewrite of stored rows runs at start, outside the upgrade steps
+- **What.** A household card filed by an older version kept the value it would replace in its `details`,
+  where the asking agent could read it. At every start `src/shared-household-proposals.ts` looks for such
+  cards and rewrites each: the value is replaced by a keyed digest of it, and the card's summary no longer
+  shows it. A decided card loses its record of the earlier value.
+- **Where.** The transaction after `apply` in `src/shared-household-proposals.ts`.
+- **Why it is not a numbered step.** A step is SQL run against a database nothing else has opened. The
+  digest is keyed with the household's key, which only the running program holds, and a waiting card needs
+  that digest so its Allow is still refused when what it would replace has changed.
+- **What is kept instead.** The three rules for such a rewrite (`docs/data-schema.md`). It changes nothing
+  the second time: a rewritten card has no `before` and is not selected again. It prints one line with the
+  number of cards it rewrote. It is listed here. A test holds all three
+  (`src/shared-household-proposals.test.ts`).
+- **What would change the answer.** A second rewrite of this kind. Then they get a table of their own that
+  records which have run, as `migrations` does for steps.
 
 ### A thread's title is kept in three tables
 - **What.** `threads.title`, `conversations.label` and `jobs.title` hold the same words.
