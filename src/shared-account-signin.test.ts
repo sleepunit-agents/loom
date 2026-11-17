@@ -180,14 +180,16 @@ it('drops, at start, the receipts an earlier version kept for the code and close
 });
 it('lets an agent ask only with the authority of the member its current work is for', () => {
   const client = new Database(':memory:'), clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
-  db.insert(members).values([{ id: 'member', role: 'owner', fullOwner: true, joinedAt: now() }, { id: 'guest', role: 'member', joinedAt: now() }]).run();
+  db.insert(members).values([{ id: 'member', role: 'owner', fullOwner: true, joinedAt: now() }, { id: 'guest', role: 'member', joinedAt: now() },
+    // A household owner who does not have the agent: the role alone gives a body nothing of theirs.
+    { id: 'second', role: 'owner', joinedAt: now() }]).run();
   db.insert(boxes).values({ id: 'box', owner: 'member', name: 'box', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: false, enrolledAt: now() }).run();
   db.insert(modelAccounts).values({ id: 'account', owner: 'member', provider: 'provider', label: 'Subscription', hasRoom: false }).run();
   db.insert(agents).values({ id: 'bot', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
-  // The guest owns the agent; the household's owner owns the account and the machine.
-  db.insert(memberAgents).values({ member: 'guest', agent: 'bot' }).run();
+  // The guest and the first owner have the agent; that owner owns the account and the machine.
+  db.insert(memberAgents).values([{ member: 'guest', agent: 'bot' }, { member: 'member', agent: 'bot' }]).run();
   const job = (id: string, member: string | null) => db.insert(jobs).values({ id, agent: 'bot', box: 'box', member, title: '', state: 'running', brief: '', model: 'm', startedByKind: 'agent', startedBy: 'bot', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: now() }).run();
-  job('for-guest', 'guest'); job('for-owner', 'member'); job('for-nobody', null);
+  job('for-guest', 'guest'); job('for-owner', 'member'); job('for-nobody', null); job('for-second', 'second');
   const operations = new Operations(client, clock, () => {}, { receipts: new OperationResults(db), writes: new DataWrites(db, { refreshAccess() {}, changed() {} }), reportError: () => {} });
   cleanup.push(() => operations.close(), () => { client.close(); });
   const work = new WeakMap<Viewer, string>();
@@ -203,9 +205,17 @@ it('lets an agent ask only with the authority of the member its current work is 
   expect(ask('for-guest')).toMatchObject({ ok: false, code: 'denied' });
   expect(ask('for-nobody')).toMatchObject({ ok: false, code: 'denied' });
   expect(ask()).toMatchObject({ ok: false, code: 'denied' });
+  // The member could ask themselves, but the agent is not on their list: its body acts on nobody's word.
+  expect(operations.call('http', { kind: 'member', id: 'second' }, 'runtime.accountSignIn', { account: 'account', box: 'box' }, 'second-asks')).toMatchObject({ ok: true });
+  db.delete(accountSignins).run();
+  expect(ask('for-second')).toMatchObject({ ok: false, code: 'denied' });
   const asked = ask('for-owner'); expect(asked).toMatchObject({ ok: true });
   const id = (asked as { value: { id: string } }).value.id;
   expect(db.select().from(accountSignins).where(eq(accountSignins.id, id)).get()).toMatchObject({ askedByKind: 'agent', askedBy: 'bot' });
   const status = (on: string) => operations.call('http', body(on), 'runtime.accountSignInStatus', { id });
   expect(status('for-owner')).toMatchObject({ ok: true }); expect(status('for-guest')).toMatchObject({ ok: false, code: 'denied' });
+  expect(status('for-second')).toMatchObject({ ok: false, code: 'denied' });
+  // Once the member no longer has the agent, the body that was asking for them can ask and read nothing.
+  db.delete(memberAgents).where(eq(memberAgents.member, 'member')).run();
+  expect(status('for-owner')).toMatchObject({ ok: false, code: 'denied' }); expect(ask('for-owner')).toMatchObject({ ok: false, code: 'denied' });
 });

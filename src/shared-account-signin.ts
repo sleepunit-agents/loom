@@ -19,7 +19,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { mayAct, type Viewer } from './policy.js';
+import { holds, rules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { liveWorker } from './shared-worker.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -44,21 +44,14 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   acting: (viewer: Viewer) => Readonly<{ job: string }> | undefined = () => undefined) {
   const account = (key: string) => db.select().from(modelAccounts).where(eq(modelAccounts.id, key)).get();
   const request = (key: string) => db.select().from(accountSignins).where(eq(accountSignins.id, key)).get();
-  // A member may ask for an account they may act on, on a machine they may act on: the rule for recording a
-  // sign-in. Asking finishes nothing: the account's owner still has to open the page and sign in themselves.
-  const memberMay = (member: string, input: { account: string; box: string }) => {
-    const row = account(input.account), viewer: Viewer = { kind: 'member', id: member };
-    if (!row || !mayAct(viewer, { type: 'runtime.model-account', member: row.owner }, sharedSharing(db))) return false;
-    const box = db.select().from(boxes).where(and(eq(boxes.id, input.box), isNull(boxes.revokedAt))).get();
-    return !!box && mayAct(viewer, { type: 'runtime.box', member: box.owner }, sharedSharing(db));
-  };
-  // An agent asks with the authority of the one member its current work is for, and of nobody else: not of
-  // its other owners, and not of the household's owners. Work that is for no member can ask for nothing.
+  // Who may ask is one rule, in policy.ts (asksSignIn): a member for an account and a machine they may act
+  // on; a body on the word of the one member its current work is for, while that member has its agent.
+  // Work that is for no member can ask for nothing. A body must also prove here that its credential is
+  // bound to one piece of current work.
   const mayAsk = (viewer: Viewer, input: { account: string; box: string }) => {
-    if (viewer.kind === 'member') return memberMay(viewer.id, input);
-    // Which member that is comes from the body's credential (Viewer.workingFor), with proof that it is one.
-    const member = viewer.kind === 'agent' && acting(viewer) ? viewer.workingFor : undefined;
-    return !!member && memberMay(member, input);
+    if (viewer.kind === 'agent' && !acting(viewer)) return false;
+    const row = account(input.account), box = db.select().from(boxes).where(and(eq(boxes.id, input.box), isNull(boxes.revokedAt))).get();
+    return !!row && !!box && holds(rules.asksSignIn, viewer, { accountOwner: row.owner, boxOwner: box.owner }, sharedSharing(db));
   };
   const machine = (viewer: Viewer) => !!liveWorker(db, viewer, runner(viewer));
   const mine = (viewer: Viewer, key: string) => machine(viewer) && request(key)?.box === viewer.id;
