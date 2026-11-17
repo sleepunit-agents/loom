@@ -64,7 +64,7 @@ export class SharedBridges {
   });
   // A receipt that expires was never delivered. Nothing can bring it back, so it is at least reported.
   this.receiver=new BridgeReceiver(options.db,options.clock,this.channels,lost=>{
-   try{options.reportError(new Error(`${lost.events} received bridge event(s) expired before they could be processed; ${lost.held} held message(s) were dropped`));}catch{ /* reporting never retries effects */ }
+   try{options.reportError(new Error(`${lost.events} received bridge event(s) expired before they could be processed; ${lost.held} held message(s) could no longer be delivered and were dropped`));}catch{ /* reporting never retries effects */ }
    if(lost.held)this.notify();
   });
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());

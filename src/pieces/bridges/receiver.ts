@@ -3,11 +3,14 @@
  * ACK/resume advancement; metadata lookup and admission happen in drain().
  * Channel resolvers read an authenticated adapter cache synchronously. Missing
  * metadata and held messages retain their receipt until retry or one-hour expiry.
- * Expiry loses the message: a held row is then closed as dropped, since only its
- * receipt could retry it, and composition is told how many receipts were lost.
+ * A held message outlives its receipt: its row keeps what admission read, and
+ * drain goes on trying it from the row for HELD_LIFETIME. Only a message that
+ * never got a row (no channel metadata for the whole hour), a row from before
+ * those fields were stored, or one held past HELD_LIFETIME is lost; composition
+ * is told how many.
  * This service performs no network IO and is owned/closed by composition.
  */
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
@@ -24,6 +27,9 @@ const slackFrame = z.object({ type: z.literal('events_api'), payload: z.object({
 const channelField = z.object({ channel_id: id });
 const slackChannelField = z.object({ channel: id });
 
+/** How long a held message is still worth delivering. After a day an answer would come too late to be
+ * wanted, so the message is closed as dropped and says why. */
+export const HELD_LIFETIME = 86_400_000;
 export interface BridgeChannelCache {
   discord(connection: string, channel: string): DiscordChannel | undefined;
   slack(connection: string, channel: string): SlackChannel | undefined;
@@ -103,6 +109,12 @@ export class BridgeReceiver {
    * composition must report the failure, rather than spin an immediate retry. */
   drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void): number {
     const source = this.connection(connection);
+    // Held messages whose receipt is gone are tried from their own rows. Such a delivery has no raw frame,
+    // so `delivered` is not called for it: a Slack message that waited this long arrives without its files.
+    const expired = new Date(this.clock.now() - RAW_EVENT_LIFETIME).toISOString();
+    for (const held of this.db.select({ id: bridgeIncoming.id }).from(bridgeIncoming)
+      .where(and(eq(bridgeIncoming.connection, connection), eq(bridgeIncoming.state, 'held'), isNotNull(bridgeIncoming.mentions), sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${expired})`))
+      .orderBy(asc(bridgeIncoming.receivedAt)).limit(limit).all()) this.incoming.retry(held.id);
     return this.events.drain(connection, (_id, raw, receivedAt) => {
       const payload = this.parse(raw);
       let message;
@@ -129,12 +141,12 @@ export class BridgeReceiver {
     }, limit);
   }
 
-  /** A held row keeps its receipt's arrival time, so one older than the receipt
-   * lifetime has no receipt left and can never be retried. Say so on the row. */
+  /** Close the held rows nothing can deliver any more, and say so on the row: one held for HELD_LIFETIME,
+   * and one whose receipt has expired and whose row was written before it stored what a retry needs. */
   private closeExpiredHeld(): number {
-    const cutoff = new Date(this.clock.now() - RAW_EVENT_LIFETIME).toISOString();
-    return this.db.update(bridgeIncoming).set({ state: 'dropped', reason: sql`'Held for an hour without delivery: ' || coalesce(${bridgeIncoming.reason}, 'no reason recorded')` })
-      .where(and(eq(bridgeIncoming.state, 'held'), sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${cutoff})`)).run().changes;
+    const before = (ms: number) => sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${new Date(this.clock.now() - ms).toISOString()})`;
+    return this.db.update(bridgeIncoming).set({ state: 'dropped', reason: sql`'Held too long to deliver: ' || coalesce(${bridgeIncoming.reason}, 'no reason recorded')` })
+      .where(and(eq(bridgeIncoming.state, 'held'), or(before(HELD_LIFETIME), and(isNull(bridgeIncoming.mentions), before(RAW_EVENT_LIFETIME))))).run().changes;
   }
 
   private connection(connection: string, platform?: 'discord' | 'slack') {
