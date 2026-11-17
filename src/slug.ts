@@ -26,5 +26,10 @@ export const householdId = slug(HOUSEHOLD_ID_MAX);
 
 /** The name of one of an agent's identity pages or manifests: letters, digits and . _ - , at most 100. */
 export const PAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-/** A memory's id as the doors give it: the agent it belongs to, a colon, and the memory's own id. */
-export const SCOPED_MEMORY_ID = /^[^:]+:[a-f0-9-]{36}$/;
+/** The id a memory store gives a memory, a draft or a card: 36 characters of hex and dashes. */
+export const STORE_ID = /^[a-f0-9-]{36}$/;
+/** An id as the doors give it: the agent it belongs to, a colon, for a draft or a card its kind and a colon,
+ * and the store's own id. */
+export const scopedStoreId = (kind?: string) => new RegExp(`^[^:]+:${kind ? `(?:${kind}):` : ''}${STORE_ID.source.slice(1, -1)}$`);
+/** A memory's id as the doors give it. */
+export const SCOPED_MEMORY_ID = scopedStoreId();

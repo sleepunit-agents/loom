@@ -12,7 +12,7 @@ import {getRequestListener} from '@hono/node-server';
 import {McpServer,WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/server';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from '../core/clock.js';
-import {secretName,requestReason} from '../pieces/secrets/input.js';
+import {secretName,agentSecretRequest} from '../pieces/secrets/input.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
 import {harnessToolPrefix} from './body-harness.js';
@@ -52,7 +52,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
    try{const current=AbortSignal.any([signal,request.signal,callSignal]);if(current.aborted)throw unavailable();const result=await work(current);if(current.aborted||closed)throw unavailable();return result;}
    catch{return failed();}
   };
-  server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:z.object({id:z.uuid(),secret:secretName,why:requestReason,minutes:z.number().int().min(1).max(525600),scope:z.enum(['agent','job']).default('job')}).strict()},(args,extra)=>run(async signal=>{
+  server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:agentSecretRequest},(args,extra)=>run(async signal=>{
    const client=metadata(signal);try{return{content:[{type:'text',text:JSON.stringify(await client.requestSecret(args))}]};}finally{client.close();}
   },extra.mcpReq.signal));
   server.registerTool('use_secret',{description:'Acquire a granted private credential for this body. Optional request waits for that request to be answered. The value is base64, not text. Never repeat the value in a conversation reply. Reuse the attempt UUID after uncertainty; do not silently create another attempt.',inputSchema:z.object({id:z.uuid(),secret:secretName,request:z.uuid().optional()}).strict(),_meta:{'anthropic/maxResultSizeChars':131072}},(args,extra)=>run(async signal=>{

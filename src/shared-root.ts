@@ -29,7 +29,7 @@ import { recordActionResult } from './shared-action-results.js';
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { boxes, household, secretChanges } from './core/data/schema.js';
+import { boxes, secretChanges } from './core/data/schema.js';
 import { setHouseSecrets } from './shared-secret-commands.js';
 import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
 import { registerSharedBridgeReply } from './shared-bridge-reply.js';
@@ -148,7 +148,7 @@ export function sharedRoot(options: {
   const proposalDigest = (words: string) => proposalKey ? createHmac('sha256', proposalKey).update(words).digest('hex') : options.commsKey!.hash('household-proposal\0' + words);
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
-    { secrets: { setRule: input => late.requests!.setRule(input) },
+    { secrets: { setRule: input => late.requests!.setRule(input), setDefault: answer => late.requests!.setDefault(answer) },
       // Revoking a machine is written once, in setup.revokeMachine below.
       machines: { revoke: id => late.revokeMachine!(id) },
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
@@ -281,7 +281,7 @@ export function sharedRoot(options: {
     rule(input: Parameters<typeof ruleSettings.set>[0], owner: string) { return ruleSettings.set(input, owner); },
     // Secrets and bridges.
     secretRule(input: Parameters<SecretRequests['setRule']>[0]) { requests.setRule(input); },
-    secretDefault(answer: 'ask' | 'auto' | 'never') { db.insert(household).values({ secretsDefault: answer }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault: answer } }).run(); },
+    secretDefault(answer: Parameters<SecretRequests['setDefault']>[0]) { requests.setDefault(answer); },
     houseSecrets(input: Parameters<typeof setHouseSecrets>[1]) { setHouseSecrets(db, input); },
     bridge(input: Parameters<BridgeSettings['change']>[0]) { return late.bridges!().change(input); },
     /** File a proposal card on an agent's behalf, as household.propose does for an outside caller. */

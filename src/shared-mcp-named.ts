@@ -1,10 +1,15 @@
 /** The names a terminal session already calls (remember, recall, note_read, ...),
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
+import {DAY} from './core/day.js';
+import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
 import {slug as slugOf,PAGE_NAME,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID} from './slug.js';
 import {randomUUID} from 'node:crypto';
 import type {McpServer} from '@modelcontextprotocol/server';
+import {householdChanges,dangerousHouseholdChanges} from './shared-household-proposals.js';
+import {MEMORY_CATEGORIES} from './categories.js';
+import {LIFESPAN_NAMES,NOTE_PATH_MAX} from './notes.js';
 
 type Variables=Record<string,string|number|null>;
 type QueryReply={data?:Record<string,unknown>|null;errors?:readonly unknown[]|null};
@@ -19,9 +24,10 @@ type Result={content:{type:'text';text:string}[];isError?:boolean};
 const say=(text:string):Result=>({content:[{type:'text',text}]});
 const refuse=(text:string):Result=>({isError:true,content:[{type:'text',text}]});
 
-const category=z.enum(['user','project','self','feedback','reference','pursuit','episode']);
+const category=z.enum(MEMORY_CATEGORIES);
+const dangerous=new Set<string>(dangerousHouseholdChanges);
 const memoryId=z.string().regex(SCOPED_MEMORY_ID);
-const notePath=z.string().min(1).max(300);
+const notePath=z.string().min(1).max(NOTE_PATH_MAX);
 const pageName=PAGE_NAME;
 type Section='creed'|'preferences'|'top-of-mind'|'self-model'|'last-24h'|'harness'|'model'|'all';
 
@@ -112,7 +118,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   async input=>{await run('memory.forget',input);return 'Forgot '+input.id;});
 
  tool('episodes','Recent activity across your bodies, newest first. Pass `to` (YYYY-MM-DD) for an earlier window.',
-  z.object({to:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()}).strict(),
+  z.object({to:z.string().regex(DAY).optional()}).strict(),
   async input=>{
    const data=await read<{memoryActivity:{to:string;days:string[];earlier:string|null;truncated:boolean;entries:Entry[]}|null}>(
     'query($to:String){memoryActivity(to:$to){to days earlier truncated entries{id at title line where what}}}',{to:input.to??null});
@@ -144,12 +150,12 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    return '# '+note.path+'\n_'+note.lifespan+' · updated '+note.updated+' by '+note.by+'_\n\n'+note.body;
   });
 
- tool('note_write','Write a note, whole. A new note needs a lifespan (keep, while or short).',
-  z.object({path:notePath,body:z.string(),lifespan:z.enum(['keep','while','short']).optional()}).strict(),
+ tool('note_write','Write a note, whole. A new note needs a lifespan ('+LIFESPAN_NAMES.join(', ')+').',
+  z.object({path:notePath,body:z.string(),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),
   async input=>{await run('memory.noteWrite',input);return 'Saved note '+input.path;});
 
  tool('note_list','List your notes under a prefix, newest first. No text.',
-  z.object({prefix:z.string().max(300).optional(),limit:z.number().int().min(1).max(500).optional()}).strict(),
+  z.object({prefix:z.string().max(NOTE_PATH_MAX).optional(),limit:z.number().int().min(1).max(500).optional()}).strict(),
   async(input,agent)=>{
    const data=await read<{memoryNotes:NoteSummary[]|null}>('query($agent:String!,$prefix:String,$first:Int){memoryNotes(agent:$agent,prefix:$prefix,first:$first){path lifespan updated by bytes files expires}}',{agent,prefix:input.prefix??null,first:input.limit??100});
    if(!data.memoryNotes)throw new Refusal('Notes are not readable with this credential');
@@ -237,7 +243,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
 
  // Knowledge: one page, its checks and its versions.
  tool('knowledge_read','Read one shared knowledge page by slug, with its sources and kept versions.',
-  z.object({slug:z.string().min(1).max(200)}).strict(),
+  z.object({slug:pageSlug}).strict(),
   async input=>{
    const data=await read<{memoryKnowledgePage:{slug:string;title:string;domain:string;updated:string;verified_at:string|null;sourcing:string|null;body:string;sources:{claim:string;locator:string}[]|null;history:{id:number;op:string;replacedAt:string;actor:string|null}[]|null}|null}>(
     'query($slug:String!){memoryKnowledgePage(slug:$slug){slug title domain updated verified_at sourcing body sources{claim locator} history{id op replacedAt actor}}}',{slug:input.slug});
@@ -248,13 +254,13 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
    return lines.join('\n');
   });
  tool('knowledge_edit','Change a shared knowledge page: replace its body (the old body is kept as a version), add a source (an http or https link), or both.',
-  z.object({slug:z.string().min(1).max(200),body:z.string().min(1).max(65536).optional(),source:z.string().max(4000).optional()}).strict(),
+  z.object({slug:pageSlug,body:z.string().min(1).max(65536).optional(),source:z.string().max(4000).optional()}).strict(),
   async input=>{await run('mind.knowledgeEdit',input);return 'Edited knowledge page '+input.slug;});
  tool('knowledge_check','Record a check of a shared knowledge page: still true, or due a check. A note is added to the page as a dated section; without one the page is left as it is. freshnessAnchor is the version or date the page holds true as of.',
-  z.object({slug:z.string().min(1).max(200),outcome:z.enum(['still-true','due-a-check']),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
+  z.object({slug:pageSlug,outcome:z.enum(['still-true','due-a-check']),note:z.string().trim().min(1).max(4000).optional(),freshnessAnchor:z.string().trim().min(1).max(200).optional()}).strict(),
   async input=>{const {outcome:_outcome,...check}=input;await run(input.outcome==='still-true'?'mind.knowledgeVerify':'mind.knowledgeRecheck',check);return 'Marked '+input.slug+' '+(input.outcome==='still-true'?'still true':'due a check');});
  tool('knowledge_restore','Put back an earlier version of a shared knowledge page.',
-  z.object({slug:z.string().min(1).max(200),revision:z.number().int().positive()}).strict(),
+  z.object({slug:pageSlug,revision:z.number().int().positive()}).strict(),
   async input=>{await run('mind.knowledgeRestore',input);return 'Restored version '+input.revision+' of '+input.slug;});
 
  // Tasks: the household's work queue, as far as you may see it.
@@ -301,8 +307,8 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   async input=>{await run('tasks.command',{action:'comment',id:input.id,text:input.text});return 'Commented on '+input.id;});
 
  // Asking a person: proposals, the approvals that result, and what waits in your inbox.
- tool('propose','Ask a household owner to allow a change you cannot make yourself. Nothing changes until an owner allows it. Filing says nothing about what is there now or whether the change can be made: the owner is told that, and answers. change names what: project, member, agent, settings (the household\'s own), rule (a standing approval), bodyPolicy, secretRule, secretDefault, houseSecrets, bridge, tempoTimings, measuring, boxSettings, runSettings, models, agentAccounts; or a dangerous action an owner must also confirm: tokenRevoke, boxRevoke, browserSignOut. input is that change\'s own fields: loom_commands({name:"household.propose"}) lists them.',
-  z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','remove','restore','tokenRevoke','boxRevoke','browserSignOut']),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
+ tool('propose','Ask a household owner to allow a change you cannot make yourself. Nothing changes until an owner allows it. Filing says nothing about what is there now or whether the change can be made: the owner is told that, and answers. change names what: '+householdChanges.filter(change=>!dangerous.has(change)).join(', ')+'; or a dangerous action an owner must also confirm: '+[...dangerous].join(', ')+'. input is that change\'s own fields: loom_commands({name:"household.propose"}) lists them.',
+  z.object({change:z.enum(householdChanges),input:z.record(z.string(),z.unknown()),why:z.string().min(1).max(500)}).strict(),
   async input=>{const value=await run('household.propose',input) as {id:string;state:string};return value.state==='pending'?'Filed approval '+value.id+'. It waits for a household owner.':'Approval '+value.id+' was answered by a standing rule and the change is made.';});
  tool('approvals','List approvals you may see, newest first. state narrows it: pending, allowed, denied, used, withdrawn or expired.',
   z.object({state:z.enum(['pending','allowed','denied','used','withdrawn','expired']).optional(),limit:z.number().int().min(1).max(50).optional()}).strict(),

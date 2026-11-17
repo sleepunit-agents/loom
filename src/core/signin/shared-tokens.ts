@@ -2,6 +2,7 @@
  * Trusted modules call this service; the HTTP identity door checks ownership.
  * Issuance is deliberately not retryable: a lost response requires a new label.
  */
+import { SHA256_HEX } from '../sha256-hex.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { credentialFingerprint, currentToken, tokenLive } from '../data/authentication.js';
 import { and, eq, isNull, ne } from 'drizzle-orm';
@@ -62,7 +63,7 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
      * other. `madeFrom` is the machine token that enrolled it; the body's token is current only while
      * that one is (currentToken). The caller has already proved who is enrolling. */
     enrolBody(input: { fingerprint: string; agent: string; job: string; madeFrom: string }) {
-      if (!/^[a-f0-9]{64}$/.test(input.fingerprint)) throw new OperationError('invalid', 'Invalid fingerprint');
+      if (!SHA256_HEX.test(input.fingerprint)) throw new OperationError('invalid', 'Invalid fingerprint');
       return db.transaction(() => {
         db.update(tokens).set({ revokedAt: new Date(clock.now()).toISOString() }).where(and(eq(tokens.kind, 'agent'), eq(tokens.job, input.job), ne(tokens.fingerprint, input.fingerprint), isNull(tokens.revokedAt))).run();
         // Labels are unique while live; each job's token gets its own. The job column is what binds it.
@@ -80,7 +81,7 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
 }
 export function registerSharedTokenAdmin(operations: Operations, db: DataDatabase, service: ReturnType<typeof sharedTokens>) {
   operations.register({ name: 'token.revoke', write: true, recheckPolicy: true,
-    input: z.object({ fingerprint: z.string().regex(/^[0-9a-f]{64}$/) }).strict(), output: z.object({ revoked: z.literal(true) }).strict(),
+    input: z.object({ fingerprint: z.string().regex(SHA256_HEX) }).strict(), output: z.object({ revoked: z.literal(true) }).strict(),
     may: viewer => sharedTokenOwner(db, viewer),
     run(ctx, input) { const result = service.revoke(input.fingerprint); ctx.changed('core.access', 'household'); return result; },
   });

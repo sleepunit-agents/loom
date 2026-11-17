@@ -1,3 +1,4 @@
+import {SHA256_HEX} from './core/sha256-hex.js';
 import {readProgramSetupTokens} from './core/data/program-setup-read.js';
 /** Trusted owner-setup logic. Outside ownership and reply release belong at
  * Root's door; persistence is supplied by the schema-owned same-DB adapter. */
@@ -13,7 +14,7 @@ import {sharedTokens,sharedTokenInput,currentMemberToken} from './core/signin/sh
 import {isReservedProgramOperation,normalizeProgramGrants,programSnapshot,sameProgramGrants,type ProgramGrantStore,type ProgramGrants} from './shared-program-access.js';
 const grants={records:z.array(z.string().min(1).max(200)).max(200),operations:z.array(z.string().min(1).max(200)).max(200)};
 export const programIssueInput=sharedTokenInput.options[0].omit({kind:true}).extend(grants).strict();
-export const programEditInput=z.object({fingerprint:z.string().regex(/^[0-9a-f]{64}$/),...grants}).strict();
+export const programEditInput=z.object({fingerprint:z.string().regex(SHA256_HEX),...grants}).strict();
 export function sharedProgramSetup(db:DataDatabase,clock:Clock,store:ProgramGrantStore,choices:()=>ProgramGrants){
  if(types.isAsyncFunction(store.read)||types.isAsyncFunction(store.readMany)||types.isAsyncFunction(store.write))throw Error('Program persistence must be synchronous SQLite');
  const issuer=sharedTokens(db,clock);

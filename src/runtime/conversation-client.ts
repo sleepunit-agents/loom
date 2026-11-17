@@ -3,7 +3,9 @@
  * Mail gets two reports, both by id only. `accept` says the body has it, so its sender sees it delivered;
  * an outstanding one is sent again before any new input. `confirm` settles it, and is sent by settle()
  * only once the answer is recorded: mail a body dies holding stays with its job for the next attempt. */
+import {DAY} from '../core/day.js';
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
+import {BODY_REQUEST_MS,validBodyRequestMs} from './body-request-time.js';
 import {DOOR_REQUEST_BYTES} from '../core/data/door-limit.js';
 import {HISTORY_BYTES} from '../core/conversations/history-limit.js';
 import { randomUUID } from 'node:crypto';
@@ -33,9 +35,9 @@ type Reply=Turn&{clientId:string;words:string};
 type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
 export type BodyDigest={summary:string;ifAbsent?:boolean;items?:{kind:'decision'|'ask'|'task'|'project';text:string}[];question?:PrivateQuestion&{to:string}};
 export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
- const clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??15_000;
+ const clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??BODY_REQUEST_MS;
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
- if(!options.token||/[\0\r\n]/.test(options.token)||!options.job||!options.conversation||!Number.isSafeInteger(timeout)||timeout<1||timeout>30_000)throw unavailable();
+ if(!options.token||/[\0\r\n]/.test(options.token)||!options.job||!options.conversation||!validBodyRequestMs(timeout))throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]);
  let closed=false,taking=false,received:{id:string;items:string[]}|undefined,settling:{id:string;items:string[]}|undefined;
  const unsettled:string[]=[];
@@ -123,7 +125,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   cardState(clientId:string,cardState:'running'|'done'|'failed',id=randomUUID()){return call('cardState',{clientId,cardState},messageResult,id);},
   status(input:{state:'working'|'waiting'|'idle'|'offline';work:string},id=randomUUID()){return call('status',input,z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),id);},
   turn(input:Turn&{kind:'reply'|'action'|'wake'|'note'|'refused'},id=randomUUID()){return call('turn',input,z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),id);},
-  finding(input:{turnSeq:number;measure:string;score:number;text:string},id:string=randomUUID()){return call('finding',input,z.object({saved:z.literal(true),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/)}).strict(),id);},
+  finding(input:{turnSeq:number;measure:string;score:number;text:string},id:string=randomUUID()){return call('finding',input,z.object({saved:z.literal(true),day:z.string().regex(DAY)}).strict(),id);},
   digest(input:BodyDigest,id=randomUUID()){return call('digest',input,z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),id);},
   close(){closed=true;lifetimeAbort.abort();for(const controller of controllers)controller.abort();},
  };

@@ -1,6 +1,7 @@
 /** Native commands use the authenticated body's declared private source.
  * Content stays there: shared retry results contain opaque IDs, never titles, paths or words. */
-import {SCOPED_MEMORY_ID} from '../../slug.js';
+import {PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID,scopedStoreId} from '../../slug.js';
+import {MEMORY_CATEGORIES} from '../../categories.js';
 import Database from 'better-sqlite3';
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
@@ -19,7 +20,7 @@ import {ProjectsStore} from '../../backends/projects.js';
 import {CardError,type CardConnection} from '../../backends/cards.js';
 type Identity={name:string;input_hash:string;expires:number};
 type Stored=Identity&{result:string};
-const category=z.enum(['user','project','self','feedback','reference','pursuit','episode']);
+const category=z.enum(MEMORY_CATEGORIES);
 const authored=z.string().refine(value=>value.trim().length>0,'Authored text cannot be blank');
 const remember=z.object({category,title:authored.max(200),content:authored.max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional(),
  sourcing:z.enum(['observed','relayed','inferred','system']).optional().describe('How the memory was produced: observed first-hand, relayed by someone, inferred, or written by the system.'),provenance:z.string().max(2000).optional().describe('Where it came from: a surface, session, lane or person.')}).strict();
@@ -84,7 +85,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit:reserve,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};
  const scopedId=z.string().regex(SCOPED_MEMORY_ID);
- const proposalId=z.string().regex(/^[^:]+:proposal:[a-f0-9-]{36}$/);
+ const proposalId=z.string().regex(scopedStoreId('proposal'));
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
  operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(input))).ref)]}))});
  // Recall is a read: no operation id, no reservation, no receipt. It warms what it finds, which the
@@ -108,9 +109,9 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   run(_ctx,_input,prepared){return prepared;}});
  const cardValue=z.union([z.string(),z.number(),z.boolean(),z.array(z.string())]);
  const stamp={verified_at:z.string().optional(),source:z.string().optional(),stale_after_days:z.number().optional()};
- const person=z.object({slug:z.string().min(1).max(64),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();
- const project=z.object({slug:z.string().min(1).max(32),name:z.string().optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().optional(),goal:z.string().optional(),where:z.record(z.string(),z.object({value:z.string(),...stamp}).strict().nullable()).optional(),links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict();
- const cardIds=z.object({ids:z.array(z.string().regex(/^[^:]+:(person|project):[a-f0-9-]{36}$/))}).strict();
+ const person=z.object({slug:z.string().min(1).max(PERSON_CARD_SLUG_MAX),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();
+ const project=z.object({slug:z.string().min(1).max(PROJECT_CARD_SLUG_MAX),name:z.string().optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().optional(),goal:z.string().optional(),where:z.record(z.string(),z.object({value:z.string(),...stamp}).strict().nullable()).optional(),links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict();
+ const cardIds=z.object({ids:z.array(z.string().regex(scopedStoreId('person|project')))}).strict();
  const cardBase={...base,admit(ctx:Context){const source=current(ctx.viewer);if(!source||!semanticCardsReady(source.db))throw new OperationError('unavailable','Private cards are not prepared for commands');reserve(ctx);}};
  const withCard=<Store extends {close():void}>(db:Database.Database,viewer:Viewer,kind:'person'|'project',open:(connection:CardConnection)=>Store,change:(store:Store)=>{card:{slug:string}})=>{
   try{const store=open({database:db,actor:author(viewer),now:options.now});try{return {ids:[opaqueCardReference(db,kind,change(store).card.slug)]};}finally{store.close();}}
@@ -120,7 +121,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'person',config=>new PeopleStore(config),store=>store.write(input)))});
  operations.register({...cardBase,doors:[...base.doors],name:'memory.projectWrite',input:project.describe('Write a project card in your own declared private Memory source. Read the returned opaque ID with memoryProject(id:) on GraphQL. Links do not grant sharing.'),output:cardIds,
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'project',config=>new ProjectsStore(config),store=>store.write(input)))});
- operations.register({...cardBase,doors:[...base.doors],name:'memory.personRestoreRevision',input:z.object({slug:z.string().min(1).max(64),revision_id:z.number().int().positive().max(2147483647)}).strict().describe('Restore one retained person-card revision in your own source. Read revision IDs with memoryPerson(id:){history{id}}.'),output:cardIds,
+ operations.register({...cardBase,doors:[...base.doors],name:'memory.personRestoreRevision',input:z.object({slug:z.string().min(1).max(PERSON_CARD_SLUG_MAX),revision_id:z.number().int().positive().max(2147483647)}).strict().describe('Restore one retained person-card revision in your own source. Read revision IDs with memoryPerson(id:){history{id}}.'),output:cardIds,
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'person',config=>new PeopleStore(config),store=>store.revisionRestore(input)))});
  operations.register({...base,doors:[...base.doors],name:'memory.propose',input:remember.omit({sourcing:true,provenance:true}).extend({category:authored.max(100),source:authored.max(200).optional()}).describe('Stage a private draft in your own source. Recall cannot see it until ratification.'),output:z.object({ids:z.array(proposalId)}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>({ids:['proposal:'+proposeOnConnection(db,input).uuid]}))});
  const overrides=remember.pick({title:true,content:true,category:true,project:true,ttl:true}).partial();

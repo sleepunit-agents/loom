@@ -35,13 +35,14 @@ import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
 import {agentRunSettingsInput,applyAgentRunSettings} from './shared-agent-run-settings.js';
 import {agentModelsInput,applyAgentModels} from './shared-agent-models.js';
 import type {ModelRole} from './runtime/placement.js';
-import {household as householdRow,secretRules,secretRuleAgents} from './core/data/schema.js';
-import {secretRuleInput,type SecretRequests} from './pieces/secrets/requests.js';
+import {secretRules,secretRuleAgents} from './core/data/schema.js';
+import {secretAnswer,secretRuleInput,type SecretRequests} from './pieces/secrets/requests.js';
 import {secretDescription} from './pieces/secrets/input.js';
 import {describeSecret} from './pieces/secrets/shared-values.js';
 import {houseSecretsInput,setHouseSecrets,readHouseSecrets} from './shared-secret-commands.js';
 import {bridgeConfiguration,type BridgeSettings} from './pieces/bridges/settings.js';
 import {measuringValues} from './core/measuring/change.js';
+import {SETTLE_SECONDS_MAX,QUIET_DAYS_MAX} from './core/tempo/volume.js';
 import type {MeasuringSettings} from './core/measuring/index.js';
 import {endBrowser} from './core/signin/shared-browser.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
@@ -55,11 +56,11 @@ import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './sh
 const operation='household.change';
 const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
  // Secrets: a standing answer for one secret, the household's default, and what an agent's house is handed at start.
- secretRule:secretRuleInput,secretDefault:z.object({answer:z.enum(['ask','auto','never'])}).strict(),houseSecrets:houseSecretsInput,
+ secretRule:secretRuleInput,secretDefault:z.object({answer:secretAnswer}).strict(),houseSecrets:houseSecretsInput,
  // A Discord or Slack connection, who answers in a channel, and which member an outside user is.
  bridge:bridgeConfiguration,
  // Tempo's three timings for one person or agent, and whether loom measures itself.
- tempoTimings:z.object({who:z.object({kind:z.enum(['person','agent']),id:z.string().min(1).max(200)}).strict(),settleSeconds:z.number().int().min(0).max(86400).optional(),dimDays:z.number().int().min(1).max(3650).optional(),muteDays:z.number().int().min(1).max(3650).optional()}).strict()
+ tempoTimings:z.object({who:z.object({kind:z.enum(['person','agent']),id:z.string().min(1).max(200)}).strict(),settleSeconds:z.number().int().min(0).max(SETTLE_SECONDS_MAX).optional(),dimDays:z.number().int().min(1).max(QUIET_DAYS_MAX).optional(),muteDays:z.number().int().min(1).max(QUIET_DAYS_MAX).optional()}).strict()
   .refine(value=>value.settleSeconds!==undefined||value.dimDays!==undefined||value.muteDays!==undefined,'Name at least one timing'),
  measuring:measuringValues,
  // Dangerous, not a setting: it cannot be put back. Named by label because an agent cannot read fingerprints.
@@ -86,13 +87,19 @@ const danger={
 } as const;
 // A standing rule that answers dangerous cards without asking is itself dangerous to set.
 const dangerousRule={verb:'Set',done:'answered without asking',yes:'Dangerous actions this rule covers will happen without a card being answered. Removing the rule later does not undo them.',no:'Each dangerous action keeps asking.'} as const;
+/** The kinds an owner must also confirm. */
+export const dangerousHouseholdChanges=Object.keys(danger) as Array<keyof typeof danger>;
 const dangerOf=(value:{change:string;input?:unknown})=>value.change in danger?danger[value.change as keyof typeof danger]
  :value.change==='rule'&&(value.input as {kind?:string;tier?:string|null}|undefined)?.kind==='dangerous'&&['tell','do'].includes((value.input as {tier?:string|null}).tier??'')?dangerousRule:undefined;
 const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S)=>z.object({change:z.literal(change),input:kinds[change],...more}).strict();
-const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('order',more),one('secretDescription',more),one('remove',more),one('restore',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
+/** Every kind of household change, once: the keys of `kinds`. The card, the command's input and the
+ * `propose` tool (src/shared-mcp-named.ts) all take their list from here. */
+export const householdChanges=Object.keys(kinds) as [keyof typeof kinds,...Array<keyof typeof kinds>];
+type Kind<S extends z.ZodRawShape>={[K in keyof typeof kinds]:ReturnType<typeof one<K,S>>}[keyof typeof kinds];
+const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',householdChanges.map(change=>one(change,more)) as unknown as [Kind<S>,...Kind<S>[]]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
 type Proposal=z.infer<typeof proposal>;
-const changeName=z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','remove','restore','tokenRevoke','boxRevoke','browserSignOut']);
+const changeName=z.enum(householdChanges);
 // What a card keeps: the change asked for, and a keyed digest of what it would replace (see the file header).
 const details=z.object({change:changeName,after:z.json(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
 // A card from before the digest kept the replaced value itself; those are rewritten once, at start.
@@ -124,7 +131,7 @@ const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
- parts:{secrets:Pick<SecretRequests,'setRule'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
+ parts:{secrets:Pick<SecretRequests,'setRule'|'setDefault'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
   measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void};
   /** A keyed digest only this program can make or check. */
@@ -188,7 +195,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='rule')rules.set(value.input,by);
    else if(value.change==='bodyPolicy')saveAgentBodyPolicy(db,value.input);
    else if(value.change==='secretRule')parts.secrets.setRule(value.input);
-   else if(value.change==='secretDefault')db.insert(householdRow).values({secretsDefault:value.input.answer}).onConflictDoUpdate({target:householdRow.singleton,set:{secretsDefault:value.input.answer}}).run();
+   else if(value.change==='secretDefault')parts.secrets.setDefault(value.input.answer);
    else if(value.change==='houseSecrets')setHouseSecrets(db,value.input);
    else if(value.change==='bridge')parts.bridges.change(value.input);
    else if(value.change==='tempoTimings'){const {who,...patch}=value.input;parts.tempo().setTimings(who,patch);}

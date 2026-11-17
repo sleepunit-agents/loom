@@ -2,6 +2,7 @@
  * neither loom.db nor the old secrets store is opened here. Not a KeyHolder:
  * callers must await this API outside a synchronous registry transaction.
  */
+import { SHA256_HEX } from '../../core/sha256-hex.js';
 import Database from 'better-sqlite3';
 import { Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
 import { createHmac, randomUUID } from 'node:crypto';
@@ -89,7 +90,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
       .update(JSON.stringify(['holder-store-v1', recipient])).digest('hex');
     const verifier = binding(keys[0], recipients[0]);
     const supplied = new Set(keys.flatMap(key => recipients.map(recipient => binding(key, recipient))));
-    const historySchema = z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1);
+    const historySchema = z.array(z.string().regex(SHA256_HEX)).min(1);
 
     db.transaction(() => {
       const hadStore = !!db!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('holder_config','holder_values','holder_receipts','holder_generation','holder_key_history','holder_aborted_writes')").get();

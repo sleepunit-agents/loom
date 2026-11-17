@@ -1,3 +1,4 @@
+import {DAY} from '../day.js';
 import {registerConversationHandoff} from './handoff.js';
 import { registerConversationBodyOutput } from './body-output.js';
 import { ConversationHistory } from './history.js';
@@ -29,7 +30,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
  const findingLine=z.string().trim().min(1).max(400).refine(text=>[...text].length<=200,'Use at most 200 characters').refine(text=>!/[\p{C}\u2028\u2029]/u.test(text),'Use printable characters on one line');
  operations.register(operation({...common,name:'conversation.finding',
   input:z.object({turnSeq:z.number().int().positive(),measure:findingLine,score:z.number().int().min(1).max(5),text:findingLine}).strict(),
-  output:z.object({saved:z.literal(true),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/)}).strict(),
+  output:z.object({saved:z.literal(true),day:z.string().regex(DAY)}).strict(),
   run(ctx,input){
    const {cv}=requireCurrent(ctx.viewer);
    const target=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.seq,input.turnSeq),eq(turns.fromKind,'agent'),eq(turns.fromId,cv.agent))).get();

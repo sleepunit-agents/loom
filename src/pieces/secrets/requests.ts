@@ -5,19 +5,20 @@ import { and, eq, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, members, jobs, conversations } from '../../core/data/schema.js';
+import { household, secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, members, jobs, conversations } from '../../core/data/schema.js';
 import { householdOwners } from '../../shared-sharing.js';
 import { householdSettings } from '../../core/data/household-settings.js';
-import { secretName, secretAgent, requestReason } from './input.js';
+import { secretName, secretAgent, requestReason, grantMinutes } from './input.js';
 import { secretHasValue } from './presence.js';
-const duration = z.number().int().min(1).max(525600);
 const requestInput = z.object({ id: z.string().min(1).max(200), secret: secretName, agent: secretAgent,
-  job: z.string().min(1).optional(), conversation: z.string().min(1).optional(), why: requestReason, minutes: duration }).strict();
+  job: z.string().min(1).optional(), conversation: z.string().min(1).optional(), why: requestReason, minutes: grantMinutes }).strict();
 /** How long a standing answer lets a secret be used when no rule has said. */
 const UNSET_RULE_MINUTES = 30;
 export type SecretRequestInput = z.input<typeof requestInput>;
 type Request = typeof secretRequests.$inferSelect;
-export const secretRuleInput = z.object({ secret: secretName, answer: z.enum(['ask', 'auto', 'never']), minutes: duration,
+/** What a standing answer may be, for one secret or as the household's default: the columns' own choices. */
+export const secretAnswer = z.enum(household.secretsDefault.enumValues);
+export const secretRuleInput = z.object({ secret: secretName, answer: secretAnswer, minutes: grantMinutes,
   agents: z.array(z.object({ agent: secretAgent, when: z.enum(['on_request', 'at_start']) }).strict()) }).strict();
 
 export class SecretRequests {
@@ -69,6 +70,12 @@ export class SecretRequests {
       }
       return this.settle(row, by, allow, always, row.minutes);
     });
+  }
+
+  /** The household's answer for a secret no rule names. The one writer of it. */
+  setDefault(raw: z.input<typeof secretAnswer>): void {
+    const secretsDefault = secretAnswer.parse(raw);
+    this.db.insert(household).values({ secretsDefault }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault } }).run();
   }
 
   setRule(raw: z.input<typeof secretRuleInput>): void {
@@ -148,7 +155,7 @@ export class SecretRequests {
         if (this.db.select().from(secretRequests).where(eq(secretRequests.id, id)).get()) continue;
         this.request({ id, secret: rule.secret, agent: job.agent, job: jobId,
           ...(job.conversation ? { conversation: job.conversation } : {}),
-          why: 'The house needs this secret when its job starts.', minutes: duration.parse(rule.minutes) }, 'at_start');
+          why: 'The house needs this secret when its job starts.', minutes: grantMinutes.parse(rule.minutes) }, 'at_start');
       }
       const at = Date.parse(this.now());
       return this.db.select().from(secretGrants).where(and(eq(secretGrants.job, jobId), eq(secretGrants.agent, job.agent))).all()

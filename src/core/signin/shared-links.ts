@@ -1,3 +1,4 @@
+import { SHA256_HEX } from '../sha256-hex.js';
 import { browserCookie, endBrowser, startBrowser } from './shared-browser.js';
 import { sharedPasskeys } from './shared-passkeys.js';
 import { bodyLimit } from 'hono/body-limit';
@@ -32,7 +33,7 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
       return { path: `/login/${code}`, expiresAt };
     },
     redeem(code: string, userAgent: string) {
-      if (!/^[0-9a-f]{64}$/.test(code)) throw new Error('Sign-in refused');
+      if (!SHA256_HEX.test(code)) throw new Error('Sign-in refused');
       return db.transaction(() => {
         const link = db.select().from(signinLinks).where(eq(signinLinks.id, fingerprint(code))).get(), now = clock.now();
         if (!link || Date.parse(link.expiresAt) <= now) throw new Error('Sign-in refused');
@@ -177,7 +178,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return c.json(write(()=>passkeys.register(cookie,body)));
   });
   routes.get('/login/:code', c => {
-    if (!/^[0-9a-f]{64}$/.test(c.req.param('code'))) return c.notFound();
+    if (!SHA256_HEX.test(c.req.param('code'))) return c.notFound();
     // no-referrer also nulls a native form's Origin (Fetch section 3.2).
     // Keep the code path out of referrers while retaining same-origin POSTs.
     c.header('referrer-policy', 'strict-origin');

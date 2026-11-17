@@ -560,7 +560,8 @@ Entries are grouped by the part of the program they belong to.
   - `agents.sprite_version`: `src/desk-sprites.ts`, with the sprite it describes, in one transaction.
   - `bridge_connections` (switched off): `src/apps/household.ts`, when the connection is removed.
   - `agent_run_settings.repository_secret`: `src/shared-secret-commands.ts`, which owns which secrets a house gets.
-  - `household.secrets_default`: `src/shared-root.ts`, the settings operation for that one answer.
+  - `household.secrets_default`: `SecretRequests.setDefault` in `src/pieces/secrets/requests.ts`, beside the rule
+    that reads it. An allowed `secretDefault` household change and installed code both call it.
   - `boxes.last_seen_at`: `src/runtime/machines.ts`, on a machine's report.
 - **Why accepted.** Each was read against its owner: none skips a check the owner makes, and each write is in
   the transaction of the fact it records. Routing them through the owner would give every owner a method per

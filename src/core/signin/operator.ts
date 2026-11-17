@@ -1,4 +1,5 @@
 /** Local OS-owner capability: one bounded link request per connection, no database client. */
+import { LOGIN_PATH } from '../sha256-hex.js';
 import { createServer, createConnection, type Socket } from 'node:net';
 import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -83,7 +84,7 @@ export async function requestLocalLink(home: string, input: unknown): Promise<{ 
       if (!data.includes(10)) return;
       try {
         const answer = JSON.parse(data.toString('utf8'));
-        if (!answer.ok || typeof answer.path !== 'string' || !/^\/login\/[0-9a-f]{64}$/.test(answer.path) || typeof answer.url !== 'string') throw new Error();
+        if (!answer.ok || typeof answer.path !== 'string' || !LOGIN_PATH.test(answer.path) || typeof answer.url !== 'string') throw new Error();
         finished = true; socket.destroy(); ok({ path: answer.path, url: answer.url });
       } catch { fail(); }
     });
