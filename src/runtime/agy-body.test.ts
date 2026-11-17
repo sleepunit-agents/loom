@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {PassThrough} from 'node:stream';
 import type {ChildProcessWithoutNullStreams} from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
-import { agyBody } from './agy-body.js';
+import { agyBody, agyLeftovers } from './agy-body.js';
 import type { HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gemini-fictional', account: 'sub', harness: 'agy', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
@@ -72,4 +72,28 @@ it('does not start without full reach, with tools it cannot deny, or for another
     const f = fixture(input); await expect(f.run(changed, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
   }
   expect(() => fixture({ mcpTools: ['Bash'] })).toThrow('Native execution unavailable');
+});
+
+it('keeps the tools file inside the scratch directory the worker gave the body, and notes the conversation there for a body that is killed', async () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'agy-test-scratch-')); homes.push(scratch);
+  const f = fixture(); const run = agyBody({ command: '/native/agy', cwd: '/house', env: { PATH: '/usr/bin', HOME: f.home, LOOM_BODY_SCRATCH: scratch }, spawn: f.launch, reach: 'all' });
+  const result = run(job, 'mail', f.abort.signal);
+  expect(f.seen.workspace!.startsWith(scratch + '/')).toBe(true);
+  // agy has named its conversation and is still working when the worker kills the whole group: nothing of the body's own cleanup runs.
+  f.child.stdout.write(JSON.stringify(good()[0]) + '\n'); await new Promise(resolve => setImmediate(resolve));
+  expect(readFileSync(join(scratch, 'agy-conversation'), 'utf8')).toBe(id);
+  expect(existsSync(join(f.data, 'brain', id))).toBe(true);
+  // What the worker then does with the scratch directory, before removing it.
+  agyLeftovers(scratch, { HOME: f.home });
+  expect(existsSync(join(f.data, 'brain', id))).toBe(false); expect(existsSync(join(f.data, 'conversations', id + '.db'))).toBe(false);
+  expect(readFileSync(join(f.data, 'antigravity-oauth-token'), 'utf8')).toBe('KEEP');
+  f.abort.abort(); f.child.emit('close', null); await expect(result).rejects.toThrow('Native execution unavailable');
+});
+it('forgets only a well-formed conversation id from the note, never a path', () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'agy-test-scratch-')); homes.push(scratch);
+  const f = fixture();
+  writeFileSync(join(scratch, 'agy-conversation'), '../../antigravity-oauth-token');
+  agyLeftovers(scratch, { HOME: f.home });
+  expect(readFileSync(join(f.data, 'antigravity-oauth-token'), 'utf8')).toBe('KEEP'); expect(existsSync(join(f.data, 'brain', id))).toBe(true);
+  agyLeftovers(join(scratch, 'missing'), { HOME: f.home });
 });

@@ -1,5 +1,11 @@
 /** The receiving body's private model tools. Root credentials never leave this
- * process; only a lifetime-bound local capability enters native MCP config. */
+ * process; only a lifetime-bound local capability enters native MCP config.
+ *
+ * The bearer checked here is that local capability and nothing more: it is made in this process, lives
+ * only in memory and in the harness's tools configuration, is accepted only on this loopback listener,
+ * and dies with the body. It is deliberately not a household credential and does not go through loom's
+ * sign-in: every tool forwards to loom with the body's own token, and loom's door is where a revoked
+ * machine or an ended job is refused. */
 import {createServer} from 'node:http';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {getRequestListener} from '@hono/node-server';
@@ -9,11 +15,12 @@ import {clock as systemClock,type Clock} from '../core/clock.js';
 import {secretName,requestReason} from '../pieces/secrets/input.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
+import {harnessToolPrefix} from './body-harness.js';
 import {bodyConversationClient} from './conversation-client.js';
 const unavailable=()=>new Error('Private Secret tool unavailable; do not retry an uncertain value with a new attempt');
 const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable().message}]});
 export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[]}){
- const extensions=bodyModelTools(input.extraTools),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>'mcp__loom_secrets__'+name));
+ const extensions=bodyModelTools(input.extraTools),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
  const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
  const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();

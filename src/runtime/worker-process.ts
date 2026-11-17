@@ -4,7 +4,12 @@
  * runner reads {job,build} JSON on stdin after the running acknowledgement.
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { bodyInput } from './body-bootstrap.js';
+import { BODY_SCRATCH } from './body-harness.js';
+import { bodyLeftovers } from './body-harnesses.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
@@ -186,13 +191,27 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
       const plan = runner(job);
-      const attempt = launch(plan, signal, runtime);
-      return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: attempt.spawned, exited: attempt.exited,
+      // Each body gets a directory of its own (mode 0700, named to it in BODY_SCRATCH) for files a harness
+      // can only be configured through. The worker removes it once the body's whole process group is gone,
+      // so what was written there does not outlive the job when the body is killed and cannot tidy up.
+      const scratch = mkdtempSync(join(tmpdir(), 'loom-body-'));
+      let removed = false;
+      const remove = () => {
+        if (removed) return; removed = true;
+        try { bodyLeftovers[job.harness]?.(scratch, plan.env); } catch { /* best effort, as in the harness itself */ }
+        try { rmSync(scratch, { recursive: true, force: true }); } catch { /* nothing in it is live once the body is dead */ }
+      };
+      let attempt: ReturnType<typeof launch>;
+      try { attempt = launch({ ...plan, env: { ...plan.env, [BODY_SCRATCH]: scratch } }, signal, runtime); }
+      catch (error) { remove(); throw error; }
+      const exited = attempt.exited.finally(remove);
+      void exited.catch(() => {});
+      return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: attempt.spawned, exited,
         release: bootstrap => {
           const payload = bodyInput(job, build, bootstrap, plan.bodyBootstrap === true);
           if (bootstrap) attempt.discardOutput();
           return attempt.release(payload);
-        }, stop: attempt.stop };
+        }, stop: async () => { try { await attempt.stop(); } finally { remove(); } } };
     },
   };
 }
