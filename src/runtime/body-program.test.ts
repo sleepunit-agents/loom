@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { bodyProgram } from './body-program.js';
-import { BODY_EXIT, exitStage } from './job-exit.js';
+import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT, exitStage } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
 const raw = 'body_' + 'a'.repeat(64);
@@ -245,4 +245,34 @@ it('refuses a job its harness cannot run before accepting any mail',async()=>{
   expect(await bodyProgram({...options,read:async()=>JSON.stringify({command:'/native/'+harness,cwd:'/house',reach}),stdin:async()=>bytes})).toBe(BODY_EXIT.assignment);
   expect(f.calls).toEqual([]);
  }
+});
+
+// Contract: a failed job's code names the stage that failed, since for a private conversation it is all there is.
+it.each([
+ ['the report before the harness starts',2,false],
+ ['the report that it left for a Stop seen in its batch',2,true],
+ ['the last report, after the answer is recorded',3,false],
+] as const)('says it lost loom when %s fails, whatever stage it was in',async(_,failing,stop)=>{
+ const f=fixture(),fetcher=f.options.fetch;let statuses=0;
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{
+  if(String(url).endsWith('/status')&&++statuses===failing)throw new Error(raw);
+  const response=await fetcher(url,init);if(stop&&String(url).endsWith('/status'))f.stop();return response;
+ }})).toBe(BODY_EXIT.contact);
+ expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
+});
+it('says the first report failed when the report that it left for a Stop seen there fails',async()=>{
+ const f=fixture(),fetcher=f.options.fetch;let statuses=0;f.stop();
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{if(String(url).endsWith("/status")&&++statuses>=2)throw new Error();return fetcher(url,init);}})).toBe(BODY_EXIT.report);
+});
+it('fails as mail, before loading anything for it, when a bridge job took words and no bridge message',async()=>{
+ const f=fixture(),fetcher=f.options.fetch,loadMemory=vi.fn(async()=>null),value=JSON.parse(f.input.toString());value.job.venue='slack';value.job.thread=null;
+ expect(await bodyProgram({...f.options,loadMemory,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:async(url,options)=>{
+  const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
+  const batch=await response.json();Object.assign(batch.value.items[0],{source:'notice',fromKind:'unknown',fromId:null});return Response.json(batch);
+ }})).toBe(BODY_EXIT.mail);
+ expect(loadMemory).not.toHaveBeenCalled();expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);
+});
+it('gives every stage its own code',()=>{
+ const codes=[...Object.values(BODY_EXIT),...Object.values(WORKER_EXIT),...Object.values(LOOM_EXIT)];
+ expect(new Set(codes).size).toBe(codes.length);expect(codes).not.toContain(0);expect(exitStage(BODY_EXIT.tools)).toBe('body tools');
 });
