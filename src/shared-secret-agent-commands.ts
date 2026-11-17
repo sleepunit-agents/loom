@@ -15,7 +15,7 @@ import { jobs, secretRequests, secretUses } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { agentSecretRequest } from './pieces/secrets/input.js';
 import type { SecretRequests } from './pieces/secrets/requests.js';
-const requestState=z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict();
+const requestState=z.object({id:z.string(),state:z.enum(secretRequests.state.enumValues)}).strict();
 const handoff=z.object({id:z.string(),state:z.enum(['started','released','failed'])}).strict();
 export function registerSharedSecretAgentCommands(operations:Operations,db:DataDatabase,requests:SecretRequests,
  body:(viewer:Viewer)=>Readonly<{agent:string;job:string}>|undefined){

@@ -23,7 +23,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
  const requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,words=>service.key.hash(words),'body-conversation');
  operations.register(operation({...common,name:'conversation.turn',
-  input:z.object({kind:z.enum(['reply','action','wake','note','refused']),model:z.string().min(1).max(200).optional(),outcome:z.enum(['answered','progressed','deferred','failed','none']).optional(),latencyMs:z.number().int().nonnegative().optional()}).strict(),
+  input:z.object({kind:z.enum(['reply','action','wake','note','refused']),model:z.string().min(1).max(200).optional(),outcome:z.enum(turns.outcome.enumValues).optional(),latencyMs:z.number().int().nonnegative().optional()}).strict(),
   output:z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer);const turn=conversationsService.turn({conversation:cv.id,fromKind:'agent',fromId:cv.agent,run:job.id,...input});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);return {saved:true as const,conversation:cv.id,seq:turn.seq};},
  }));

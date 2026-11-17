@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { taskCreateSchema, taskEditSchema, taskAskSchema } from './tasks.js';
-import type { NewTask, TaskActor, TaskRow, TaskService } from './tasks.js';
+import { taskCreateSchema, taskEditSchema, taskAskSchema, taskLinkType } from './tasks.js';
+import type { NewTask, TaskActor, TaskLinkType, TaskRow, TaskService } from './tasks.js';
 
 /** Intent from the shared Tasks form. Identity is supplied separately by root. */
 export type TaskCommand =
@@ -10,12 +10,12 @@ export type TaskCommand =
   | { action: 'close'; id: string; reason: string }
   | { action: 'move'; id: string; before: string | null }
   | { action: 'comment'; id: string; text: string }
-  | { action: 'link' | 'unlink'; id: string; dependsOn: string; type: 'blocks' | 'parent-child' }
+  | { action: 'link' | 'unlink'; id: string; dependsOn: string; type: TaskLinkType }
   | { action: 'answer'; id: string; question: string; answer: 'yes' | 'no' | 'words'; text?: string }
   | { action: 'ask'; id: string; input: Parameters<TaskService['ask']>[1] };
 
 const id = z.string().trim().min(1);
-const relation = { id, dependsOn: id, type: z.enum(['blocks', 'parent-child']) };
+const relation = { id, dependsOn: id, type: taskLinkType };
 /** Outside-door input validation; identity is never part of the command. */
 export const taskCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create'), input: taskCreateSchema }).strict(),

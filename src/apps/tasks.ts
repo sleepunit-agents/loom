@@ -24,6 +24,9 @@ export const taskCreateSchema = z.object({
 });
 export const taskEditSchema = z.object(summary).partial().strict();
 export const taskAskSchema = z.object({ to: person.extend({ kind: z.literal('member') }), ask: z.string().trim().min(1), ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), answers: z.enum(['yes-no', 'words']).default('yes-no') });
+/** How one task may depend on another. */
+export const taskLinkType = z.enum(['blocks', 'parent-child']);
+export type TaskLinkType = z.infer<typeof taskLinkType>;
 export type NewTask = z.input<typeof taskCreateSchema>;
 export type TaskRow = typeof tasks.$inferSelect;
 export type TaskDetail = TaskRow & { comments: (typeof taskComments.$inferSelect)[]; links: (typeof taskLinks.$inferSelect)[] };
@@ -40,8 +43,8 @@ export interface TaskService {
   /** Place a task just before another in the household's hand-kept order, or last. */
   move(id: string, before: string | null): TaskRow;
   comment(id: string, text: string, actor: TaskActor): void;
-  link(id: string, dependsOn: string, type: 'blocks' | 'parent-child'): void;
-  unlink(id: string, dependsOn: string, type: 'blocks' | 'parent-child'): void;
+  link(id: string, dependsOn: string, type: TaskLinkType): void;
+  unlink(id: string, dependsOn: string, type: TaskLinkType): void;
   ask(id: string, input: { to: TaskActor; ask: string; ifYes: string; ifNo: string; answers?: 'yes-no' | 'words' }, actor: TaskActor): TaskRow;
   answer(id: string, answer: 'yes' | 'no' | 'words', text: string, actor: TaskActor): TaskRow;
 }
@@ -69,8 +72,8 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     db.insert(taskComments).values({ task: id, seq, actorKind: actor.kind, actor: actor.id, at: now(), text }).run();
     touch(id, {});
   };
-  const link = (id: string, dependsOn: string, type: 'blocks' | 'parent-child') => {
-    z.enum(['blocks', 'parent-child']).parse(type); row(id); row(dependsOn);
+  const link = (id: string, dependsOn: string, type: TaskLinkType) => {
+    taskLinkType.parse(type); row(id); row(dependsOn);
     if (id === dependsOn) throw new Error('A task cannot depend on itself');
     // Reject cycles of the same relationship; parents and blockers have independent meaning.
     const seen = new Set<string>(), pending = [dependsOn];
@@ -129,7 +132,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
     link(id, dependsOn, type) { db.transaction(() => link(id, dependsOn, type)); },
-    unlink(id, dependsOn, type) { z.enum(['blocks', 'parent-child']).parse(type); db.transaction(() => { row(id); row(dependsOn); db.delete(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).run(); touch(id, {}); }); },
+    unlink(id, dependsOn, type) { taskLinkType.parse(type); db.transaction(() => { row(id); row(dependsOn); db.delete(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).run(); touch(id, {}); }); },
     ask(id, input, actor) {
       const value = taskAskSchema.parse(input); person.parse(actor);
       return db.transaction(() => {

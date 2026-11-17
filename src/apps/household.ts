@@ -29,6 +29,9 @@ export const settingsInput = z.object({
   backupKeep: z.number().int().min(1).max(BACKUP_KEEP_MAX),
   backupRecipients: z.array(z.string().trim().regex(/^(?:age1[0-9a-z]{20,100}|ssh-(?:ed25519|rsa) [A-Za-z0-9+/=]{40,1000}(?: [^\r\n]{0,100})?)$/)).max(50).transform(values => [...new Set(values)].sort()),
 }).partial().strict().refine(value => Object.keys(value).length > 0, 'Name at least one setting');
+/** What can be removed and restored: its row stays (setRemoved). */
+export const removable = z.enum(['member', 'agent', 'project', 'bridge']);
+export type Removable = z.infer<typeof removable>;
 export class HouseholdError extends Error {
   constructor(readonly code: 'invalid' | 'conflict' | 'not-found', message: string) { super(message); }
 }
@@ -72,7 +75,7 @@ export function householdService(db: DataDatabase, now: () => string) {
     },
     /** Remove keeps the row and everything that refers to it. A removed person cannot sign in, a removed
      * agent does not run, a removed project or connection is out of use. Restore puts it back. */
-    setRemoved(of: 'member' | 'agent' | 'project' | 'bridge', id: string, removed: boolean) {
+    setRemoved(of: Removable, id: string, removed: boolean) {
       return db.transaction(() => {
         const table = of === 'member' ? members : of === 'agent' ? agents : of === 'project' ? projects : bridgeConnections;
         const row = db.select({ id: table.id, removedAt: table.removedAt }).from(table).where(eq(table.id, id)).get();

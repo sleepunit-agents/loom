@@ -379,3 +379,18 @@ it('caps a private secret read in one place', () => {
   privateSecretClient({ ...options, timeoutMs: PRIVATE_SECRET_TIMEOUT_MS }).close();
   expect(() => privateSecretClient({ ...options, timeoutMs: PRIVATE_SECRET_TIMEOUT_MS + 1 })).toThrow('Private secret input unavailable');
 });
+
+it('takes a choice the database also checks from the column, and states the others once', () => {
+  const holders = (list: RegExp) => sources('src').filter(file => file !== 'src/core/data/schema.ts' && list.test(text(file)));
+  // Checked by the schema: the door's own shapes read the column's list.
+  expect(holders(/'answered',\s*'progressed'/)).toEqual([]);
+  expect(holders(/'ask',\s*'tell',\s*'do'/)).toEqual([]);
+  expect(holders(/'merge',\s*'command',\s*'setting'/)).toEqual([]);
+  // The body is another program and states what it expects to be answered (docs/accepted-tradeoffs.md,
+  // "A client states the shape of the answer it expects"); on loom's side the list is the column's.
+  expect(holders(/'pending',\s*'allowed',\s*'denied',\s*'cancelled'/)).toEqual(['src/runtime/conversation-client.ts']);
+  expect(holders(/'working',\s*'waiting',\s*'idle'/)).toEqual(['src/runtime/body-program-tools.ts']);
+  // Not a column's list: what can be removed, and how tasks depend on each other.
+  expect(holders(/'member',\s*'agent',\s*'project',\s*'bridge'/)).toEqual(['src/apps/household.ts']);
+  expect(holders(/'blocks',\s*'parent-child'/)).toEqual(['src/apps/tasks.ts']);
+});

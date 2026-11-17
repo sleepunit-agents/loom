@@ -48,7 +48,7 @@ import {endBrowser} from './core/signin/shared-browser.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
-import {householdService,HouseholdError,memberInput,agentInput,settingsInput,GITHUB_LOGIN} from './apps/household.js';
+import {householdService,HouseholdError,memberInput,agentInput,settingsInput,removable,GITHUB_LOGIN} from './apps/household.js';
 import {householdSettings} from './core/data/household-settings.js';
 import {projectInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
@@ -71,8 +71,8 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  order:z.object({of:z.enum(['members','agents']),ids:z.array(z.string().min(1).max(100)).min(1).max(1000)}).strict(),
  // Removing keeps the row and its history: a removed person cannot sign in, a removed agent does not run,
  // a removed project or bridge connection is out of use. Restoring puts it back.
- remove:z.object({of:z.enum(['member','agent','project','bridge']),id:z.string().min(1).max(200)}).strict(),
- restore:z.object({of:z.enum(['member','agent','project','bridge']),id:z.string().min(1).max(200)}).strict(),
+ remove:z.object({of:removable,id:z.string().min(1).max(200)}).strict(),
+ restore:z.object({of:removable,id:z.string().min(1).max(200)}).strict(),
  // What a secret is for. Its value is never on a card.
  secretDescription:z.object({secret:z.string().min(1).max(200),description:secretDescription}).strict(),
  tokenRevoke:z.object({label:z.string().trim().min(1).max(200)}).strict(),
