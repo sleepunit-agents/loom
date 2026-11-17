@@ -31,6 +31,12 @@ export const WORKER_STOP = {
   /** A path under `accountLogins` or `container.mounts`, or `container.socket` or `container.nestedSocket`
    * (worker-mounts.ts has the rules). The line is followed by the configuration key at fault, never by a path. */
   mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
+  /** A worker with container bodies builds each house itself and reads from the image how a body starts.
+   * The line is followed by the key that must go: `build`, `runners`, `accountRunners`, or `container.mounts`
+   * when it is one list and not a list for each agent. */
+  retired: [53, 'the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent'],
+  /** A worker with container bodies fetches house repositories with the machine's git. */
+  git: [54, 'git, which fetches each house\'s repository, could not be run on this machine'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */

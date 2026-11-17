@@ -1,19 +1,26 @@
-import { ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
+import { BUILD_DEADLINE_MAX_MS, HOUSE_BUILD_DEFAULT_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { logTail } from './log-tail.js';
 import { bodyInput } from './body-bootstrap.js';
-/** Docker bodies run only in the separate worker. Builds retain their bounded
- * configured worker command; its artifact must be an already-built image. */
+/** Container bodies run only in the separate worker. One worker runs any agent's house: it fetches the
+ * job's house repository and builds its image itself (house-source.ts, house-image.ts), mounts its own
+ * body program into the container, and reads from the image how a body starts. Nothing about any one
+ * agent is set up on the machine but, where wanted, that agent's mounts. */
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { dockerEngine, DockerResponseError, type DockerEngine } from './docker-engine.js';
 import { BODY_SCRATCH } from './body-harness.js';
-import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type WorkerCommand } from './worker-process.js';
-import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
+import { BuildTimeError, UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
+import { defaultWorkerState, workerLeft } from './worker-left.js';
+import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
+import { buildHouse, houseBuilt, houseImage, houseStart, pruneHouses, type HouseStart } from './house-image.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
-import { bodyMounts, type AccountLogins, type BodyMount, type FixedMount } from './worker-mounts.js';
+import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
  * nothing is discovered. */
@@ -25,8 +32,8 @@ export interface ContainerConfig {
   nestedSocket?: string;
   /** Sent as `HostConfig.Runtime`. `runc` when left out. */
   runtime?: typeof CONTAINER_RUNTIMES[number];
-  /** Directories of this machine given to every body's container (worker-mounts.ts). */
-  mounts?: readonly FixedMount[];
+  /** Directories of this machine given to the containers of one agent's bodies, by agent (worker-mounts.ts). */
+  mounts?: AgentMounts;
   setupTimeoutMs?: number;
   cleanupTimeoutMs?: number;
 }
@@ -54,21 +61,22 @@ function ownMounts(inspect: unknown, asked: readonly EngineMount[]): boolean {
   }
   return left.size === 0;
 }
-function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, config: ContainerConfig, mounts: readonly EngineMount[]) {
-  if (!image.trim() || /[\s\0]/.test(image) || !plan.command || !plan.cwd.startsWith('/')) throw new Error('Invalid container command');
+/** The ports a job publishes, each on the same port inside. Checked before the engine is asked anything. */
+function portBindings(job: WorkerAssignment) {
   const bindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
   for (const { address, port } of job.run?.ports ?? []) {
     if (!isIP(address) || !Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error('Invalid container port');
     (bindings[`${port}/tcp`] ??= []).push({ HostIp: address, HostPort: String(port) });
   }
-  // A container body's scratch directory is the container's own temporary directory: it is private to the
-  // body because the container is, and it is removed with the container.
-  const env = { [BODY_SCRATCH]: plan.env.TMPDIR || '/tmp', ...plan.env };
-  return { Image: image, Entrypoint: [plan.command], Cmd: [...plan.args], WorkingDir: plan.cwd,
-    Env: Object.entries(env).map(([key, value]) => {
-      if (!ENV_NAME.test(key) || value.includes('\0')) throw new Error('Invalid container environment');
-      return `${key}=${value}`;
-    }),
+  return bindings;
+}
+/** One body's container. The image says which node runs the body, with which body file, in which
+ * directory (house-image.ts); the program is the worker's own, mounted. The environment is the image's:
+ * the worker adds only where the body may keep scratch files, which is the container's own temporary
+ * directory, private to the body because the container is and removed with it. */
+function createSpec(job: WorkerAssignment, house: HouseStart, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
+  return { Image: house.id, Entrypoint: [house.node], Cmd: [BODY_PROGRAM, house.body], WorkingDir: house.cwd,
+    Env: [`${BODY_SCRATCH}=/tmp`],
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },
@@ -121,39 +129,86 @@ function output(socket: Duplex, signal: AbortSignal) {
   return { done, tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
 }
 
-export function containerWorkerExecutor(config: WorkerRunnerConfig & {
-  build: WorkerCommand; buildTimeoutMs?: number;
+export function containerWorkerExecutor(config: {
+  /** The longest a house's fetch and build together may take: HOUSE_BUILD_DEFAULT_MS when left out. A job
+   * still waiting then fails with WORKER_EXIT.buildTime; the worker reports on the job all the while. */
+  buildTimeoutMs?: number;
   container: ContainerConfig;
   /** When present, every job requires an exact account/harness sign-in directory (worker-mounts.ts). */
   accountLogins?: AccountLogins;
   /** This machine's id, as its jobs name it: the containers it may end at start carry it as a label. */
   box: string;
-  /** For the build commands, which are processes: see commandWorkerExecutor. */
+  /** The worker's own directory: held from here until close(), and where the house mirrors are kept. */
   state?: string;
   /** The file with the worker's token for loom, when the caller has one: no mount may reach it. */
   tokenFile?: string;
-}, dependencies: { engine?: DockerEngine; builder?: WorkerExecutor; name?: () => string } = {}): WorkerExecutor {
+}, dependencies: {
+  engine?: DockerEngine; name?: () => string;
+  /** Where houses are fetched from; a test names its own. */
+  source?: HouseSource;
+  /** The directory the worker is installed in. By default, where this program was loaded from. */
+  program?: string;
+  git?: () => boolean; left?: typeof workerLeft;
+} = {}): WorkerExecutor {
   const fixed = structuredClone(config);
-  const runner = workerRunner(fixed);
   if (fixed.container.runtime !== undefined && !CONTAINER_RUNTIMES.includes(fixed.container.runtime)) throw new Error('Invalid container runtime');
-  // Checked and fixed here, before the builder takes the state directory or anything asks the engine: a
-  // worker whose mounts cannot be used is not made (WorkerStop 'mounts').
-  const mountsFor = bodyMounts({ accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, socket: fixed.container.socket,
+  const buildMs = fixed.buildTimeoutMs ?? HOUSE_BUILD_DEFAULT_MS;
+  if (!validDeadline(buildMs, BUILD_DEADLINE_MAX_MS)) throw new Error('Invalid worker build deadline');
+  // This file is <program>/dist/runtime/worker-container.js: two directories up is the installed package.
+  const program = dependencies.program ?? realpathSync(fileURLToPath(new URL('../..', import.meta.url))).replace(/\/$/, '');
+  // Checked and fixed here, before the state directory is taken or anything asks the engine: a worker
+  // whose mounts cannot be used is not made (WorkerStop 'mounts').
+  const mountsFor = bodyMounts({ program, accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, socket: fixed.container.socket,
     nestedSocket: fixed.container.nestedSocket, state: fixed.state, tokenFile: fixed.tokenFile });
-  /** What must hold before a build is worth starting: the job has a sign-in directory, when those are configured.
-   * A nested job on a machine with no nested socket still fails when its body is started, as before. */
-  const signIn = (job: WorkerAssignment) => { mountsFor({ account: job.account, harness: job.harness }); };
+  if (!dependencies.source && !(dependencies.git ?? gitAvailable)()) throw new WorkerStop('git');
+  /** Whether this worker can run the job at all, asked before a build is worth starting. A house image is
+   * signed in to nothing: the job's account reaches the body only as its sign-in directory. So with
+   * several accounts of the job's provider on this machine and no sign-in directories configured, the
+   * job cannot be held to the account loom placed it on, and is refused (WORKER_EXIT.runner). A nested
+   * job on a machine with no nested socket still fails when its body is started, as before. */
+  const serves = (job: WorkerAssignment) => {
+    if (fixed.accountLogins === undefined && (job.accountChoices ?? 1) > 1) throw new UnservedJobError('Several accounts need a sign-in directory each');
+    mountsFor({ agent: job.agent, account: job.account, harness: job.harness });
+  };
   const engine = dependencies.engine ?? dockerEngine(fixed.container.socket);
-  const builder = dependencies.builder ?? commandWorkerExecutor(fixed);
+  const left = fixed.state === undefined ? undefined : (dependencies.left ?? workerLeft)(fixed.state);
+  const source = dependencies.source ?? houseSource({ directory: join(fixed.state ?? defaultWorkerState(fixed.box), 'houses'),
+    started: pid => left ? left.note(pid, { job: 'house-fetch' }) : () => {} });
+  /** The builds under way, by image: one at a time for one image, and every job that wants it waits on the
+   * one. A build is the worker's and not a job's: it has the build limit of its own, and a job that is
+   * cancelled only stops waiting. */
+  const builds = new Map<string, { done: Promise<void>; abort: AbortController; ranOut: boolean }>();
+  /** Images a job was given and whose body has not ended: never removed. (A job abandoned between its build
+   * and its body leaves its image here until the worker stops: one image kept too long.) */
+  const inHand = new Map<string, number>();
+  const hold = (image: string, by: 1 | -1) => { const count = (inHand.get(image) ?? 0) + by; if (count > 0) inHand.set(image, count); else inHand.delete(image); };
+  const built = (house: WorkerAssignment['house'], commit: string, image: string) => {
+    let build = builds.get(image);
+    if (!build) {
+      const abort = new AbortController(), made = { abort, ranOut: false, done: Promise.resolve() };
+      const timer = setTimeout(() => { made.ranOut = true; abort.abort(); }, buildMs);
+      made.done = (async () => {
+        if (await houseBuilt(engine, image, abort.signal)) return;
+        await buildHouse(engine, image, house.file, source.archive(house, commit, abort.signal), abort.signal);
+        // What builds leave behind is asked gone only when this was the only build: another's unfinished
+        // layers have no name either.
+        await pruneHouses(engine, [image, ...inHand.keys()], builds.size === 1, abort.signal);
+      })().finally(() => { clearTimeout(timer); if (builds.get(image) === made) builds.delete(image); });
+      void made.done.catch(() => {});
+      build = made; builds.set(image, build);
+    }
+    return build;
+  };
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
   const cleanupMs = deadline(fixed.container.cleanupTimeoutMs, 30_000);
   return {
-    close() { builder.close?.(); },
-    /** The build commands a previous worker left are processes (the builder ends those). Its bodies are
-     * containers: every one labelled as a job of this machine is removed, running or not. The list is
-     * read a few at a time until it is empty, so one reply never outgrows what the engine client reads. */
+    close() { for (const build of builds.values()) build.abort.abort(); left?.close(); },
+    /** What a previous worker left: a git it had started is a process, recorded in the state directory.
+     * Its bodies are containers: every one labelled as a job of this machine is removed, running or not.
+     * The list is read a few at a time until it is empty, so one reply never outgrows what the engine
+     * client reads. */
     async endLeft(signal) {
-      const processes = await builder.endLeft?.(signal) ?? { unverified: 0 };
+      const processes = left ? { unverified: (await left.reap()).unverified } : { unverified: 0 };
       const filters = encodeURIComponent(JSON.stringify({ label: ['loom.job', `loom.box=${fixed.box}`] }));
       for (let round = 0; ; round++) {
         const within = AbortSignal.any([signal, AbortSignal.timeout(cleanupMs)]);
@@ -168,16 +223,51 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
         }
       }
     },
-    build: (job, signal, repositoryInput) => { runner(job); signIn(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
+    /** The job's house as an image on this engine: its repository fetched at the job's branch, and that
+     * commit built unless it already is. The secret loom sent for the repository goes to the fetch and
+     * nowhere else. Nothing here blocks: the worker goes on reporting on the job while it waits. A job
+     * that has waited the build limit fails with BuildTimeError; whatever else goes wrong fails it as a
+     * failed build, in one sentence, because git's and the engine's own words may name the repository. */
+    build(job, signal, repositoryInput) {
+      serves(job);
+      const house = structuredClone(job.house);
+      return (async () => {
+        const limit = new AbortController(); let ranOut = false, shared: ReturnType<typeof built> | undefined;
+        const cancel = () => limit.abort(), timer = setTimeout(() => { ranOut = true; limit.abort(); }, buildMs);
+        signal.addEventListener('abort', cancel, { once: true });
+        if (signal.aborted) cancel();
+        // The wait ends with the limit or the job, whatever the fetch or the engine is doing.
+        const ended = new Promise<never>((_, reject) => limit.signal.addEventListener('abort', () => reject(new Error('Worker build cancelled')), { once: true }));
+        void ended.catch(() => {});
+        try {
+          if (limit.signal.aborted) throw new Error('Worker build cancelled');
+          const commit = await Promise.race([source.fetch(house, repositoryInput, limit.signal), ended]);
+          const image = houseImage(house, commit);
+          shared = built(house, commit, image);
+          await Promise.race([shared.done, ended]);
+          hold(image, 1);
+          return image;
+        } catch {
+          throw ranOut || shared?.ranOut ? new BuildTimeError('Worker build ran out of time') : new Error('Worker build failed');
+        } finally { clearTimeout(timer); signal.removeEventListener('abort', cancel); }
+      })();
+    },
     start(job, image, signal): WorkerBody {
-      const assignment = structuredClone(job), plan = runner(assignment);
-      if (!plan || signal.aborted) throw new Error('Container runner unavailable');
-      const mounts = engineMounts(mountsFor(assignment));
-      const spec = createSpec(assignment, image, plan, fixed.container, mounts);
-      const name = `loom-${(dependencies.name ?? randomUUID)()}`;
-      if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
+      const assignment = structuredClone(job);
+      // The image is this job's until its body has ended, or was never made.
+      let held = true;
+      const letGo = () => { if (held) { held = false; hold(image, -1); } };
+      let mounts: EngineMount[], bindings: ReturnType<typeof portBindings>, name: string;
+      try {
+        if (signal.aborted) throw new Error('Container cancelled');
+        serves(assignment);
+        if (!image.trim() || /[\s\0]/.test(image)) throw new Error('Invalid container image');
+        mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
+        name = `loom-${(dependencies.name ?? randomUUID)()}`;
+        if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
+      } catch (error) { letGo(); throw error; }
       const abort = new AbortController();
-      let socket: Duplex | undefined, id: string | undefined, released = false, createRejected = false;
+      let socket: Duplex | undefined, id: string | undefined, released = false, createRejected = false, createAsked = false;
       let logs: ReturnType<typeof output> | undefined;
       let stopping: Promise<void> | undefined;
       // Abort must begin reaping even while loom's running acknowledgement is
@@ -188,7 +278,10 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
       const setupTimer = setTimeout(cancel, setupMs);
       const setup = (async () => {
         try {
-          let created: unknown;
+          // The image says how a body starts in it; one that does not fails this job (UnmetHouseError).
+          const spec = createSpec(assignment, await houseStart(engine, image, assignment.harness, abort.signal), fixed.container, mounts, bindings);
+          if (abort.signal.aborted) throw new Error('Container cancelled');
+          let created: unknown; createAsked = true;
           try { created = await engine.json('POST', `/containers/create?name=${encodeURIComponent(name)}`, spec, abort.signal); }
           catch (error) {
             // A definite rejected create (especially a name conflict) grants no
@@ -228,13 +321,14 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
         } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
       void exited.catch(() => {});
-      return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: setup, exited,
+      // The program is loom's own body program, so it takes the body's private credential.
+      return { acceptsBootstrap: true, spawned: setup, exited,
         async release(bootstrap) {
           await setup;
           if (released || abort.signal.aborted || stopping || !socket || socket.destroyed) throw new Error('Container input unavailable');
           released = true;
           if (bootstrap) logs!.discard();
-          const payload = bodyInput(assignment, image, bootstrap, plan.bodyBootstrap === true);
+          const payload = bodyInput(assignment, image, bootstrap, true);
           await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify(payload) + '\n',
             (error?: Error | null) => error ? reject(error) : resolve()));
         },
@@ -250,10 +344,11 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
             const timer = setTimeout(() => cleanup.abort(), cleanupMs);
             try {
               // Name also covers a create reply lost before its ID was received.
-              if (!createRejected) await engine.json('DELETE', `/containers/${id ?? name}?force=1&v=1`, undefined, cleanup.signal);
+              // Nothing to remove when the engine was never asked for a container (the image was refused first).
+              if (createAsked && !createRejected) await engine.json('DELETE', `/containers/${id ?? name}?force=1&v=1`, undefined, cleanup.signal);
               if (cleanup.signal.aborted) throw new Error('Container cleanup uncertain');
             } finally {
-              clearTimeout(timer); signal.removeEventListener('abort', cancel);
+              clearTimeout(timer); signal.removeEventListener('abort', cancel); letGo();
             }
           });
           return stopping;

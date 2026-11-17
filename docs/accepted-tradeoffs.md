@@ -370,7 +370,8 @@ Entries are grouped by the part of the program they belong to.
   `src/runtime/worker-container.ts`.
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
   harness and no other. A fixed mount or another entry that names the same directory, one above it or one
-  inside it stops the worker at start; so does any mounted directory that is, holds or is inside either
+  inside it stops the worker at start (another agent's mounts and the worker's own program directory
+  included); so does any mounted directory that is, holds or is inside either
   engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
   file. With `accountLogins` present, a job
   with no exact entry does not run.
@@ -388,6 +389,39 @@ Entries are grouped by the part of the program they belong to.
   rewrite, or renews through the worker. Each body could then have a copy of its own. For nested
   containers: an engine of the job's own (one that cannot see the machine's files) in place of the
   machine's socket.
+
+### A Housefile is as dangerous as the engine's builder lets it be
+
+- **What.** A worker with container bodies builds each agent's house from the repository and Housefile in
+  that agent's run settings. Every step of a Housefile runs in the engine's builder, on this machine, as
+  whatever the engine runs builds as. A build step can use the network, and can do whatever a fault in the
+  engine's builder lets it do; with a rootless engine that is bounded by the worker's own user, who can
+  read the sign-in directories and the worker's token.
+- **Where.** `buildHouse` in `src/runtime/house-image.ts`; `houseSource` in `src/runtime/house-source.ts`.
+- **What is enforced.** Only loom's assignment names a house, and only an agent's owners set it, for an
+  agent allowed on the machine. The worker fetches `https` addresses only, with `git` run under none of
+  the machine user's configuration or credentials. It never reads, unpacks or runs anything from a
+  repository: the commit's files go to the engine as a tar stream. It adds no build argument, secret,
+  host path, socket or privilege to a build. The repository's secret goes to the fetch alone.
+- **Why the rest is accepted.** Running an agent's house is the point: whoever may set an agent's house
+  already decides what that agent's bodies run. A build is the engine's to confine, as a container is.
+- **What would change the answer.** An engine whose builds run with no network and in a sandbox of their
+  own, asked for by name; or building on a machine that holds nothing else.
+
+### A worker treats its engine's unnamed leftovers as its own to remove
+
+- **What.** After building a house's image the worker asks its engine to remove images that have no name
+  and are older than a day, and build cache unused for a week. The request is to the whole engine: an
+  unnamed image somebody else left there, for another purpose, goes too.
+- **Where.** `pruneHouses` in `src/runtime/house-image.ts`.
+- **What is enforced.** Named images are never touched except loom's own house images
+  (`localhost/loom-house-…`), of which the two newest of each house and the ten newest in all are kept.
+  Nothing is removed by force: the engine keeps what a container uses. The request for leftovers is made
+  only when no other build is running in this worker, and only for what is a day old.
+- **Why accepted.** Builds leave unnamed layers behind, most of all the ones that failed or were ended,
+  and nothing marks them as loom's. A machine that builds houses unattended filled its disk this way.
+  What has no name and is not in use is what an engine's own clean-up removes.
+- **What would change the answer.** An engine that marks what a build left with the build's own label.
 
 ### Bodies a killed worker left that cannot be told from a stranger
 

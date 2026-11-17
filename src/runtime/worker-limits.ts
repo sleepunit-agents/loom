@@ -12,3 +12,6 @@ export const BUILD_DEADLINE_MAX_MS = 3_600_000;
 export const validDeadline = (ms: number, max: number): boolean => Number.isSafeInteger(ms) && ms >= 1 && ms <= max;
 /** A name an environment variable can have. */
 export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** How long building a house's image is given when the configuration does not say: a first build on a
+ * machine pulls a base image and installs a house's tools. `buildTimeoutMs` overrides it, up to BUILD_DEADLINE_MAX_MS. */
+export const HOUSE_BUILD_DEFAULT_MS = 1_800_000;

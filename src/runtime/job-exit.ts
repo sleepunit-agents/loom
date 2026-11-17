@@ -55,6 +55,12 @@ export const WORKER_EXIT = {
    * can hold to the account loom placed it on, or (container bodies with `accountLogins`) no sign-in
    * directory for that account and harness. */
   runner: 27,
+  /** The house's image does not say how a body of the job's harness starts in it (house-image.ts): the
+   * house, not this machine, has to change. (28 is the body's, 29 is below, 31 is loom's.) */
+  house: 30,
+  /** The house's fetch and build did not finish within the build limit (`buildTimeoutMs`). The worker
+   * reported on the job all the while; nothing was lost. (31 is loom's.) */
+  buildTime: 32,
   /** The body did not end by itself: a signal ended its process (the system's memory killer, an operator's
    * kill). The body reported nothing, so this is the worker's word for it. (28 is the body's.) */
   killed: 29,
@@ -71,7 +77,7 @@ const named = (who: string, codes: Record<string, number>) => new Map(Object.ent
 const stages: Record<Exclude<ExitBy, 'runner'>, Map<number, string>> = {
   body: named('body', BODY_EXIT),
   // The worker says `killed`, about the body.
-  worker: named('worker', WORKER_EXIT).set(WORKER_EXIT.killed, 'body killed'),
+  worker: named('worker', WORKER_EXIT).set(WORKER_EXIT.killed, 'body killed').set(WORKER_EXIT.buildTime, 'worker build time'),
   loom: named('loom', LOOM_EXIT),
 };
 /** The stage a job's exit code names, for showing beside the number. Undefined for 0, for a runner's own

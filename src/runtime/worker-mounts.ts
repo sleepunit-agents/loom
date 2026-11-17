@@ -1,5 +1,6 @@
 /** The directories of this machine that a container body is given: its own account's sign-in directory
- * (`accountLogins`) and the house's fixed mounts (`container.mounts`), and for a job allowed nested
+ * (`accountLogins`), its own agent's fixed mounts (`container.mounts`, by agent), the worker's own program
+ * directory, read-only, which holds the body program every body runs, and for a job allowed nested
  * containers the engine's socket (`container.nestedSocket`). Nothing else of the host is ever mounted.
  *
  * Every rule about these paths is here and nowhere else, the engine's own socket (`container.socket`)
@@ -17,12 +18,20 @@ export const NESTED_SOCKET_TARGET = '/var/run/docker.sock';
 /** The places no other mount's target may be, hold or be inside, so that none hides or replaces the socket:
  * the place itself, and the one it is in most images, where `/var/run` is a link to `/run`. */
 const SOCKET_PLACES = [NESTED_SOCKET_TARGET, '/run/docker.sock'] as const;
+/** Where every body's container finds the worker's own program directory, and in it the body program. */
+export const BODY_PROGRAM_TARGET = '/opt/loom';
+/** The body program inside that directory, as a path in the container. */
+export const BODY_PROGRAM = `${BODY_PROGRAM_TARGET}/dist/body.js`;
+/** What a stop names when the program directory itself is at fault: it has no configuration key. */
+const PROGRAM_KEY = 'the directory the worker is installed in';
 /** A configuration key's part as it is printed: as it is when it is an ordinary name, quoted otherwise. */
 const named = (part: string) => /^[A-Za-z0-9_@.+-]+$/.test(part) ? part : JSON.stringify(part);
 /** A directory of this machine and the path a container sees it at. */
 export interface HostDirectory { source: string; target: string }
-/** A mount every body on this machine gets. Read-only unless it says otherwise. */
+/** A mount every body of one agent gets on this machine. Read-only unless it says otherwise. */
 export interface FixedMount extends HostDirectory { readOnly?: boolean }
+/** The fixed mounts of each agent, by agent id. A body gets its own agent's list and no other. */
+export type AgentMounts = Readonly<Record<string, readonly FixedMount[]>>;
 /** A sign-in directory for each account id, then harness. */
 export type AccountLogins = Readonly<Record<string, Readonly<Record<string, HostDirectory>>>>;
 /** One bind mount the worker asks the engine for, and expects to find when it inspects the container. */
@@ -46,14 +55,17 @@ function resting(path: string): string {
 }
 
 /** Check the configured paths and fix them. Returns what one job's container is given: the engine's socket
- * first when the job is allowed nested containers, then its account's sign-in directory for its harness
- * when sign-ins are configured, then the fixed mounts.
+ * first when the job is allowed nested containers, then the worker's program directory, then its account's
+ * sign-in directory for its harness when sign-ins are configured, then its own agent's fixed mounts.
  * @throws WorkerStop('mounts'), with the configuration key at fault, when the configuration breaks a rule.
  * Of two directories that overlap it names the later one. The returned function throws
  * UnservedJobError for a job with no exact sign-in entry, as a missing `accountRunners` entry does, and
  * a plain error for a nested job on a machine with no nested socket. */
 export function bodyMounts(config: {
-  accountLogins?: AccountLogins; mounts?: readonly FixedMount[];
+  accountLogins?: AccountLogins; mounts?: AgentMounts;
+  /** The directory the worker is installed in, mounted read-only into every body at BODY_PROGRAM_TARGET.
+   * Left out only by callers that start no body (tests of the other mounts alone). */
+  program?: string;
   /** The engine's socket the worker itself talks to. Never mounted; a mount that reached it would hand
    * every body the engine. Left out only by callers that have no engine (tests of the mounts alone). */
   socket?: string;
@@ -61,7 +73,7 @@ export function bodyMounts(config: {
   /** The worker's own files, never mounted: the state directory (its records of what it started, by which
    * the next worker ends what this one left) and the file holding its token for loom. */
   state?: string; tokenFile?: string;
-}, user: { uid?: () => number | undefined } = {}): (job: Pick<WorkerAssignment, 'account' | 'harness' | 'run'>) => BodyMount[] {
+}, user: { uid?: () => number | undefined } = {}): (job: Pick<WorkerAssignment, 'agent' | 'account' | 'harness' | 'run'>) => BodyMount[] {
   const uid = (user.uid ?? (() => process.getuid?.()))();
   /** Stop the worker, naming the configuration key at fault and nothing written under it. */
   const stop = (key: string): never => { throw new WorkerStop('mounts', key); };
@@ -82,15 +94,30 @@ export function bodyMounts(config: {
     try { return lstatSync(realpathSync(path)).isSocket(); }
     catch { return false; }
   };
-  /** A mounted directory and the configuration key it was written under. */
-  interface Entry { mount: BodyMount; key: string }
-  const fixed: Entry[] = [], loginList: Entry[] = [], logins = new Map<string, Map<string, BodyMount>>();
-  for (const [index, mount] of (config.mounts ?? []).entries()) {
-    const key = `container.mounts[${index}]`;
-    if (!directory(mount.source)) stop(`${key}.source`);
-    if (!plainPath(mount.target)) stop(`${key}.target`);
-    // Read-only unless it says exactly `false`.
-    fixed.push({ key, mount: Object.freeze({ source: mount.source, target: mount.target, readOnly: mount.readOnly !== false }) });
+  /** A mounted directory, the configuration key it was written under, and whose containers it is in:
+   * one agent's (a fixed mount), one account and harness's (a sign-in directory), or every body's. */
+  interface Entry { mount: BodyMount; key: string; agent?: string; login?: true }
+  const fixed = new Map<string, BodyMount[]>(), logins = new Map<string, Map<string, BodyMount>>(), directories: Entry[] = [];
+  // The worker's own directory need not be this user's (a system-wide install is root's). It is only read.
+  let program: BodyMount | undefined;
+  if (config.program !== undefined) {
+    const path = config.program;
+    try { if (!plainPath(path) || !lstatSync(path).isDirectory() || realpathSync(path) !== path) stop(PROGRAM_KEY); }
+    catch { stop(PROGRAM_KEY); }
+    program = Object.freeze({ source: path, target: BODY_PROGRAM_TARGET, readOnly: true });
+    directories.push({ key: PROGRAM_KEY, mount: program });
+  }
+  for (const [agent, mounts] of Object.entries(config.mounts ?? {})) {
+    const own: BodyMount[] = [];
+    for (const [index, mount] of mounts.entries()) {
+      const key = `container.mounts.${named(agent)}[${index}]`;
+      if (!directory(mount.source)) stop(`${key}.source`);
+      if (!plainPath(mount.target)) stop(`${key}.target`);
+      // Read-only unless it says exactly `false`.
+      const made = Object.freeze({ source: mount.source, target: mount.target, readOnly: mount.readOnly !== false });
+      own.push(made); directories.push({ key, mount: made, agent });
+    }
+    fixed.set(agent, own);
   }
   for (const [account, harnesses] of Object.entries(config.accountLogins ?? {})) {
     const byHarness = new Map<string, BodyMount>();
@@ -101,7 +128,7 @@ export function bodyMounts(config: {
       // Read-write: the provider's program rewrites its files when it renews the sign-in. Two bodies on
       // one account share it: docs/accepted-tradeoffs.md, "Two bodies on one account share one sign-in directory".
       const mount = Object.freeze({ source: login.source, target: login.target, readOnly: false });
-      byHarness.set(harness, mount); loginList.push({ key, mount });
+      byHarness.set(harness, mount); directories.push({ key, mount, login: true });
     }
     logins.set(account, byHarness);
   }
@@ -110,23 +137,24 @@ export function bodyMounts(config: {
   // Mounted as it is written, as before: the engine reports the source it was asked for.
   const nested = config.nestedSocket === undefined ? undefined
     : Object.freeze({ source: config.nestedSocket, target: NESTED_SOCKET_TARGET, readOnly: false });
-  const directories = [...fixed, ...loginList];
-  // Inside one container: no directory on, above or below the nested socket's place, another fixed mount or
-  // a sign-in directory. Two sign-in directories are never in one container, so they may share a target.
-  // (The fixed mounts come first in the list, so "an earlier fixed mount" is every pair with one in it.)
-  for (const [index, { mount, key }] of directories.entries())
-    if (SOCKET_PLACES.some(place => overlap(mount.target, place))
-      || fixed.some((other, at) => at < index && overlap(mount.target, other.mount.target))) stop(`${key}.target`);
-  // On this machine, one rule for every source. No two mounted directories are the same or one inside the
-  // other: a sign-in directory then reaches only its own account and harness, and a read-only directory is
-  // not writable under a second name. And none is, holds or lies inside what must stay out of a container
-  // that was not given it: either engine socket, the worker's state directory, the file with its token.
-  // Each of those is compared twice, as it is written and where it really is (or will be): a body must
-  // reach neither the thing nor a link the worker follows to it.
+  // Inside one container: no directory on, above or below the nested socket's place or another directory
+  // that can be in the same container. Two never meet when they are two agents' fixed mounts, or two
+  // sign-in directories; those may share a target. Of two that collide, the later is named.
+  const meet = (one: Entry, other: Entry) => !(one.login && other.login) && !(one.agent !== undefined && other.agent !== undefined && one.agent !== other.agent);
+  for (const [index, entry] of directories.entries())
+    if (SOCKET_PLACES.some(place => overlap(entry.mount.target, place))
+      || directories.some((other, at) => at < index && meet(entry, other) && overlap(entry.mount.target, other.mount.target))) stop(`${entry.key}.target`);
+  // On this machine, one rule for every source, whoever's it is. No two mounted directories are the same or
+  // one inside the other: a sign-in directory then reaches only its own account and harness, an agent's
+  // directory only that agent's bodies, the body program cannot be written through an agent's mount, and a
+  // read-only directory is not writable under a second name. And none is, holds or lies inside what must
+  // stay out of a container that was not given it: either engine socket, the worker's state directory, the
+  // file with its token. Each of those is compared twice, as it is written and where it really is (or will
+  // be): a body must reach neither the thing nor a link the worker follows to it.
   const kept = [config.socket, config.nestedSocket, config.state, config.tokenFile].flatMap(path => path === undefined ? [] : [resolve(path), resting(path)]);
   for (const [index, { mount, key }] of directories.entries())
-    if (directories.some((other, at) => at < index && overlap(mount.source, other.mount.source)) || kept.some(path => overlap(mount.source, path))) stop(`${key}.source`);
-  const everyBody = fixed.map(entry => entry.mount);
+    if (directories.some((other, at) => at < index && overlap(mount.source, other.mount.source)) || kept.some(path => overlap(mount.source, path)))
+      stop(key === PROGRAM_KEY ? key : `${key}.source`);
   const present = config.accountLogins !== undefined;
   return job => {
     const own: BodyMount[] = [];
@@ -134,12 +162,14 @@ export function bodyMounts(config: {
       if (!nested) throw new Error('Nested containers unavailable');
       own.push(nested);
     }
+    if (program) own.push(program);
     if (present) {
       const login = logins.get(job.account)?.get(job.harness);
-      // Never a fallback: not the fixed mounts alone, and never another account's directory.
+      // Never a fallback: not the other mounts alone, and never another account's directory.
       if (!login) throw new UnservedJobError('Worker has no configured sign-in directory for account');
       own.push(login);
     }
-    return [...own, ...everyBody];
+    // Its own agent's and nobody else's; an agent with no list gets none.
+    return [...own, ...fixed.get(job.agent) ?? []];
   };
 }

@@ -78,3 +78,37 @@ for (const stage of ['request', 'response', 'attach']) it(`settles cancellation 
   await Promise.resolve(); f.abort.abort(); await failed; expect(mocked.request).toHaveBeenCalledOnce();
   f.response.destroy();
 });
+
+// Building an image: the context is streamed up as it comes, and the engine's talk is read and dropped.
+function buildFixture() {
+  const sent: Buffer[] = [];
+  const req = Object.assign(new PassThrough(), { destroyed: false });
+  req.on('data', (chunk: Buffer) => sent.push(chunk));
+  const response = Object.assign(new PassThrough(), { statusCode: 200 });
+  mocked.request.mockImplementation((_options, callback) => { if (callback) queueMicrotask(() => callback(response)); return req; });
+  return { req, response, sent, engine: dockerEngine('/explicit/docker.sock'), abort: new AbortController(), context: new PassThrough() };
+}
+it('streams a build context to the engine as a tar and waits for the engine to finish', async () => {
+  const f = buildFixture(); let done = false;
+  const pending = f.engine.build('/build?t=name&dockerfile=Housefile', f.context, f.abort.signal).then(() => { done = true; });
+  f.context.write('tar-'); f.context.end('bytes'); await new Promise(resolve => setImmediate(resolve));
+  expect(Buffer.concat(f.sent).toString()).toBe('tar-bytes');
+  expect(mocked.request).toHaveBeenCalledExactlyOnceWith({ socketPath: '/explicit/docker.sock', method: 'POST', path: '/build?t=name&dockerfile=Housefile', signal: f.abort.signal,
+    headers: { 'Content-Type': 'application/x-tar' } }, expect.any(Function));
+  f.response.write('{"stream":"Step 1/2"}\n'); f.response.write('{"stream":"x'.padEnd(200_000, 'y') + '"}\n'); await new Promise(resolve => setImmediate(resolve));
+  expect(done).toBe(false);
+  f.response.end('{"aux":{"ID":"sha256:abc"}}\n'); await pending; expect(done).toBe(true);
+});
+for (const failure of ['an error line', 'an error detail split across chunks', 'a refusing status', 'a broken context', 'a broken answer', 'a broken request']) it(`fails a build over ${failure}, without the engine's words`, async () => {
+  const f = buildFixture();
+  if (failure === 'a refusing status') f.response.statusCode = 500;
+  const pending = f.engine.build('/build?t=name', f.context, f.abort.signal), failed = expect(pending).rejects.toThrow(/^Docker (build|request) failed$/);
+  await Promise.resolve();
+  if (failure === 'an error line') { f.context.end(); f.response.end('{"stream":"ok"}\n{"error":"private: no such file /secret/path"}\n'); }
+  if (failure === 'an error detail split across chunks') { f.context.end(); f.response.write('{"stream":"ok"}\n{"errorDe'); f.response.end('tail":{"message":"private"}}'); }
+  if (failure === 'a refusing status') { f.context.end(); f.response.end('{"message":"private"}'); }
+  if (failure === 'a broken context') f.context.destroy(new Error('private git failure'));
+  if (failure === 'a broken answer') { f.context.end(); f.response.destroy(new Error('offline')); }
+  if (failure === 'a broken request') f.req.emit('error', new Error('offline'));
+  await failed;
+});

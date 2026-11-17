@@ -24,7 +24,7 @@ import { isHolderGeneration } from './pieces/secrets/role.js';
 import { isDiscordId } from './pieces/bridges/discord-id.js';
 import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
-import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
+import { BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
 import { CONVERSATION_ID, HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, TASK_ID, conversationId, householdId, scopedStoreId, slug, taskId } from './slug.js';
 import { MEMORY_CATEGORIES } from './categories.js';
 import { DAY } from './core/day.js';
@@ -58,8 +58,10 @@ import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './pieces/mind/knowledge.js'
 import { RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME } from './pieces/bridges/events.js';
 import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
 import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
-import { NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
+import { BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
 import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
+import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_BODY, HOUSE_LABEL_NODE, HOUSE_VERSION } from './runtime/house-image.js';
+import { HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
 
 const root = new URL('../', import.meta.url).pathname;
@@ -594,6 +596,26 @@ it('names where a nested job finds the engine, the engine runtimes and a mount\'
   // A fixed mount is read-only unless it says false, decided in one place; the file's schema gives no default of its own.
   expect(sources('src/runtime').filter(file => /readOnly\s*(\?\?|!==|===|\|\|)|readOnly:[^,}\n]*\.default\(/.test(text(file)))).toEqual(['src/runtime/worker-mounts.ts']);
   expect(text('src/runtime/worker-mounts.ts')).toContain('readOnly: mount.readOnly !== false');
+});
+
+it('says once where a body finds its program, what a house image must say, and how long and how much a house may take', () => {
+  // Where the worker's own directory is in every container, and the body program in it.
+  expect([BODY_PROGRAM_TARGET, BODY_PROGRAM]).toEqual(['/opt/loom', '/opt/loom/dist/body.js']);
+  expect(sources('src').filter(file => text(file).includes('/opt/loom'))).toEqual(['src/runtime/worker-mounts.ts']);
+  expect(text('src/runtime/worker-container.ts')).toContain('Cmd: [BODY_PROGRAM, house.body]');
+  // The image contract's labels: written in the one file that reads them.
+  expect([HOUSE_LABEL, HOUSE_VERSION, HOUSE_LABEL_NODE, HOUSE_LABEL_BODY]).toEqual(['loom.house', '1', 'loom.house.node', 'loom.house.body.']);
+  expect(sources('src').filter(file => /['"`]loom\.house/.test(text(file)))).toEqual(['src/runtime/house-image.ts']);
+  // What is kept on the disk, and how long a build may take.
+  expect([HOUSE_IMAGES_PER_HOUSE, HOUSE_IMAGES_KEPT, HOUSE_MIRRORS_KEPT, HOUSE_BUILD_DEFAULT_MS]).toEqual([2, 10, 8, 1_800_000]);
+  expect(sources('src/runtime').filter(file => /\b1_?800_?000\b/.test(text(file)))).toEqual(['src/runtime/worker-limits.ts']);
+  expect(text('src/runtime/worker-container.ts')).toContain('fixed.buildTimeoutMs ?? HOUSE_BUILD_DEFAULT_MS');
+  // How a repository's address, branch and Housefile must be written is the fetch's rule; a house image's name is made in one place.
+  expect(sources('src').filter(file => text(file).includes('loom-house-'))).toEqual(['src/runtime/house-image.ts']);
+  expect(text('src/runtime/house-image.ts')).toContain("import { houseFile, type House } from './house-source.js';");
+  // A worker with container bodies takes no build command and no runners: the file's schema lets them be absent, and only then.
+  expect(text('src/runtime/worker-program.ts')).toContain('build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),');
+  expect(text('src/runtime/worker-program.ts')).toContain("throw new WorkerStop('retired', key)");
 });
 
 it('makes two times that must agree one time, or works one out from the other', () => {

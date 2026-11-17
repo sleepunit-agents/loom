@@ -1,6 +1,6 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
 import { doorTokenIn } from '../cli/connection.js';
-import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
+import { BUILD_DEADLINE_MAX_MS, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -17,7 +17,6 @@ import { WORKER_STOP, WorkerStop, workerStopLine, type WorkerStopStage } from '.
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
-const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(ENV_NAME), commandString) });
 /** A directory of this machine and where a container sees it. Only the shape is read here: every rule
  * about these paths, and about the two engine sockets below, is in worker-mounts.ts, which stops the worker
  * with a line of its own (exit 52). A path written wrongly is that exit too, never this file's 41. */
@@ -36,7 +35,11 @@ const configSchema = z.object({
    * body's scratch directory, so that the worker after it can end them if this one is killed
    * (worker-left.ts). Left out, it is a directory under the temporary directory named for this user and machine. */
   state: commandString.startsWith('/').optional(),
-  build: command, buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(), runners: z.record(z.string(), runnerCommand),
+  /** For a worker whose bodies are processes: the command that builds, and one runner for each harness.
+   * A worker with container bodies takes neither (WorkerStop 'retired'): it builds each house itself. */
+  build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),
+  /** The longest a build may take. Left out: 5 minutes for a build command, 30 for a house's image. */
+  buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   /** A sign-in directory for each account id, then harness, mounted into that job's container and no
    * other. Container bodies only. When present, every job needs an exact entry. */
@@ -49,7 +52,9 @@ const configSchema = z.object({
     intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
   container: z.object({ socket: z.string(), nestedSocket: z.string().optional(),
     runtime: z.enum(CONTAINER_RUNTIMES).optional(),
-    mounts: z.array(hostDirectory.extend({ readOnly: z.boolean().optional() }).strict()).optional(),
+    // By agent id. One list for every body is what this key used to be: read here so that the worker
+    // can stop on it with its own line (WorkerStop 'retired') and not as a file that is not valid.
+    mounts: z.union([z.array(z.unknown()), z.record(z.string().min(1), z.array(hostDirectory.extend({ readOnly: z.boolean().optional() }).strict()))]).optional(),
     setupTimeoutMs: stepDeadline.optional(),
     cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),
 }).strict().superRefine((config, context) => {
@@ -58,9 +63,8 @@ const configSchema = z.object({
   // A body run as a process is given nothing by a mount: sign-in directories that would be shared by every
   // body all the same are refused, never quietly ignored.
   if (config.accountLogins && !config.container) context.addIssue({ code: 'custom', message: 'Account sign-in directories need container bodies' });
-  if (!config.container) return;
-  const plans = [...Object.values(config.runners), ...Object.values(config.accountRunners ?? {}).flatMap(values => Object.values(values))];
-  if (plans.some(plan => !containerCommand.safeParse(plan).success)) context.addIssue({ code: 'custom', message: 'Invalid container runner command' });
+  // Bodies as processes need the command that builds and a runner for each harness, as before.
+  if (!config.container && (!config.build || !config.runners)) context.addIssue({ code: 'custom', message: 'A worker without container bodies needs build and runners' });
 });
 export async function workerProgram(input: {
   args: readonly string[];
@@ -127,6 +131,10 @@ export async function workerProgram(input: {
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
     stage = 'config';
     const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
+    // Keys a worker with container bodies used to take. It does not go on without them as if they were
+    // not there: whoever wrote one expects it to do something.
+    if (config.container) for (const [key, present] of [['build', config.build], ['runners', config.runners], ['accountRunners', config.accountRunners],
+      ['container.mounts', Array.isArray(config.container.mounts) ? true : undefined]] as const) if (present !== undefined) throw new WorkerStop('retired', key);
     stage = 'token';
     const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
@@ -135,8 +143,8 @@ export async function workerProgram(input: {
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     executor = config.container
-      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: config.container, state })
-      : (input.executor ?? commandWorkerExecutor)({ ...config, state });
+      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: { ...config.container, mounts: Array.isArray(config.container.mounts) ? undefined : config.container.mounts }, state })
+      : (input.executor ?? commandWorkerExecutor)({ ...config, build: config.build!, runners: config.runners!, state });
     // Before any report or claim: end what a worker killed before this one left running, or the work loom
     // has queued again would run beside it. If that cannot be done, this worker does not start.
     stage = 'left';

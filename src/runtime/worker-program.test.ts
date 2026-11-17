@@ -6,6 +6,8 @@ import { RELAY_MS } from './account-signin-relay.js';
 import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT } from './job-exit.js';
 const plan = { command: '/builder', args: [], cwd: '/work', env: { PATH: '/bin' } };
 const config = { url: 'https://loom.example', box: 'b', tokenFile: '/token', build: plan, runners: { claude: plan } };
+/** A worker with container bodies: it builds each house itself, so it has no build command and no runners. */
+const houseConfig = { url: config.url, box: config.box, tokenFile: config.tokenFile };
 function fixture() {
   const handlers = new Map<string, () => void>();
   return { handlers, args: ['/config'], read: vi.fn(async (path: string) => path === '/config' ? JSON.stringify(config) : ' private-token\n'),
@@ -165,7 +167,7 @@ for (const buildTimeoutMs of [0, 1.5, 3_600_001]) it(`rejects invalid configured
 
 it('selects the actual container executor when configured, without invoking a host runner', async () => {
   const f = fixture(), containerExecutor = vi.fn().mockReturnValue({ container: true });
-  const selected = { ...config, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
+  const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
   expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state });
@@ -195,17 +197,28 @@ for (const accountRunners of [null, [], { sub: null }, { sub: [] }, { sub: { cla
   expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config');
   expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
 });
-it('passes account bindings to container execution too', async () => {
-  const f = fixture(), containerExecutor = vi.fn().mockReturnValue({}), configured = { ...config, container: { socket: '/fake/docker.sock' }, accountRunners: { subscription: { claude: plan } } };
-  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'token');
-  expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }); expect(f.executor).not.toHaveBeenCalled();
+it.each([
+  ['build', { build: plan }], ['runners', { runners: { claude: plan } }], ['runners', { runners: {} }], ['accountRunners', { accountRunners: { subscription: { claude: plan } } }],
+  ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [{ source: '/house/stamps', target: '/house/stamps' }] } }], ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [] } }],
+  ['build', config],
+])('stops a worker with container bodies that still has %s, naming the key, before it reads its token', async (key, patch) => {
+  const f = fixture(), containerExecutor = vi.fn();
+  f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }));
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(53);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith(`Worker stopped: ${WORKER_STOP.retired[1]} (${key})\n`);
+  expect(WORKER_STOP.retired[1]).toBe('the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent');
+  expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
-
-for (const patch of [{ cwd: 'relative' }, { env: { 'BAD-KEY': 'value' } }]) it('rejects invalid container runner plans before the token or builder', async () => {
-  const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, container: { socket: '/fake/docker.sock' }, accountRunners: { sub: { claude: { ...plan, ...patch } } } }));
-  const containerExecutor = vi.fn(); expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]);
-  expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
+it('stops a worker with container bodies on a machine that has no git, with its own line and code', async () => {
+  const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('git'); });
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(54);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: git, which fetches each house\'s repository, could not be run on this machine\n'); expect(f.run).not.toHaveBeenCalled();
+});
+for (const gone of ['build', 'runners'] as const) it(`still needs ${gone} for a worker whose bodies are processes`, async () => {
+  const f = fixture(), { [gone]: _left, ...rest } = config;
+  f.read.mockResolvedValue(JSON.stringify(rest));
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
 });
 
 for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\0fact'], ['bad\nline'], ['bad\rfact'], ['x'.repeat(257)], Array.from({ length: 129 }, (_, i) => 'fact'+i), null, 'gpu:5090']) it('rejects invalid configured machine facts before reading a token or executing', async () => {
@@ -246,22 +259,23 @@ it('takes a sign-in deadline up to the relay\'s own and no longer', async () => 
 // Houses: the runtime's name, sign-in directories and fixed mounts (worker-mounts.ts holds the rules).
 it('passes the engine runtime, the sign-in directories and the fixed mounts to container execution as they were written', async () => {
   const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
-  const configured = { ...config, accountLogins: { subscription: { claude: { source: '/logins/subscription', target: '/home/agent/.claude' } } },
-    container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: [{ source: '/house/stamps', target: '/house/stamps', readOnly: false }, { source: '/house/mirror', target: '/mirror' }] } };
+  const configured = { ...houseConfig, buildTimeoutMs: 2_400_000, accountLogins: { subscription: { claude: { source: '/logins/subscription', target: '/home/agent/.claude' } } },
+    container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: { art: [{ source: '/house/stamps', target: '/house/stamps', readOnly: false }], mark: [{ source: '/house/mirror', target: '/mirror' }] } } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
   expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }); expect(f.executor).not.toHaveBeenCalled();
 });
 for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { container: { socket: '/s', runtime: '' } },
-  { container: { socket: '/s', mounts: [{ source: '/a', target: '/b', readOnly: 'yes' }] } }, { container: { socket: '/s', mounts: [{ source: '/a', target: '/b', propagation: 'shared' }] } },
-  { container: { socket: '/s', mounts: [{ source: '/a' }] } }, { container: { socket: '/s', mounts: { source: '/a', target: '/b' } } },
+  { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', readOnly: 'yes' }] } } }, { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', propagation: 'shared' }] } } },
+  { container: { socket: '/s', mounts: { art: [{ source: '/a' }] } } }, { container: { socket: '/s', mounts: { source: '/a', target: '/b' } } }, { container: { socket: '/s', mounts: { '': [] } } },
+  { container: { socket: '/s', buildTimeoutMs: 1 } }, { container: { socket: '/s' }, buildTimeoutMs: 3_600_001 },
   { container: { socket: '/s' }, accountLogins: { a: { claude: { source: '/a', target: '/b', readOnly: true } } } },
   { container: { socket: '/s' }, accountLogins: { a: { claude: { source: '/a' } } } }, { container: { socket: '/s' }, accountLogins: { a: { source: '/a', target: '/b' } } },
   // Sign-in directories are mounts: a worker whose bodies are processes cannot give one to one job only.
   { accountLogins: { a: { claude: { source: '/a', target: '/b' } } } }, { accountLogins: {} }].entries())
   it(`rejects a runtime it does not know, a misshapen mount and sign-in directories without container bodies, before the token is read (${JSON.stringify(patch[1])})`, async () => {
     const f = fixture(), containerExecutor = vi.fn();
-    f.read.mockResolvedValue(JSON.stringify({ ...config, ...patch[1] }));
+    f.read.mockResolvedValue(JSON.stringify({ ...('container' in patch[1] ? houseConfig : config), ...patch[1] }));
     expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]);
     expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
@@ -280,41 +294,41 @@ it('stops before any work is claimed when a path given to containers or an engin
   const login = (source: string, target = '/home/agent/.claude') => ({ accountLogins: { subscription: { claude: { source, target } } } });
   const started = async (patch: { accountLogins?: unknown; container?: Record<string, unknown>; tokenFile?: string; state?: string }) => {
     const f = fixture();
-    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, state: workerState, ...patch, container: { socket, ...patch.container } }) : 'private-token');
+    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, state: workerState, ...patch, container: { socket, ...patch.container } }) : 'private-token');
     // The real container executor, so the real checks, which come before the state directory is taken.
     return { code: await workerProgram(f), f };
   };
   try {
     // The same configuration with nothing wrong in it starts, so each stop below is for the one thing changed.
-    const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: [{ source: other, target: '/house/x' }] } });
+    const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: { art: [{ source: other, target: '/house/x' }] } } });
     expect(fine.code).toBe(0); expect(fine.f.error).not.toHaveBeenCalled(); expect(fine.f.run).toHaveBeenCalledOnce();
     // So does one whose engine socket is named through a linked directory, as `/var/run/docker.sock` is on
     // most machines, with nothing else in it: a configuration from before any of these keys.
-    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: [{ source: other, target: '/house/x' }] }]) {
+    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: { art: [{ source: other, target: '/house/x' }] } }]) {
       const linked = await started({ container });
       expect(linked.code).toBe(0); expect(linked.f.error).not.toHaveBeenCalled(); expect(linked.f.run).toHaveBeenCalledOnce();
     }
     const subscription = 'accountLogins.subscription.claude';
     for (const [what, key, patch] of [
       ['a sign-in directory that is missing', `${subscription}.source`, login('/loom-test/private-missing-login')],
-      ['a relative mount source', 'container.mounts[0].source', { container: { mounts: [{ source: 'private-relative', target: '/house/x' }] } }],
-      ['a relative mount target', 'container.mounts[0].target', { container: { mounts: [{ source: real, target: 'house/x' }] } }],
-      ['a mount that is a symbolic link to a directory that is itself fine', 'container.mounts[0].source', { container: { mounts: [{ source: link, target: '/house/x' }] } }],
+      ['a relative mount source', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: 'private-relative', target: '/house/x' }] } } }],
+      ['a relative mount target', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: 'house/x' }] } } }],
+      ['a mount that is a symbolic link to a directory that is itself fine', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: link, target: '/house/x' }] } } }],
       ['a sign-in directory that is a symbolic link', `${subscription}.source`, login(link)],
-      ['two mounts at nested places', 'container.mounts[1].target', { container: { mounts: [{ source: real, target: '/house/x' }, { source: other, target: '/house/x/inner' }] } }],
-      ['a mount at a sign-in directory\'s place', `${subscription}.target`, { ...login(real), container: { mounts: [{ source: other, target: '/home/agent/.claude' }] } }],
-      ['a mount at the nested socket\'s place', 'container.mounts[0].target', { container: { mounts: [{ source: real, target: '/var/run/docker.sock' }] } }],
-      ['a mount at /run', 'container.mounts[0].target', { container: { mounts: [{ source: real, target: '/run' }] } }],
-      ['one directory mounted twice', 'container.mounts[1].source', { container: { mounts: [{ source: real, target: '/one' }, { source: real, target: '/two', readOnly: false }] } }],
-      ['a mount that is a sign-in directory', `${subscription}.source`, { ...login(real), container: { mounts: [{ source: real, target: '/house/x' }] } }],
+      ['two mounts at nested places', 'container.mounts.art[1].target', { container: { mounts: { art: [{ source: real, target: '/house/x' }, { source: other, target: '/house/x/inner' }] } } }],
+      ['a mount at a sign-in directory\'s place', `${subscription}.target`, { ...login(real), container: { mounts: { art: [{ source: other, target: '/home/agent/.claude' }] } } }],
+      ['a mount at the nested socket\'s place', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: '/var/run/docker.sock' }] } } }],
+      ['a mount at /run', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: '/run' }] } } }],
+      ['one directory mounted twice', 'container.mounts.art[1].source', { container: { mounts: { art: [{ source: real, target: '/one' }, { source: real, target: '/two', readOnly: false }] } } }],
+      ['a mount that is a sign-in directory', `${subscription}.source`, { ...login(real), container: { mounts: { art: [{ source: real, target: '/house/x' }] } } }],
       ['a nested socket that is a directory', 'container.nestedSocket', { container: { nestedSocket: real } }],
       ['a relative nested socket', 'container.nestedSocket', { container: { nestedSocket: 'engine/engine.sock' } }],
       ['a relative engine socket', 'container.socket', { container: { socket: 'engine/engine.sock' } }],
       ['an engine socket that is not there', 'container.socket', { container: { socket: join(engine, 'private-none.sock') } }],
-      ['a mount of the directory that holds the engine socket', 'container.mounts[0].source', { container: { mounts: [{ source: engine, target: '/house/run' }] } }],
-      ['a mount of the real directory of an engine socket named through a link', 'container.mounts[0].source', { container: { socket: join(run, 'engine.sock'), mounts: [{ source: engine, target: '/house/run' }] } }],
-      ['a mount that will hold the state directory', 'container.mounts[0].source', { state: join(other, 'private-state'), container: { mounts: [{ source: other, target: '/house/x' }] } }],
-      ['a mount that holds the token file', 'container.mounts[0].source', { tokenFile: join(real, 'private-token-file'), container: { mounts: [{ source: real, target: '/house/x' }] } }],
+      ['a mount of the directory that holds the engine socket', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: engine, target: '/house/run' }] } } }],
+      ['a mount of the real directory of an engine socket named through a link', 'container.mounts.art[0].source', { container: { socket: join(run, 'engine.sock'), mounts: { art: [{ source: engine, target: '/house/run' }] } } }],
+      ['a mount that will hold the state directory', 'container.mounts.art[0].source', { state: join(other, 'private-state'), container: { mounts: { art: [{ source: other, target: '/house/x' }] } } }],
+      ['a mount that holds the token file', 'container.mounts.art[0].source', { tokenFile: join(real, 'private-token-file'), container: { mounts: { art: [{ source: real, target: '/house/x' }] } } }],
     ] as const) {
       const { code, f } = await started(patch);
       expect(code, what).toBe(52);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UnservedJobError, workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
-import { WORKER_EXIT } from './job-exit.js';
+import { BuildTimeError, UnmetHouseError, UnservedJobError, workOnce, type WorkerAssignment, type WorkerBody, type WorkerControl } from './worker.js';
+import { WORKER_EXIT, exitStage } from './job-exit.js';
+import { REPORT_MS, SILENCE_MS } from './silence.js';
 const deferred = <T>() => { let resolve!: (v: T) => void; let reject!: (e?: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'c', model: 'm', account: 'a', harness: 'h', brief: 'hello', run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] }, house: { repository: 'r', file: 'Containerfile', branch: 'main' } };
@@ -18,10 +19,10 @@ function fixture() {
   }) };
   const abort = new AbortController();
   let pulse = () => {};
-  const disposed = vi.fn();
-  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal,
+  const disposed = vi.fn(), clock = { ms: 0 };
+  const run = () => workOnce({ box: 'b', control, executor, signal: abort.signal, now: () => clock.ms,
     schedule: { every: (_ms, callback) => { pulse = callback; return disposed; } } });
-  return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed };
+  return { control, executor, built, spawned, exited, body, abort, run, pulse: () => pulse(), disposed, clock };
 }
 async function flush() { for (let i = 0; i < 12; i++) await Promise.resolve(); }
 describe('worker work plane', () => {
@@ -104,15 +105,59 @@ describe('worker work plane', () => {
     beat.resolve(true); await flush(); expect(f.control.started).toHaveBeenCalledOnce();
     f.exited.resolve({ exitCode: 0, logTail: 'done' }); expect(await run).toBe('finished');
   });
-  it('kills a running body after terminal rejection or transport loss without a finish or local retry', async () => {
-    for (const error of [false, true]) {
-      const f = fixture(), run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
-      if (error) vi.mocked(f.control.heartbeat).mockRejectedValue(new Error('offline'));
-      else vi.mocked(f.control.heartbeat).mockResolvedValue(false);
-      f.pulse(); expect(await run).toBe('abandoned');
-      expect(f.body.stop).toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled();
-      expect(f.executor.start).toHaveBeenCalledOnce();
+  it('kills a running body when loom says the job is no longer its own, without a finish or local retry', async () => {
+    const f = fixture(), run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+    vi.mocked(f.control.heartbeat).mockResolvedValue(false);
+    f.pulse(); expect(await run).toBe('abandoned');
+    expect(f.body.stop).toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled();
+    expect(f.executor.start).toHaveBeenCalledOnce();
+  });
+  it('does not give a job up over a report loom did not answer while loom can still have heard of it in time', async () => {
+    // One report in the silence interval is enough for loom (silence.ts). A slow or dropped one, on a
+    // machine busy building, used to end the job at once: loom then heard nothing and recorded it lost.
+    const f = fixture(), run = f.run(); await flush();
+    vi.mocked(f.control.heartbeat).mockRejectedValue(new Error('offline'));
+    for (let report = 1; report <= 6; report++) { f.clock.ms = report * REPORT_MS; f.pulse(); await flush(); }
+    expect(f.control.heartbeat).toHaveBeenCalledTimes(6); expect(f.abort.signal.aborted).toBe(false); expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+    // loom answers again: the job is still this worker's, and the count starts over.
+    vi.mocked(f.control.heartbeat).mockResolvedValue(true); f.clock.ms = 7 * REPORT_MS; f.pulse(); await flush();
+    vi.mocked(f.control.heartbeat).mockRejectedValue(new Error('offline'));
+    for (let report = 8; report <= 13; report++) { f.clock.ms = report * REPORT_MS; f.pulse(); await flush(); }
+    expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+    f.built.resolve('image'); f.spawned.resolve(); await flush(); vi.mocked(f.control.heartbeat).mockResolvedValue(true);
+    f.exited.resolve({ exitCode: 0, logTail: 'done' }); expect(await run).toBe('finished');
+  });
+  it('gives the job up once no report has been answered for so long that loom has taken it for lost', async () => {
+    for (const phase of ['building', 'running'] as const) {
+      const f = fixture(), run = f.run(); await flush();
+      if (phase === 'running') { f.built.resolve('image'); f.spawned.resolve(); await flush(); }
+      vi.mocked(f.control.heartbeat).mockRejectedValue(new Error('offline'));
+      // The last answered report was the claim (or the running acknowledgement), at 0. The next try after
+      // this one could not be answered inside the silence interval.
+      f.clock.ms = SILENCE_MS - REPORT_MS - 1; f.pulse(); await flush(); expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+      f.clock.ms = SILENCE_MS - REPORT_MS; f.pulse(); expect(await run).toBe('abandoned');
+      expect(f.control.finish).not.toHaveBeenCalled(); expect(f.executor.build.mock.calls[0][1].aborted).toBe(true);
+      if (phase === 'running') expect(f.body.stop).toHaveBeenCalled();
     }
+  });
+  it('goes on reporting a job as starting for as long as its build takes', async () => {
+    const f = fixture(), run = f.run(); await flush();
+    // Forty minutes of a build that has not returned: a report at every interval, each answered.
+    for (let report = 1; report <= 160; report++) { f.clock.ms = report * REPORT_MS; f.pulse(); await flush(); }
+    expect(f.control.heartbeat).toHaveBeenCalledTimes(160);
+    expect(vi.mocked(f.control.heartbeat).mock.calls.every(call => call[1] === 'starting')).toBe(true);
+    expect(f.executor.build.mock.calls[0][1].aborted).toBe(false); expect(f.control.finish).not.toHaveBeenCalled();
+    f.abort.abort(); expect(await run).toBe('abandoned');
+  });
+  it('says so when a house\'s build ran out of time, and when its image does not say how a body starts', async () => {
+    const timed = fixture(); timed.executor.build.mockImplementation(() => Promise.reject(new BuildTimeError('private')));
+    expect(await timed.run()).toBe('finished');
+    expect(timed.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.buildTime, 'Worker could not start the body: the build ran out of time', 'worker');
+    expect([WORKER_EXIT.buildTime, exitStage(WORKER_EXIT.buildTime, 'worker')]).toEqual([32, 'worker build time']);
+    const unmet = fixture(), run = unmet.run(); await flush(); unmet.built.resolve('image'); unmet.spawned.reject(new UnmetHouseError('private')); 
+    expect(await run).toBe('finished'); expect(unmet.body.stop).toHaveBeenCalled();
+    expect(unmet.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.house, 'Worker could not start the body: the house image does not say how a body starts in it', 'worker');
+    expect([WORKER_EXIT.house, exitStage(WORKER_EXIT.house, 'worker')]).toEqual([30, 'worker house']);
   });
   it('waits for an in-flight running heartbeat and suppresses finish if authority is rejected', async () => {
     const f = fixture(), beat = deferred<boolean>(), run = f.run(); await flush();
