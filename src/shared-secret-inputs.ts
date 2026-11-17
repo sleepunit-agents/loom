@@ -1,7 +1,12 @@
 import {startupRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
  * Owners can write values in Settings; only the actual granted job receives
- * bytes here. Runtime parent access is limited to its configured repo input. */
+ * bytes here. Runtime parent access is limited to its configured repo input.
+ *
+ * These routes are not registered operations, on purpose: an operation's result is saved as a receipt and
+ * replayed, and secret bytes must not be. Who may call is proof of assignment (a body's own job, a worker's
+ * own machine), not a sharing rule, so it is checked here and not in policy.ts. The reasoning and the full
+ * list of checks: docs/accepted-tradeoffs.md, "The private secret-input routes are not registered operations". */
 import {Hono} from 'hono';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
