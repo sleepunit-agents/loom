@@ -313,7 +313,9 @@ Entries are grouped by the part of the program they belong to.
 - Why: they are three facts with three owners, not three copies of one. A tier belongs to the outside
   account and is meant to stay when that account is linked, re-linked or unlinked; a card is descriptive
   and decides nothing. Removing a link therefore leaves both, on purpose.
-- Would change it: a tier or a card being used to decide who somebody is. Only `bridge_people` may do that.
+- Would change it: a tier or a card being used to decide who somebody is. Only `bridge_people` may do that,
+  and only for a member who is in the household now: removing a member keeps their link, and intake
+  (`incoming.ts`) and the run policy (`body-policy.ts`) then take the account for an outside one.
 
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody

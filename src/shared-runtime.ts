@@ -64,7 +64,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     },
   });
   operations.register({ name: 'runtime.heartbeat', write: true, recheckPolicy: true, doors: ['http'],
-    input: jobInput.extend({ state: z.enum(['starting', 'running']) }).strict(),
+    input: jobInput.extend({ state: z.enum(claimedJobStates) }).strict(),
     output: z.object({ active: z.boolean() }).strict(), may: (viewer, input) => assigned(viewer, input.job),
     // A cached active:true cannot restore authority after a terminal transition.
     validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },

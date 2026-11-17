@@ -2,6 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {createHash,randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
+import {BODY_EXIT} from './job-exit.js';
 import {EventEmitter} from 'node:events';
 import {PassThrough,Writable} from 'node:stream';
 import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
@@ -153,5 +154,5 @@ it('retires the projection on listener setup failure before a held heartbeat set
   const before=requests;expect(await captured!.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});expect(requests).toBe(before);
   let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);expect(spawn).not.toHaveBeenCalled();
  }finally{release();}
- expect(await running).toBe(13);expect(errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
+ expect(await running).toBe(BODY_EXIT.tools);expect(errors).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
 });

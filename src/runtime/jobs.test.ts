@@ -6,6 +6,9 @@ import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
 import { Jobs, QUEUE_DEADLINE_MS, agentMailAdmission } from './jobs.js';
 import { BODY_EXIT, LOOM_EXIT, exitStage } from './job-exit.js';
+import { FakeClock } from '../core/clock.js';
+import { SettledInbox } from '../core/tempo/settle.js';
+import { defaultTimings } from '../core/tempo/volume.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
@@ -371,4 +374,93 @@ it('records an admission that threw as a notice, and offers the rest of the batc
   expect(changed).toHaveBeenCalledOnce();
   expect(agentMailAdmission(broken, changed)({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
   expect(f.db.select().from(inbox).where(eq(inbox.source, 'notice')).get()?.state).toBe('resolved');
+});
+/** Mail and jobs as the program joins them: Tempo's settled inbox offering each batch to agentMailAdmission,
+ * and told again (as the root tells it) whenever a job ends. */
+function settledFixture() {
+  const f = fixture(), clock = new FakeClock(Date.parse(f.now()));
+  const settled = new SettledInbox(f.db, clock, agentMailAdmission(f.runtime, () => {}));
+  const settle = () => { settled.changed(); clock.advance(defaultTimings.settleSeconds * 1000); };
+  const unended = (conversation = f.conversation.id) => f.db.select().from(jobs).where(eq(jobs.conversation, conversation)).all().filter(job => !['done', 'failed', 'lost', 'stopped'].includes(job.state));
+  /** A running body that has taken its batch, with a second message arriving behind it. */
+  const busy = () => {
+    const first = f.send(); settle();
+    const [job] = unended();
+    f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+    f.comms.take(f.conversation.id, job.id);
+    const late = f.send(); settle();
+    expect(unended().map(row => row.id)).toEqual([job.id]);
+    expect(f.db.select().from(inbox).where(eq(inbox.id, late.id)).get()).toMatchObject({ state: 'waiting', job: null });
+    return { first, late, job };
+  };
+  return { ...f, clock, settled, settle, unended, busy };
+}
+it.each([
+  ['finishes', (f: ReturnType<typeof settledFixture>, job: string) => { f.runtime.finish(job, 'worker', 0); }],
+  ['fails', (f: ReturnType<typeof settledFixture>, job: string) => { f.runtime.finish(job, 'worker', 1); }],
+  ['is stopped', (f: ReturnType<typeof settledFixture>, job: string) => { f.runtime.stop(job, 'owner', 'reset'); }],
+  ['is lost', (f: ReturnType<typeof settledFixture>, job: string) => { f.tick(600_000); expect(f.runtime.sweep().map(row => row.state)).toEqual(['lost']); }],
+])('starts work for mail that arrived behind a running body once that job %s', (_, end) => {
+  const f = settledFixture(), { first, late, job } = f.busy();
+  // The body answered what it took, so nothing of its own is left to try again.
+  f.comms.confirm(first.id, job.id);
+  end(f, job.id);
+  // What the root does when a job ends: tell Tempo that capacity changed. No other mail arrives.
+  f.settled.changed();
+  const next = f.unended();
+  expect(next).toHaveLength(1);
+  expect(next[0].id).not.toBe(job.id);
+  expect(f.db.select().from(inbox).where(eq(inbox.id, late.id)).get()).toMatchObject({ state: 'waiting', job: next[0].id });
+  f.settled.close();
+});
+it('starts work for late mail after the last attempt of a failed job, and not while a retry is queued', () => {
+  const f = settledFixture(), { late, job } = f.busy();
+  // The body died with its batch unconfirmed: the batch is tried again, and the late mail waits behind the retry.
+  const { retry } = f.runtime.finish(job.id, 'worker', 1);
+  // The returned batch is a change to the agent's waiting mail, so it settles again before it is offered.
+  f.settle();
+  expect(f.unended().map(row => row.id)).toEqual([retry!.id]);
+  expect(f.db.select().from(inbox).where(eq(inbox.id, late.id)).get()).toMatchObject({ job: null });
+  f.runtime.stop(retry!.id, 'owner', 'write-off');
+  f.settled.changed();
+  const next = f.unended();
+  expect(next).toHaveLength(1);
+  expect(f.db.select().from(inbox).where(eq(inbox.id, late.id)).get()).toMatchObject({ job: next[0].id });
+  f.settled.close();
+});
+it('starts work for late mail in one conversation when the same batch held new mail for another', () => {
+  const f = settledFixture(), { first, late, job } = f.busy();
+  const other = f.comms.open({ agent: 'art', venue: 'wake', place: 'elsewhere', label: 'Other', project: 'pond', member: null });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: other.id, source: 'trigger', fromKind: 'agent', fromId: 'art', words: 'Elsewhere' });
+  f.settle();
+  // The other conversation was free, so its mail became a job; the busy one keeps its late mail waiting.
+  expect(f.unended(other.id)).toHaveLength(1);
+  expect(f.unended().map(row => row.id)).toEqual([job.id]);
+  // Admitting the other conversation's mail changed it, so the batch settles once more while the body works.
+  f.settle();
+  f.comms.confirm(first.id, job.id);
+  f.runtime.finish(job.id, 'worker', 0);
+  f.settled.changed();
+  const next = f.unended();
+  expect(next).toHaveLength(1);
+  expect(f.db.select().from(inbox).where(eq(inbox.id, late.id)).get()).toMatchObject({ job: next[0].id });
+  expect(f.unended(other.id)).toHaveLength(1);
+  f.settled.close();
+});
+it('tells listeners of an admission only when it started a job or wrote a notice', () => {
+  const f = fixture(); let changes = 0;
+  const admit = agentMailAdmission(f.runtime, () => { changes++; });
+  const mail = f.send(), items = f.db.select().from(inbox).all();
+  expect(admit({ kind: 'agent', id: 'art' }, items)).toBe(true);
+  expect(changes).toBe(1);
+  // Offered again with the job still there: everything waiting is held by it, and nothing changed.
+  expect(admit({ kind: 'agent', id: 'art' }, items)).toBe(true);
+  expect(changes).toBe(1);
+  const job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  f.comms.take(f.conversation.id, job.id, [mail.id]);
+  f.send();
+  // Mail the job does not hold is not admitted, so the settled inbox keeps offering it.
+  expect(admit({ kind: 'agent', id: 'art' }, f.db.select().from(inbox).all())).toBe(false);
+  expect(changes).toBe(1);
 });

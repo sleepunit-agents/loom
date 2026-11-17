@@ -23,6 +23,9 @@ export const BODY_EXIT = {
   /** A later report failed while the body was at work: it lost loom, or loom had ended the job. The body
    * dropped what it was doing, whatever stage that was; the harness is not to blame. */
   contact: 20,
+  /** The body's own tools server, which the harness is given, could not be started. (The next free number:
+   * 21 to 27 are the worker's.) */
+  tools: 28,
 } as const;
 export const WORKER_EXIT = {
   /** Fetching the private repository input. */

@@ -237,13 +237,14 @@ it('tries every held message in turn, however many stay held', () => {
   expect(f.raw()).toEqual([]);
   // Enabled again, but the same bot now also stands for a second agent, so all three stay held.
   f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
-  f.db.insert(bridgeConnections).values({ id: 'twin', platform: 'discord', agent: 'mark', workspace: 'w', botUser: 'bot', tokenSecret: 'bot', enabled: false, state: 'disconnected', stateAt: f.now() }).run();
+  f.db.insert(bridgeConnections).values({ id: 'twin', platform: 'discord', agent: 'mark', workspace: 'w', botUser: 'bot', tokenSecret: 'bot', enabled: true, state: 'disconnected', stateAt: f.now() }).run();
   const states = () => f.db.select().from(bridgeIncoming).all().map(row => row.state);
   f.receiver.drain('discord', 1);
   f.receiver.drain('discord', 1);
   expect(states()).toEqual(['held', 'held', 'held']);
   // That is put right. The next pass of one row goes on to the third message, not back to the first.
-  f.db.delete(bridgeConnections).where(eq(bridgeConnections.id, 'twin')).run();
+  // By the door the program has: the second connection is switched off, and its row stays.
+  f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'twin')).run();
   f.receiver.drain('discord', 1);
   expect(states()).toEqual(['held', 'held', 'delivered']);
   f.receiver.drain('discord', 1); f.receiver.drain('discord', 1);

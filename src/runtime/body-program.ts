@@ -54,6 +54,10 @@ export async function bodyProgram(input: {
   const context: string[] = [], incoming:string[]=[];
   const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
+  // Every report to loom goes through here. One that fails after the first exchange is the stage that failed
+  // (BODY_EXIT.contact), whatever the body was doing when it reported; the first is BODY_EXIT.report.
+  let first=true;
+  const tell=(value:Parameters<NonNullable<typeof client>['status']>[0])=>client!.status(value).catch((error:unknown)=>{if(!first)unavailable=true;throw error;});
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
@@ -82,14 +86,15 @@ export async function bodyProgram(input: {
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
-    let reporting:ReturnType<NonNullable<typeof client>['status']>|undefined;
-    const report=()=>reporting??(reporting=client!.status(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
+    let reporting:ReturnType<typeof tell>|undefined;
+    const report=()=>reporting??(reporting=tell(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
     const observe=(value:{stopRequested:boolean})=>{if(value.stopRequested){stopped=true;erase();nativeAbort.abort();}};
     observe(await report());
-    if(stopped){await client.status(left);return BODY_EXIT.stopped;}
+    if(stopped){await tell(left);return BODY_EXIT.stopped;}
+    first=false;
     const beat=()=>{
       if(pending||signal.aborted)return;
-      pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
+      pending=report().then(observe,()=>{erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
     };
     cancel=input.schedule?input.schedule.every(REPORT_MS,beat):(()=>{const timer=setInterval(beat,REPORT_MS);return()=>clearInterval(timer);})();
     exit=BODY_EXIT.startup;
@@ -111,10 +116,13 @@ export async function bodyProgram(input: {
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       const words=bodyMailContext(item);if(words!==null)context.push(words);
     });
-    if (batch.stopRequested) { await retire(); await client.status(left); return BODY_EXIT.stopped; }
+    if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
     if(signal.aborted)throw new Error();
     // Mail with no words left to answer (they expired, or the item is muted) needs no answer: settle it now.
-    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.settle();await client.status({state:'idle',work:''});return 0;}
+    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.settle();await tell({state:'idle',work:''});return 0;}
+    // A bridge answer is a reply to a message from the bridge. Mail with words and no such message is mail
+    // this body cannot answer, so it fails here, as mail, before anything else is loaded for it.
+    if(bridge&&!incoming.length)throw new Error();
     exit=BODY_EXIT.identity;
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
@@ -122,10 +130,10 @@ export async function bodyProgram(input: {
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
-    if (started.stopRequested) { await retire(); await client.status(left); return BODY_EXIT.stopped; }
-    if(bridge&&!incoming.length)throw new Error();
+    if (started.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
     const replyTo=incoming.at(-1);
     if(!input.native){
+      exit=BODY_EXIT.tools;
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
@@ -140,7 +148,7 @@ export async function bodyProgram(input: {
     try { answer = await native(room, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
     finally { await retire(); }
-    if(stopped && !input.signal.aborted) { await client.status(left); return BODY_EXIT.stopped; }
+    if(stopped && !input.signal.aborted) { await tell(left); return BODY_EXIT.stopped; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
     exit=BODY_EXIT.record;
@@ -156,12 +164,12 @@ export async function bodyProgram(input: {
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
-    await client.status({ state: 'idle', work: '' });
+    await tell({ state: 'idle', work: '' });
     return 0;
   } catch {
     await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
-      try{await client.status(left);return BODY_EXIT.stopped;}catch{}
+      try{await tell(left);return BODY_EXIT.stopped;}catch{}
     }
     // A report that failed is why the work was dropped, whichever stage was dropped.
     input.error('Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;

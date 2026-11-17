@@ -34,6 +34,12 @@ export const QUEUE_DEADLINE_MS = 24 * 3_600_000;
 /** What admission answers: the conversation's unended job, or why its waiting mail did not become one. */
 export interface Admission {
   job?: Job;
+  /** Whether this call started that job. */
+  started?: boolean;
+  /** That job was already there and does not hold all of the conversation's waiting mail: some arrived
+   * after it was admitted. A body takes mail once, so that mail may never reach it, and it is not admitted
+   * until it is held by a job. It becomes one when this job has ended and admission is asked again. */
+  behind?: boolean;
   /** Why mail that is waiting got no job, in loom's own words. Absent when there was nothing to admit. */
   declined?: string;
   /** Whether this call told the agent's owners so for the first time. */
@@ -69,7 +75,8 @@ export class Jobs {
     return this.keepText(job) ? job.brief : '';
   }
 
-  /** Called after inbox settling. Repeated admission returns the same active job.
+  /** Called after inbox settling. Repeated admission returns the same active job, whether or not it holds
+   * the mail that is waiting now (see Admission.behind).
    * Work that ran out of attempts and work that was stopped need fresh mail to resume. */
   admit(conversationId: string): Job | undefined { return this.admission(conversationId).job; }
 
@@ -98,8 +105,8 @@ export class Jobs {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
       if (!conversation) throw new Error('Conversation not found');
       const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
-      if (existing) return { job: existing };
       const mail = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
+      if (existing) return { job: existing, behind: mail.some(item => item.job !== existing.id) };
       if (!mail.length) return {};
       // A waiting row's job is its last admission attempt, even before take().
       // New mail has no job: no timestamp comparison can lose same-tick mail.
@@ -127,7 +134,7 @@ export class Jobs {
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
       this.delivery(job.id,'held');
       for (const item of mail) this.mail.resolveSource('notice', `mail-not-admitted:${JSON.stringify([conversation.agent, item.id])}`, 'Work was started');
-      return { job };
+      return { job, started: true };
     }, { behavior: 'immediate' });
   }
 
@@ -312,25 +319,30 @@ export class Jobs {
 
 /** How settled mail for an agent becomes work: one job per conversation the mail is in, even when one
  * settled batch holds mail from several. Tempo calls this; it is the only caller of admission outside
- * tests. True only when every conversation in the batch has a job. Mail that got none is not dropped in
- * silence: Jobs.admission tells the agent's owners why, and an admission that threw is recorded the same
- * way here instead of being left to the caller, which could only swallow it. `changed` runs when any job
- * was admitted or any such notice was newly written. */
+ * tests. True only when every conversation in the batch has a job that holds all of its waiting mail. Mail
+ * that arrived behind a job already there is not admitted by it (Admission.behind), so the answer is
+ * false and the settled inbox offers the batch again on every later change. The end of a job is one such
+ * change (the root calls Tempo's capacityChanged for every job that ends), and that is when the mail gets
+ * its own job. Mail that got none for another reason is not dropped in silence: Jobs.admission tells the
+ * agent's owners why, and an admission that threw is recorded the same way here instead of being left to
+ * the caller, which could only swallow it. `changed` runs when any job was started or any such notice was
+ * newly written. */
 export function agentMailAdmission(jobs: Jobs, changed: () => void): AdmitInbox {
   return (who, items) => {
     if (who.kind !== 'agent') return false;
     const conversations = new Set(items.filter(item => item.toKind === 'agent' && item.to === who.id)
       .flatMap(item => item.conversation ? [item.conversation] : []));
-    let admitted = 0, noticed = false;
+    let admitted = 0, started = false, noticed = false;
     for (const id of conversations) {
       let result: Admission;
       try { result = jobs.admission(id); }
       // If even the record cannot be written, the caller hears the error and offers the mail again later.
       catch (error) { result = jobs.failed(id, error); }
-      if (result.job) admitted++;
+      if (result.job && !result.behind) admitted++;
+      started ||= result.started === true;
       noticed ||= result.noticed === true;
     }
-    if (admitted || noticed) changed();
+    if (started || noticed) changed();
     return admitted > 0 && admitted === conversations.size;
   };
 }

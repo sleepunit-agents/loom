@@ -1,10 +1,19 @@
 /** Trusted bridge ingress. Platform adapters supply authenticated event fields;
- * person identity comes exclusively from household person links. */
-import { and, eq, inArray, ne } from 'drizzle-orm';
+ * person identity comes exclusively from household person links.
+ *
+ * Who counts is the household's answer as it is now (policy.ts, inHousehold), asked each time a message is
+ * received or tried again. A person link stands for its member only while that member is in the household:
+ * removing a member keeps the link, and their account is then nobody's. A connection speaks for its agent
+ * only while it is in use (enabled and not removed) and that agent is in the household: a retired
+ * connection's bot is no agent's, so it is neither a peer that could be addressed, nor a household sender,
+ * nor a second claim on a bot that another connection now holds. */
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, parseIncomingId } from './keys.js';
 import { conversationPlace } from './place.js';
+import { inHousehold } from '../../policy.js';
+import { sharedSharing } from '../../shared-sharing.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
@@ -60,10 +69,15 @@ export class BridgeIncoming {
       const channel = message.parent ?? message.channel;
       const route = this.db.select().from(bridgeChannels).where(and(eq(bridgeChannels.platform, connection.platform), eq(bridgeChannels.workspace, connection.workspace), eq(bridgeChannels.channel, channel))).get();
       const filters = this.db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, connection.id)).all();
-      const peers = this.db.select().from(bridgeConnections).where(and(eq(bridgeConnections.platform, connection.platform), eq(bridgeConnections.workspace, connection.workspace))).all();
+      const sharing = sharedSharing(this.db);
+      // The connections of this workspace that speak for an agent now, and this one whatever its state:
+      // what it may not do when it is off is said below, by its own row.
+      const peers = this.db.select().from(bridgeConnections).where(and(eq(bridgeConnections.platform, connection.platform), eq(bridgeConnections.workspace, connection.workspace))).all()
+        .filter(p => p.id === connection.id || (p.enabled && !p.removedAt && inHousehold({ kind: 'agent', id: p.agent }, sharing)));
       const senders = peers.filter(p => p.botUser === message.user);
       const sender = senders[0];
-      const link = this.db.select().from(bridgePeople).where(and(eq(bridgePeople.platform, connection.platform), eq(bridgePeople.workspace, connection.workspace), eq(bridgePeople.user, message.user))).get();
+      const linked = this.db.select().from(bridgePeople).where(and(eq(bridgePeople.platform, connection.platform), eq(bridgePeople.workspace, connection.workspace), eq(bridgePeople.user, message.user))).get();
+      const link = linked && inHousehold({ kind: 'member', id: linked.member }, sharing) ? linked : undefined;
       // Who the message is addressed to: whoever it mentions, the author of the message it explicitly
       // replies to, and the bot whose own message its thread hangs under. Nothing looser counts: a bot
       // that has merely spoken in the thread, or spoke last in the room, is not addressed. A thread's root
@@ -79,7 +93,7 @@ export class BridgeIncoming {
       let state: 'held' | 'dropped' | 'delivered' = 'delivered';
       let reason: string | null = null;
       let matchedMember = sender ? null : link?.member ?? null;
-      if (!connection.enabled) { state = 'held'; reason = 'Connection disabled'; }
+      if (!connection.enabled || connection.removedAt) { state = 'held'; reason = 'Connection disabled'; }
       else if (filters.some(f => f.rule === 'ignore' && f.channel === channel) || (filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === channel))) { state = 'dropped'; reason = 'Channel filtered'; }
       else if (message.user === connection.botUser) { state = 'dropped'; reason = 'Own message'; }
       else if (peers.some(p => p.botUser === connection.botUser && p.agent !== connection.agent)) { state = 'held'; reason = 'Ambiguous connection agent'; }
@@ -88,7 +102,7 @@ export class BridgeIncoming {
       // conversations (within one guild the copies are one Inbox item, below). Settings refuses that
       // setup; a database that has it anyway delivers through neither.
       else if (message.isDm && connection.platform === 'discord' && this.db.select({ id: bridgeConnections.id }).from(bridgeConnections)
-        .where(and(eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.botUser, connection.botUser), eq(bridgeConnections.enabled, true), ne(bridgeConnections.workspace, connection.workspace))).get()) { state = 'held'; reason = 'Bot is connected in another guild'; }
+        .where(and(eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.botUser, connection.botUser), eq(bridgeConnections.enabled, true), isNull(bridgeConnections.removedAt), ne(bridgeConnections.workspace, connection.workspace))).get()) { state = 'held'; reason = 'Bot is connected in another guild'; }
       else if (new Set(senders.map(p => p.agent)).size > 1) { state = 'held'; reason = 'Ambiguous bot identity'; }
       else if ((message.bot || message.webhook || sender) && (!sender || !route?.botsMayTalk)) { state = 'dropped'; reason = 'Unknown bot or bots disabled'; }
       else if (!message.isDm && !addressed.has(connection.botUser)) {
