@@ -47,7 +47,10 @@ function command(plan: WorkerCommand): WorkerCommand {
   return { ...plan, args: [...plan.args], env: { ...plan.env } };
 }
 export interface WorkerRunnerConfig {
-  /** Shared commands may choose the account from the startup envelope themselves. */
+  /** One command per harness, whatever the account. loom placed the job on an account it checked for room,
+   * and names it in the startup envelope, but nothing here holds the command to it: the job runs on whichever
+   * account that command's own environment is signed in to. That is right for a machine with one account
+   * per harness. A machine with several must use accountRunners, or usage lands on an account loom did not pick. */
   runners: Readonly<Record<string, WorkerCommand>>;
   /** When present, every job requires an exact account/harness binding. */
   accountRunners?: Readonly<Record<string, Readonly<Record<string, WorkerCommand>>>>;
