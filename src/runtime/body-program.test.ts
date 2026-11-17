@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { bodyProgram, BODY_EXIT } from './body-program.js';
+import { bodyProgram } from './body-program.js';
+import { BODY_EXIT } from './job-exit.js';
 import type { WorkerAssignment } from './worker.js';
 const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
 const raw = 'body_' + 'a'.repeat(64);
@@ -53,7 +54,8 @@ it.each(['token', 'job', 'origin', 'harness', 'conversation', 'thread', 'malform
   if (mode === 'thread') value.job.thread = null;
   if (mode === 'pre-abort') f.abort.abort();
   const bytes = Buffer.from(mode === 'malformed' ? '{' : mode === 'large' ? 'x'.repeat(1_048_577) : JSON.stringify(value));
-  expect(await bodyProgram({ ...f.options, stdin: async () => bytes })).toBe(1); expect(f.native).not.toHaveBeenCalled(); expect(f.calls).toEqual([]);
+  const stage = mode === 'pre-abort' ? 'input' : mode === 'harness' || mode === 'conversation' || mode === 'thread' ? 'assignment' : 'envelope';
+  expect(await bodyProgram({ ...f.options, stdin: async () => bytes })).toBe(BODY_EXIT[stage]); expect(f.native).not.toHaveBeenCalled(); expect(f.calls).toEqual([]);
   if (mode !== 'pre-abort') expect(bytes.every(byte => byte === 0)).toBe(true);
   expect(f.error).toHaveBeenCalledWith('Body stopped: invalid input or unavailable execution\n');
 });
@@ -118,7 +120,7 @@ it.each(['missing-ref','foreign-platform','unsupported-venue'])('refuses a %s br
  expect(await bodyProgram({...f.options,stdin:async()=>bytes,...(mode==='unsupported-venue'?{startup}:{}),fetch:async(url,options)=>{
   const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
   const batch=await response.json();Object.assign(batch.value.items[0],{source:mode==='foreign-platform'?'discord':'slack',refs:mode==='missing-ref'?[]:['bi:fixture']});return Response.json(batch);
- }})).toBe(mode==='unsupported-venue'?1:BODY_EXIT.mail);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);if(mode==='unsupported-venue'){expect(startup).not.toHaveBeenCalled();expect(f.calls).toEqual([]);}
+ }})).toBe(mode==='unsupported-venue'?BODY_EXIT.assignment:BODY_EXIT.mail);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);if(mode==='unsupported-venue'){expect(startup).not.toHaveBeenCalled();expect(f.calls).toEqual([]);}
 });
 
 it('replies to the last accepted matching bridge reference even when its words are unavailable',async()=>{
@@ -171,13 +173,13 @@ it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, r
 });
 it('refuses an unknown venue before accepting any mail',async()=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='unregistered';
- expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(BODY_EXIT.assignment);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
 });
 
 it.each(['wake','handoff'] as const)('refuses %s without a conversation before accepting mail',async venue=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue=venue;value.job.conversation=null;value.job.thread=null;
- expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(BODY_EXIT.assignment);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
 });
 it('keeps supplementary response words out of completion metadata',async()=>{
@@ -189,4 +191,14 @@ it('keeps supplementary response words out of completion metadata',async()=>{
 it('never takes a Stop itself: loom takes it when the job is next reported, so the body only says idle',async()=>{
  const f=fixture();f.stop();expect(await bodyProgram(f.options)).toBe(0);
  expect(f.calls.some(row=>'seenStop' in (row.body.input as object))).toBe(false);
+});
+
+it('says which early stage failed: the machine\'s body file, or the first report to loom',async()=>{
+ const f=fixture();
+ expect(await bodyProgram({...f.options,read:async()=>'{'})).toBe(BODY_EXIT.config);
+ expect(await bodyProgram({...f.options,read:async()=>{throw new Error('ENOENT');}})).toBe(BODY_EXIT.config);
+ const g=fixture();
+ expect(await bodyProgram({...g.options,fetch:async()=>new Response(null,{status:401})})).toBe(BODY_EXIT.report);
+ expect(g.native).not.toHaveBeenCalled();
+ expect(new Set(Object.values(BODY_EXIT)).size).toBe(Object.keys(BODY_EXIT).length);
 });

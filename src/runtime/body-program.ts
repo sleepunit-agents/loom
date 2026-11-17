@@ -14,6 +14,7 @@ import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
+import { BODY_EXIT } from './job-exit.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
 // way the household's list of tools an agent's body is not given still applies.
@@ -21,8 +22,6 @@ const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), re
 const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
   bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(/^body_[a-f0-9]{64}$/) }).strict(),
 }).strict();
-/** How a body that fails says where, with no private words: its exit code. 1 is input it could not accept. */
-export const BODY_EXIT={startup:11,mail:12,identity:13,harness:14,record:15} as const;
 /** What a body reports after a Stop, before leaving with exit 0. It does not take the Stop itself: loom takes
  * it when it next hears of this job (Jobs.endIfStopAsked) and records the job as stopped. */
 const left={state:'idle',work:''} as const;
@@ -37,7 +36,8 @@ export async function bodyProgram(input: {
   error: (text: string) => void;
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
-  let exit:number=1;
+  // The stage the body is in, as the exit code a failure there reports (see job-exit.ts).
+  let exit:number=BODY_EXIT.input;
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
@@ -53,16 +53,20 @@ export async function bodyProgram(input: {
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
+    exit=BODY_EXIT.config;
     const plan = config.parse(JSON.parse(await input.read(input.args[0])));
+    exit=BODY_EXIT.envelope;
     bytes = await input.stdin();
     if (input.signal.aborted || bytes.byteLength > 1_048_576) throw new Error();
     const parsed = envelope.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
     bytes.fill(0); bytes = undefined;
     bootstrap = { ...parsed.bootstrap, token: Buffer.from(parsed.bootstrap.token, 'ascii') };
     const { job } = bodyInput(parsed.job, parsed.build, bootstrap, true);
+    exit=BODY_EXIT.assignment;
     const bridge=job.venue==='discord'||job.venue==='slack';
     const background=job.venue==='wake'||job.venue==='handoff';
     if (!Object.hasOwn(bodyHarnesses, job.harness) || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
+    exit=BODY_EXIT.report;
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;

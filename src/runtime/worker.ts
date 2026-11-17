@@ -1,4 +1,5 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
+import { WORKER_EXIT } from './job-exit.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
 export interface WorkerRunPolicy {
@@ -68,6 +69,9 @@ export type WorkerResult = 'idle' | 'finished' | 'abandoned';
 /** One assignment per invocation, never a local launch retry. The server owns
  * start retries, terminal states and placement. Transport uncertainty aborts the
  * attempt; the server's silence sweep reconciles it, rather than duplicate work.
+ * That holds for every report: a poll or a finish that loom did not answer ends this
+ * attempt as abandoned, never the worker. Only a body that could not be reaped throws.
+ * A failed start is reported with the WORKER_EXIT code of the stage that failed.
  * A worker process can call again after this resolves, or run several independent
  * slots. Never call this from loom's server/composition root. */
 export async function workOnce(input: {
@@ -78,7 +82,9 @@ export async function workOnce(input: {
   const interval = input.heartbeatMs ?? 15_000;
   if (!Number.isFinite(interval) || interval <= 0 || interval >= 120_000) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
-  const job = await control.next();
+  let job: WorkerAssignment | undefined;
+  // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.
+  try { job = await control.next(); } catch { return 'abandoned'; }
   if (!job) return 'idle';
   if (job.box !== input.box) throw new Error('Assignment belongs to another worker');
   // Snapshot input before giving asynchronous adapters control of it.
@@ -101,22 +107,32 @@ export async function workOnce(input: {
       .finally(() => { heartbeat = undefined; });
   };
   const dispose = (input.schedule ?? schedule).every(interval, pulse);
+  // The body has ended and been reaped, so a report loom did not answer leaves nothing to undo here.
+  // The job goes silent and the sweep ends it; this worker goes on to its next poll.
+  const report = async (exitCode: number, logTail: string): Promise<WorkerResult> => {
+    try { await control.finish(assignment.id, exitCode, logTail); return 'finished'; }
+    catch { return 'abandoned'; }
+  };
   try {
     let build: string;
+    let stage: keyof typeof WORKER_EXIT = 'input';
     try {
       if (abort.signal.aborted) return 'abandoned';
       const repositoryInput=await control.repositoryInput?.(assignment.id,abort.signal);
+      stage = 'build';
       try {
         if(abort.signal.aborted)return 'abandoned';
         build = repositoryInput?await executor.build(assignment,abort.signal,repositoryInput):await executor.build(assignment,abort.signal);
       } finally { repositoryInput?.fill(0); }
       if (abort.signal.aborted) return 'abandoned';
       if (!build.trim()) throw new Error('Build returned no artifact');
+      stage = 'launch';
       body = executor.start(assignment, build, abort.signal);
       // Attach a handler immediately: a fast exit may precede spawned/started.
       void body.exited.catch(() => {});
       await body.spawned;
       if (body.acceptsBootstrap) {
+        stage = 'enroll';
         if (!control.enrollBody) throw new Error('Body enrollment unavailable');
         bootstrap = await control.enrollBody(assignment.id, abort.signal);
       }
@@ -127,8 +143,8 @@ export async function workOnce(input: {
       reporting = true;
       await heartbeat;
       if (abandoned || abort.signal.aborted) return 'abandoned';
-      await control.finish(assignment.id, 1, 'Worker build or body launch failed');
-      return 'finished';
+      // The stage is named twice: the code survives where a private conversation's log tail is dropped.
+      return await report(WORKER_EXIT[stage], `Worker could not start the body: ${stage} failed`);
     }
     if (abort.signal.aborted) return 'abandoned';
     reporting = true;
@@ -144,20 +160,22 @@ export async function workOnce(input: {
     if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
-    let result: { exitCode: number; logTail: string };
+    let result: { exitCode: number; logTail: string }, failed: 'release' | 'reap' | undefined = 'release';
     try {
       try { if (bootstrap) await body.release(bootstrap); else await body.release(); }
       finally { eraseBootstrap(bootstrap); }
+      failed = 'reap';
       result = await body.exited;
+      failed = undefined;
     }
-    catch { result = { exitCode: 1, logTail: 'Worker body failed' }; }
+    catch { result = { exitCode: WORKER_EXIT[failed!], logTail: `Worker lost the body: ${failed} failed` }; }
     // Reap the entire process group before a terminal report can admit more work.
     await body.stop();
     reporting = true;
     await heartbeat;
     if (abort.signal.aborted) return 'abandoned';
-    await control.finish(assignment.id, result.exitCode, bootstrap ? '' : result.logTail.slice(-16_384));
-    return 'finished';
+    // A private body's output is never reported; the worker's own words about a failure are not the body's.
+    return await report(result.exitCode, bootstrap && !failed ? '' : result.logTail.slice(-16_384));
   } finally {
     eraseBootstrap(bootstrap);
     dispose();
