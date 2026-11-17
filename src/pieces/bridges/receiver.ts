@@ -134,6 +134,18 @@ export class BridgeReceiver {
     if (!held.length && after) { this.heldAfter.delete(connection); held = page(); }
     for (const row of held) { this.heldAfter.set(connection, row); this.incoming.retry(row.id); }
     let failure: unknown, failed = false;
+    // A frame that cannot be taken in now: a later version of this code, better channel metadata or a
+    // later pass may take it. It waits as any unread event does, is reported once, and is counted as lost
+    // if it is still unread when its frame expires.
+    const unread = (receipt: string, error: unknown): false => {
+      const key = JSON.stringify([connection, receipt]);
+      if (!this.unreadable.has(key)) {
+        if (this.unreadable.size >= 4096) this.unreadable.clear();
+        this.unreadable.add(key);
+        if (!failed) { failed = true; failure = error; }
+      }
+      return false;
+    };
     const count = this.events.drain(connection, (receipt, raw, receivedAt): Consumed => {
       let message;
       try {
@@ -154,19 +166,13 @@ export class BridgeReceiver {
           if (!channel && !event.channel_type) return false;
           message = normalizeSlack(source, frame.payload, channel);
         }
-      } catch (error) {
-        // Unreadable now; a later version of this code, or better channel metadata, may read it. It waits
-        // as any unread event does, and is counted as lost if it is still unread when its frame expires.
-        const key = JSON.stringify([connection, receipt]);
-        if (!this.unreadable.has(key)) {
-          if (this.unreadable.size >= 4096) this.unreadable.clear();
-          this.unreadable.add(key);
-          if (!failed) { failed = true; failure = error; }
-        }
-        return false;
-      }
+      } catch (error) { return unread(receipt,error); }
       if (!message) return;
-      const row=this.incoming.receive(message,true,receivedAt);
+      let row;
+      // Intake that refuses one message (an id reused for another, a row that cannot be written now) must
+      // not end the pass for the frames behind it. The frame waits and is reported as an unreadable one is.
+      try { row=this.incoming.receive(message,true,receivedAt); }
+      catch (error) { return unread(receipt,error); }
       // The row keeps what a retry needs, so the frame need not outlive its hour.
       if(row.state==='held')return 'recorded';
       // A delivered message whose files are still to be fetched keeps its frame, which lists them, for that hour.

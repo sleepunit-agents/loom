@@ -5,13 +5,13 @@ import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-import { secretName, secretAgent, secretDescription } from './pieces/secrets/input.js';
+import { secretName, secretAgent, secretDescription, houseSecretAlias } from './pieces/secrets/input.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { householdOwner } from './shared-sharing.js';
 import type { SecretValues } from './pieces/secrets/shared-values.js';
 const id = z.string().min(1).max(200);
 export const houseSecretsInput=z.object({agent:secretAgent,repository:secretName.nullable(),
-  secrets:z.array(z.object({alias:z.string().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,199}$/),secret:secretName}).strict()).max(128)
+  secrets:z.array(z.object({alias:houseSecretAlias,secret:secretName}).strict()).max(128)
     .refine(values=>new Set(values.map(value=>value.alias)).size===values.length,'An alias names one secret')}).strict();
 const command = z.discriminatedUnion('action', [
   z.object({action:z.literal('answer'),id,allow:z.boolean(),always:z.boolean()}).strict(),

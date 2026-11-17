@@ -9,7 +9,8 @@ import { answerable } from './answer-rule.js';
  * door supplies current SQL visibility; no default policy or new transport. */
 import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from '../data/database.js';
 import { actionResults, inbox, inboxReads, inboxRefs, messages, threads } from '../data/schema.js';
 import { keepReadUntil } from '../data/read-lease.js';
@@ -210,8 +211,7 @@ export class InboxQueries {
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
-    if (viewer.kind !== 'member') return [];
-    return this.db.select().from(actionResults).where(eq(actionResults.member, viewer.id))
+    return this.db.select().from(actionResults).where(sqlRule(rules.ownNotice, viewer, getTableColumns(actionResults)))
       .orderBy(desc(sql`julianday(${actionResults.at})`), desc(actionResults.id)).limit(limit).all();
   }
   refs(viewer: Viewer, id: string): string[] {

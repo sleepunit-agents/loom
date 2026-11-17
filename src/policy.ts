@@ -137,6 +137,14 @@ const waitsOnReadable: Rule = first([
 ], all(equal('waitsOnKind', null), equal('waitsOnId', null)));
 /** A bridge connection: household owners, and the members who own its agent. Never the agent itself. */
 const bridgeConnection: Rule = any(householdOwner, agentOwners);
+/** Who may review a reply that did not go out (release a held one, dismiss one held or in doubt): a member
+ * who reads it, by the read rule of `bridgeSends`, and who is a household owner, since running the
+ * household's bridges is theirs; or, when it answers a direct message, any member who reads it. The owner
+ * role does not read a direct message (rule `conversation`), so there the reply is reviewed by the people
+ * the message is shown to: the conversation's own member for their private one, the agent's owners for one
+ * from anybody else. So every reply awaiting review has someone who can see it and decide. Never an agent. */
+const reviewsReply: Rule = all(viewerIs('member'), currentViewer, seenWith('bridgeIncoming', 'incoming'),
+  any(householdOwner, seenWith('bridgeIncoming', 'incoming', equal('isDm', true))));
 /** A task shares by project first. Without a project it is its owner's: a member's own, or an agent's owners'. */
 const task: Rule = any(householdOwner, first([
   [set('project'), inProject('project')],
@@ -201,7 +209,8 @@ const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent
  * refuses. A body whose member has left the household or lost the agent gets nothing (agentItself).
  *
  * One hand-off is not the body's and is not narrowed: a worker fetches the house's repository with the
- * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). */
+ * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). What
+ * the worker is granted for that is asked for apart and serves no body, in anyone's work. */
 const usesSecretsOnStandingWord: Rule = all(agentItself, any(equal('workingFor', null), { is: 'forItsMember', rule: householdOwner }));
 export function standingSecretAnswerServes(v: Viewer, s: Sharing): boolean {
   return v.kind === 'agent' && holds(usesSecretsOnStandingWord, v, { agent: v.id, workingFor: v.workingFor ?? null }, s);
@@ -215,8 +224,15 @@ const asksSignIn: Rule = any(signInAsker, { is: 'forItsMember', rule: signInAske
 /** A member in the household now, for what every member may do for themselves (their own preferences,
  * passkeys, browsers and devices). */
 const currentMember: Rule = all(viewerIs('member'), currentViewer);
+/** The notice of a person's own action ("Saved in Tasks"): the member it was written for, and nobody else.
+ * Reading the notices and marking one read ask this one rule. */
+const ownNotice: Rule = all(currentMember, self('member'));
+/** A model account's name and how full it is, in one coarse word: anyone in the household now, since work
+ * is placed by it and people are told why work waits. Everything else about an account is its member's
+ * and the household owners' (ownedByMember('owner'), asked by the same read). */
+const accountSummary: Rule = currentViewer;
 
-export const rules = { labelled, conversation, inTalk, waitsOnReadable, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer,
+export const rules = { labelled, conversation, inTalk, waitsOnReadable, reviewsReply, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer, ownNotice, accountSummary,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */
@@ -359,6 +375,97 @@ export function isHouseholdOwner(v: Viewer, s: Sharing): boolean {
  * or the agent itself. A full owner has every agent on their list. */
 export function directsAgent(v: Viewer, agent: string, s: Sharing): boolean {
   return holds(ownsAgent('agent'), v, { agent }, s);
+}
+
+/** The members who have this agent on their own list now, in id order. A removed member is not among
+ * them. The one reading of "who has the agent" for code that is not judging a viewer: where a machine
+ * may run it, and who is told that it cannot run. */
+export function membersWithAgent(agent: string, s: Sharing): string[] {
+  return Object.keys(s.members).filter(id => s.members[id].agents.includes(agent)).sort();
+}
+/** May this machine be handed this agent's work? A machine is its owner's, and a removed member is nobody:
+ * their machine runs nothing, whatever lists it was left on. Otherwise the agent must be in the household
+ * and either
+ *  - the machine lists the agent, and its owner has the agent or has lent the machine to it (`lent`); or
+ *  - the machine takes any agent of its owner's (`hostsAny`), and its owner has this one.
+ * `listed` is the machine's own entry for the agent, when it has one. */
+export function machineMayHost(machine: { owner: string; hostsAny: boolean }, listed: { lent: boolean } | undefined, agent: string, s: Sharing): boolean {
+  const owner = entry(s.members, machine.owner);
+  if (!owner || !s.agents?.includes(agent)) return false;
+  const has = owner.agents.includes(agent);
+  return listed ? has || listed.lent : machine.hostsAny && has;
+}
+
+/** Scheduled work: who may set a trigger, whose work its firing is, and who may fire it by hand.
+ *
+ * A trigger records who set it (`ownerKind`, `owner`) and may name a recipient (`toKind`, `to`). The agent
+ * it puts to work is its agent recipient, or, with no recipient, the agent whose own operation it is.
+ *
+ * Whose work a firing is follows who set the trigger, as every other piece of work follows who asked:
+ *  - A trigger an agent set for itself (in a terminal session, a job for no member, or work for a
+ *    household owner), and one a household owner set, is the agent's own. It fires as the whole agent.
+ *  - A trigger set by a member who is not a household owner, or by a body doing that member's private
+ *    work, is that member's direction. It is recorded as theirs (`ownerKind` member, `owner` them; triggerAsSet), and
+ *    each firing is private work for them: the body it starts reaches no further than they do
+ *    (Viewer.workingFor), so it reads no project they are not in and is served no standing answer about
+ *    a secret. The member is read from the trigger when it fires and judged on the facts of that moment:
+ *    one who has since become a household owner is not narrowed, one who has stopped being one is, and
+ *    for one who has left or lost the agent the firing fails (mayRunPrivateWork).
+ * Such a member's trigger can only send the agent words (an inbox target). An operation target (the
+ * sweep) gathers records by the agent's whole reach, so it is not theirs to schedule, and a stored one
+ * does not fire. */
+export interface TriggerFacts { ownerKind: 'member' | 'agent' | 'household'; owner?: string | null; targetKind: 'operation' | 'inbox';
+  toKind?: 'person' | 'agent' | null; to?: string | null; project?: string | null }
+/** The agent a trigger puts to work, if it does. */
+export const triggerAgent = (t: Pick<TriggerFacts, 'ownerKind' | 'owner' | 'toKind' | 'to'>): string | null =>
+  t.toKind === 'agent' ? t.to ?? null : !t.toKind && t.ownerKind === 'agent' ? t.owner ?? null : null;
+/** The member whose direction a trigger for an agent is when this viewer sets it: a member who is not a
+ * household owner, or the member such a body is working for. Nobody for anyone else. */
+export function triggerSetFor(v: Viewer, s: Sharing): string | undefined {
+  const member = v.kind === 'member' ? v.id : v.kind === 'agent' ? v.workingFor : undefined;
+  return member === undefined || entry(s.members, member)?.owner ? undefined : member;
+}
+/** A new trigger as it is recorded when this viewer sets it. A request that names an agent as the owner of
+ * a trigger that puts an agent to work is how an agent's own trigger is written; set by or for a member
+ * who is not a household owner, it is recorded as that member's instead. So a body asks the same way
+ * whoever it works for, and what it is given is decided here. Any other owner is taken as written and
+ * judged by maySetTrigger. */
+export function triggerAsSet<T extends TriggerFacts>(v: Viewer, t: T, s: Sharing): T {
+  const member = triggerSetFor(v, s);
+  return member !== undefined && t.ownerKind === 'agent' && triggerAgent(t) !== null ? { ...t, ownerKind: 'member', owner: member } : t;
+}
+/** The member a firing of this trigger is private work for, or nobody when it is the agent's own. */
+export function triggerWorksFor(t: Pick<TriggerFacts, 'ownerKind' | 'owner' | 'toKind' | 'to'>, s: Sharing): string | undefined {
+  return t.toKind === 'agent' && t.ownerKind === 'member' && t.owner && !entry(s.members, t.owner)?.owner ? t.owner : undefined;
+}
+/** Who may set a trigger, and change the words and times of one that is set (the same question, asked of
+ * the stored trigger). The viewer must be in the household now and:
+ *  - have authored it: a household owner authors any; an agent, and a member who has it, authors the
+ *    agent's own; a member authors their own. Where triggerSetFor names a member, a trigger that puts an
+ *    agent to work is authored only as that member's, with an inbox target: such a viewer neither sets
+ *    nor rewords the agent's own trigger, whose words run with the agent's whole reach;
+ *  - be in its project, if it has one;
+ *  - may address its recipient (rule `recipient`: an agent by whoever directs it, a person by themselves
+ *    or a household owner). With no recipient it is a household owner's, or the agent's own operation. */
+export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
+  if (!inHousehold(v, s)) return false;
+  const owner = isHouseholdOwner(v, s), member = triggerSetFor(v, s), agent = triggerAgent(t);
+  const own = t.ownerKind === 'agent' && !!t.owner && holds(recipient, v, { toKind: 'agent', to: t.owner }, s);
+  const authored = member !== undefined && agent !== null ? t.ownerKind === 'member' && t.owner === member && t.targetKind === 'inbox'
+    : owner || own || t.ownerKind === 'member' && v.kind === 'member' && t.owner === v.id;
+  if (!authored || t.project && !(Object.hasOwn(s.projects, t.project) && holds(rules.project, v, { id: t.project }, s))) return false;
+  return t.toKind && t.to ? holds(recipient, v, { toKind: t.toKind, to: t.to }, s) : owner || own;
+}
+/** Who may fire a trigger by hand, or turn a stopped one back on: someone who reads it (rule `trigger`,
+ * which the caller checks on the stored row) and who may put its agent to work (directsAgent), as for
+ * pausing the agent and setting the trigger. Being in the trigger's project shows it and lets a person
+ * stop it; it does not start an agent they do not direct. One that puts no agent to work is started by
+ * whoever may address its recipient, or with no recipient by a household owner. */
+export function mayStartTrigger(v: Viewer, t: Pick<TriggerFacts, 'ownerKind' | 'owner' | 'toKind' | 'to'>, s: Sharing): boolean {
+  if (!inHousehold(v, s)) return false;
+  const agent = triggerAgent(t);
+  if (agent !== null) return holds(recipient, v, { toKind: 'agent', to: agent }, s);
+  return t.toKind && t.to ? holds(recipient, v, { toKind: t.toKind, to: t.to }, s) : isHouseholdOwner(v, s);
 }
 
 export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {

@@ -56,9 +56,16 @@ export function presentedCredential(request: Request): { bearer: string; cookie?
   return cookie ? { cookie } : undefined;
 }
 
+/** A machine that has not been revoked and whose owner is in the household now. A removed member is nobody
+ * (policy.ts), so their machine's token, and a body running there, stop being current when they are
+ * removed, and are current again if they are restored. */
+function machineCurrent(db: DataDatabase, box: string): boolean {
+  return !!db.select({ id: boxes.id }).from(boxes).innerJoin(members, eq(members.id, boxes.owner))
+    .where(and(eq(boxes.id, box), isNull(boxes.revokedAt), isNull(members.removedAt))).get();
+}
 /** A token that is live and whose holder is current: a member who has not been removed, an agent that has
- * not been removed, or a machine that has not been revoked. A token bound to a job is current only while
- * that job is this agent's current work on a machine that has not been revoked. A token enrolled from
+ * not been removed, or a machine that is current (machineCurrent). A token bound to a job is current only
+ * while that job is this agent's current work on a machine that is current. A token enrolled from
  * another (a body's, from its machine's) is current only while that one is: revoking a machine's token
  * ends the bodies it started. */
 export function currentToken(db: DataDatabase, id: string, now: number): { token: typeof tokens.$inferSelect; viewer: Exclude<Viewer, { kind: 'service' }>; job?: string } | undefined {
@@ -75,7 +82,7 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
     if (token.job) {
       const job = db.select({ agent: jobs.agent, box: jobs.box, state: jobs.state, member: jobs.member }).from(jobs).where(eq(jobs.id, token.job)).get();
       if (!job || job.agent !== token.agent || !job.box || !jobClaimed(job.state)) return;
-      if (!db.select({ id: boxes.id }).from(boxes).where(and(eq(boxes.id, job.box), isNull(boxes.revokedAt))).get()) return;
+      if (!machineCurrent(db, job.box)) return;
       // A body is its agent narrowed to the member its job is for (policy.ts, Viewer.workingFor). It is said
       // here, where the job row is read, so no door can meet a body's token as the whole agent.
       if (job.member) return { token, viewer: { kind: 'agent' as const, id: token.agent, workingFor: job.member }, job: token.job };
@@ -83,7 +90,7 @@ export function currentToken(db: DataDatabase, id: string, now: number): { token
     return { token, viewer: { kind: 'agent' as const, id: token.agent }, job: token.job ?? undefined };
   }
   if (token.kind === 'runner' && token.box) {
-    if (!db.select({ id: boxes.id }).from(boxes).where(and(eq(boxes.id, token.box), isNull(boxes.revokedAt))).get()) return;
+    if (!machineCurrent(db, token.box)) return;
     return { token, viewer: { kind: 'runner' as const, id: token.box } };
   }
 }

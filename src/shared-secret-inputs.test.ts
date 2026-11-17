@@ -124,7 +124,7 @@ it('the actual HTTP worker control receives and acknowledges the configured pre-
 });
 
 it('a general grant cannot substitute for repository startup permission or undo its revocation',async()=>{
- const f=fixture();f.grant('REPO','build');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);f.rule('REPO');const [grant]=f.root.services.secrets.inputs.startGrants('build');f.root.writes.run(()=>f.root.services.secrets.requests.revoke(grant.request!));expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);expect(f.source.read).not.toHaveBeenCalled();
+ const f=fixture();f.grant('REPO','build');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);f.rule('REPO');const [grant]=f.root.services.secrets.inputs.repositoryGrant('build','REPO');f.root.writes.run(()=>f.root.services.secrets.requests.revoke(grant.request!));expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);expect(f.source.read).not.toHaveBeenCalled();
 });
 
 it.each([true,false])('the repository recipient waits on one real Inbox answer before build (allow=%s)',async allow=>{
@@ -133,14 +133,14 @@ it.each([true,false])('the repository recipient waits on one real Inbox answer b
  const fetch=vi.fn<typeof globalThis.fetch>(async(url,options)=>{const response=await f.root.http.request(String(url),options);if(response.status===423)entered();return response;});
  const recipient=privateSecretClient({url:'https://loom.test',token:raw.runner,signal:new AbortController().signal,clock:f.clock,fetch});
  try{const pending=recipient.repository('build');const outcome=pending.then(value=>({value,error:false}),()=>({value:undefined,error:true}));await waiting;for(let i=0;i<12;i++)await Promise.resolve();expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);
- const request=f.root.services.secrets.inputs.requests.grantAtStart('build');expect(request).toEqual([]);
- const id='q-start-'+createHash('sha256').update(JSON.stringify(['build','REPO'])).digest('hex');f.root.writes.run(()=>f.root.services.secrets.requests.answer(id,'owner',allow));f.clock.advance(1000);
+ const request=f.root.services.secrets.inputs.requests.grantAtStart('build',undefined,true,'repository');expect(request).toEqual([]);
+ const id='q-repo-'+createHash('sha256').update(JSON.stringify(['build','REPO'])).digest('hex');f.root.writes.run(()=>f.root.services.secrets.requests.answer(id,'owner',allow));f.clock.advance(1000);
  const result=await outcome;expect(result.error).toBe(!allow);if(allow){expect(result.value?.toString()).toBe('PRIVATE_SOURCE_VALUE');result.value?.fill(0);expect(f.source.read).toHaveBeenCalledOnce();}else expect(f.source.read).not.toHaveBeenCalled();expect(fetch.mock.calls.filter(([url])=>String(url).endsWith('/read'))).toHaveLength(2);
  }finally{recipient.close();}
 });
 
 it('an unrelated grant cannot substitute for revoked alias startup permission across holder IO',async()=>{
- const f=fixture();f.grant();f.rule();const [grant]=f.root.services.secrets.inputs.startGrants('body');let entered!:()=>void,release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'startup',alias:'API_TOKEN'});await started;f.root.writes.run(()=>f.root.services.secrets.requests.revoke(grant.request!));const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);expect((await pending).status).toBe(503);expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.root.services.secrets.requests.grantFor('TOKEN','art','body')).toBeDefined();
+ const f=fixture();f.grant();f.rule();const [grant]=f.root.writes.run(()=>f.root.services.secrets.requests.grantAtStart('body')).value;let entered!:()=>void,release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'startup',alias:'API_TOKEN'});await started;f.root.writes.run(()=>f.root.services.secrets.requests.revoke(grant.request!));const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);expect((await pending).status).toBe(503);expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.root.services.secrets.requests.grantFor('TOKEN','art','body')).toBeDefined();
 });
 it('an empty repository never reads a configured secret or issues startup consent',async()=>{
  const f=fixture();f.db.update(jobs).set({houseRepository:''}).where(eq(jobs.id,'build')).run();f.db.update(agentRunSettings).set({houseRepository:''}).run();f.rule('REPO');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(204);expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretGrants).all()).toEqual([]);
@@ -165,7 +165,7 @@ it('ignores pending startup rules for secrets absent from this house inputs',asy
  const f=fixture();f.rule();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect(f.db.select().from(secretRequests).all()).toHaveLength(1);expect(f.db.select().from(inbox).all()).toEqual([]);expect(f.source.read).not.toHaveBeenCalled();
 });
 it('refuses over128 configured startup aliases without issuing consent or reading values',async()=>{
- const f=fixture();f.rule();for(let i=0;i<128;i++)f.db.insert(agentHouseSecrets).values({agent:'art',alias:'alias-'+i,secret:'TOKEN'}).run();expect((await f.post('startup',{})).status).toBe(503);expect(f.db.select().from(secretRequests).all()).toEqual([]);expect(f.db.select().from(secretGrants).all()).toEqual([]);expect(f.source.read).not.toHaveBeenCalled();
+ const f=fixture();f.rule();for(let i=0;i<128;i++)f.db.insert(agentHouseSecrets).values({agent:'art',alias:'ALIAS_'+i,secret:'TOKEN'}).run();expect((await f.post('startup',{})).status).toBe(503);expect(f.db.select().from(secretRequests).all()).toEqual([]);expect(f.db.select().from(secretGrants).all()).toEqual([]);expect(f.source.read).not.toHaveBeenCalled();
 });
 it.each(['ask','auto'] as const)('repository startup does not issue an unrelated %s rule',async answer=>{
  const f=fixture();f.rule('REPO');f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'TOKEN',answer,minutes:5,agents:[{agent:'art',when:'at_start'}]}));expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(200);expect(f.db.select().from(secretRequests).all().map(row=>row.secret)).toEqual(['REPO']);expect(f.db.select().from(secretGrants).all().map(row=>row.secret)).toEqual(['REPO']);expect(f.db.select().from(inbox).all()).toEqual([]);expect(f.source.read).toHaveBeenCalledExactlyOnceWith('REPO');
@@ -197,11 +197,12 @@ it('hands a body in a member\'s private work only a secret a household owner all
  // A grant for the agent and no one job, which an owner allowed in other work: a standing answer.
  const agentWide=f.root.writes.run(()=>{const id=randomUUID();f.root.services.secrets.requests.request({id,secret:'TOKEN',agent:'art',why:'Other work',minutes:5});f.root.services.secrets.requests.answer(id,'owner',true);return id;}).value;
  expect((await read()).status).toBe(403);
- // A grant for this job that a rule settled, as the worker's fetch of the repository leaves behind.
+ // A grant for this job that a rule settled.
  f.rule('REPO');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(200);
  f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'build')).run();
  f.root.writes.run(()=>f.root.services.secrets.requests.grantAtStart('body',['REPO']));expect(f.db.select().from(secretGrants).where(eq(secretGrants.job,'body')).get()).toMatchObject({secret:'REPO',grantedBy:'rule'});
  expect((await read('REPO')).status).toBe(403);
+ f.db.delete(secretGrants).where(eq(secretGrants.job,'body')).run();
  // A secret the house is given at start by a rule: the body is not handed it, and the owners are asked for this job.
  f.rule();expect(await(await f.post('startup',{})).json()).toEqual({aliases:[],pending:true});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(403);
  expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting').map(row=>[row.to,row.words])).toEqual([['owner','Allow art to use TOKEN for 5 minutes, in its private work for lee?']]);
@@ -216,4 +217,37 @@ it('hands a body in a member\'s private work only a secret a household owner all
  f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();const use=f.db.select().from(secretUses).all().find(row=>row.state==='started')!.id;
  f.db.delete(memberAgents).where(eq(memberAgents.member,'lee')).run();
  expect((await f.post('confirm',{use})).status).toBe(403);expect((await f.post('startup',{})).status).toBe(403);expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(403);
+});
+
+it('keeps what a worker was granted to fetch the repository from every body, whoever allowed it',async()=>{
+ const f=fixture(),read=()=>f.post('read',{kind:'request',id:randomUUID(),secret:'REPO'});
+ f.db.insert(members).values({id:'lee',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'lee',agent:'art'}).run();
+ f.db.update(jobs).set({member:'lee',state:'starting'}).where(eq(jobs.id,'body')).run();
+ // The rule says ask, so the worker's fetch files a card. It is the worker's and does not name the member.
+ f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
+ expect((await f.post('read',{kind:'repository',job:'body'},raw.runner)).status).toBe(423);
+ const card=f.db.select().from(secretRequests).where(eq(secretRequests.job,'body')).get()!;
+ expect(card.id).toBe('q-repo-'+createHash('sha256').update(JSON.stringify(['body','REPO'])).digest('hex'));
+ expect(f.db.select().from(inbox).where(eq(inbox.sourceId,card.id)).get()?.words).toBe('Allow art to use REPO for 5 minutes?');
+ // A household owner allows it: a grant for that very job, given by a member.
+ f.root.writes.run(()=>f.root.services.secrets.requests.answer(card.id,'owner',true));
+ expect(f.db.select().from(secretGrants).where(eq(secretGrants.job,'body')).get()).toMatchObject({secret:'REPO',grantedBy:'owner',request:card.id});
+ expect((await f.post('read',{kind:'repository',job:'body'},raw.runner)).status).toBe(200);
+ // The body of that job, working for a member who is not an owner, is not handed the secret on it.
+ f.db.update(jobs).set({state:'running'}).where(eq(jobs.id,'body')).run();
+ expect((await read()).status).toBe(403);
+ // Nor is a body in the agent's own work: a rule that lists the agent at start does not answer what a body asks for.
+ f.db.update(jobs).set({member:null}).where(eq(jobs.id,'body')).run();
+ expect((await read()).status).toBe(403);expect(f.source.read).toHaveBeenCalledOnce();
+ // The same secret listed for the house too is asked for apart, on a card that names the member.
+ f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();f.db.insert(agentHouseSecrets).values({agent:'art',alias:'REPO_TOKEN',secret:'REPO'}).run();
+ expect(await(await f.post('startup',{})).json()).toEqual({aliases:[],pending:true});
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting').map(row=>row.words)).toEqual(['Allow art to use REPO for 5 minutes, in its private work for lee?']);
+});
+
+it('leaves a stored alias no body could take out of the startup plan, so the others still arrive',async()=>{
+ const f=fixture();f.rule();
+ for(const alias of ['deploy-key','a.b','PATH','NODE_OPTIONS'])f.db.insert(agentHouseSecrets).values({agent:'art',alias,secret:'TOKEN'}).run();
+ expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});
+ expect((await f.post('read',{kind:'startup',alias:'deploy-key'})).status).toBe(400);expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
 });

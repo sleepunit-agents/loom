@@ -11,7 +11,9 @@ import type { Viewer } from './policy.js';
 import type { Recipient } from './core/tempo/volume.js';
 import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
-import { tempoCommandAllowed } from './shared-tempo-access.js';
+import { tempoCommandAllowed, recordedTrigger } from './shared-tempo-access.js';
+import { mayRunPrivateWork, triggerWorksFor } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
 import { Jobs, agentMailAdmission } from './runtime/jobs.js';
 import { repositoryInstructions } from './core/tempo/repository.js';
 
@@ -34,7 +36,13 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
   const admitAgent = agentMailAdmission(new Jobs(db, () => new Date(clock.now()).toISOString()), changed);
   return installTempoComposition({ db, clock, writes, operations,
     contributors: options.contributors,beforeStart:options.beforeStart,
-    delivery: { conversations, changed, instructions: options.instructions ?? (options.repository ? repositoryInstructions(options.repository) : undefined), changeRevision: options.changeRevision,
+    delivery: { conversations, changed,
+      worksFor(trigger) {
+        const sharing = sharedSharing(db), member = triggerWorksFor(trigger, sharing);
+        if (member !== undefined && !mayRunPrivateWork({ agent: trigger.to!, member, project: trigger.project ?? undefined }, sharing))
+          throw new Error('The member this was set for no longer has the agent, or is not in its project');
+        return member;
+      }, instructions: options.instructions ?? (options.repository ? repositoryInstructions(options.repository) : undefined), changeRevision: options.changeRevision,
       // Mail for a person is a notice to send; mail for an agent is work to admit.
       admit: options.admit ?? ((who, items) => who.kind === 'person'
         ? options.notify?.(who.id, items.map(item => item.id)) ?? false : admitAgent(who, items)),
@@ -45,6 +53,6 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     // Chat is the control surface: a current body may carry out its member's ordinary mailbox preference
     // without becoming that member. When is the volume rule in policy.ts, asked by tempoCommandAllowed;
     // chatMember is this door's proof that the caller is the current body of that member's chat.
-    commands: { mailboxReceiptScope:options.mailboxReceiptScope, authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember) },
+    commands: { mailboxReceiptScope:options.mailboxReceiptScope, recorded: (viewer, trigger) => recordedTrigger(db, viewer, trigger), authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember) },
   });
 }

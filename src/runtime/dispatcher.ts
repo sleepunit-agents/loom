@@ -3,6 +3,7 @@
  * here executes a process, opens credentials or invents another transport. */
 import { Threads } from '../core/conversations/threads.js';
 import { workerPolicy } from './body-policy.js';
+import { wakePlaceTriggers } from '../core/tempo/tempo.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, modelAccountBoxes, modelAccounts, threads, triggers } from '../core/data/schema.js';
@@ -65,13 +66,17 @@ export class Dispatcher {
       }
     }, { behavior: 'immediate' });
   }
-  /** A lane's work runs in the conversation its trigger opened, whose place is the trigger. What that trigger
+  /** A lane's work runs in the conversation its trigger opened, whose place names the trigger (wakePlace). What that trigger
    * wants to run on is read when the job is placed, so an edit to the lane takes effect at once. */
   private wants(conversation: string | null): string | null {
     if (!conversation) return null;
     const row = this.db.select({ venue: conversations.venue, place: conversations.place }).from(conversations).where(eq(conversations.id, conversation)).get();
     if (row?.venue !== 'wake' || !row.place) return null;
-    return this.db.select({ wants: triggers.wantsModel }).from(triggers).where(eq(triggers.id, row.place)).get()?.wants ?? null;
+    for (const id of wakePlaceTriggers(row.place)) {
+      const trigger = this.db.select({ wants: triggers.wantsModel }).from(triggers).where(eq(triggers.id, id)).get();
+      if (trigger) return trigger.wants ?? null;
+    }
+    return null;
   }
   /** How many accounts of the placed account's provider are signed in on the machine. Placement checked the
    * placed one for room; only the worker knows whether its command can be held to it (see workerRunner). */

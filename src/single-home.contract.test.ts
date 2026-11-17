@@ -32,7 +32,8 @@ import { BODY_REQUEST_MAX_MS, BODY_REQUEST_MS, validBodyRequestMs } from './runt
 import { LOGIN_PATH, SHA256_HEX } from './core/sha256-hex.js';
 import { QUIET_DAYS_MAX, SETTLE_SECONDS_MAX, validTimings } from './core/tempo/volume.js';
 import { LIFESPAN_DAYS, LIFESPAN_NAMES, NOTE_PATH_MAX } from './notes.js';
-import { GRANT_MINUTES_MAX, agentSecretRequest, grantMinutes } from './pieces/secrets/input.js';
+import { GRANT_MINUTES_MAX, agentSecretRequest, grantMinutes, houseSecretAlias, isHouseSecretAlias } from './pieces/secrets/input.js';
+import { houseSecretsInput } from './shared-secret-commands.js';
 import { PRIVATE_SECRET_TIMEOUT_MS, privateSecretClient } from './pieces/secrets/private-client.js';
 import { secretAnswer, secretRuleInput } from './pieces/secrets/requests.js';
 import { householdService } from './apps/household.js';
@@ -422,4 +423,17 @@ it('writes the shape of a task id and of a conversation id once, where each is m
   expect(refsIn(`See ${long}.`, undefined).tasks).toEqual([long]);
   expect(conversationRefs(`See ${long}.`)).toEqual([long]);
   expect(tasksCited({ title: `Fix ${long}`, body: '', head: { ref: 'fix/t77-pond' } } as Parameters<typeof tasksCited>[0])).toEqual([long, 't-77']);
+});
+
+it('holds a house secret\'s alias to one rule at the door that stores it and in the body that receives it', () => {
+  const names = ['DEPLOY_KEY', '_x', 'a1', 'A'.repeat(200), 'deploy-key', 'a.b', '1A', '', 'A=B', 'A'.repeat(201), 'PATH', 'home', 'NODE_OPTIONS', 'mcp_x', 'LD_PRELOAD', 'DYLD_X', 'LOOM_BODY_SCRATCH'];
+  expect(names.filter(isHouseSecretAlias)).toEqual(['DEPLOY_KEY', '_x', 'a1', 'A'.repeat(200)]);
+  for (const alias of names) {
+    const door = houseSecretsInput.safeParse({ agent: 'art', repository: null, secrets: [{ alias, secret: 'S' }] }).success;
+    expect([alias, door, houseSecretAlias.safeParse(alias).success]).toEqual([alias, isHouseSecretAlias(alias), isHouseSecretAlias(alias)]);
+  }
+  // The body's half of this is in runtime/body-secrets.test.ts: with nothing of its own to add, it takes the same names.
+  // No other file spells the shape of an alias.
+  const copies = sources('src').filter(file => file !== 'src/pieces/secrets/input.ts' && /\[A-Za-z_\]\[A-Za-z0-9_[^\]]*\]\{0,199\}|alias:\s*z\.string\(\)/.test(text(file)));
+  expect(copies).toEqual([]);
 });

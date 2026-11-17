@@ -1,6 +1,6 @@
 /** How a program outside the daemon reaches it and proves itself: LOOM_URL and LOOM_TOKEN_FILE.
  * One reading of the token file for every client (`loom-token` and its siblings, `loom-taskstore`,
- * `loom mcp`), so a file one of them accepts is accepted by all.
+ * `loom mcp`, and the worker), so a file one of them accepts is accepted by all.
  *
  * The address is not one rule, on purpose. The command-line clients take plain http to any host, for a
  * household reached over its own network. `loom mcp` takes its address through `privateOrigin`
@@ -17,14 +17,20 @@ const TOKEN_FILE_BYTES = 8192;
 /** A token is printable ASCII with no space in it. Surrounding whitespace (a final newline) is not part of it. */
 const TOKEN = /^[\x21-\x7e]{1,4096}$/;
 
+/** The token a file's text holds. For a caller that is handed the file as text (the worker, whose reader is
+ * its own so tests can supply it); everyone else reads through readDoorToken, which also wipes the bytes. */
+export function doorTokenIn(text: string): string {
+  if (Buffer.byteLength(text) > TOKEN_FILE_BYTES) throw new ConnectionError('Token file is not a token');
+  const token = text.trim();
+  if (!token) throw new ConnectionError('Token file is empty');
+  if (!TOKEN.test(token)) throw new ConnectionError('Token file is not a token');
+  return token;
+}
 /** The token a file's bytes hold. The caller's buffer is wiped whether or not it held one. */
 function tokenIn(bytes: Buffer): string {
   try {
     if (bytes.length > TOKEN_FILE_BYTES) throw new ConnectionError('Token file is not a token');
-    const token = bytes.toString('utf8').trim();
-    if (!token) throw new ConnectionError('Token file is empty');
-    if (!TOKEN.test(token)) throw new ConnectionError('Token file is not a token');
-    return token;
+    return doorTokenIn(bytes.toString('utf8'));
   } finally { bytes.fill(0); }
 }
 export async function readDoorToken(file: string | undefined): Promise<string> {

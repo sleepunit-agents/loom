@@ -21,12 +21,16 @@ function LiveBridges({ path, go }: { path?: string; go?: (path: string) => void 
   const manage=snapshot.status==='live'&&query.data?.bridgeReader?.manage===true;
   return <BridgesView key={snapshot.member} snapshot={snapshot} member={snapshot.member} {...route}
     select={selected => navigate(selected ? `${base}/item/${selected.folder}/${encodeURIComponent(selected.id)}` : `${base}/${route.folder}`)}
-    changeFolder={folder => navigate(`${base}/${folder}`)} cards={manage?{
+    changeFolder={folder => navigate(`${base}/${folder}`)} cards={!manage?{
+      // Reviewing a reply is not only a manager's: a reply in a direct message is reviewed by the people the message
+      // is shown to (policy.ts, rules.reviewsReply). The door decides; a reply this person may not review is refused there.
+      send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
+    }:{
       create:route.folder==='sends'?null:<details key={route.folder}><summary>New {route.folder==='connections'?'connection':route.folder==='channels'?'channel rule':'person link'}</summary>{route.folder==='connections'?<ConnectionControl/>:route.folder==='channels'?<ChannelControl/>:<PersonControl/>}</details>,
       connection:id=>{const row=snapshot.connections.find(row=>row.id===id);return row&&<ConnectionControl key={JSON.stringify(row)} row={row} filters={snapshot.filters.filter(f=>f.connection===id)}/>;},
       channel:row=><ChannelControl key={JSON.stringify(row)} row={row}/>,person:row=><PersonControl key={JSON.stringify(row)} row={row}/>,
       send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
-    }:undefined}/>;
+    }}/>;
 }
 /** The registered app now reads the generated schema itself. An explicit host
  * may still supply the same view contract, including its approval controls. */

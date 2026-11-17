@@ -67,6 +67,9 @@ it('tells an unreadable configuration, an invalid one, an unreadable token file 
   expect(await stopped(f => { f.read.mockResolvedValue('{}'); })).toEqual([41, 'Worker stopped: the configuration file could not be read or is not valid\n']);
   expect(await stopped(f => { f.read.mockImplementation(async path => { if (path === '/config') return JSON.stringify(config); throw new Error('private-token'); }); }))
     .toEqual([42, 'Worker stopped: the token file could not be read\n']);
+  // The token file is read by the rule every other client reads it by (cli/connection.ts): a file `loom mcp` would refuse stops the worker too.
+  for (const bad of ['', ' \n', 'two words', 'a'.repeat(8193)]) expect(await stopped(f => { f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(config) : bad); }))
+    .toEqual([42, 'Worker stopped: the token file could not be read\n']);
   expect(await stopped(f => { f.control.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
   expect(await stopped(f => { f.executor.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
   expect(await stopped(f => { f.run.mockRejectedValue(new Error('private-brief')); })).toEqual([49, 'Worker stopped: a body it started could not be ended, so it takes no more work\n']);
