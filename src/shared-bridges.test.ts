@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {agentPeople,conversationSessions,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -247,4 +247,22 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  expect((await save({session,files})).status).toBe(200);
  f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
  expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
+});
+// What a room's body can schedule, written down as it is and not as it should be: an open finding, not an
+// accepted trade-off. Tempo's rule (policy.ts, maySetTrigger) asks who the caller is and whom it works
+// for, not what room its job is in. Whoever closes it changes the first expectation below.
+it('lets the body of a room schedule its agent\'s own later work, whoever is in the room, and not another agent\'s or a person\'s',async()=>{
+ const f=fixture();const incoming=await f.receive();
+ f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
+ // The room's sender is an outside account at tier 2: a guest, so the job runs under the guests' tool denials.
+ expect(f.db.select().from(inbox).get()).toMatchObject({fromKind:'unknown'});
+ const trigger=(more:Record<string,unknown>)=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3_600_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Words chosen in the room',note:'Set from a room',...more});
+ // Its own agent's trigger: allowed. When it fires it is the agent's own wake, outside this room and its limits.
+ const own=trigger({});expect((await f.call('tempo','set',own)).status).toBe(200);
+ expect(f.db.select().from(triggers).all()).toMatchObject([{id:own.id,ownerKind:'agent',owner:'art',toKind:'agent',to:'art',instructions:'Words chosen in the room',member:null}]);
+ // Not another agent's work, and not a message to a person.
+ expect((await f.call('tempo','set',trigger({owner:'mark',to:'mark'}))).status).toBe(403);
+ expect((await f.call('tempo','set',trigger({to:'mark'}))).status).toBe(403);
+ expect((await f.call('tempo','set',trigger({toKind:'person',to:'owner'}))).status).toBe(403);
+ expect(f.db.select().from(triggers).all()).toHaveLength(1);
 });
