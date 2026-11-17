@@ -2,7 +2,7 @@
  * Every decision here is a rule from policy.ts, read for one trigger, recipient or record. */
 import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { eq } from 'drizzle-orm';
-import { holds, inHousehold, isHouseholdOwner, rules, tableRules, type Viewer } from './policy.js';
+import { addressee, holds, inHousehold, isHouseholdOwner, rules, tableRules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { triggers, approvals, changes, conversations, inbox, jobs, secretRequests } from './core/data/schema.js';
@@ -58,7 +58,7 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
       // the door must hold proof of that member's current chat, and the item must be one that member reads.
       const member = viewer.kind === 'agent' ? viewer.workingFor : undefined;
       return member !== undefined && chatMember?.(viewer) === member && holds(rules.inboxVolume, viewer, access.item, sharing)
-        && visibleItem(access.item.id, { kind: 'member', id: member });
+        && visibleItem(access.item.id, addressee(member));
     }
     case 'pause': case 'resume': return directs(access.agent);
     case 'edit': return maySet(access.trigger);

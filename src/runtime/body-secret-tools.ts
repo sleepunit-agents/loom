@@ -17,6 +17,8 @@ import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
 import {harnessToolPrefix} from './body-harness.js';
 import {bodyConversationClient} from './conversation-client.js';
+/** The most one request to these local tools may carry, and the most secret bytes they keep to erase. */
+const TOOL_REQUEST_BYTES=1024*1024,RETAINED_SECRET_BYTES=1024*1024;
 const unavailable=()=>new Error('Private Secret tool unavailable; do not retry an uncertain value with a new attempt');
 const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable().message}]});
 export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[]}){
@@ -42,7 +44,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   if(active.size>=16)return new Response(null,{status:429});
   if(request.method!=='POST')return new Response(null,{status:405});
   let size=0;
-  const bounded=request.body?new Request(request,{body:request.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(bytes,target){size+=bytes.byteLength;if(size>1_048_576)throw unavailable();target.enqueue(bytes);}})),duplex:'half'} as RequestInit):request;
+  const bounded=request.body?new Request(request,{body:request.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(bytes,target){size+=bytes.byteLength;if(size>TOOL_REQUEST_BYTES)throw unavailable();target.enqueue(bytes);}})),duplex:'half'} as RequestInit):request;
   const server=new McpServer({name:'loom-secrets',version:'1'});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   const run=async(work:(signal:AbortSignal)=>Promise<{content:{type:'text';text:string}[]}>,callSignal:AbortSignal)=>{
@@ -65,7 +67,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
     value=await privateInput.granted(args.secret,args.id);
     if(signal.aborted||closed)throw unavailable();
     const encoded=value.toString('base64'),representations=[Buffer.from(value),Buffer.from(encoded)];
-    if(retained+representations.reduce((n,value)=>n+value.length,0)>1_048_576){for(const value of representations)value.fill(0);throw unavailable();}
+    if(retained+representations.reduce((n,value)=>n+value.length,0)>RETAINED_SECRET_BYTES){for(const value of representations)value.fill(0);throw unavailable();}
     exposed.push(...representations);retained+=representations.reduce((n,value)=>n+value.length,0);
     return{content:[{type:'text',text:JSON.stringify({encoding:'base64',value:encoded})}]};
    }finally{value?.fill(0);privateInput.close();client.close();if(waitingHere){waiting--;input.waiting?.(waiting>0);}}

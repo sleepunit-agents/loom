@@ -39,12 +39,13 @@ it('leaves missing tiers unknown instead of parsing trust claims from words', ()
   f.db.delete(inboxRefs).run();
   expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
 });
-it('uses the linked member key and ignores unrelated people and conversations', () => {
+it('names a linked member as the sender and ignores unrelated people and conversations', () => {
   const f = fixture();
   f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'linked', member: 'owner' }).run();
   const linked = f.receive('linked', 'linked', 'linked-dm');
-  f.db.insert(agentPeople).values([{ agent: 'art', person: 'owner', tier: 3 }, { agent: 'art', person: f.key, tier: 1 }]).run();
-  expect(workerPolicy(f.db, { id: 'other-job', agent: 'art', conversation: linked.conversation }).people).toEqual([{ kind: 'person', person: 'owner', tier: 3 }]);
+  // Somebody else's tier, in another conversation, is not this sender's.
+  f.db.insert(agentPeople).values({ agent: 'art', person: f.key, tier: 1 }).run();
+  expect(workerPolicy(f.db, { id: 'other-job', agent: 'art', conversation: linked.conversation }).people).toEqual([{ kind: 'person', person: 'owner', tier: null }]);
 });
 it('keeps the tier set for an outside person after they are linked to a member', () => {
   const f = fixture(), outside = JSON.stringify(['discord', 'w', 'linked']);
@@ -54,9 +55,9 @@ it('keeps the tier set for an outside person after they are linked to a member',
   const linked = f.receive('linked', 'linked', 'linked-dm'), job = { id: 'other-job', agent: 'art', conversation: linked.conversation };
   expect(f.db.select().from(inbox).where(eq(inbox.conversation, linked.conversation!)).get()).toMatchObject({ fromKind: 'person', fromId: 'owner' });
   expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'owner', tier: 2 }]);
-  // A tier stored under the member's own id still comes first.
+  // Nothing saves a tier under a member's id, so a row that has one gives nobody a tier.
   f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 3 }).run();
-  expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'owner', tier: 3 }]);
+  expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'owner', tier: 2 }]);
 });
 it('does not borrow a higher tier from a receipt in another conversation', () => {
   const f = fixture(), other = f.receive('high', 'other', 'other-room');
@@ -102,10 +103,10 @@ for (const guard of ['state', 'member', 'channel', 'message'] as const) it(`requ
   if (guard === 'message') f.db.update(inbox).set({ sourceId: JSON.stringify(['w', 'room', 'different-message']) }).run();
   expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
 });
-it('keeps a linked thread sender key and configured tier across venues', () => {
+it('names a member writing in a loom thread as the sender, with no tier: tiers are set for outside accounts', () => {
   const f = fixture(); f.db.update(inbox).set({ source: 'thread', fromKind: 'person', fromId: 'owner' }).run();
   f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 2 }).run();
-  expect(f.read().people).toEqual([{ kind: 'person', person: 'owner', tier: 2 }]);
+  expect(f.read().people).toEqual([{ kind: 'person', person: 'owner', tier: null }]);
 });
 
 it('excludes audible waiting mail still assigned to another job', () => {

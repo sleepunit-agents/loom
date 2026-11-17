@@ -19,3 +19,5 @@ export interface ReceiptPersistence {
   expire(now: number): void;
   nextExpiry(): number | undefined;
 }
+/** How long a write's answer is kept for a retry: thirty days from the write. */
+export const RECEIPT_MS = 30 * 86_400_000;

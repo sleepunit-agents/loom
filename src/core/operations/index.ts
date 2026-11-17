@@ -1,11 +1,9 @@
 import { internalCaller, isInternalCaller, wasInternalCaller, closeInternalCallers } from '../internal.js';
-import { statement } from '../db/index.js';
-import type { OperationReceipt, ReceiptPersistence } from './receipts.js';
+import { RECEIPT_MS, type OperationReceipt, type ReceiptPersistence } from './receipts.js';
 import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
 import type { Db } from '../db/index.js';
-import { migrate } from '../db/index.js';
 import type { Clock } from '../clock.js';
 import type { Viewer } from '../../policy.js';
 import type { Measuring, TimingTarget } from '../measuring/index.js';
@@ -108,15 +106,10 @@ export class Operations {
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
   private measuring?: Pick<Measuring, 'run' | 'runAsync'>;
-  /** Fresh composition supplies receipts backed by THIS connection. Effects and
-   * receipts then commit in one transaction without creating legacy tables.
-   * Omit only while using the legacy bootstrap; never mix stores/connections.
-   */
-  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer, operation:string) => boolean; receiptScope?: (viewer:Viewer)=>string|undefined } = {}) {
-    if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
+  /** The receipt store must be backed by THIS connection, so that an effect and its receipt commit in one
+   * transaction. The dispatcher keeps no receipt table of its own. */
+  constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void; currentOutside?: (viewer: Viewer, operation:string) => boolean; receiptScope?: (viewer:Viewer)=>string|undefined }) {
     if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
-    if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
-
     this.expire();
   }
   private transaction<T>(run: () => T, write: boolean): T {
@@ -137,29 +130,18 @@ export class Operations {
   private expire() {
     this.stopExpiry?.();
     this.expireReceipts(this.clock.now());
-    const next = this.options.receipts ? this.options.receipts.nextExpiry() :
-      (statement(this.db, 'SELECT min(expires) AS next FROM core_operations').get() as { next: number | null }).next ?? undefined;
+    const next = this.options.receipts.nextExpiry();
     this.stopExpiry = next === undefined ? undefined : this.clock.at(next, () => this.expire());
   }
   private expireReceipts(now: number) {
-    if (this.options.receipts) this.options.receipts.expire(now);
-    else statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(now);
+    this.options.receipts.expire(now);
   }
   private receipt(caller: string, id: string): OperationReceipt | undefined {
-    if (this.options.receipts) return this.options.receipts.get(caller, id);
-    const row = statement(this.db, 'SELECT * FROM core_operations WHERE viewer=? AND id=?').get(caller, id) as
-      { name: string; input_hash: string; result: string; expires: number } | undefined;
-    return row && { caller, id, operation: row.name, inputHash: row.input_hash, result: JSON.parse(row.result) as Result, expires: row.expires };
+    return this.options.receipts.get(caller, id);
   }
   private saveReceipt(receipt: OperationReceipt, recovery = false) {
-    if (this.options.receipts) {
-      if (recovery) this.options.receipts.recover(receipt);
-      else this.options.receipts.insert(receipt);
-    } else {
-      const sql = 'INSERT INTO core_operations VALUES (?,?,?,?,?,?)' + (recovery ?
-        ' ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires' : '');
-      statement(this.db, sql).run(receipt.caller, receipt.id, receipt.operation, receipt.inputHash, JSON.stringify(receipt.result), receipt.expires);
-    }
+    if (recovery) this.options.receipts.recover(receipt);
+    else this.options.receipts.insert(receipt);
   }
   register<I>(op: Operation<I>) {
     if (!/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_-]*$/.test(op.name) || this.ops.has(op.name)) throw new Error('invalid or duplicate operation');
@@ -196,7 +178,7 @@ export class Operations {
             recovered = candidate;
           }
         }
-        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > Math.min(receipt.expires, now + 30 * 86400_000))
+        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > Math.min(receipt.expires, now + RECEIPT_MS))
           throw new Error('Recovery unavailable');
         const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};
         const serialized = JSON.stringify(answer);
@@ -325,7 +307,7 @@ export class Operations {
             return old.result;
           }
         }
-        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
+        const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + RECEIPT_MS } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
         let recovered: RecoveredWrite | undefined;
         if (op.write) for (const recover of this.recoveries) {
           recovered = recover(ctx);
@@ -350,9 +332,9 @@ export class Operations {
         const answer: Result = { ok: true, value: op.output.parse(value ?? null) };
         const serialized = JSON.stringify(answer);
         if (op.write) this.saveReceipt({ caller: who, id: id!, operation: name, inputHash: body,
-          result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + 30 * 86400_000 });
+          result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + RECEIPT_MS });
         const completed=JSON.parse(serialized) as Result;
-        if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + 30 * 86400_000);
+        if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + RECEIPT_MS);
         return completed;
       }, !!op.write);
     } catch (e) { result = thrown(e, op.refuses); }

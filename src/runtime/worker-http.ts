@@ -2,7 +2,7 @@ import { privateSecretClient } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. No local retries: a lost
  * claim or report is reconciled by loom's job-silence sweep. The one exception is
  * finish, which is sent again under the same operation id (see httpWorkerControl). */
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { credentialFingerprint } from '../core/data/authentication.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
@@ -11,6 +11,8 @@ import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 import type { SignInReason } from './account-signin-reasons.js';
 import { FINISH_BUDGET_MS } from './silence.js';
+import { mintBodyToken } from './body-token.js';
+import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
   conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), model: z.string(), account: z.string(), accountChoices: z.number().int().min(1).optional(),
@@ -49,7 +51,7 @@ function operationCaller(input: WorkerHttpOptions) {
     if (onAbort) { signal.addEventListener('abort', onAbort, { once: true }); if (signal.aborted) onAbort(); }
     try {
       const body = JSON.stringify({ id, input: args });
-      if (Buffer.byteLength(body, 'utf8') > 1_048_576) throw new Error('Worker request exceeded limit');
+      if (Buffer.byteLength(body, 'utf8') > DOOR_REQUEST_BYTES) throw new Error('Worker request exceeded limit');
       response = await (input.fetch ?? fetch)(new URL(`/api/runtime/${name}`, base), {
         method: 'POST', redirect: 'error', signal,
         headers: { authorization: `Bearer ${input.token}`, 'content-type': 'application/json' },
@@ -64,7 +66,8 @@ function operationCaller(input: WorkerHttpOptions) {
           const { done, value } = await reader.read();
           if (done) break;
           size += value.byteLength;
-          if (size > 1_048_576) throw new Error('Worker response exceeded limit');
+          // An answer to a worker is small: it reads no more of one than it may send.
+          if (size > DOOR_REQUEST_BYTES) throw new Error('Worker response exceeded limit');
           chunks.push(value);
         }
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
@@ -114,7 +117,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
   const ack = z.object({ ok: z.literal(true) });
   return {
     enrollBody: async (job, signal) => {
-      const token = Buffer.from('body_'+randomBytes(32).toString('hex'), 'ascii');
+      const token = mintBodyToken();
       const cancellation = AbortSignal.any([input.signal, signal]);
       let erased = false;
       const erase = () => { erased = true; token.fill(0); cancellation.removeEventListener('abort', erase); };

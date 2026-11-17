@@ -22,12 +22,14 @@ import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
 import { withUnknownSender } from './harness-traits.js';
 import { REPORT_MS } from './silence.js';
+import { BODY_TOKEN } from './body-token.js';
+import { BODY_START_BYTES } from './body-input-limit.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
 // way the household's list of tools an agent's body is not given still applies.
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1), reach: z.enum(['loom', 'all']).default('loom') }).strict();
 const envelope = z.object({ job: workerAssignment, build: z.string().min(1),
-  bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(/^body_[a-f0-9]{64}$/) }).strict(),
+  bootstrap: z.object({ origin: z.string(), job: z.string(), token: z.string().regex(BODY_TOKEN) }).strict(),
 }).strict();
 /** What a body reports after a Stop, before leaving with BODY_EXIT.stopped. It does not take the Stop itself:
  * loom takes it when the worker reports that exit (Jobs.finish) and records the job as stopped. */
@@ -64,7 +66,7 @@ export async function bodyProgram(input: {
     const plan = config.parse(JSON.parse(await input.read(input.args[0])));
     exit=BODY_EXIT.envelope;
     bytes = await input.stdin();
-    if (input.signal.aborted || bytes.byteLength > 1_048_576) throw new Error();
+    if (input.signal.aborted || bytes.byteLength > BODY_START_BYTES) throw new Error();
     const parsed = envelope.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
     bytes.fill(0); bytes = undefined;
     bootstrap = { ...parsed.bootstrap, token: Buffer.from(parsed.bootstrap.token, 'ascii') };

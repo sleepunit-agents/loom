@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { agentInput, settingsInput } from './apps/household.js';
-import { COMMS_DAYS_DEFAULT, COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
+import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, household } from './core/data/schema.js';
 import { MAX_SLUG } from './backends/people.js';
@@ -50,8 +50,7 @@ it('reads how long Comms keeps words in one place, with the database\'s own defa
   const client = new Database(':memory:');
   try {
     const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z');
-    expect(commsKeepDays(db)).toBe(COMMS_DAYS_DEFAULT);
-    expect(household.commsDays.default).toBe(COMMS_DAYS_DEFAULT);
+    expect(commsKeepDays(db)).toBe(household.commsDays.default);
     db.insert(household).values({ commsDays: 3 }).run();
     expect(commsKeepDays(db)).toBe(3);
   } finally { client.close(); }
@@ -74,7 +73,19 @@ it('takes an agent\'s face choices from the schema, and the app draws the same o
 
 it('names the door\'s request limit once', () => {
   // The door's three ways in and the clients that send to it. The number is written in the first file only.
-  const door = ['src/core/data/door-limit.ts', 'src/core/data/http.ts', 'src/core/data/socket.ts', 'src/shared-root.ts', 'src/cli/shared-task-client.ts'];
+  const door = ['src/core/data/door-limit.ts', 'src/core/data/http.ts', 'src/core/data/socket.ts', 'src/shared-root.ts', 'src/cli/shared-task-client.ts',
+    'src/runtime/worker-http.ts', 'src/runtime/body-command-client.ts', 'src/runtime/conversation-client.ts'];
   expect(door.filter(file => /1024 \* 1024|1_048_576|1048576/.test(text(file)))).toEqual(['src/core/data/door-limit.ts']);
   for (const file of door) expect(text(file), file).toContain('DOOR_REQUEST_BYTES');
+});
+
+it('states the shape of a body\'s token once, where it is made', () => {
+  // The worker makes it and the body checks what it was handed; both read the one pattern and length.
+  const shapes = sources('src').filter(file => /body_\[a-f0-9\]|'body_'/.test(text(file)));
+  expect(shapes).toEqual(['src/runtime/body-token.ts']);
+  for (const file of ['src/runtime/worker-http.ts', 'src/runtime/body-bootstrap.ts', 'src/runtime/body-program.ts']) expect(text(file), file).toContain("from './body-token.js'");
+});
+
+it('states how much earlier talk a body is handed once', () => {
+  for (const file of ['src/core/conversations/history-context.ts', 'src/runtime/conversation-client.ts']) expect(text(file), file).toContain('HISTORY_BYTES');
 });

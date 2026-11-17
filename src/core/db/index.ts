@@ -1,29 +1,6 @@
 /** A connection's type, and statements prepared once per connection. */
 import type Database from 'better-sqlite3';
 export type Db = Database.Database;
-export interface Migration { number: number; sql: string }
-/** Numbered steps for one piece's own tables, recorded in `core_migrations`, which the caller must have created.
- * The household database does not use this (src/core/data/database.ts upgrades it). The one caller left is the
- * dispatcher's built-in receipt table, used when it is given no receipt store, which only tests do. */
-export function migrate(db: Db, piece: string, migrations: Migration[]): void {
-  if (!/^[a-z][a-z0-9_]*$/.test(piece)) throw new Error('invalid piece name');
-  const ordered = [...migrations].sort((a, b) => a.number - b.number);
-  if (ordered.some((m, i) => !Number.isInteger(m.number) || m.number < 1 || (i > 0 && ordered[i - 1].number === m.number))) throw new Error('invalid migration numbers');
-  db.transaction(() => {
-    for (const m of ordered) {
-      const old = db.prepare('SELECT sql FROM core_migrations WHERE piece = ? AND number = ?').get(piece, m.number) as { sql: string } | undefined;
-      if (old) { if (old.sql !== m.sql) throw new Error('applied migration changed'); continue; }
-      const latest = db.prepare('SELECT max(number) AS n FROM core_migrations WHERE piece = ?').get(piece) as { n: number | null };
-      if (latest.n !== null && m.number < latest.n) throw new Error('migration inserted before applied history');
-      const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name));
-      db.exec(m.sql);
-      const added = (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).filter(r => !tables.has(r.name) && !r.name.startsWith('sqlite_'));
-      if (added.some(r => !r.name.startsWith(`${piece}_`))) throw new Error('migration table must carry its piece prefix');
-      db.prepare('INSERT INTO core_migrations VALUES (?, ?, ?)').run(piece, m.number, m.sql);
-    }
-  })();
-}
-
 /** Shared synchronous statements: no bound arguments, rows or results are retained. */
 export interface StatementMetrics {
   sql: string; calls: number; failures: number; ms: number; prepares: number; prepareMs: number;

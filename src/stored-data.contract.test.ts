@@ -94,6 +94,9 @@ it('states each card limit, the kept-versions count and the knowledge check inte
 it('declares what the dispatcher asks of a receipt store once', () => {
   const declared = sources('src').filter(file => /interface (?:ReceiptPersistence|OperationReceipt)\b/.test(text(file)));
   expect(declared).toEqual(['src/core/operations/receipts.ts']);
+  // The dispatcher keeps no receipt table of its own, and says once how long a receipt lasts.
+  expect(sources('src').filter(file => /core_operations|core_migrations/.test(text(file)))).toEqual([]);
+  expect(text('src/core/operations/index.ts')).not.toMatch(/\b30 \* 86_?400_?000/);
 });
 
 it('revokes a machine, and appends to the approval record, in one place each', () => {

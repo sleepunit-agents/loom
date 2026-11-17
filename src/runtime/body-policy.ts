@@ -40,10 +40,11 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
     let kind: 'person' | 'outside' | 'unknown' = 'unknown', person: string | null = null, tier: Tier = null;
     if (item.fromKind === 'person' && item.fromId) {
       kind = 'person'; person = item.fromId;
-      // A tier is saved under a person's outside key (shared-agent-body-policy.ts). Linking that person to a
-      // member changes who their messages are from, not the tier the owner gave them, so look under both.
+      // A tier is saved under a person's outside key and under nothing else (shared-agent-body-policy.ts).
+      // Linking that person to a member changes who their messages are from, not the tier the owner gave
+      // them, so the tier is still looked up by the outside account the message came from.
       const outside = outsideKey(item, item.fromId);
-      tier = tierOf(person) ?? (outside === null ? null : tierOf(outside));
+      tier = outside === null ? null : tierOf(outside);
     } else if (item.fromKind === 'unknown') {
       const outside = outsideKey(item, null);
       if (outside !== null) { kind = 'outside'; person = outside; tier = tierOf(outside); }

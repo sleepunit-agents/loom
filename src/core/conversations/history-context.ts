@@ -4,6 +4,7 @@ import {conversations,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
 import { commsKeepDays } from '../data/comms-days.js';
+import { HISTORY_BYTES } from './history-limit.js';
 export type HistoryLine={seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string};
 export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number):Promise<()=>HistoryLine[]>{
  const {db}=comms,thread=db.select().from(threads).where(eq(threads.conversation,conversation)).get();
@@ -30,7 +31,7 @@ export async function prepareHistoryContext(comms:CommsMessages,conversation:str
   if(words===null||!(deadline(row)>Date.parse(comms.now())))continue;
   const line={seq:row.seq,kind:row.kind,sender:row.sender,at:row.at,words,keepUntil:new Date(deadline(row)).toISOString()};
   const size=Buffer.byteLength(JSON.stringify(line))+(prepared.length?1:0);
-  if(bytes+size>1_048_576)break;
+  if(bytes+size>HISTORY_BYTES)break;
   bytes+=size;prepared.push({snapshot:row,delivery:acceptedFingerprint,words});
  }
  return()=>{

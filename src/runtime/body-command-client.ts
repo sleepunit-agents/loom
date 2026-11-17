@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import { bodyOrigin } from './body-bootstrap.js';
+import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 const unavailable=()=>new Error('Body request failed; outcome may be uncertain');
 const json=z.json();
 const result=z.discriminatedUnion('ok',[
@@ -33,7 +34,7 @@ export function bodyCommandClient(options:{url:string;token:string;signal:AbortS
  async function post(path:string,payload:unknown){
   if(!current())throw unavailable();
   let body:string;try{body=JSON.stringify(payload);}catch{throw unavailable();}
-  if(Buffer.byteLength(body)>1048576)throw unavailable();
+  if(Buffer.byteLength(body)>DOOR_REQUEST_BYTES)throw unavailable();
   const abort=new AbortController(),end=clock.now()+timeout;active.add(abort);
   const stop=()=>abort.abort();lifetime.addEventListener('abort',stop,{once:true});
   const cancel=clock.at(end,stop),valid=()=>current()&&!abort.signal.aborted&&clock.now()<end;

@@ -5,15 +5,16 @@ import { FakeClock } from '../clock.js';
 import { DEFAULT_MEASURING, type TimingDay } from '../measuring/index.js';
 import { measuringRuntime } from '../measuring/runtime.js';
 import { Operations } from './index.js';
+import { createDataSchema } from '../data/database.js';
+import { OperationResults } from '../data/operation-results.js';
 
 const owner = { kind: 'member', id: 'owner' } as const;
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 function fixture() {
   const db = new Database(':memory:');
-  db.exec('CREATE TABLE core_migrations (piece TEXT NOT NULL, number INTEGER NOT NULL, sql TEXT NOT NULL, PRIMARY KEY(piece,number))');
   const clock = new FakeClock();
-  const operations = new Operations(db, clock, () => {});
+  const operations = new Operations(db, clock, () => {}, { receipts: new OperationResults(createDataSchema(db, () => new Date(clock.now()).toISOString())) });
   let settings = { ...DEFAULT_MEASURING };
   const rows: TimingDay[] = [];
   const transactions: boolean[] = [];

@@ -197,17 +197,13 @@ Only `loom.db` and `knowledge.db` are checked for being the right kind of file a
 
 ## Code no program starts
 
-Two things are compiled but reached by no executable. Each is here for a stated reason.
+One thing is compiled but reached by no executable, for a stated reason.
 
 - **The example household.** `src/example-home.ts`, `src/example-home-adapters.ts`,
   `src/example-runtime.ts` and `src/rebuild` build and check a fictitious home. They are
   run by `scripts/example-home.mjs` and the acceptance walkthrough
   (`docs/example-household.md`). The adapters file is loaded by path, from a file the
   example writes into its home, so no import names it.
-- **The dispatcher's own receipt table.** `src/core/operations/index.ts` makes
-  `core_operations` when it is given no receipt store, through `migrate` in
-  `src/core/db/index.ts`. The program always gives it one (`operation_results`); only
-  tests do not.
 
 An agent's old conversation tables (above) are the one thing kept for the move of an older
 home's data. `docs/migration-plan.md` and `docs/migration-registry.md` describe that move;
