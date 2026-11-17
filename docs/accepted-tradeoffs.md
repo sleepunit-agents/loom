@@ -38,6 +38,24 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** If rules could be set by anyone but an owner, or if a rule with no
   person ever answered for a member who is not an owner.
 
+### A merge card for a repository loom does not read is answered on its words
+- **What.** A merge target names a pull request and one exact commit. For a repository loom reads, a card
+  is held to the change loom holds: the agent's own, open, at that commit. For a repository loom does not
+  read (none of a project's, and no change of it held), loom knows nothing of the pull request. A standing
+  rule is still read for such a target, and a card is filed, allowed by an owner or a rule, and spent, on
+  the target's words alone.
+- **Where.** `src/shared-work-body.ts` (`merge`), `src/apps/changes.ts` (`readsRepository`),
+  `src/apps/approval-request.ts`, `src/shared-work-commands.ts` (`mergeTarget`).
+- **Why accepted.** The agent merges in repositories loom does not sync, and its rule is to ask first. The
+  allowance is exact: that pull request at that commit, once. loom cannot tell that the pull request is
+  still open at that commit, or that it is the agent's; the script that merges must merge that commit and no
+  other (`--match-head-commit`). Such a card carries no project, so a project's rule never answers it: only
+  a rule whose scope is a repository pattern does.
+- **Checked.** `src/shared-work-own.test.ts`: a repository loom reads is held to the change (wrong commit,
+  another agent's change and a closed change are refused); one it does not read is answered on its words.
+- **What would change the answer.** If loom came to read the agent's own repositories, the stricter path
+  applies to them with no change here.
+
 ### A household proposal that cannot be made is still filed
 - **What.** `household.propose` answers an agent the same way whatever is in the household: it does not
   refuse because the thing named is missing, is already as asked, or could never be allowed. The card that
