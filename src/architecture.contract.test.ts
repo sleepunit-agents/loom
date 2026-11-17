@@ -56,3 +56,15 @@ it('keeps test fixtures out of the build: each is named *.fixture.ts, and tsconf
   // Every path the list names must exist, so a stale entry cannot stand in for a rule.
   expect(exclude.filter(path => !path.includes('*') && !['node_modules', 'dist'].includes(path) && !existsSync(join(root, path)))).toEqual([]);
 });
+
+it('estimates CI time only for test files that exist', () => {
+  // scripts/ci-sequencer.ts balances shards by these medians; a name left behind by a removed test is dead weight.
+  const durations = JSON.parse(readFileSync(join(root, 'scripts/ci-test-durations.json'), 'utf8')) as Record<string, number>;
+  expect(Object.keys(durations).length).toBeGreaterThan(20);
+  expect(Object.keys(durations).filter(file => !existsSync(join(root, file)))).toEqual([]);
+});
+
+it('counts the household tables in docs/data-schema.md as the schema has them', () => {
+  const stated = /: (\d+) tables\./.exec(readFileSync(join(root, 'docs/data-schema.md'), 'utf8'))?.[1];
+  expect(Number(stated)).toBe(Object.keys(tables).length + Object.keys(plumbing).length);
+});

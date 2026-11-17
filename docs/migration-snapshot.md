@@ -1,5 +1,9 @@
 # Snapshot for the move
 
+> **This describes commands that are no longer in the tree.** `loom migrate` and its importers were removed with
+> the older program (commit abbf6857, 2026-11-16) and are in the repository's history. The page is kept, with
+> `migration-plan.md` and `migration-registry.md`, as the record of what an older home holds and what a move must preserve.
+
 Run `loom migrate snapshot --from <old-home> --tasks <taskstore.db> --to <new-directory>`.
 External stores are explicit, read-only inputs:
 
