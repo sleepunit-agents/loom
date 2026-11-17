@@ -13,8 +13,10 @@ import type { DataDatabase } from './database.js';
 import { tokens, sessions, members, agents, boxes, jobs, programTokens } from './schema.js';
 
 /** What is stored and looked up for a token, a cookie or a sign-in code: its SHA-256. The secrets are 256
- * random bits, so finding a row by this digest tells a caller nothing through timing. */
-export const credentialFingerprint = (secret: string) => createHash('sha256').update(secret).digest('hex');
+ * random bits, so finding a row by this digest tells a caller nothing through timing. This is the only
+ * statement of the rule: a worker that makes a body's token itself and sends loom the fingerprint alone
+ * computes it with this function too, from the bytes it will erase. */
+export const credentialFingerprint = (secret: string | Uint8Array) => createHash('sha256').update(secret).digest('hex');
 
 /** How long a browser stays signed in, counted from when it signed in. An agent's browser gets hours. */
 export const PERSON_SESSION_MS = 30 * 86400_000, AGENT_SESSION_MS = 6 * 3600_000;

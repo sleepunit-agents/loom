@@ -2,12 +2,14 @@ import { privateSecretClient } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. No local retries: a lost
  * claim or report is reconciled by loom's job-silence sweep. The one exception is
  * finish, which is sent again under the same operation id (see httpWorkerControl). */
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { credentialFingerprint } from '../core/data/authentication.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
+import type { SignInReason } from './account-signin-reasons.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
   conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), venue:z.string().min(1).nullable().optional(), model: z.string(), account: z.string(),
@@ -99,8 +101,10 @@ export function workerSignIn(input: WorkerHttpOptions) {
   return {
     next: () => call('signInNext', {}, z.object({ id: z.string(), account: z.string(), owner: z.string(), provider: z.string() }).strict().nullable()),
     page: async (page: { id: string; link: string; userCode?: string }) => { await call('signInPage', page, saved); },
-    code: (id: string) => call('signInCode', { id }, z.object({ code: z.string().nullable(), stop: z.boolean() }).strict()),
-    done: async (done: { id: string; signedIn: boolean; why?: string }) => { await call('signInDone', done, saved); },
+    // The take is a write sent under the take id itself, so sending it again is the same take.
+    take: (id: string, take: string) => call('signInTake', { id }, z.object({ taken: z.boolean() }).strict(), undefined, take),
+    code: (id: string, take: string) => call('signInCode', { id, take }, z.object({ code: z.string().nullable(), stop: z.boolean(), answered: z.boolean() }).strict()),
+    done: async (done: { id: string; signedIn: boolean; why?: SignInReason }) => { await call('signInDone', done, saved); },
   };
 }
 export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly string[] }): WorkerControl {
@@ -117,7 +121,7 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       try {
         if (cancellation.aborted) throw new Error('Body enrollment cancelled');
         await operationCaller({ ...input, signal: cancellation })('enrollBody',
-          { job, fingerprint: createHash('sha256').update(token).digest('hex') }, z.object({ registered: z.literal(true) }).strict(), erase);
+          { job, fingerprint: credentialFingerprint(token) }, z.object({ registered: z.literal(true) }).strict(), erase);
         if (cancellation.aborted || erased) throw new Error('Body enrollment cancelled');
         return { origin: new URL(input.url).origin, job, token, erase };
       } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }

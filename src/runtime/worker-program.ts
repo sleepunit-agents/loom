@@ -156,7 +156,7 @@ export async function workerProgram(input: {
           const request = await remoteSignIn.next();
           if (request) {
             const program = config.accountSignIn!.programs.find(entry => entry.provider === request.provider);
-            if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'This machine has no sign-in program for ' + request.provider.slice(0, 100) });
+            if (!program) await remoteSignIn.done({ id: request.id, signedIn: false, why: 'no-program' });
             else await (input.relaySignIn ?? relaySignIn)(program.command, request, remoteSignIn, { signal: abort.signal, timeoutMs: config.accountSignIn!.timeoutMs });
           }
         } catch { if (!abort.signal.aborted) input.error('Worker sign-in check unavailable\n'); }
