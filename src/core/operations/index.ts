@@ -40,7 +40,11 @@ export interface Operation<I = unknown> {
   /** The service this calls refuses bad requests by throwing a plain Error whose
    * message is meant for the caller. Report those as `invalid`, not as an outage. */
   refuses?: boolean;
-  /** Sensitive authority results must recheck current policy even on receipt replay. */
+  /** A retry of a write is answered from its receipt, or from a recovered outside commit, only for a
+   * caller who may still make the call: `may` is asked again first. That is the rule for every write and
+   * needs no flag. An operation says `false` (or decides per call) only when its own `may` reads state that
+   * its write changes, so that asking again would refuse the honest retry of a write that succeeded; it
+   * then answers for what a caller who has since lost the right can learn from the stored result. */
   recheckPolicy?: boolean | ((viewer: Viewer, input: I) => boolean);
   /** Per-record window gate, evaluated before replay with the exact authenticated Viewer.
    * A piece may admit an independently proved acknowledgement-only body control. */
@@ -300,7 +304,10 @@ export class Operations {
       result = this.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
         if (!this.outsideAllowed(door,viewer,name)) return failure('denied','Permission denied');
-        if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
+        // Before any receipt or recovered commit is looked at: see recheckPolicy. A read has neither, and is
+        // checked once, below.
+        const recheck = typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy !== false;
+        if ((op.windowOnly || op.write && recheck) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
         const who = callerKey(viewer);
         const fingerprint = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         // Keep the canonical principal for existing durable recovery journals.
