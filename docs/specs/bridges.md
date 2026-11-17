@@ -16,8 +16,9 @@ The code is `src/pieces/bridges/`, with its doors in `src/shared-bridge-commands
   `bridge_connections`. It names the secret its token comes from (and, for Slack, the app token's). The
   bridge reads the token from loom's secret holder each time it uses it. One daemon in loom holds every
   enabled connection: a Gateway session for Discord, a Socket Mode connection for Slack.
-- **A channel rule** says which agent answers a room when nobody is addressed, and whether bots may talk
-  there: `bridge_channels`.
+- **A channel rule** says which agent answers a room when nobody is addressed, whether bots may talk
+  there, and optionally a **brief**: the name of a role page of that agent's, given to the body of every
+  conversation in the room. `bridge_channels`.
 - **A filter** on a connection lists rooms it ignores, or the only rooms it answers:
   `bridge_channel_filters`. An `only` filter chooses rooms; it never drops a direct message.
 - **A person link** says which household member an outside account is: `bridge_people`.
@@ -60,16 +61,27 @@ connection received, delivered and held in the last day.
    thread, one per Slack thread in a room, one per direct conversation. A one-to-one direct conversation
    with a linked member is private to that member.
 5. The message becomes mail in the agent's inbox, and the runtime starts a job for the conversation if it
-   has none. A Discord message's attachments are listed in its words with Discord's link; a Slack message's
-   files are fetched and kept fourteen days (`bridge_files`).
+   has none. A Discord message's attachments are listed in its words with Discord's link. The files of a
+   delivered message are fetched and kept fourteen days (`bridge_files`): Slack's with the connection's
+   credential, Discord's first five up to 8 MB each from its signed links.
 
 A dropped message keeps no words. An edit is not read.
 
 ## The job
 
-A body takes the conversation's waiting mail. With it comes what was said earlier in that conversation
-(`src/core/conversations/bridge-history.ts`): the session itself is new every run. A sender who is not a
-member and is not at tier 3 makes the job a guest's, and the agent's guests-only tool denials apply to it.
+A body takes the conversation's waiting mail. Before that it asks loom for the harness session the last
+body of this conversation left (`conversation_sessions`, sealed, at most 700 KB packed, kept for the
+household's keep time for words). Handed one, it continues it and is told only the new mail. Otherwise
+it starts fresh and is told what was said earlier in the conversation
+(`src/core/conversations/bridge-history.ts`). When it has answered it hands the session back. Only Claude
+Code keeps sessions so far.
+
+A body with file tools finds the kept files of the messages it took written into its scratch directory,
+named in its input. If the channel's rule names a brief, the body is given that page; if the agent has no
+such page the work goes on and the agent's owners get one notice.
+
+A sender who is not a member and is not at tier 3 makes the job a guest's, and the agent's guests-only
+tool denials apply to it.
 
 While a running job holds a Discord message unanswered, the bot reacts 👀 to it and shows typing in the
 channel (`presence.ts`). Both are best effort.
@@ -77,7 +89,11 @@ channel (`presence.ts`). Both are best effort.
 ## The answer
 
 - The body's final text is posted as the reply to the last message it took (`bridges.reply`). During its
-  run it may post more with `bridges.say`. At most twenty posts are made for the mail one job took.
+  run it may post more with `bridges.say`. At most twenty posts are made for the mail one job took. On
+  Discord a `bridges.say` post may carry up to four files, 600 KB together, each named by a path inside
+  the body's working or scratch directory; they are kept with the post (`bridge_send_files`) until it is
+  settled.
+- Where a stop word stopped a job the bot says "Stopped here.".
 - Every post goes through one queue (`sends.ts`): split at the platform's limit, each part recorded when
   the platform confirms it (`bridge_send_parts`). A post whose outcome is unknown is `uncertain` and is
   never sent again; an owner may dismiss it. While effects are off a post is `held` for an owner to release.
@@ -86,7 +102,9 @@ channel (`presence.ts`). Both are best effort.
 
 ## Not built
 
-Each of these needs a column or a table, and is described in the trade-offs entries named above: a
-setting that lets everyone in a room talk to an agent as a guest; a link from an outside account to a
-People card; a brief named by a channel's rule; a file attached to a post; Discord attachments kept as
-files; resuming the harness's own session between runs.
+- A setting that lets everyone in a room talk to an agent as a guest (a column on the channel's rule).
+- A link from an outside account to a People card (a column on the person link).
+- Rooms where a bot's every post wakes an agent without a mention: a bot wakes an agent only by writing
+  its mention.
+- Reading an edit.
+- Sessions for harnesses other than Claude Code, and posts with files on Slack.
