@@ -721,10 +721,15 @@ Entries are grouped by the part of the program they belong to.
   uses, so it is split, receipted, held while effects are off and reviewed like a reply. It settles no mail
   and is no reply: the body's final answer is still posted as the reply. loom makes at most twenty posts
   for the mail one job took, the reply among them.
-  On Discord such a post may carry files: at most four, 600 KB together. The model names each by a path;
-  the body program reads it, and only a regular file inside the body's working directory or its scratch
-  directory, with every link followed, is read. The bytes are kept with the post (`bridge_send_files`)
-  until it is sent, dismissed or left in doubt, and go out with its last part. Slack posts carry no files.
+  On Discord such a post may carry files: at most four, 600 KB together. The model names each by a path.
+  The body program opens it once, never following a link at its last step, and asks the rest of the open
+  file: it must be a regular file with one name, and the kernel must place it inside the body's working
+  directory or its scratch directory. A hard link is refused by its second name, since one made inside
+  the area to a file outside cannot be told apart; a file of the body's own with two names is refused
+  too. The bytes are kept with the post (`bridge_send_files`) while it may still be sent (`pending`,
+  `sending`, or `held` for a person), and go in the same write that makes it `sent`, `dismissed` or
+  `uncertain`, by whichever path, the start-up after a crash included (`dropSettledFiles`). They go out
+  with its last part. Slack posts carry no files.
 - Where: `src/shared-bridge-reply.ts` (`speaking`, `BRIDGE_POSTS_PER_JOB`); the queue is
   `src/pieces/bridges/sends.ts`; the limits are `send-file-limit.ts`; the path is read by
   `src/runtime/body-files.ts`, called from `body-program-tools.ts`; the form is built in `reply-api.ts`.

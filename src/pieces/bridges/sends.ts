@@ -1,4 +1,4 @@
-import { and, asc, eq, max } from 'drizzle-orm';
+import { and, asc, eq, inArray, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
@@ -35,8 +35,17 @@ export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 
   const changed = db.update(bridgeSends).set({ state: decision === 'release' ? 'pending' : 'dismissed' })
     .where(and(eq(bridgeSends.id, id), eq(bridgeSends.state, send.state))).run();
   if (!changed.changes) throw new Error('Reply state changed');
-  // A dismissed post is never sent: its files go now.
-  if (decision === 'dismiss') db.delete(bridgeSendFiles).where(eq(bridgeSendFiles.send, id)).run();
+  dropSettledFiles(db);
+}
+
+/** The one rule for how long a post's files are kept: while the post may still be sent. A post that is
+ * waiting (`pending`), being sent (`sending`), or held for a person who may release it (`held`) keeps
+ * them. One that is `sent`, `dismissed`, or `uncertain` (never sent again) has no more use for them, and
+ * they go in the write that puts it there, whichever path that was: the attempt itself, a person's
+ * dismissal, or the start-up that finds a post a crash left mid-send. Called in the same transaction as
+ * every such change, so no file outlives its post's last chance. */
+export function dropSettledFiles(db: Pick<DataDatabase, 'delete' | 'select'>): void {
+  db.delete(bridgeSendFiles).where(inArray(bridgeSendFiles.send, db.select({ id: bridgeSends.id }).from(bridgeSends).where(inArray(bridgeSends.state, ['sent', 'uncertain', 'dismissed'])))).run();
 }
 
 /** Trusted in-process send queue on the approved shared schema. External callers
@@ -64,7 +73,12 @@ export class BridgeSends {
     private now: () => string, private changed: () => void = () => {},
     private commit:<T>(write:()=>T)=>T=write=>db.transaction(write)) {
     // The app may have accepted the post before a crash lost its receipt.
-    const recovered = this.commit(()=>db.update(bridgeSends).set({ state: 'uncertain' }).where(eq(bridgeSends.state, 'sending')).run());
+    const recovered = this.commit(()=>{
+      const left = db.update(bridgeSends).set({ state: 'uncertain' }).where(eq(bridgeSends.state, 'sending')).run();
+      // Never sent again, so its files go too; and any a crash left beside a post already settled.
+      dropSettledFiles(db);
+      return left;
+    });
     if (recovered.changes) changed();
   }
 
@@ -165,8 +179,7 @@ export class BridgeSends {
       if (state === 'pending') this.notBefore.set(send.id, Date.parse(this.now()) + RETRY_UNSENT);
       this.commit(() => {
         this.db.update(bridgeSends).set({ state }).where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run();
-        // Sent, or in doubt and so never sent again: the post has no more use for its files.
-        if (state === 'sent' || state === 'uncertain') this.db.delete(bridgeSendFiles).where(eq(bridgeSendFiles.send, send.id)).run();
+        dropSettledFiles(this.db);
       });
       this.changed();
     }

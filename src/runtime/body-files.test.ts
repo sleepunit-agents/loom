@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -26,16 +27,38 @@ it('refuses anything outside that area, however it is reached', () => {
   const f = fixture();
   symlinkSync(join(f.outside, 'secret.key'), join(f.cwd, 'link-out'));
   symlinkSync(f.outside, join(f.cwd, 'dir-out'));
-  symlinkSync(join(f.cwd, 'out', 'plot one.png'), join(f.cwd, 'link-in'));
   for (const path of [join(f.outside, 'secret.key'), '../outside/secret.key', 'out/../../outside/secret.key', 'link-out', 'dir-out/secret.key', '/etc/hostname', '/proc/self/environ'])
     expect(() => f.read([path]), path).toThrow(BodyFileRefused);
-  // A link that stays inside is the file it points at.
-  expect(f.read(['link-in'])[0].contents.toString()).toBe('PNG');
   // A directory, a missing file, an empty file, a path with a NUL.
   writeFileSync(join(f.cwd, 'empty'), '');
   for (const path of ['out', 'no-such-file', 'empty', 'out/plot\0.png', '']) expect(() => f.read([path]), JSON.stringify(path)).toThrow(BodyFileRefused);
   // The refusal says which path, and nothing of a file's contents.
-  expect(() => f.read(['link-out'])).toThrow("Not inside this body's working area: link-out");
+  expect(() => f.read(['dir-out/secret.key'])).toThrow("Not inside this body's working area: dir-out/secret.key");
+});
+
+it('asks everything of the open file: a link as the last step, a link on the way, and a second name', () => {
+  const f = fixture();
+  // The last step is a link: refused wherever it leads, even to a file of the body's own. It is the one step
+  // a body could swap after a check, so it is never followed.
+  symlinkSync(join(f.cwd, 'out', 'plot one.png'), join(f.cwd, 'link-in'));
+  symlinkSync(join(f.outside, 'secret.key'), join(f.cwd, 'link-out'));
+  expect(() => f.read(['link-in'])).toThrow('No such file, or a link: link-in');
+  expect(() => f.read(['link-out'])).toThrow('No such file, or a link: link-out');
+  // A link on the way that stays inside the area is the body's own layout; one that leads out is caught by
+  // where the open file really is.
+  symlinkSync(join(f.cwd, 'out'), join(f.cwd, 'also-out'));
+  expect(f.read(['also-out/plot one.png'])[0].contents.toString()).toBe('PNG');
+  symlinkSync(f.outside, join(f.scratch, 'way-out'));
+  expect(() => f.read([join(f.scratch, 'way-out', 'secret.key')])).toThrow("Not inside this body's working area");
+  // A hard link made inside the area to a file outside it has the inside path, so it is refused by its second name.
+  linkSync(join(f.outside, 'secret.key'), join(f.cwd, 'looks-inside.key'));
+  expect(() => f.read(['looks-inside.key'])).toThrow('A file with more than one name is not posted: looks-inside.key');
+  // The same rule refuses a file of the body's own that has two names.
+  linkSync(join(f.cwd, 'out', 'plot one.png'), join(f.cwd, 'second-name.png'));
+  expect(() => f.read(['second-name.png'])).toThrow('more than one name');
+  // A pipe is not waited on, and is no file.
+  execFileSync('mkfifo', [join(f.cwd, 'pipe')]);
+  expect(() => f.read(['pipe'])).toThrow(BodyFileRefused);
 });
 
 it('holds a post to its count and its bytes', () => {

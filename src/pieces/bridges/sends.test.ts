@@ -306,6 +306,19 @@ describe('a post\'s files', () => {
     await f.sends.flush();
     expect(f.read('released').state).toBe('sent'); expect(kept(f)).toEqual([]);
   });
+  it('go at start-up with a post a crash left mid-send, which is then in doubt and never sent again', () => {
+    const f = fixture();
+    f.sends.queue({ id: 'mid-send', incoming: 'in', text: 'One', files: [png()] });
+    f.sends.queue({ id: 'waiting', incoming: 'in', text: 'Two', files: [png()] });
+    f.sends.queue({ id: 'for-review', incoming: 'in', text: 'Three', held: true, files: [png()] });
+    // loom stopped while the first was crossing the network.
+    f.db.update(bridgeSends).set({ state: 'sending' }).where(eq(bridgeSends.id, 'mid-send')).run();
+    const restarted = new BridgeSends(f.db, { post: f.post }, f.now, f.changed);
+    expect(f.read('mid-send').state).toBe('uncertain');
+    // Its files are gone; the posts that may still be sent keep theirs.
+    expect(kept(f).map(row => row[0]).sort()).toEqual(['for-review', 'waiting']);
+    void restarted;
+  });
   it('are refused past their count or their bytes, when empty, and on Slack, and then nothing is queued', () => {
     const f = fixture();
     const file = (bytes: number) => ({ name: 'f', contents: Buffer.alloc(bytes, 1) });
