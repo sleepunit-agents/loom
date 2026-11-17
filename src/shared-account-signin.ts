@@ -69,8 +69,9 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
     mail.redactAnswer(row.item, USED);
     mail.resolveItem(row.item, state === 'done' ? 'Signed in' : why ?? 'The sign-in did not finish');
   };
-  /** Close every open request that has run out of time. Called at start and before a worker or a person
-   * is given one; nothing here runs on a timer, so a request is closed at the next of those. */
+  /** Close every open request that has run out of time. Called at start, before a worker or a person is
+   * given one, and by the program's periodic sweep (the returned `expire`), so an answered code is
+   * blanked within one sweep of its request running out even when no worker polls and nobody asks. */
   const sweep = (at: string) => { for (const row of db.select().from(accountSignins).where(inArray(accountSignins.state, [...open])).all()) if (lapsed(row, at)) end(row, 'failed', 'It ran out of time', at); };
   // runtime.signInCode was once a write, so its results, code included, were kept as retry receipts.
   db.transaction(() => { db.delete(operationResults).where(eq(operationResults.operation, 'runtime.signInCode')).run(); sweep(now()); });
@@ -149,5 +150,6 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       ctx.changed('accountSignin', row.id); return { saved: true as const };
     },
     after(input) { if (signedIn.delete(input)) { const row = request(input.id); if (row) accountObservationCommitted(db, row.account); } } });
+  return { /** For the program's periodic sweep. */ expire() { db.transaction(() => sweep(now())); } };
 }
 const USED = '(used)';

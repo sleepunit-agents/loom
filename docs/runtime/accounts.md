@@ -176,6 +176,36 @@ sign-in location. Recording a sign-in also requires access to the live box as
 its owner or a household owner. Agents, runners and services cannot administer
 these records, and a token label is never ownership.
 
+### Signing in from anywhere
+
+`runtime.accountSignIn {account, box}` asks the worker on that machine to run
+the provider's sign-in program (`accountSignIn.programs` in the worker's config,
+one per provider). The program is started in a private directory and talks to
+the worker through files there: it writes `link` (the page to open) and, for a
+device flow, `user-code`; for a paste-code flow the worker writes `code`. Exit 0
+means the provider's own program says the account is signed in.
+
+On failure the program writes one reason word in `why`. Loom shows its own
+sentence for the word and never the program's text, because what a provider's
+program prints could repeat a code or a token:
+
+| Word | Shown as |
+|---|---|
+| `refused` | The provider refused the sign-in |
+| `wrong-code` | The provider did not accept the code |
+| `expired` | The page or the code ran out before the sign-in finished |
+| `unreachable` | The provider could not be reached from this machine |
+| `not-installed` | The provider's program is not installed on this machine |
+
+Anything else, or nothing, is shown as "The provider's program says the account
+is not signed in". The list is `SIGNIN_REASONS` in
+`src/runtime/account-signin-relay.ts`.
+
+A pasted code is read by the worker of that machine while the sign-in waits and
+is blanked when the sign-in ends, however it ends. A request nobody finishes
+ends after 20 minutes; the program's periodic sweep closes it even when no
+worker is polling.
+
 The separate private program performs the actual provider sign-in/out. These
 commands record its result, without accepting credentials or invoking it inside
 Loom. A fresh sign-in or removed association invalidates pending usage reports

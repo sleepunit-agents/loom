@@ -7,9 +7,8 @@ import { Jobs, agentMailAdmission } from './jobs.js';
 import { Machines } from './machines.js';
 
 export interface RuntimeOptions {
-  /** No longer read: placement is the dispatcher's (shared-runtime.ts). Kept only because shared-root.ts
-   * still passes it; drop both together. */
-  roles?: unknown;
+  /** Whatever else runs out of time and is closed on the same tick (an account sign-in nobody finished). */
+  expire?(): void;
   /** Notify Tempo and live queries only after database transactions commit. */
   changed(): void;
   /** Feed TempoSources.job(id); it reads the committed terminal record. */
@@ -39,7 +38,7 @@ export function createRuntime(db: DataDatabase, clock: Clock, options: RuntimeOp
     const lost = jobs.sweep();
     // These services commit separately. Publish lost-job events even if the
     // machine notice pass fails, so a later tick need not rediscover the loss.
-    try { machines.sweep(); }
+    try { try { machines.sweep(); } finally { options.expire?.(); } }
     finally { ended(lost.map(job => job.id)); }
   };
   const tick = () => {

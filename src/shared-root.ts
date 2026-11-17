@@ -187,7 +187,7 @@ export function sharedRoot(options: {
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
   registerModelAccountAdmin(operations, db, roles);
-  registerSharedAccountSignIn(operations, db, now, credentials.runner, credentials.body);
+  const accountSignIns = registerSharedAccountSignIn(operations, db, now, credentials.runner, credentials.body);
   let tempo!: ReturnType<typeof installSharedTempo>;
 
   registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
@@ -203,7 +203,7 @@ export function sharedRoot(options: {
       if (meter?.enabled()) meter.run('job', name, work); else work();
     }),
   });
-  const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  const runtime = createRuntime(db, jobClock('runtime.tick'), { expire: accountSignIns.expire, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   startupCleanups.push(()=>runtime.close());
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
   registerSharedJobControl(operations, db, { now, jobEnded: id => { jobEnded(id); tempo?.capacityChanged(); } });
@@ -296,6 +296,8 @@ export function sharedRoot(options: {
     runtime,
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
+  // Attachments are read here too (bridges.file). Only a daemon fetches them, so without one there is
+  // nothing to read but what an earlier configuration left, and that is erased after fourteen days.
   if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedTokenAdmin(operations, db, services.signin);
   registerSharedAccount(operations, db, services.account);

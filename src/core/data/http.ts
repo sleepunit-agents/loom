@@ -19,7 +19,10 @@ import { ExecutionDrain } from './execution.js';
  * No credential, session, plumbing or service-only table enters this schema.
  */
 /** The fourth argument accepts either extra query fields or a caller-specific
- * root schema. The fifth adds shared fields to that root (e.g. Memory). */
+ * root schema. The fifth adds shared fields to that root (e.g. Memory).
+ * The default authenticator is not a weaker door: dataAuthentication itself refuses a removed member, a
+ * revoked machine, an ended job and every program token. The running program passes sharedCredentials,
+ * which adds the proofs (which credential, which job) that operations ask for. */
 export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string, schemaOrFields: ((viewer: Viewer) => GraphQLSchema) | GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}, readVersion?: () => number, now: () => number = Date.now) {
   const app = new Hono();
   const executions = new ExecutionDrain();
