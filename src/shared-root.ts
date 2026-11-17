@@ -140,10 +140,12 @@ export function sharedRoot(options: {
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
   // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
-  const late: { requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume'] } = {};
+  const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume'] } = {};
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
     { secrets: { setRule: input => late.requests!.setRule(input) },
+      // Revoking a machine is written once, in setup.revokeMachine below.
+      machines: { revoke: id => late.revokeMachine!(id) },
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
       tempo: () => late.tempo!(),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) } });
@@ -278,8 +280,10 @@ export function sharedRoot(options: {
     bridge(input: Parameters<BridgeSettings['change']>[0]) { return late.bridges!().change(input); },
     /** File a proposal card on an agent's behalf, as household.propose does for an outside caller. */
     propose(agent: string, change: { change: string; input: unknown; why: string }, where?: { conversation: string; member: string | null; project: string | null }) { return householdProposals.file(services.approvals, agent, change, where); },
+    /** The one place a machine is revoked: by installed code directly, and by an allowed household proposal. */
     revokeMachine(id: string) { db.update(boxes).set({ revokedAt: now() }).where(and(eq(boxes.id, id), isNull(boxes.revokedAt))).run(); recount(); },
   };
+  late.revokeMachine = id => setup.revokeMachine(id);
   const services = {
     setup,
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},

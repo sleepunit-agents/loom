@@ -108,11 +108,11 @@ export async function openHolderStore(directory: string, identityFile: string, f
       const history = saved ? historySchema.parse(JSON.parse(saved.bindings)) : old ? [old.verifier] : [];
       if ((saved && (!old || !history.includes(old.verifier))) || new Set(history).size !== history.length
         || history.some(hash => !supplied.has(hash))) throw unavailable();
-      if (!old) db!.prepare('INSERT INTO holder_config VALUES (1,?)').run(verifier);
+      if (!old) db!.prepare('INSERT INTO holder_config (id, verifier) VALUES (1,?)').run(verifier);
       const updated = [...new Set([...history, verifier])].sort();
-      db!.prepare('INSERT INTO holder_key_history VALUES (1,?) ON CONFLICT(id) DO UPDATE SET bindings=excluded.bindings')
+      db!.prepare('INSERT INTO holder_key_history (id, bindings) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET bindings=excluded.bindings')
         .run(JSON.stringify(updated));
-      db!.prepare('INSERT OR IGNORE INTO holder_generation VALUES (1,?)').run(randomUUID());
+      db!.prepare('INSERT OR IGNORE INTO holder_generation (id, generation) VALUES (1,?)').run(randomUUID());
     }).immediate();
     const store = db;
     let closed = false;
@@ -131,7 +131,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
       if (old && !hashes.includes(old.fingerprint)) throw unavailable();
       return !!old;
     };
-    const receipt = (who: HolderWrite, hash: string) => store.prepare('INSERT INTO holder_receipts VALUES (?,?,?)')
+    const receipt = (who: HolderWrite, hash: string) => store.prepare('INSERT INTO holder_receipts (member, write_id, fingerprint) VALUES (?,?,?)')
       .run(who.member, who.writeId, hash);
     return {
       async set(who, name, value, mode) {
@@ -150,7 +150,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
             if (replay(who, hashes)) return;
             const exists = !!store.prepare('SELECT 1 FROM holder_values WHERE name=?').get(name);
             if (exists !== (mode === 'replace')) throw unavailable();
-            store.prepare('INSERT INTO holder_values VALUES (?,?) ON CONFLICT(name) DO UPDATE SET ciphertext=excluded.ciphertext').run(name, ciphertext);
+            store.prepare('INSERT INTO holder_values (name, ciphertext) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET ciphertext=excluded.ciphertext').run(name, ciphertext);
             receipt(who, hashes[0]);
             store.prepare('UPDATE holder_generation SET generation=? WHERE id=1').run(randomUUID());
           }).immediate();
@@ -183,7 +183,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
             const aborted = !!store.prepare('SELECT 1 FROM holder_aborted_writes WHERE member=? AND write_id=?').get(who.member, who.writeId);
             if (committed && aborted) throw unavailable();
             if (committed) return 'committed' as const;
-            if (!aborted) store.prepare('INSERT INTO holder_aborted_writes VALUES (?,?)').run(who.member, who.writeId);
+            if (!aborted) store.prepare('INSERT INTO holder_aborted_writes (member, write_id) VALUES (?,?)').run(who.member, who.writeId);
             return 'undone' as const;
           }).immediate();
         } catch { throw unavailable(); }

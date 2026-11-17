@@ -1,9 +1,9 @@
 /** One owner intent grants a standing project rule and answers this exact head.
  * The agent still performs any forge action through its own current checks. */
-import {eq,sql} from 'drizzle-orm';
+import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
-import {approvals,changes,approvalRecord} from './core/data/schema.js';
+import {approvals,changes} from './core/data/schema.js';
 import {type Operations,OperationError} from './core/operations/index.js';
 import type {approvalService} from './apps/approvals.js';
 import type {approvalRulesService} from './apps/approval-rules.js';
@@ -39,8 +39,7 @@ export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,s
     if(error instanceof Error&&['Change is no longer open','Change head has changed','Approval does not match this change','Approval is already answered','Approval cannot be denied now'].includes(error.message))throw new OperationError('conflict','The merge request changed. Open it again.');
     throw error;
    }
-   const seq=db.select({n:sql<number>`coalesce(max(${approvalRecord.seq}),0)+1`}).from(approvalRecord).get()!.n;
-   db.insert(approvalRecord).values({seq,at:new Date(ctx.now).toISOString(),event:'grant',approval:card.id,agent:card.agent,note:`Standing merge rule for ${input.project}${input.person?` for ${input.person}`:''}`}).run();
+   service.recordGrant(card.id,`Standing merge rule for ${input.project}${input.person?` for ${input.person}`:''}`);
    ctx.changed('approvals',card.id);ctx.changed('changes',input.change);ctx.changed('approval_rules',JSON.stringify(key));
    return {id:card.id};
   },

@@ -15,12 +15,15 @@ const sources = (directory: string): string[] => readdirSync(join(root, director
     : /\.ts$/.test(entry.name) && !/\.(test|fixture)\.ts$/.test(entry.name) ? [join(directory, entry.name)] : []);
 const text = (file: string) => readFileSync(join(root, file), 'utf8');
 
-it('names the columns of every insert into a household table or a memory receipt table', () => {
+it('names the columns of every insert into a household table, a memory receipt table or a secret holder table', () => {
   // An upgraded household database can hold a table's columns in another order than a fresh one
   // (an added column lands last), and recognition accepts that. So a value is never placed by position.
   const tables = new Set([...text('src/core/data/schema.ts').matchAll(/sqliteTable\(\s*'([a-z_]+)'/g)].map(match => match[1]));
   expect(tables.size).toBeGreaterThan(80);
   for (const name of ['mind_operation_receipts', 'mind_source_migrations', 'memory_command_receipts', 'memory_command_preparations']) tables.add(name);
+  // The secret holder's own file: the same hazard the day one of its tables gains a column.
+  for (const [, name] of text('src/pieces/secrets/holder-store.ts').matchAll(/CREATE TABLE IF NOT EXISTS (holder_\w+)/g)) tables.add(name);
+  expect([...tables].filter(name => name.startsWith('holder_'))).toHaveLength(6);
   const positional = sources('src').flatMap(file => [...text(file).matchAll(/INSERT\s+(?:OR\s+\w+\s+)?INTO\s+["`]?(\w+)["`]?\s*(?:VALUES|SELECT)\b/gi)]
     .filter(match => tables.has(match[1])).map(match => `${file}: ${match[1]}`));
   expect(positional).toEqual([]);
@@ -52,12 +55,10 @@ it('answers for an unset household in one place, with the database\'s own defaul
     expect(householdTimezone(db)).toBe('Pacific/Kiritimati');
   } finally { client.close(); }
   expect(text('assets/data/schema.sql')).toContain(`"backup_keep" between 1 and ${BACKUP_KEEP_MAX}`);
-  // A default written again beside a read of the household row. These files belong to streams that were
-  // not in reach when this was written; take each name out when that file calls householdSettings.
-  const elsewhere = ['src/apps/household.ts', 'src/core/tempo/triggers.ts', 'src/pieces/bridges/readers.ts', 'src/pieces/secrets/requests.ts', 'src/shared-household-proposals.ts'];
+  // A default written again beside a read of the household row would drift from the column's own.
   const copies = sources('src').filter(file => file !== 'src/core/data/household-settings.ts'
-    && /\?\?\s*\(?(?:\(\)\s*=>\s*)?'UTC'|secretsDefault\s*\?\?|\.answer\s*\?\?\s*'ask'|backupAt\s*\?\?|backupKeep\s*\?\?/.test(text(file))).sort();
-  expect(copies).toEqual(elsewhere);
+    && /\?\?\s*\(?(?:\(\)\s*=>\s*)?'UTC'|secretsDefault\s*\?\?|\.answer\s*\?\?\s*'ask'|backupAt\s*\?\?|backupKeep\s*\?\?|commsDays\s*\?\?|COMMS_DAYS_DEFAULT/.test(text(file))).sort();
+  expect(copies).toEqual([]);
 });
 
 it('has no time zone of its own: every clock a person reads is the household\'s', () => {
@@ -93,4 +94,17 @@ it('states each card limit, the kept-versions count and the knowledge check inte
 it('declares what the dispatcher asks of a receipt store once', () => {
   const declared = sources('src').filter(file => /interface (?:ReceiptPersistence|OperationReceipt)\b/.test(text(file)));
   expect(declared).toEqual(['src/core/operations/receipts.ts']);
+});
+
+it('revokes a machine, and appends to the approval record, in one place each', () => {
+  // A second writer would repeat the first's rule (the recount after a revocation, the record's sequence) or forget it.
+  const revokers = sources('src').filter(file => /update\(boxes\)\s*\.set\(\{\s*revokedAt/.test(text(file)));
+  expect(revokers).toEqual(['src/shared-root.ts']);
+  const recorders = sources('src').filter(file => /insert\(approvalRecord\)/.test(text(file)));
+  expect(recorders).toEqual(['src/apps/approvals.ts']);
+});
+
+it('states what a GitHub name looks like once', () => {
+  const patterns = sources('src').filter(file => /\[A-Za-z0-9\]\[A-Za-z0-9-\]\{0,38\}/.test(text(file)));
+  expect(patterns).toEqual(['src/apps/household.ts']);
 });

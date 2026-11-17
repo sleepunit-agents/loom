@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, max } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
-import { agentPauses, household, triggerEdits, triggerLog, triggers } from '../data/schema.js';
+import { agentPauses, triggerEdits, triggerLog, triggers } from '../data/schema.js';
 import type { Clock } from '../clock.js';
+import { householdTimezone } from '../data/household-settings.js';
 import { localDate, nextTime } from './calendar.js';
 
 export type Trigger = typeof triggers.$inferSelect;
@@ -81,7 +82,7 @@ export class TriggerEngine {
   constructor(private db: DataDatabase, private clock: Clock, private effects: TriggerEffects) {}
   private open() { if (this.closed) throw new Error('Tempo is closed'); }
   private now() { return new Date(this.clock.now()).toISOString(); }
-  private zone() { return this.db.select({ zone: household.timezone }).from(household).get()?.zone ?? 'UTC'; }
+  private zone() { return householdTimezone(this.db); }
   private log(id: string, event: string, note = '') {
     const seq = (this.db.select({ seq: max(triggerLog.seq) }).from(triggerLog).get()?.seq ?? 0) + 1;
     this.db.insert(triggerLog).values({ seq, trigger: id, at: this.now(), event, note }).run();

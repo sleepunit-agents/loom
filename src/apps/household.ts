@@ -4,7 +4,8 @@ import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { agents, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
 import { householdId } from '../slug.js';
-import { COMMS_DAYS_DEFAULT, COMMS_DAYS_MAX } from '../core/data/comms-days.js';
+import { COMMS_DAYS_MAX } from '../core/data/comms-days.js';
+import { BACKUP_KEEP_MAX, householdSettings } from '../core/data/household-settings.js';
 const id = householdId;
 export const memberInput = z.object({
   id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
@@ -16,13 +17,15 @@ export const agentInput = z.object({
   // The choices are the schema's own (src/core/data/schema.ts), so a new shape is added in one place.
   faceShape: z.enum(agents.faceShape.enumValues), faceEyes: z.enum(agents.faceEyes.enumValues),
 }).strict();
+/** A GitHub user or organisation name, as GitHub allows them. */
+export const GITHUB_LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const zone = z.string().min(1).max(100).refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Unknown time zone');
 /** A patch: only the named settings change. An empty backup target turns backups off. */
 export const settingsInput = z.object({
   defaultAgent: id.nullable(), timezone: zone, commsDays: z.number().int().min(1).max(COMMS_DAYS_MAX),
-  githubOwner: z.string().regex(/^(?:[A-Za-z0-9][A-Za-z0-9-]{0,38})?$/),
+  githubOwner: z.string().refine(value => value === '' || GITHUB_LOGIN.test(value), 'Not a GitHub name'),
   backupTarget: z.string().trim().max(500), backupAt: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
-  backupKeep: z.number().int().min(1).max(90),
+  backupKeep: z.number().int().min(1).max(BACKUP_KEEP_MAX),
   backupRecipients: z.array(z.string().trim().regex(/^(?:age1[0-9a-z]{20,100}|ssh-(?:ed25519|rsa) [A-Za-z0-9+/=]{40,1000}(?: [^\r\n]{0,100})?)$/)).max(50).transform(values => [...new Set(values)].sort()),
 }).partial().strict().refine(value => Object.keys(value).length > 0, 'Name at least one setting');
 export class HouseholdError extends Error {
@@ -84,9 +87,8 @@ export function householdService(db: DataDatabase, now: () => string) {
       });
     },
     settings() {
-      const row = db.select().from(household).get();
-      return { defaultAgent: row?.defaultAgent ?? null, timezone: row?.timezone ?? 'UTC', commsDays: row?.commsDays ?? COMMS_DAYS_DEFAULT, githubOwner: row?.githubOwner ?? '',
-        secretsDefault: row?.secretsDefault ?? 'ask', backupTarget: row?.backupTarget ?? '', backupAt: row?.backupAt ?? '03:00', backupKeep: row?.backupKeep ?? 7,
+      // What an unset household has is answered in one place (core/data/household-settings.ts).
+      return { ...householdSettings(db),
         backupRecipients: db.select().from(backupRecipients).orderBy(asc(backupRecipients.recipient)).all().map(entry => entry.recipient) };
     },
     setSettings(input: z.input<typeof settingsInput>) {

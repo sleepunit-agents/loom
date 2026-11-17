@@ -109,6 +109,8 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         return get(id);
       });
     },
+    /** Note on a card's record that a standing rule was granted from it. The record has one writer: this service. */
+    recordGrant(id: string, note: string) { record(get(id), 'grant', note); },
     withdraw(id: string, agent: string) {
       return db.transaction(() => {
         const row = expire(get(id));

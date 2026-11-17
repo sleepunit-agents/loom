@@ -32,7 +32,8 @@ import {endBrowser} from './core/signin/shared-browser.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
-import {householdService,HouseholdError,memberInput,agentInput,settingsInput} from './apps/household.js';
+import {householdService,HouseholdError,memberInput,agentInput,settingsInput,GITHUB_LOGIN} from './apps/household.js';
+import {householdSettings} from './core/data/household-settings.js';
 import {projectInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
@@ -49,7 +50,7 @@ const kinds={project:projectInput,member:memberInput,agent:agentInput,settings:s
  // Dangerous, not a setting: it cannot be put back. Named by label because an agent cannot read fingerprints.
  // How things run: a machine's settings, how an agent runs, the models it may use, and its outside accounts.
  boxSettings:boxSettingsInput,runSettings:agentRunSettingsInput,models:agentModelsInput,
- agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
+ agentAccounts:z.object({agent:z.string().min(1).max(200),github:z.array(z.string().regex(GITHUB_LOGIN)).max(100).transform(values=>[...new Set(values.map(value=>value.toLowerCase()))].sort())}).strict(),
  // The order people or agents are listed in: every one of them, once.
  order:z.object({of:z.enum(['members','agents']),ids:z.array(z.string().min(1).max(100)).min(1).max(1000)}).strict(),
  // Removing keeps the row and its history: a removed person cannot sign in, a removed agent does not run,
@@ -100,7 +101,7 @@ const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
- parts:{secrets:Pick<SecretRequests,'setRule'>;bridges:Pick<BridgeSettings,'read'|'change'>;
+ parts:{secrets:Pick<SecretRequests,'setRule'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
   measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void}}){
  const listed=(of:'members'|'agents')=>(of==='members'?db.select({id:members.id}).from(members).orderBy(asc(members.position),asc(members.id)):db.select({id:agents.id}).from(agents).orderBy(asc(agents.position),asc(agents.id))).all().map(row=>row.id);
@@ -126,7 +127,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    const row=db.select().from(secretRules).where(eq(secretRules.secret,value.input.secret)).get();if(!row)return null;
    return sorted({secret:row.secret,answer:row.answer,minutes:row.minutes,agents:db.select({agent:secretRuleAgents.agent,when:secretRuleAgents.when}).from(secretRuleAgents).where(eq(secretRuleAgents.secret,row.secret)).orderBy(asc(secretRuleAgents.agent),asc(secretRuleAgents.when)).all()});
   }
-  if(value.change==='secretDefault')return {answer:db.select().from(householdRow).get()?.secretsDefault??'ask'};
+  if(value.change==='secretDefault')return {answer:householdSettings(db).secretsDefault};
   if(value.change==='houseSecrets')return db.select({id:agents.id}).from(agents).where(eq(agents.id,value.input.agent)).get()?sorted(readHouseSecrets(db,value.input.agent)):null;
   if(value.change==='bridge'){const row=parts.bridges.read(value.input);return row?sorted(row):null;}
   if(value.change==='tempoTimings'){const now=parts.tempo().timings(value.input.who) as Record<string,number>;return sorted({who:value.input.who,...Object.fromEntries(Object.keys(value.input).filter(key=>key!=='who').map(key=>[key,now[key]]))});}
@@ -180,7 +181,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    }
    else if(value.change==='secretDescription'){if(!describeSecret(db,{...value.input,by,at:now()}))throw new OperationError('not-found','No secret has that name');}
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
-   else if(value.change==='boxRevoke')db.update(boxes).set({revokedAt:now()}).where(eq(boxes.id,liveBox(value.input.name)!.id)).run();
+   else if(value.change==='boxRevoke')parts.machines.revoke(liveBox(value.input.name)!.id);
    else for(const row of browsers(value.input))endBrowser(db,row.id);
   }catch(error){
    if(error instanceof HouseholdError)throw new OperationError(error.code,error.message);
