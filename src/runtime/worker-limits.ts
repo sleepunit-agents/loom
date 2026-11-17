@@ -24,3 +24,9 @@ export const SLOTS_MAX = 16;
 /** How many bodies a worker runs on one account at once when the configuration does not say
  * (`accountSlots`); never more than its slots. */
 export const ACCOUNT_SLOTS_DEFAULT = 4;
+/** The oldest git a worker with container bodies fetches houses with. Each part of how it runs git has a
+ * first release, and this is the newest of them: `--no-write-fetch-head` (2.29), settings given in the
+ * environment (`GIT_CONFIG_COUNT`, 2.31), no per-user configuration file (`GIT_CONFIG_GLOBAL`, 2.32), and
+ * the handling of a commit's `.gitattributes` and `export-subst` without the two memory faults mended in
+ * 2.39.1 (CVE-2022-23521, CVE-2022-41903), which `git archive` of a stranger's commit would reach. */
+export const GIT_MINIMUM = [2, 39, 1] as const;

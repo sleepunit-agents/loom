@@ -17,7 +17,7 @@ import { BODY_SCRATCH } from './body-harness.js';
 import { BuildTimeError, UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 import { defaultWorkerState, workerLeft } from './worker-left.js';
 import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
-import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, type HouseStart } from './house-image.js';
+import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, type HouseGuard, type HouseStart } from './house-image.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
 import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
@@ -129,6 +129,8 @@ function output(socket: Duplex, signal: AbortSignal) {
   return { done, tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
 }
 
+/** How long looking after the disk may take, each time: the longest one step may. */
+const UPKEEP_MS = STEP_DEADLINE_MAX_MS;
 /** What the worker says when it could not look after its house images. Its own words, to its own log. */
 export const UPKEEP_FAILED = 'Worker could not look at its house images: old ones stay until it can\n';
 /** Whether the body program can load from this directory alone, which is all a container is given of it:
@@ -202,20 +204,33 @@ export function containerWorkerExecutor(config: {
    * one. A build is the worker's and not a job's: it has the build limit of its own, and a job that is
    * cancelled only stops waiting. */
   const builds = new Map<string, { done: Promise<void>; abort: AbortController; ranOut: boolean }>();
-  /** Images a job was given and whose body has not ended: never removed. (A job abandoned between its build
-   * and its body leaves its image here until the worker stops: one image kept too long.) */
+  /** Images a job wants or has, from the moment it knows which image that is until its body has ended or it
+   * is known that it will never start one (`discard`): not removed meanwhile. Counted, since several jobs
+   * may hold one image. */
   const inHand = new Map<string, number>();
   const hold = (image: string, by: 1 | -1) => { const count = (inHand.get(image) ?? 0) + by; if (count > 0) inHand.set(image, count); else inHand.delete(image); };
+  /** Removals of house images under way, by image: whoever wants one of these waits for its removal to be
+   * over before asking the engine whether the image is there. */
+  const removing = new Map<string, { over: Promise<void>; end: () => void }>();
+  /** An image may be removed when no job holds it and none is building it, asked at the moment of removal. */
+  const guard: HouseGuard = {
+    take(image) {
+      if (inHand.has(image) || builds.has(image) || removing.has(image)) return false;
+      let end!: () => void; const over = new Promise<void>(resolve => { end = resolve; });
+      removing.set(image, { over, end }); return true;
+    },
+    done(image) { const removal = removing.get(image); removing.delete(image); removal?.end(); },
+  };
   /** Looking after the disk, after a build: old house images and what builds left behind. It is nobody's
    * job: it runs beside whatever comes next, under a limit of its own, one at a time, and a failure is
-   * said and nothing more. The image just built and every image a job holds are kept. */
+   * said and nothing more. An image a job holds, or one being built, is kept: asked at each removal. */
   let upkeeping: AbortController | undefined;
   const upkeep = (image: string) => {
     if (upkeeping) return;
-    const abort = upkeeping = new AbortController(), timer = setTimeout(() => abort.abort(), STEP_DEADLINE_MAX_MS);
+    const abort = upkeeping = new AbortController(), timer = setTimeout(() => abort.abort(), UPKEEP_MS);
     // What builds leave behind is asked gone only when this was the only build: another's unfinished
     // layers have no name either.
-    void pruneHouses(engine, [image, ...inHand.keys()], builds.size <= 1, abort.signal).then(looked => looked, () => false)
+    void pruneHouses(engine, guard, builds.size <= 1, abort.signal).then(looked => looked, () => false)
       .then(looked => { clearTimeout(timer); if (upkeeping === abort) upkeeping = undefined; if (!looked && !closed) dependencies.say?.(UPKEEP_FAILED); });
   };
   let closed = false;
@@ -267,7 +282,7 @@ export function containerWorkerExecutor(config: {
       serves(job);
       const house = structuredClone(job.house);
       return (async () => {
-        const limit = new AbortController(); let ranOut = false, shared: ReturnType<typeof built> | undefined;
+        const limit = new AbortController(); let ranOut = false, shared: ReturnType<typeof built> | undefined, held: string | undefined;
         const cancel = () => limit.abort(), timer = setTimeout(() => { ranOut = true; limit.abort(); }, buildMs);
         signal.addEventListener('abort', cancel, { once: true });
         if (signal.aborted) cancel();
@@ -278,15 +293,25 @@ export function containerWorkerExecutor(config: {
           if (limit.signal.aborted) throw new Error('Worker build cancelled');
           const commit = await Promise.race([source.fetch(house, repositoryInput, limit.signal), ended]);
           const image = houseImage(house, commit);
+          // Held from here, before anything is asked about it: an upkeep under way will not remove it now.
+          hold(image, 1); held = image;
+          // One that is being removed this moment is waited for, so that it is found gone and built again
+          // rather than found there and gone a moment later.
+          const removal = removing.get(image);
+          if (removal) await Promise.race([removal.over, ended]);
           shared = built(house, commit, image);
           await Promise.race([shared.done, ended]);
-          hold(image, 1);
+          held = undefined;
           return image;
         } catch {
+          // Whatever went wrong, this job will not use the image.
+          if (held !== undefined) hold(held, -1);
           throw ranOut || shared?.ranOut ? new BuildTimeError('Worker build ran out of time') : new Error('Worker build failed');
         } finally { clearTimeout(timer); signal.removeEventListener('abort', cancel); }
       })();
     },
+    /** A job that was given this image and will start no body from it. */
+    discard(_job, image) { hold(image, -1); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job);
       // The image is this job's until its body has ended, or was never made.

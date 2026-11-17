@@ -58,6 +58,11 @@ export interface WorkerBody {
 export interface WorkerExecutor {
   build(job: WorkerAssignment, signal: AbortSignal, repositoryInput?: Uint8Array): Promise<string>;
   start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody;
+  /** Told of a build this job was given and will never start a body from: the job was stopped, cancelled
+   * or abandoned after `build` and before `start`. An executor that keeps something for a built job (an
+   * image it will not remove meanwhile) lets go of it here. Not called once `start` has been called: what
+   * the body held is let go when the body is stopped. */
+  discard?(job: WorkerAssignment, build: string): void;
   /** Called once, before the worker takes any work: end every build and body a worker before this one
    * left running on this machine, and remove what they kept. A killed worker cannot stop its bodies, and
    * loom queues a lost job's work again; without this the same work would run twice side by side.
@@ -146,6 +151,8 @@ export async function workOnce(input: {
   if (input.signal.aborted) cancel();
   let state: 'starting' | 'running' = 'starting';
   let body: WorkerBody | undefined;
+  // What `build` gave this job, until `start` has been called with it: the executor is told if it never is.
+  let unused: string | undefined;
   // What this job's body holds to itself (its account, its ports) from before it is started until it has ended.
   let giveUp = () => {};
   let reporting = false;
@@ -183,10 +190,13 @@ export async function workOnce(input: {
       } finally { repositoryInput?.fill(0); }
       if (abort.signal.aborted) return 'abandoned';
       if (!build.trim()) throw new Error('Build returned no artifact');
+      unused = build;
       stage = 'launch';
       // Built: now the job waits its turn, reported as starting all the while. A Stop or a worker stop ends the wait.
       if (input.turns) giveUp = await input.turns.take(turnsOf(assignment), abort.signal);
       if (abort.signal.aborted) return 'abandoned';
+      // From here the build is the executor's again, whether or not the start works.
+      unused = undefined;
       body = executor.start(assignment, build, abort.signal);
       // Attach a handler immediately: a fast exit may precede spawned/started.
       void body.exited.catch(() => {});
@@ -265,6 +275,7 @@ export async function workOnce(input: {
     // Executor cancellation must settle build/exit; stop also reaps an already
     // exited process. Do not leave work behind when the worker loses authority.
     if (body) await body.stop();
+    if (unused !== undefined) executor.discard?.(assignment, unused);
     // Only once the body is known to have ended. One that could not be ended keeps what it held: the throw
     // above stops the worker, and nothing is started beside it meanwhile.
     giveUp();

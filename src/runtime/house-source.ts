@@ -23,12 +23,14 @@ import { existsSync, mkdirSync, readdirSync, rmSync, statSync, utimesSync } from
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { COMMIT } from '../apps/merge-target.js';
+import { GIT_MINIMUM } from './worker-limits.js';
 
 /** How many repositories' mirrors the worker keeps: the ones fetched most recently. A mirror holds one
  * shallow commit per fetch until git's own collection, so this and the repositories' sizes bound what the
  * fetches leave on disk. One that is removed is fetched again when a job next needs it. */
 export const HOUSE_MIRRORS_KEPT = 8;
-const MIRROR = /^[0-9a-f]{32}\.git$/;
+/** A mirror's name: so many hex digits of its repository's digest. */
+const MIRROR_DIGITS = 32, MIRROR = new RegExp(`^[0-9a-f]{${MIRROR_DIGITS}}\\.git$`);
 /** What an agent's run settings say its house is. */
 export interface House { repository: string; file: string; branch: string }
 /** A house that cannot be fetched: its address, branch or file is not one the worker takes, or git failed.
@@ -49,7 +51,8 @@ const houseBranch = (branch: unknown): branch is string => typeof branch === 'st
   && !branch.includes('..') && !branch.includes('//') && !branch.endsWith('/') && !branch.endsWith('.') && !branch.endsWith('.lock');
 /** The repository's address as a URL, when it is one the worker fetches. */
 function houseAddress(repository: unknown, protocols: readonly string[]): URL | undefined {
-  if (typeof repository !== 'string' || repository.length > 2048 || control(repository) || /\s/.test(repository)) return undefined;
+  // No backslash and no `@` anywhere: a URL parser and git do not read either the same way.
+  if (typeof repository !== 'string' || repository.length > 2048 || control(repository) || /[\s\\@]/.test(repository)) return undefined;
   let url: URL;
   try { url = new URL(repository); } catch { return undefined; }
   if (!protocols.includes(url.protocol.slice(0, -1)) || !repository.startsWith(`${url.protocol}//`)) return undefined;
@@ -69,7 +72,7 @@ function authorization(credential: Uint8Array): string {
 function environment(home: string, protocols: readonly string[], extra: readonly [string, string][] = []): Record<string, string> {
   const settings: [string, string][] = [
     ['credential.helper', ''], ['core.hooksPath', '/dev/null'], ['core.attributesFile', '/dev/null'], ['core.fsmonitor', 'false'],
-    ['http.followRedirects', 'false'], ['transfer.credentialsInUrl', 'die'], ['fetch.fsckObjects', 'true'], ['gc.autoDetach', 'false'],
+    ['http.followRedirects', 'false'], ['fetch.fsckObjects', 'true'], ['gc.autoDetach', 'false'],
     ['protocol.allow', 'never'], ...protocols.map((protocol): [string, string] => [`protocol.${protocol}.allow`, 'always']), ...extra,
   ];
   return { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: home, LC_ALL: 'C',
@@ -77,13 +80,14 @@ function environment(home: string, protocols: readonly string[], extra: readonly
     GIT_CONFIG_COUNT: String(settings.length),
     ...Object.fromEntries(settings.flatMap(([key, value], index) => [[`GIT_CONFIG_KEY_${index}`, key], [`GIT_CONFIG_VALUE_${index}`, value]])) };
 }
-/** The oldest git the worker fetches with: the first that can fetch without writing FETCH_HEAD, where git
- * would otherwise write the repository's address down in the mirror (`--no-write-fetch-head`). */
-export const GIT_MINIMUM = [2, 29] as const;
-/** Whether what `git --version` printed names a git of at least that version. */
+/** Whether what `git --version` printed names a git of at least GIT_MINIMUM. A git older than that is
+ * not run at all: it would fetch without the worker's settings, which it does not read from the environment. */
 export const gitNewEnough = (printed: string): boolean => {
-  const found = /^git version (\d+)\.(\d+)/.exec(printed);
-  return !!found && (Number(found[1]) > GIT_MINIMUM[0] || (Number(found[1]) === GIT_MINIMUM[0] && Number(found[2]) >= GIT_MINIMUM[1]));
+  const found = /^git version (\d+)\.(\d+)\.(\d+)/.exec(printed);
+  if (!found) return false;
+  const has = found.slice(1).map(Number);
+  for (const [at, least] of GIT_MINIMUM.entries()) if (has[at] !== least) return has[at] > least;
+  return true;
 };
 /** Whether this machine has a git the worker can run, and one new enough. */
 export const gitAvailable = (): boolean => {
@@ -116,7 +120,7 @@ export function houseSource(options: {
   kept?: number;
 }): HouseSource {
   const start = options.spawn ?? native, protocols = options.protocols ?? ['https'];
-  const mirrorOf = (repository: string) => join(options.directory, `${createHash('sha256').update(repository).digest('hex').slice(0, 32)}.git`);
+  const mirrorOf = (repository: string) => join(options.directory, `${createHash('sha256').update(repository).digest('hex').slice(0, MIRROR_DIGITS)}.git`);
   /** Run git to its end. Its error output is never read; its standard output only when asked for, and little of it. */
   const run = (args: readonly string[], env: Readonly<Record<string, string>>, signal: AbortSignal, output: 'pipe' | 'ignore' = 'ignore') => new Promise<string>((resolve, reject) => {
     if (signal.aborted) { reject(new HouseSourceError('House fetch cancelled')); return; }

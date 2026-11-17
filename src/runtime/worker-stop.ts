@@ -5,6 +5,7 @@
  *
  * These are the worker process's own exit codes. A job's exit code (job-exit.ts) is a different thing,
  * recorded on the job's row; the numbers are kept apart all the same. 0 is a worker that was asked to stop. */
+import { GIT_MINIMUM } from './worker-limits.js';
 export const WORKER_STOP = {
   /** A failure in none of the stages below: a defect in the worker. */
   unexpected: [1, 'an unexpected failure'],
@@ -36,7 +37,7 @@ export const WORKER_STOP = {
    * when it is one list and not a list for each agent. */
   retired: [53, 'the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent'],
   /** A worker with container bodies fetches house repositories with the machine's git. */
-  git: [54, 'git 2.29 or later, which fetches each house\'s repository, could not be run on this machine'],
+  git: [54, `git ${GIT_MINIMUM.join('.')} or later, which fetches each house's repository, could not be run on this machine`],
   /** The directory the worker is installed in is mounted into every container for the body program. */
   program: [55, 'the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;

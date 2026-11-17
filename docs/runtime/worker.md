@@ -194,7 +194,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
 | 52 | a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file. The line ends with the configuration key at fault in brackets, for example `(container.mounts.art[1].source)`: a key, never a path (see "Mounted directories" under "Container bodies") |
 | 53 | the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent's repository, the image says how a body starts, and mounts are listed by agent. The line ends with the key in brackets: `(build)`, `(runners)`, `(accountRunners)` or `(container.mounts)` (see "Container bodies") |
-| 54 | git 2.29 or later, which fetches each house's repository, could not be run on this machine |
+| 54 | git 2.39.1 or later, which fetches each house's repository, could not be run on this machine |
 | 55 | the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them) |
 
 A worker that stops cannot report its own end, so loom records the job it held
@@ -320,7 +320,8 @@ house with nothing set up on the machine for that agent: it needs the engine,
 Such a worker has no `build` command, no `runners` and no `accountRunners`. A
 configuration that has `container` and one of them, or `container.mounts` as one
 list, stops the worker with exit code 53 and the key that must go. A machine
-with no `git`, or one older than 2.29, stops it with 54.
+with no `git`, or one older than 2.39.1, stops it with 54 (the worker runs no
+older git at all: see "The worker builds a house itself").
 
 **How the worker must be installed.** Every container is given the directory the
 worker is installed in, and nothing else of it, to run the body program from. So
@@ -344,9 +345,8 @@ Housefile in it, and a branch ("Agent house settings").
 1. **Fetch.** The worker keeps one bare mirror for each repository under its
    state directory (`houses/`), fetches the job's branch into it with the
    machine's `git`, and reads which commit that is. A mirror holds git's objects
-   and nothing that says where they came from: no remote, and no `FETCH_HEAD`
-   (which is why git 2.29 is the oldest it runs with). It keeps the eight
-   mirrors used most recently.
+   and nothing that says where they came from: no remote, and no `FETCH_HEAD`.
+   It keeps the eight mirrors used most recently.
 2. **Find or build.** The image of that repository, Housefile and commit is
    named `localhost/loom-house-<16 hex>:<commit>`. If the engine has it, it is
    used. If not, the worker streams that commit's files (`git archive`) to the
@@ -359,14 +359,34 @@ Housefile in it, and a branch ("Agent house settings").
 The worker never checks a repository out, never reads the Housefile and never
 runs anything from a repository. The Housefile is the whole definition of a
 house: it must build from what the repository holds and what the engine can pull.
-The build context is the repository at that commit and nothing else; submodules
-and Git LFS files are not in it. The worker passes no build argument, secret,
-host path or socket to a build.
+The worker passes no build argument, secret, host path or socket to a build.
+
+The build context is what `git archive` makes of that commit. One file of the
+repository is read on the host for that, by git and not by the worker: the
+commit's own `.gitattributes`. Through it a commit decides three things about
+its own archive and nothing else: files left out (`export-ignore`), a
+placeholder replaced by the commit's id or date (`export-subst`), and line
+endings (`text`, `eol`). The Housefile decides the same and more, so this gives
+whoever can push nothing they did not have. No program a repository names is
+run: a `filter`, `diff` or `merge` attribute names a driver that only git's
+configuration can define, the worker gives git none but its own, and a
+repository cannot configure git by what it holds. Submodules and Git LFS files
+are not in the context.
+
+**git 2.39.1 is the oldest the worker runs.** Each part of how it runs git has
+a first release: no `FETCH_HEAD` (2.29), settings given in the environment
+(2.31), no per-user configuration file (2.32). And reading a stranger's
+`.gitattributes` is only safe on a git with the two memory faults in that code
+mended (CVE-2022-23521 and CVE-2022-41903, mended in 2.39.1). A distribution's
+older git with those fixes carried back still reports its old number, and is
+refused: the worker cannot tell it from one without them.
 
 **Only `https://` repositories are fetched.** A job whose house is anything else
 (an `ssh` address, a path) fails as a failed build (exit code 22). So does one
-whose branch is not a plain name (letters, digits, `.`, `_`, `/`, `-`; no `+`,
-`@`, `..` or spaces) or whose Housefile path is not a plain relative one. `git` is run with none of the
+whose address holds a `@` or a backslash, whose branch is not a plain name (at
+most 200 of letters, digits, `.`, `_`, `/`, `-`, beginning with a letter or a
+digit; no `..`, no `//`, not ending in `/`, `.` or `.lock`) or whose Housefile
+path is not a plain relative one. `git` is run with none of the
 machine user's configuration: no stored credentials or helpers, no rewrites, no
 hooks, no prompt, no other protocol, no redirects. So a job can never fetch with
 the machine user's own access.
@@ -396,7 +416,13 @@ does not depend on the worker's version, so deploying a new loom rebuilds
 nothing. After a build, once the job has its image, the worker looks after the
 disk beside whatever it does next: it lists loom's own house images, keeps the
 two newest of each house and the ten most recently built in all, and removes the
-rest; it never removes one a container uses or one a job holds. It then asks the
+rest. It never removes one a container uses, one being built, or one a job
+holds: a job holds its image from the moment it knows which one it wants until
+its body has ended or the job has ended without one, and that is asked again
+at the moment of each removal. A job that wants an image whose removal is under
+way waits for the removal and builds the image again. So the counts hold for
+the images no job has: one that a job holds is kept beyond them until that job
+is over. It then asks the
 engine to remove images that have no name and are older than a day, and build
 cache unused for a week. That last request reaches every unnamed image on the
 engine, not only loom's (see "A worker treats its engine's unnamed leftovers as

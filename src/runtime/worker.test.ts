@@ -298,7 +298,7 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
   f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
 });
   it('with one body at a time on an account, starts a second job\'s body only when the first body has ended, reporting it as starting while it waits', async () => {
-    const turns = workerTurns(), first = fixture(turns), second = fixture(turns, { ...job, id: 'k' }), elsewhere = fixture(turns, { ...job, id: 'm', account: 'another-account', run: { ...job.run!, ports: [] } });
+    const turns = workerTurns({ accounts: 1 }), first = fixture(turns), second = fixture(turns, { ...job, id: 'k' }), elsewhere = fixture(turns, { ...job, id: 'm', account: 'another-account', run: { ...job.run!, ports: [] } });
     // Another account again, but publishing the port the first job publishes: that waits too.
     const samePort = fixture(turns, { ...job, id: 'p', account: 'a-third-account' });
     const one = first.run(), two = second.run(), three = elsewhere.run(), four = samePort.run(); await flush();
@@ -320,7 +320,7 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
     samePort.spawned.resolve(); await flush(); samePort.exited.resolve({ exitCode: 0, logTail: '' }); expect(await four).toBe('finished');
   });
   it('ends only the job that is stopped while it waits for its account, and leaves the one running alone', async () => {
-    const turns = workerTurns(), running = fixture(turns), waiting = fixture(turns, { ...job, id: 'k' }), behind = fixture(turns, { ...job, id: 'm' });
+    const turns = workerTurns({ accounts: 1 }), running = fixture(turns), waiting = fixture(turns, { ...job, id: 'k' }), behind = fixture(turns, { ...job, id: 'm' });
     const one = running.run(), two = waiting.run(), three = behind.run(); await flush();
     for (const f of [running, waiting, behind]) f.built.resolve('image'); await flush(); running.spawned.resolve(); await flush();
     // A Stop: loom answers the waiting job's report with "no longer yours".
@@ -334,7 +334,7 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
     behind.spawned.resolve(); await flush(); behind.exited.resolve({ exitCode: 0, logTail: '' }); expect(await three).toBe('finished');
   });
   it('gives its turn up when a start fails, and keeps it when a body could not be ended', async () => {
-    const turns = workerTurns(), failing = fixture(turns), next = fixture(turns, { ...job, id: 'k' });
+    const turns = workerTurns({ accounts: 1 }), failing = fixture(turns), next = fixture(turns, { ...job, id: 'k' });
     const one = failing.run(), two = next.run(); await flush();
     failing.built.resolve('image'); next.built.resolve('image'); await flush();
     failing.spawned.reject(new Error('launch failed')); expect(await one).toBe('finished');
@@ -359,4 +359,30 @@ it('keeps bytes intact until pending private stdin acceptance and then erases th
     second.exited.resolve({ exitCode: 0, logTail: '' }); expect(await two).toBe('finished'); await flush(); expect(third.executor.start).toHaveBeenCalledOnce();
     first.exited.resolve({ exitCode: 0, logTail: '' }); expect(await one).toBe('finished');
     third.spawned.resolve(); await flush(); third.exited.resolve({ exitCode: 0, logTail: '' }); expect(await three).toBe('finished');
+  });
+  it('tells the executor of a build whose body it will never start, on every way out, and of none whose body it did start', async () => {
+    const discard = vi.fn();
+    const leaving = async (how: 'stopped while it waits its turn' | 'cancelled once built' | 'worker stopped while it waits') => {
+      const turns = workerTurns({ accounts: 1 }), holder = fixture(turns), f = fixture(turns, { ...job, id: 'k' });
+      Object.assign(holder.executor, { discard }); Object.assign(f.executor, { discard });
+      const one = holder.run(), two = f.run(); await flush(); holder.built.resolve('held-image'); await flush(); holder.spawned.resolve(); await flush();
+      f.built.resolve('built-image'); await flush(); expect(f.executor.start).not.toHaveBeenCalled();
+      if (how === 'stopped while it waits its turn') { vi.mocked(f.control.heartbeat).mockResolvedValue(false); f.pulse(); }
+      if (how === 'cancelled once built') f.abort.abort();
+      if (how === 'worker stopped while it waits') { f.abort.abort(); holder.abort.abort(); }
+      expect(await two).toBe('abandoned'); expect(f.executor.start).not.toHaveBeenCalled();
+      expect(discard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 'k' }), 'built-image'); discard.mockClear();
+      // The job that did start its body is the executor's own to let go of, when the body stops.
+      holder.exited.resolve({ exitCode: 0, logTail: '' }); await one; expect(discard).not.toHaveBeenCalled();
+    };
+    await leaving('stopped while it waits its turn'); await leaving('cancelled once built'); await leaving('worker stopped while it waits');
+    // A start that throws at once, and one whose body fails to come up: the executor was handed the image, so nothing is told twice.
+    const thrown = fixture(); Object.assign(thrown.executor, { discard }); thrown.executor.start.mockImplementation(() => { throw new Error('refused'); });
+    const refused = thrown.run(); await flush(); thrown.built.resolve('image'); expect(await refused).toBe('finished'); expect(discard).not.toHaveBeenCalled();
+    const failing = fixture(); Object.assign(failing.executor, { discard });
+    const failed = failing.run(); await flush(); failing.built.resolve('image'); await flush(); failing.spawned.reject(new Error('no')); expect(await failed).toBe('finished');
+    expect(discard).not.toHaveBeenCalled(); expect(failing.body.stop).toHaveBeenCalled();
+    // A build that failed handed nothing over.
+    const unbuilt = fixture(); Object.assign(unbuilt.executor, { discard });
+    const none = unbuilt.run(); await flush(); unbuilt.built.reject(new Error('build failed')); expect(await none).toBe('finished'); expect(discard).not.toHaveBeenCalled();
   });

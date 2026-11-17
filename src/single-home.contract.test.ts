@@ -24,7 +24,7 @@ import { isHolderGeneration } from './pieces/secrets/role.js';
 import { isDiscordId } from './pieces/bridges/discord-id.js';
 import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
-import { ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
+import { GIT_MINIMUM, ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, ENV_NAME, HOUSE_BUILD_DEFAULT_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
 import { CONVERSATION_ID, HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SCOPED_MEMORY_ID, SLUG, STORE_ID, TASK_ID, conversationId, householdId, scopedStoreId, slug, taskId } from './slug.js';
 import { MEMORY_CATEGORIES } from './categories.js';
 import { DAY } from './core/day.js';
@@ -61,7 +61,8 @@ import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
 import { BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
 import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
 import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_BODY, HOUSE_LABEL_NODE, HOUSE_VERSION } from './runtime/house-image.js';
-import { GIT_MINIMUM, HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
+import { HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
+import { WORKER_STOP } from './runtime/worker-stop.js';
 import { LISTING_MAX } from './runtime/docker-engine.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
 
@@ -617,7 +618,11 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(text('src/runtime/house-image.ts').split('loom-house-')).toHaveLength(2);
   expect(text('src/runtime/house-image.ts').match(/\b16\b/g)).toHaveLength(1);
   // One listing's size, and one answer's, in the engine client; the oldest git, where git is run.
-  expect([LISTING_MAX, [...GIT_MINIMUM]]).toEqual([4_194_304, [2, 29]]);
+  expect([LISTING_MAX, [...GIT_MINIMUM]]).toEqual([4_194_304, [2, 39, 1]]);
+  // The oldest git is one number: the stop line is made from it, and no other source writes a git version.
+  expect(WORKER_STOP.git[1]).toBe('git 2.39.1 or later, which fetches each house\'s repository, could not be run on this machine');
+  expect(sources('src').filter(file => /git \d+\.\d+/i.test(text(file)))).toEqual([]);
+  expect(sources('src/runtime').filter(file => /GIT_MINIMUM = /.test(text(file)))).toEqual(['src/runtime/worker-limits.ts']);
   expect(sources('src').filter(file => /\b4_?194_?304\b/.test(text(file)))).toEqual(['src/runtime/docker-engine.ts']);
   expect(text('src/runtime/house-image.ts')).toContain("import { houseFile, type House } from './house-source.js';");
   // How many jobs a worker runs side by side: the two numbers in one file, read by the schema and the program.

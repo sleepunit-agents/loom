@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
-import { gitAvailable, gitNewEnough, GIT_MINIMUM, houseFile, houseSource, HouseSourceError, type GitSpawn } from './house-source.js';
+import { gitAvailable, gitNewEnough, houseFile, houseSource, HouseSourceError, type GitSpawn } from './house-source.js';
+import { GIT_MINIMUM } from './worker-limits.js';
 
 // A real git and a real repository: what is tested is what git does with what the worker gives it.
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-source-'));
@@ -60,6 +61,27 @@ it('writes nothing of where a repository is, or of its secret, anywhere in the m
   expect(kept).not.toMatch(/a-secret-token|YS1zZWNyZXQtdG9rZW4|extraheader/i);
   expect(existsSync(join(root, 'unnamed', mirror, 'FETCH_HEAD'))).toBe(false);
 });
+it('archives what the commit\'s own attributes say to archive, and runs nothing they name', async () => {
+  // git reads a commit's .gitattributes when it archives it. This is all of what a pusher gets from that:
+  // which files go, text put in for a placeholder, line endings. The pusher decides the same and more in
+  // the Housefile. What a pusher does not get is a program run on this machine.
+  const marker = join(root, 'attribute-ran');
+  const origin = repository('attributes', {
+    'Housefile': 'FROM scratch\n', 'left-out.txt': 'not in the archive\n', 'stamped.txt': 'commit $Format:%H$\n', 'windows.txt': 'one\ntwo\n', 'filtered.txt': 'through a filter\n',
+    '.gitattributes': 'left-out.txt export-ignore\nstamped.txt export-subst\nwindows.txt text eol=crlf\nfiltered.txt filter=run diff=run merge=run\n',
+    // A repository cannot configure git by carrying files that look like configuration.
+    '.gitconfig': `[filter "run"]\n\tsmudge = sh -c 'touch ${marker}; cat'\n\tclean = sh -c 'touch ${marker}; cat'\n[diff "run"]\n\ttextconv = sh -c 'touch ${marker}; cat'\n`,
+    '.git-config': `[filter "run"]\n\tsmudge = touch ${marker}\n`,
+  });
+  const source = local('attributes-mirror'), house = { repository: origin.address, file: 'Housefile', branch: 'main' };
+  const tar = (await all(source.archive(house, await source.fetch(house, undefined, never()), never()))).toString('latin1');
+  expect(tar).toContain('Housefile'); expect(tar).not.toContain('not in the archive');
+  expect(tar).toContain(`commit ${origin.first}`); expect(tar).toContain('one\r\ntwo\r\n'); expect(tar).toContain('through a filter');
+  expect(existsSync(marker)).toBe(false);
+  // The same attributes do run a program when git is given a configuration that names one: the check is not vacuous.
+  execFileSync('git', ['-c', `filter.run.smudge=sh -c 'touch ${marker}; cat'`, 'archive', '--format=tar', origin.first], { cwd: origin.path, env: quiet, stdio: 'ignore' });
+  expect(existsSync(marker)).toBe(true);
+});
 it('keeps one mirror per repository and writes neither the address nor a remote into it', async () => {
   const one = repository('one', { Housefile: 'FROM scratch\n' }), two = repository('two', { Housefile: 'FROM scratch\n' });
   const source = local('apart');
@@ -98,7 +120,8 @@ it.each([
   ['ssh', 'ssh://git@example.com/house.git'], ['the short ssh form', 'git@example.com:org/house.git'], ['a command transport', 'ext::sh -c touch% /tmp/x'],
   ['an option', '--upload-pack=touch /tmp/x'], ['the git protocol', 'git://example.com/house.git'], ['a user in the address', 'https://user@example.com/house.git'],
   ['a password in the address', 'https://user:pw@example.com/house.git'], ['a query', 'https://example.com/house.git?x=1'], ['a fragment', 'https://example.com/house.git#x'],
-  ['a line break', 'https://example.com/house.git\n--upload-pack=x'], ['a space', 'https://example.com/house .git'], ['no host', 'https:///house.git'],
+  ['a line break', 'https://example.com/house.git\n--upload-pack=x'], ['a backslash a parser reads as a slash', 'https://example.com\\@other.example/house.git'],
+  ['an at sign in the path', 'https://example.com/a@b/house.git'], ['a space', 'https://example.com/house .git'], ['no host', 'https:///house.git'],
   ['an address that is not text', 7], ['nothing', ''],
 ])('fetches only https addresses: refuses %s without running git', async (_what, address) => {
   const spawned = vi.fn(), source = houseSource({ directory: join(root, 'unused'), spawn: spawned });
@@ -159,7 +182,7 @@ it('gives the repository\'s secret to the one fetch, as a header for the reposit
     expect(Object.keys(call.env).filter(key => !/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)).sort())
       .toEqual(['GIT_ALLOW_PROTOCOL', 'GIT_ATTR_NOSYSTEM', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_TERMINAL_PROMPT', 'HOME', 'LC_ALL', 'PATH']);
     expect(call.env).toMatchObject({ GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https', HOME: join(root, 'secret') });
-    expect(settings(call.env)).toMatchObject({ 'credential.helper': '', 'core.hooksPath': '/dev/null', 'http.followRedirects': 'false', 'protocol.allow': 'never', 'protocol.https.allow': 'always', 'transfer.credentialsInUrl': 'die' });
+    expect(settings(call.env)).toMatchObject({ 'credential.helper': '', 'core.hooksPath': '/dev/null', 'http.followRedirects': 'false', 'protocol.allow': 'never', 'protocol.https.allow': 'always' });
     expect(JSON.stringify(call.env)).not.toMatch(/ambient-private|agent\.sock|\/usr\/bin\/leak/);
   }
 });
@@ -204,12 +227,14 @@ it('ends git when the job is cancelled, and tells the worker which processes it 
 });
 it('says whether this machine has a git it can run, new enough to fetch without writing the address down', () => {
   expect(gitAvailable()).toBe(true);
-  expect(GIT_MINIMUM).toEqual([2, 29]);
-  expect(['git version 2.29.0', 'git version 2.47.3', 'git version 3.0.1', 'git version 2.39.5 (Apple Git-154)', 'git version 2.45.1.windows.1'].every(gitNewEnough)).toBe(true);
-  expect(['git version 2.28.9', 'git version 1.9.5', 'git version 2', 'not git', ''].some(gitNewEnough)).toBe(false);
+  expect([...GIT_MINIMUM]).toEqual([2, 39, 1]);
+  expect(['git version 2.39.1', 'git version 2.39.5', 'git version 2.40.0', 'git version 2.47.3', 'git version 3.0.0', 'git version 2.39.5 (Apple Git-154)', 'git version 2.45.1.windows.1'].every(gitNewEnough)).toBe(true);
+  // Older than any one of what the worker needs: settings by environment (2.31), no global file (2.32), no
+  // FETCH_HEAD (2.29), and attribute handling without the faults mended in 2.39.1.
+  expect(['git version 2.39.0', 'git version 2.38.9', 'git version 2.32.0', 'git version 2.30.2', 'git version 2.29.0', 'git version 1.9.5', 'git version 2.39', 'git version 2', 'not git', ''].some(gitNewEnough)).toBe(false);
   vi.stubEnv('PATH', join(root, 'empty')); expect(gitAvailable()).toBe(false);
   // An old git on the path is no git for this.
-  const old = join(root, 'old-git'); mkdirSync(old); writeFileSync(join(old, 'git'), '#!/bin/sh\necho git version 2.20.1\n', { mode: 0o755 });
+  const old = join(root, 'old-git'); mkdirSync(old); writeFileSync(join(old, 'git'), '#!/bin/sh\necho git version 2.39.0\n', { mode: 0o755 });
   vi.stubEnv('PATH', old); expect(gitAvailable()).toBe(false);
 });
 

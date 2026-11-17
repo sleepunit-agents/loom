@@ -1,13 +1,15 @@
 import { PassThrough } from 'node:stream';
 import { expect, it, vi } from 'vitest';
 import { DockerResponseError, type DockerEngine } from './docker-engine.js';
-import { UnmetHouseError as HouseImageError } from './worker.js';
+import { UnmetHouseError } from './worker.js';
 import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE } from './house-image.js';
 import { LISTING_MAX } from './docker-engine.js';
 
 const house = { repository: 'https://example.com/org/house.git', file: 'house/Housefile', branch: 'main' }, commit = 'c'.repeat(40);
 const image = houseImage(house, commit), id = `sha256:${'a'.repeat(64)}`;
 const never = () => new AbortController().signal;
+/** A guard that lets every image go but these. */
+const keeping = (names: readonly string[]) => ({ take: (name: string) => !names.includes(name), done: () => {} });
 function engine(answer: (method: string, path: string) => unknown = () => undefined) {
   const json = vi.fn(async (method: string, path: string, _body: unknown, _signal: AbortSignal) => answer(method, path));
   const build = vi.fn(async (_path: string, context: PassThrough, _signal: AbortSignal) => { context.resume(); });
@@ -60,10 +62,10 @@ it.each([
   ['a relative body file', labelled({ ...good, 'loom.house.body.claude': 'claude.json' })], ['no working directory', labelled(good, { WorkingDir: '' })],
   ['the root as working directory', labelled(good, { WorkingDir: '/' })], ['no configuration', { Id: id }],
 ])('refuses an image with %s, as the house\'s fault', async (_what, inspected) => {
-  await expect(houseStart(engine(() => inspected), image, 'claude', never())).rejects.toThrow(HouseImageError);
+  await expect(houseStart(engine(() => inspected), image, 'claude', never())).rejects.toThrow(UnmetHouseError);
 });
 it('names the label or the rule an image breaks, and never anything else', async () => {
-  const rule = async (inspected: unknown, harness = 'claude') => (await houseStart(engine(() => inspected), image, harness, never()).catch(error => error as HouseImageError)).rule;
+  const rule = async (inspected: unknown, harness = 'claude') => (await houseStart(engine(() => inspected), image, harness, never()).catch(error => error as UnmetHouseError)).rule;
   expect(await rule(labelled({ ...good, 'loom.house': '2' }))).toBe('loom.house');
   expect(await rule(labelled({ ...good, 'loom.house.node': '/usr/bin/../bin/node' }))).toBe('loom.house.node');
   expect(await rule(labelled(good), 'agy')).toBe('loom.house.body.agy');
@@ -75,8 +77,8 @@ it('names the label or the rule an image breaks, and never anything else', async
 it.each([
   ['a volume of its own', { Volumes: { '/data': {} } }], ['a volume its base image declared', { Volumes: { '/var/lib/x': {}, '/data': {} } }],
 ])('refuses an image that declares %s before any container is made of it', async (_what, config) => {
-  const failure = await houseStart(engine(() => labelled(good, config)), image, 'claude', never()).catch(error => error as HouseImageError);
-  expect(failure).toBeInstanceOf(HouseImageError); expect(failure.rule).toBe('VOLUME');
+  const failure = await houseStart(engine(() => labelled(good, config)), image, 'claude', never()).catch(error => error as UnmetHouseError);
+  expect(failure).toBeInstanceOf(UnmetHouseError); expect(failure.rule).toBe('VOLUME');
   // No volumes, said either way an engine says it.
   for (const Volumes of [null, {}, undefined]) expect(await houseStart(engine(() => labelled(good, { Volumes })), image, 'claude', never())).toMatchObject({ id });
 });
@@ -87,11 +89,11 @@ it('takes one shape for a house image\'s name, wherever one is asked about', asy
 });
 it('refuses a harness the image has no body file for, and one that is no label\'s name', async () => {
   for (const harness of ['agy', 'constructor', 'toString', '__proto__', 'Claude', 'a b', '', 'claude.x'])
-    await expect(houseStart(engine(() => labelled(good)), image, harness, never())).rejects.toThrow(HouseImageError);
+    await expect(houseStart(engine(() => labelled(good)), image, harness, never())).rejects.toThrow(UnmetHouseError);
   // An engine's failure, or an answer that is not an image, is not the house's fault.
   const broken = await houseStart(engine(() => { throw new DockerResponseError(500); }), image, 'claude', never()).catch(error => error as Error);
-  expect(broken).not.toBeInstanceOf(HouseImageError);
-  expect(await houseStart(engine(() => ({ Id: '../x', Config: { Labels: good } })), image, 'claude', never()).catch(error => error as Error)).not.toBeInstanceOf(HouseImageError);
+  expect(broken).not.toBeInstanceOf(UnmetHouseError);
+  expect(await houseStart(engine(() => ({ Id: '../x', Config: { Labels: good } })), image, 'claude', never()).catch(error => error as Error)).not.toBeInstanceOf(UnmetHouseError);
 });
 
 const tag = (houseHex: string, commitLetter: string) => `localhost/loom-house-${houseHex.repeat(16)}:${commitLetter.repeat(40)}`;
@@ -109,7 +111,7 @@ it('keeps the two newest images of each house and removes the older, never the o
   expect([HOUSE_IMAGES_PER_HOUSE, HOUSE_IMAGES_KEPT]).toEqual([2, 10]);
   const rows = [{ name: tag('a', '1'), built: 10 }, { name: tag('a', '2'), built: 20 }, { name: tag('a', '3'), built: 30 }, { name: tag('a', '4'), built: 40 },
     { name: tag('b', '1'), built: 5 }, { name: tag('b', '2'), built: 15 }, { name: 'localhost/loom-house-art-new:abc', built: 1 }, { name: 'docker.io/library/node:22', built: 2 }];
-  const all = listing(rows); await pruneHouses(all.made, [tag('a', '1')], false, never());
+  const all = listing(rows); await pruneHouses(all.made, keeping([tag('a', '1')]), false, never());
   // Of house a: the two newest, and the oldest because a job holds it. Of house b: both. Nothing that is not a house image of this naming.
   expect(all.removed).toEqual([tag('a', '2')]);
   expect(all.asked[0]).toBe('GET /images/json?filters={"reference":["localhost/loom-house-*"]}');
@@ -118,29 +120,44 @@ it('keeps the two newest images of each house and removes the older, never the o
 });
 it('keeps ten house images in all, the most recently built', async () => {
   const houses = 'abcdef0123456'.split(''), rows = houses.map((hex, index) => ({ name: tag(hex, '1'), built: index }));
-  const all = listing(rows); await pruneHouses(all.made, [], false, never());
+  const all = listing(rows); await pruneHouses(all.made, keeping([]), false, never());
   expect(all.removed.sort()).toEqual(rows.slice(0, 3).map(row => row.name).sort());
 });
 it('reads a listing longer than one ordinary answer, and says so when it cannot list at all', async () => {
   // Images carry their labels in a listing: many of them, or one with a long label, are a long answer.
   const rows = [1, 2, 3, 4].map(n => ({ name: tag('a', String(n)), built: n })), long = listing(rows);
-  expect(await pruneHouses(long.made, [], false, never())).toBe(true);
+  expect(await pruneHouses(long.made, keeping([]), false, never())).toBe(true);
   expect(long.made.json.mock.calls[0][4]).toBe(LISTING_MAX);
   expect(long.removed).toEqual([tag('a', '2'), tag('a', '1')]);
   // An answer the client will not read, an engine that is down, an answer that is no list: nothing is
   // removed, nothing is thrown, and whoever asked is told that the disk was not looked at.
   for (const answer of [() => { throw new Error('Docker response exceeded limit'); }, () => ({ message: 'not a list' })]) {
-    const unread = engine(answer); expect(await pruneHouses(unread, [], true, never())).toBe(false);
+    const unread = engine(answer); expect(await pruneHouses(unread, keeping([]), true, never())).toBe(false);
     expect(unread.json).toHaveBeenCalledOnce();
   }
 });
 it('leaves an image the engine will not remove, goes on, and never fails', async () => {
   const rows = [1, 2, 3, 4].map(n => ({ name: tag('a', String(n)), built: n }));
-  const some = listing(rows, [tag('a', '2')]); await pruneHouses(some.made, [], false, never());
+  const some = listing(rows, [tag('a', '2')]); await pruneHouses(some.made, keeping([]), false, never());
   expect(some.removed).toEqual([tag('a', '1')]);
   await expect(pruneHouses(engine(() => [null, { RepoTags: 'x' }, { RepoTags: [7] }]), [], true, never())).resolves.toBe(true);
 });
 it('asks the engine to forget what builds left behind only when told no build is running', async () => {
-  const all = listing([]); await pruneHouses(all.made, [], true, never());
+  const all = listing([]); await pruneHouses(all.made, keeping([]), true, never());
   expect(all.asked.slice(1)).toEqual(['POST /images/prune?filters={"dangling":["true"],"until":["24h"]}', 'POST /build/prune?filters={"until":["168h"]}']);
+});
+
+it('asks whether an image may go at the moment it is about to remove it, and says when each removal is over', async () => {
+  const rows = [1, 2, 3, 4, 5].map(n => ({ name: tag('a', String(n)), built: n })), all = listing(rows), events: string[] = [];
+  // A job takes hold of the oldest image while the removals before it are under way.
+  let held = false;
+  const guard = { take: (name: string) => { events.push(`ask ${name.at(-1)}`); if (name === tag('a', '2')) held = true; return !(held && name === tag('a', '1')); },
+    done: (name: string) => { events.push(`done ${name.at(-1)}`); } };
+  await pruneHouses(all.made, guard, false, never());
+  expect(all.removed).toEqual([tag('a', '3'), tag('a', '2')]);
+  // Asked one at a time, each just before its own removal, and told when that removal has been answered. Never asked about one it keeps anyway.
+  expect(events).toEqual(['ask 3', 'done 3', 'ask 2', 'done 2', 'ask 1']);
+  // Told the removal is over when the engine refuses it too.
+  const refusing = listing(rows.slice(0, 3), [tag('a', '1')]), told: string[] = [];
+  await pruneHouses(refusing.made, { take: () => true, done: name => told.push(name) }, false, never()); expect(told).toEqual([tag('a', '1')]);
 });

@@ -24,9 +24,10 @@ const ACCOUNT = 'account:';
 export const turnsOf = (job: Pick<WorkerAssignment, 'account' | 'run'>): string[] =>
   [...new Set([`${ACCOUNT}${job.account}`, ...(job.run?.ports ?? []).map(({ port }) => `port:${port}`)])];
 
-/** @param room How many bodies may run on one account at once. One, when left out. A port is always one body's. */
-export function workerTurns(room: { accounts?: number } = {}): WorkerTurns {
-  const accounts = room.accounts ?? 1;
+/** @param room How many bodies may run on one account at once (the worker's `accountSlots`; the default is
+ * the configuration's, not this file's). A port is always one body's. */
+export function workerTurns(room: { accounts: number }): WorkerTurns {
+  const accounts = room.accounts;
   if (!Number.isSafeInteger(accounts) || accounts < 1) throw new Error('Invalid account slots');
   /** How many bodies hold each thing now. */
   const held = new Map<string, number>();

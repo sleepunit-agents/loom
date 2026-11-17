@@ -213,33 +213,33 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       const own = new Promise<void>(resolve => { ended = resolve; });
       const mine = building = before ? Promise.all([before, own]).then(() => {}) : own;
       try { return await (async () => {
-      if (before) {
-        const cancelled = new Promise<never>((_, reject) => { if (signal.aborted) reject(new Error('Worker build failed')); else signal.addEventListener('abort', () => reject(new Error('Worker build failed')), { once: true }); });
-        void cancelled.catch(() => {});
-        await Promise.race([before, cancelled]);
-      }
-      const abort = new AbortController();
-      const cancel = () => abort.abort();
-      signal.addEventListener('abort', cancel, { once: true });
-      if (signal.aborted) cancel();
-      const timer = setTimeout(cancel, buildTimeoutMs);
-      let attempt: ReturnType<typeof launch> | undefined, forget = () => {};
-      try {
-        attempt = launch(buildPlan, abort.signal, runtime);
-        forget = noted(attempt, job);
-        await attempt.spawned;
-        await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
-        const result = await attempt.exited;
-        if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
-        const output: unknown = JSON.parse(attempt.output());
-        if (!output || typeof output !== 'object' || !('build' in output) || typeof output.build !== 'string' || !output.build.trim()) throw new Error('Builder returned no artifact');
-        return output.build;
-      } finally {
-        clearTimeout(timer);
-        signal.removeEventListener('abort', cancel);
-        if (attempt) await attempt.stop();
-        forget();
-      }
+        if (before) {
+          const cancelled = new Promise<never>((_, reject) => { if (signal.aborted) reject(new Error('Worker build failed')); else signal.addEventListener('abort', () => reject(new Error('Worker build failed')), { once: true }); });
+          void cancelled.catch(() => {});
+          await Promise.race([before, cancelled]);
+        }
+        const abort = new AbortController();
+        const cancel = () => abort.abort();
+        signal.addEventListener('abort', cancel, { once: true });
+        if (signal.aborted) cancel();
+        const timer = setTimeout(cancel, buildTimeoutMs);
+        let attempt: ReturnType<typeof launch> | undefined, forget = () => {};
+        try {
+          attempt = launch(buildPlan, abort.signal, runtime);
+          forget = noted(attempt, job);
+          await attempt.spawned;
+          await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
+          const result = await attempt.exited;
+          if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
+          const output: unknown = JSON.parse(attempt.output());
+          if (!output || typeof output !== 'object' || !('build' in output) || typeof output.build !== 'string' || !output.build.trim()) throw new Error('Builder returned no artifact');
+          return output.build;
+        } finally {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', cancel);
+          if (attempt) await attempt.stop();
+          forget();
+        }
       })(); } finally { ended(); if (building === mine) building = undefined; }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {

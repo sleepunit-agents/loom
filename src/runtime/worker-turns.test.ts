@@ -16,7 +16,7 @@ it('names what a job\'s body needs to itself: its account, and each port it publ
     .toEqual(['account:a', 'port:8080', 'port:9000']);
 });
 it('gives one account to one job at a time, and to the next when the first gives it up', async () => {
-  const turns = workerTurns(), first = asking(turns, ['account:a']), second = asking(turns, ['account:a']), other = asking(turns, ['account:b']);
+  const turns = workerTurns({ accounts: 1 }), first = asking(turns, ['account:a']), second = asking(turns, ['account:a']), other = asking(turns, ['account:b']);
   await settle();
   expect([first.given, second.given, other.given]).toEqual([true, false, true]);
   first.release(); await settle(); expect(second.given).toBe(true);
@@ -36,12 +36,11 @@ it('lets as many bodies run on one account as it is told, and makes the next wai
   const wide = workerTurns({ accounts: 4 }), first = asking(wide, ['account:a', 'port:8080']), second = asking(wide, ['account:a', 'port:8080']), third = asking(wide, ['account:a']);
   await settle(); expect([first.given, second.given, third.given]).toEqual([true, false, false]);
   first.release(); await settle(); expect([second.given, third.given]).toEqual([true, true]);
-  // Left unsaid, an account is one body's at a time; and the number is a whole one of at least 1.
-  expect(asking(workerTurns(), ['account:a']).given || true).toBe(true);
+  // The number is a whole one of at least 1.
   for (const accounts of [0, -1, 1.5, Number.NaN]) expect(() => workerTurns({ accounts })).toThrow('Invalid account slots');
 });
 it('serves in the order asked, and never lets a later job in front of an earlier one that wants the same thing', async () => {
-  const turns = workerTurns(), holder = asking(turns, ['account:a']);
+  const turns = workerTurns({ accounts: 1 }), holder = asking(turns, ['account:a']);
   // Wants two things, one of them held. A later job wants only the free one: it waits behind.
   const both = asking(turns, ['account:a', 'port:8080']), later = asking(turns, ['port:8080']), apart = asking(turns, ['port:9000']);
   await settle(); expect([both.given, later.given, apart.given]).toEqual([false, false, true]);
@@ -49,12 +48,12 @@ it('serves in the order asked, and never lets a later job in front of an earlier
   both.release(); await settle(); expect(later.given).toBe(true);
 });
 it('takes everything at once or nothing, so two jobs cannot hold half of what each other needs', async () => {
-  const turns = workerTurns(), one = asking(turns, ['account:a', 'port:1']), two = asking(turns, ['port:1', 'account:a']);
+  const turns = workerTurns({ accounts: 1 }), one = asking(turns, ['account:a', 'port:1']), two = asking(turns, ['port:1', 'account:a']);
   await settle(); expect([one.given, two.given]).toEqual([true, false]);
   one.release(); await settle(); expect(two.given).toBe(true);
 });
 it('lets a job that is stopped leave the wait, and lets those behind it move up', async () => {
-  const turns = workerTurns(), abort = new AbortController(), holder = asking(turns, ['account:a']);
+  const turns = workerTurns({ accounts: 1 }), abort = new AbortController(), holder = asking(turns, ['account:a']);
   const stopped = asking(turns, ['account:a', 'port:1'], abort.signal), behind = asking(turns, ['port:1']);
   await settle(); expect([stopped.given, behind.given]).toEqual([false, false]);
   abort.abort(); await settle();

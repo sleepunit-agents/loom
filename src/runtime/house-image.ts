@@ -31,10 +31,14 @@ const LEFTOVER_IMAGES = '24h', LEFTOVER_CACHE = '168h';
 /** How a house image's name begins, and how many hex digits of the house's digest follow. */
 const PREFIX = 'localhost/loom-house-', HOUSE_DIGITS = 16;
 const IMAGE_ID = new RegExp(`^(sha256:)?${SHA256_HEX_WITHIN}$`);
-/** A house image's name: the house, then the commit (the one shape of a commit, apps/merge-target.ts). */
-const NAME = new RegExp(`^${PREFIX}[0-9a-f]{${HOUSE_DIGITS}}:${COMMIT.source.slice(1, -1)}$`);
-/** Whether this is the name of a house image, the one shape asked about everywhere an image is named. */
-export const houseImageName = (image: unknown): image is string => typeof image === 'string' && NAME.test(image);
+const HOUSE = new RegExp(`^[0-9a-f]{${HOUSE_DIGITS}}$`);
+/** Whether this is the name of a house image, the one shape asked about everywhere an image is named: how
+ * it begins, the house's digits, a colon, and a commit (the one shape of a commit, apps/merge-target.ts). */
+export const houseImageName = (image: unknown): image is string => {
+  if (typeof image !== 'string' || !image.startsWith(PREFIX)) return false;
+  const [house, commit, ...more] = image.slice(PREFIX.length).split(':');
+  return more.length === 0 && HOUSE.test(house) && commit !== undefined && COMMIT.test(commit);
+};
 /** A harness's name as a label can carry it. */
 const HARNESS = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -92,11 +96,16 @@ export async function houseStart(engine: DockerEngine, image: string, harness: s
   return { id: found.Id, node, body, cwd };
 }
 
+/** Who says whether an image may be removed. Asked for each image at the moment it is about to be removed,
+ * not before: a job can take hold of an image while the removals are under way. `take` answers and, when
+ * it says yes, marks the image as being removed until `done` is called for it, so that whoever wants
+ * that image meanwhile can wait for the removal to be over and not find it half gone. */
+export interface HouseGuard { take(image: string): boolean; done(image: string): void }
 /** After a build: remove the house images this worker no longer needs, and what builds left behind.
- * Never the image named, never by force (the engine refuses one a container uses), and never an error.
+ * Never one the guard holds back, never by force (the engine refuses one a container uses), never an error.
  * @returns false when the engine's images could not be listed, so that nothing was looked at: whoever
  * asked says so. What could not be removed now is found again after the next build. */
-export async function pruneHouses(engine: DockerEngine, keep: readonly string[], leftovers: boolean, signal: AbortSignal): Promise<boolean> {
+export async function pruneHouses(engine: DockerEngine, guard: HouseGuard, leftovers: boolean, signal: AbortSignal): Promise<boolean> {
   let listed: unknown;
   // Only loom's own house images are asked for. Each comes with its labels, so the answer may be long.
   try { listed = await engine.json('GET', `/images/json?filters=${filters({ reference: [`${PREFIX}*`] })}`, undefined, signal, LISTING_MAX); }
@@ -112,8 +121,11 @@ export async function pruneHouses(engine: DockerEngine, keep: readonly string[],
   const perHouse = new Map<string, number>(); let kept = 0;
   for (const { name } of images) {
     const house = name.slice(0, name.indexOf(':')), count = perHouse.get(house) ?? 0;
-    if (keep.includes(name) || (count < HOUSE_IMAGES_PER_HOUSE && kept < HOUSE_IMAGES_KEPT)) { perHouse.set(house, count + 1); kept++; continue; }
+    if (count < HOUSE_IMAGES_PER_HOUSE && kept < HOUSE_IMAGES_KEPT) { perHouse.set(house, count + 1); kept++; continue; }
+    // Held back: it stays, and counts among what is kept.
+    if (!guard.take(name)) { perHouse.set(house, count + 1); kept++; continue; }
     try { await engine.json('DELETE', `/images/${name}`, undefined, signal); } catch { /* in use, or gone */ }
+    finally { guard.done(name); }
   }
   if (!leftovers) return true;
   try { await engine.json('POST', `/images/prune?filters=${filters({ dangling: ['true'], until: [LEFTOVER_IMAGES] })}`, undefined, signal); } catch { /* an engine without it */ }
