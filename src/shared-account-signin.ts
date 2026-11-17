@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { mayAct, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { accountSignins, boxes, inbox, memberAgents, members, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
+import { accountSignins, boxes, inbox, jobs, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
 import { inboxContentChanged } from './core/tempo/volume.js';
 import { OperationError, type Operations } from './core/operations/index.js';
@@ -28,23 +28,31 @@ const open = ['asked', 'started', 'waiting'] as const;
 /** What a pasted sign-in code may look like; anything else is not handed to the worker. */
 export const signInCode = /^[A-Za-z0-9#_.\-/]{8,2048}$/;
 
-export function registerSharedAccountSignIn(operations: Operations, db: DataDatabase, now: () => string, runner: (viewer: Viewer) => Readonly<{ box: string }> | undefined) {
+/** `acting` is the door's proof that an agent's credential is bound to one piece of current work
+ * (sharedCredentials.body). Without it no agent may ask. */
+export function registerSharedAccountSignIn(operations: Operations, db: DataDatabase, now: () => string, runner: (viewer: Viewer) => Readonly<{ box: string }> | undefined,
+  acting: (viewer: Viewer) => Readonly<{ job: string }> | undefined = () => undefined) {
   const account = (key: string) => db.select().from(modelAccounts).where(eq(modelAccounts.id, key)).get();
   const request = (key: string) => db.select().from(accountSignins).where(eq(accountSignins.id, key)).get();
   // A member may ask for an account they may act on, on a machine they may act on: the rule for recording a
-  // sign-in. An agent may ask on behalf of a member who owns it and could ask. Asking finishes nothing: the
-  // account's owner still has to open the page and sign in themselves.
+  // sign-in. Asking finishes nothing: the account's owner still has to open the page and sign in themselves.
   const memberMay = (member: string, input: { account: string; box: string }) => {
     const row = account(input.account), viewer: Viewer = { kind: 'member', id: member };
     if (!row || !mayAct(viewer, { type: 'runtime.model-account', member: row.owner }, sharedSharing(db))) return false;
     const box = db.select().from(boxes).where(and(eq(boxes.id, input.box), isNull(boxes.revokedAt))).get();
     return !!box && mayAct(viewer, { type: 'runtime.box', member: box.owner }, sharedSharing(db));
   };
-  // Who an agent may ask for: the members who own it, and every full owner, who owns every agent.
-  const owners = (agent: string) => [...new Set([...db.select().from(memberAgents).where(eq(memberAgents.agent, agent)).all().map(row => row.member),
-    ...db.select({ id: members.id }).from(members).where(and(eq(members.fullOwner, true), isNull(members.removedAt))).all().map(row => row.id)])];
-  const mayAsk = (viewer: Viewer, input: { account: string; box: string }) => viewer.kind === 'member' ? memberMay(viewer.id, input)
-    : viewer.kind === 'agent' && owners(viewer.id).some(member => memberMay(member, input));
+  // An agent asks with the authority of the one member its current work is for, and of nobody else: not of
+  // its other owners, and not of the household's owners. Work that is for no member can ask for nothing.
+  const workingFor = (viewer: Viewer) => {
+    const work = acting(viewer);
+    return work && db.select({ member: jobs.member }).from(jobs).where(and(eq(jobs.id, work.job), eq(jobs.agent, viewer.id))).get()?.member || undefined;
+  };
+  const mayAsk = (viewer: Viewer, input: { account: string; box: string }) => {
+    if (viewer.kind === 'member') return memberMay(viewer.id, input);
+    const member = viewer.kind === 'agent' ? workingFor(viewer) : undefined;
+    return !!member && memberMay(member, input);
+  };
   const machine = (viewer: Viewer) => {
     if (viewer.kind !== 'runner' || runner(viewer)?.box !== viewer.id) return false;
     const row = db.select({ revokedAt: boxes.revokedAt }).from(boxes).where(eq(boxes.id, viewer.id)).get();
