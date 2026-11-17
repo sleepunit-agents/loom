@@ -8,6 +8,7 @@ import {DOOR_REQUEST_BYTES} from '../core/data/door-limit.js';
 import {HISTORY_BYTES} from '../core/conversations/history-limit.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { privateOrigin } from '../core/private-origin.js';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
@@ -33,9 +34,8 @@ type Card=Reply&{tool:string;cardState:'running'|'done'|'failed'};
 export type BodyDigest={summary:string;ifAbsent?:boolean;items?:{kind:'decision'|'ask'|'task'|'project';text:string}[];question?:PrivateQuestion&{to:string}};
 export function bodyConversationClient(options:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;fetch?:typeof fetch;clock?:Clock;timeoutMs?:number}){
  const clock=options.clock??systemClock,request=options.fetch??fetch,timeout=options.timeoutMs??15_000;
- let origin:URL;try{origin=new URL(options.url);}catch{throw unavailable();}
- if(origin.username||origin.password||origin.search||origin.hash||origin.pathname!=='/'||origin.protocol!=='https:'&&!(origin.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(origin.hostname))
-  ||!options.token||/[\0\r\n]/.test(options.token)||!options.job||!options.conversation||!Number.isSafeInteger(timeout)||timeout<1||timeout>30_000)throw unavailable();
+ let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
+ if(!options.token||/[\0\r\n]/.test(options.token)||!options.job||!options.conversation||!Number.isSafeInteger(timeout)||timeout<1||timeout>30_000)throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]);
  let closed=false,taking=false,received:{id:string;items:string[]}|undefined,settling:{id:string;items:string[]}|undefined;
  const unsettled:string[]=[];

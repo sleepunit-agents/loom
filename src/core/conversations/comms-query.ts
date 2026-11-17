@@ -2,7 +2,7 @@ import { readAll } from '../data/execution.js';
 import { readCommsFolders, readCommsThreads, readCommsRefs, readCommsPage, readCommsSet, type CommsReadSet } from '../data/comms-read.js';
 import { selectedQueryFields } from '../data/queries.js';
 import { readCommsHome } from '../data/comms-home.js';
-import { wordsDeadline } from './retention.js';
+import { wordsDeadline, wordsKept } from './retention.js';
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
 import { and, eq, getTableColumns, is, SQL, type AnyColumn } from 'drizzle-orm';
@@ -45,7 +45,7 @@ export class CommsQueries {
       .innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), eq(conversations.id, expected.conversation), this.allowed(viewer))).get();
     const days = this.readSet?.days??commsKeepDays(this.db);
-    if (!current?.keepUntil || current.at !== expected.at || current.keepUntil !== expected.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
+    if (!current?.keepUntil || current.at !== expected.at || current.keepUntil !== expected.keepUntil) return null;
     const deadline = wordsDeadline(current, days);
     return Number.isFinite(deadline) ? new Date(deadline).toISOString() : null;
   }
@@ -97,9 +97,7 @@ export class CommsQueries {
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread)).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
     const days = () => this.readSet?.days??commsKeepDays(this.db);
-    const retained = (entry: ReturnType<typeof row>, keep: number) => !!entry?.message.words && !!entry.message.keepUntil
-      && Number.isInteger(keep) && keep >= 1 && keep <= 14 && Date.parse(entry.message.keepUntil) > Date.parse(this.now())
-      && Date.parse(entry.message.at) + keep * 86400000 > Date.parse(this.now());
+    const retained = (entry: ReturnType<typeof row>, keep: number) => !!entry?.message.words && wordsKept(entry.message, keep, this.now());
     const same = (message: Message) => ['at', 'sender', 'kind', 'keepUntil', 'inboxItem'].every(key => message[key as keyof Message] === expected[key as keyof typeof expected]);
     const scope = (entry: ReturnType<typeof row>) => !!entry && entry.agent === expected.agent && entry.project === expected.project && entry.member === expected.member && entry.conversation === expected.conversation;
     const before = row(), keep = days();

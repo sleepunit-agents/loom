@@ -3,8 +3,8 @@
  * `loom mcp`), so a file one of them accepts is accepted by all.
  *
  * The address is not one rule, on purpose. The command-line clients take plain http to any host, for a
- * household reached over its own network. `loom mcp` takes its address through `bodyOrigin`
- * (src/runtime/body-bootstrap.ts), which allows plain http to this machine only, because that session
+ * household reached over its own network. `loom mcp` takes its address through `privateOrigin`
+ * (src/core/private-origin.ts), which allows plain http to this machine only, because that session
  * is started by a harness on behalf of an agent. See docs/accepted-tradeoffs.md. */
 import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';

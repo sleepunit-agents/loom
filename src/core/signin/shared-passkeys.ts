@@ -16,6 +16,8 @@ import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
 import { tokens, passkeys } from '../data/schema.js';
 import { verifyRegistration, verifyAssertion, ALGS } from './webauthn.js';
+/** How long a passkey challenge can be answered, and how long the browser is told it has. */
+const CHALLENGE_MS=300000;
 export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpId:string}) {
   type Issued={expires:number;session?:string;token?:string};
   const CAP=1024,signIns=new Map<string,Issued>(),additions=new Map<string,Issued>();
@@ -30,14 +32,14 @@ export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpI
     for(const [key,value]of set)if(value.expires<=clock.now())set.delete(key);
     // A Map keeps the order things were added in, so its first key is the oldest challenge.
     while(set.size>=CAP)set.delete(set.keys().next().value!);
-    const value=randomBytes(32).toString('base64url');set.set(value,{expires:clock.now()+300000,...binding});return value;
+    const value=randomBytes(32).toString('base64url');set.set(value,{expires:clock.now()+CHALLENGE_MS,...binding});return value;
   };
   const spend=(value:string)=>{const found=signIns.get(value)??additions.get(value);signIns.delete(value);additions.delete(value);if(!found||found.expires<=clock.now())throw Error('Challenge expired');return found;};
   return {
-    loginOptions(){return {challenge:challenge(),rpId:rp.rpId,timeout:300000,userVerification:'required'};},
+    loginOptions(){return {challenge:challenge(),rpId:rp.rpId,timeout:CHALLENGE_MS,userVerification:'required'};},
     registrationOptions(cookie:string){
       const {session,token}=fresh(cookie);
-      return {challenge:challenge({session:session.id,token:token.fingerprint}),rp:{id:rp.rpId,name:'Loom'},user:{id:Buffer.from(token.member!).toString('base64url'),name:token.member!,displayName:token.member!},pubKeyCredParams:ALGS.map(alg=>({type:'public-key',alg})),timeout:300000,authenticatorSelection:{residentKey:'required',userVerification:'required'},attestation:'none',excludeCredentials:db.select().from(passkeys).all().filter(k=>{const t=db.select().from(tokens).where(eq(tokens.fingerprint,k.token)).get();return t?.member===token.member;}).map(k=>({type:'public-key',id:k.id}))};
+      return {challenge:challenge({session:session.id,token:token.fingerprint}),rp:{id:rp.rpId,name:'Loom'},user:{id:Buffer.from(token.member!).toString('base64url'),name:token.member!,displayName:token.member!},pubKeyCredParams:ALGS.map(alg=>({type:'public-key',alg})),timeout:CHALLENGE_MS,authenticatorSelection:{residentKey:'required',userVerification:'required'},attestation:'none',excludeCredentials:db.select().from(passkeys).all().filter(k=>{const t=db.select().from(tokens).where(eq(tokens.fingerprint,k.token)).get();return t?.member===token.member;}).map(k=>({type:'public-key',id:k.id}))};
     },
     register(cookie:string,body:Record<string,unknown>){
       const {session,token}=fresh(cookie), verified=verifyRegistration(body,rp), issued=spend(verified.challenge);

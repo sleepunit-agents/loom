@@ -1,5 +1,6 @@
 /** Standing answers over the approved table. The caller supplies trusted actingFor
  * member ID context; query text or a merely readable record cannot supply that identity. */
+import {parseMergeTarget} from './merge-target.js';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
@@ -61,7 +62,7 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
       if(!input.actingFor||['unknown','?'].includes(input.actingFor)||input.target.length>8192)return;
       const person=personFor(input.actingFor);
       if(person===undefined)return;
-      const target=input.kind==='merge'?/^github:([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#[1-9][0-9]*@[a-f0-9]{40}$/.exec(input.target)?.[1]:input.target;
+      const target=input.kind==='merge'?parseMergeTarget(input.target)?.repository:input.target;
       if(!target)return;
       const lookup=input.kind==='merge'?`github:${target.toLowerCase()}`:target;
       const hits=db.select().from(approvalRules).where(and(eq(approvalRules.kind,input.kind),eq(approvalRules.person,person))).all().flatMap(rule=>{

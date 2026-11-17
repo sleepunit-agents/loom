@@ -1,3 +1,4 @@
+import { ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { bodyInput } from './body-bootstrap.js';
 /** Docker bodies run only in the separate worker. Builds retain their bounded
  * configured worker command; its artifact must be an already-built image. */
@@ -19,7 +20,7 @@ export interface ContainerConfig {
 }
 function deadline(value: number | undefined, fallback: number) {
   const result = value ?? fallback;
-  if (!Number.isSafeInteger(result) || result < 1 || result > 300_000) throw new Error('Invalid Docker deadline');
+  if (!validDeadline(result, STEP_DEADLINE_MAX_MS)) throw new Error('Invalid Docker deadline');
   return result;
 }
 function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, config: ContainerConfig) {
@@ -39,7 +40,7 @@ function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, c
   const env = { [BODY_SCRATCH]: plan.env.TMPDIR || '/tmp', ...plan.env };
   return { Image: image, Entrypoint: [plan.command], Cmd: [...plan.args], WorkingDir: plan.cwd,
     Env: Object.entries(env).map(([key, value]) => {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || value.includes('\0')) throw new Error('Invalid container environment');
+      if (!ENV_NAME.test(key) || value.includes('\0')) throw new Error('Invalid container environment');
       return `${key}=${value}`;
     }),
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,

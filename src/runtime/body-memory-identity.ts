@@ -1,9 +1,10 @@
 /** Private Identity goes to the model, never into assignment/receipt metadata. */
+import {PAGE_NAME} from '../slug.js';
 import {z} from 'zod';
 import type {bodyCommandClient} from './body-command-client.js';
 const section=z.string().nullable();
 const identity=z.object({agent:z.string(),readAt:z.iso.datetime(),creed:section,preferences:section,selfModel:section,topOfMind:section,recent:section,role:section.optional()}).strict();
-const pageName=/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const pageName=PAGE_NAME;
 export const bodyIdentityQuery='query BodyMemory($agent:String!){memoryIdentity(agent:$agent){agent readAt creed preferences selfModel topOfMind recent}}';
 /** The same, with the agent's authored page for where this body was started: roles/<venue>.md beside the creed.
  * A body started by a trigger is on the wake venue, so roles/wake.md is what every lane is told. */

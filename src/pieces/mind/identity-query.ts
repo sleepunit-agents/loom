@@ -1,4 +1,5 @@
 /** A body's Identity is an authored, read-only view of declared private files. */
+import {PAGE_NAME} from '../../slug.js';
 import Database from 'better-sqlite3';
 import {existsSync,readFileSync,realpathSync} from 'node:fs';
 import {isAbsolute,join,relative} from 'node:path';
@@ -15,7 +16,7 @@ import type {QueryDeadlines} from './query-deadlines.js';
 const text={type:GraphQLString},required={type:new GraphQLNonNull(GraphQLString)};
 /** Authored pages beside the creed: one folder per kind, one Markdown file per name. */
 const pageFolders:Readonly<Record<string,string>>={harness:'harnesses',model:'models',role:'roles',project:'projects',client:'clients'};
-const pageName=/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const pageName=PAGE_NAME;
 function identity(directory:string,name:string){
  const path=join(directory,name);if(!existsSync(path))return null;
  const base=realpathSync(directory),target=realpathSync(path),inside=relative(base,target);

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { credentialFingerprint } from '../core/data/authentication.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { privateOrigin } from '../core/private-origin.js';
 import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
@@ -36,10 +37,8 @@ export interface WorkerHttpOptions {
  * a try is given no more time than the budget has left, whatever the request deadline is set to. */
 const FINISH_TRIES = 3, FINISH_PAUSE_MS = 2_000;
 function operationCaller(input: WorkerHttpOptions) {
-  const base = new URL(input.url);
-  if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)))
-    throw new Error('Worker needs HTTPS (HTTP allowed only on loopback)');
-  if (base.username || base.password || base.search || base.hash || base.pathname !== '/') throw new Error('Worker URL must be an origin');
+  let base: URL;
+  try { base = privateOrigin(input.url); } catch { throw new Error('Worker URL must be an HTTPS origin (HTTP allowed only on loopback)'); }
   if (!input.token.trim() || /[\r\n]/.test(input.token)) throw new Error('Worker token is invalid');
   const timeoutMs = input.timeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('Invalid worker request timeout');

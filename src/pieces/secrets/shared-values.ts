@@ -7,8 +7,8 @@ import { createHash, createHmac, createSecretKey } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
-import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents } from '../../core/data/schema.js';
-import { Conversations } from '../../core/conversations/index.js';
+import { members, secrets, secretChanges, secretWriteJournal } from '../../core/data/schema.js';
+import { SecretRequests } from './requests.js';
 import type { HolderWrite } from './holder-store.js';
 import { secretName, secretDescription } from './input.js';
 import { secretHasValue } from './presence.js';
@@ -132,19 +132,8 @@ export class SecretValues {
       // it. The holder, not metadata presence, decides add/replace availability.
       this.db.insert(secrets).values({ name: row.secret, description: row.description, changedAt: at, changedBy: row.member })
         .onConflictDoUpdate({ target: secrets.name, set: { description: row.description, changedAt: at, changedBy: row.member } }).run();
-      if (row.operation === 'remove') {
-        this.db.delete(secretGrants).where(eq(secretGrants.secret, row.secret)).run();
-        const requests = this.db.select().from(secretRequests).where(eq(secretRequests.secret, row.secret)).all();
-        for (const request of requests) {
-          if (request.state !== 'pending' && request.state !== 'allowed') continue;
-          const state = request.state === 'pending' ? 'cancelled' : 'revoked';
-          this.db.update(secretRequests).set({ state, answeredAt: at }).where(eq(secretRequests.id, request.id)).run();
-          new Conversations(this.db, () => at).resolveSource('secret-request', request.id, state);
-        }
-        this.db.delete(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).run();
-        this.db.insert(secretRules).values({ secret: row.secret, answer: 'ask', minutes: 30 })
-          .onConflictDoUpdate({ target: secretRules.secret, set: { answer: 'ask' } }).run();
-      }
+      // What a removal does to requests, grants and the standing answer is the request owner's rule.
+      if (row.operation === 'remove') new SecretRequests(this.db, () => at).removed(row.secret);
       this.db.insert(secretChanges).values({ id: row.id, secret: row.secret,
         action: row.operation === 'remove' ? 'removed' : row.operation, by: row.member, at }).run();
       this.db.update(secretWriteJournal).set({ state: 'committed', completedAt: at }).where(eq(secretWriteJournal.id, row.id)).run();

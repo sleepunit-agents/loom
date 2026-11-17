@@ -1,4 +1,5 @@
 /** Trusted household membership and agent appearance over the shared schema. */
+import { HH_MM } from '../core/tempo/calendar.js';
 import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
@@ -24,7 +25,7 @@ const zone = z.string().min(1).max(100).refine(value => { try { new Intl.DateTim
 export const settingsInput = z.object({
   defaultAgent: id.nullable(), timezone: zone, commsDays: z.number().int().min(1).max(COMMS_DAYS_MAX),
   githubOwner: z.string().refine(value => value === '' || GITHUB_LOGIN.test(value), 'Not a GitHub name'),
-  backupTarget: z.string().trim().max(500), backupAt: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+  backupTarget: z.string().trim().max(500), backupAt: z.string().regex(HH_MM),
   backupKeep: z.number().int().min(1).max(BACKUP_KEEP_MAX),
   backupRecipients: z.array(z.string().trim().regex(/^(?:age1[0-9a-z]{20,100}|ssh-(?:ed25519|rsa) [A-Za-z0-9+/=]{40,1000}(?: [^\r\n]{0,100})?)$/)).max(50).transform(values => [...new Set(values)].sort()),
 }).partial().strict().refine(value => Object.keys(value).length > 0, 'Name at least one setting');

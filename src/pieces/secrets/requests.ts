@@ -13,6 +13,8 @@ import { secretHasValue } from './presence.js';
 const duration = z.number().int().min(1).max(525600);
 const requestInput = z.object({ id: z.string().min(1).max(200), secret: secretName, agent: secretAgent,
   job: z.string().min(1).optional(), conversation: z.string().min(1).optional(), why: requestReason, minutes: duration }).strict();
+/** How long a standing answer lets a secret be used when no rule has said. */
+const UNSET_RULE_MINUTES = 30;
 export type SecretRequestInput = z.input<typeof requestInput>;
 type Request = typeof secretRequests.$inferSelect;
 export const secretRuleInput = z.object({ secret: secretName, answer: z.enum(['ask', 'auto', 'never']), minutes: duration,
@@ -95,6 +97,31 @@ export class SecretRequests {
       this.db.delete(secretGrants).where(eq(secretGrants.request, id)).run();
       this.db.update(secretRequests).set({ state: 'revoked', answeredAt: this.now() }).where(eq(secretRequests.id, id)).run();
       return this.read(id);
+    });
+  }
+
+  /** One grant, taken back by its id. A grant that answers a request goes with that request's revocation. */
+  revokeGrant(id: string): void {
+    this.db.transaction(() => {
+      const grant = this.db.select().from(secretGrants).where(eq(secretGrants.id, id)).get();
+      if (!grant) throw new Error('Unknown grant');
+      if (grant.request) this.revoke(grant.request);
+      else this.db.delete(secretGrants).where(eq(secretGrants.id, id)).run();
+    });
+  }
+
+  /** The secret's value is gone, so nothing may wait on it or use it: every open request is cancelled,
+   * every allowed one revoked, every grant deleted, and the standing answer returns to asking with no
+   * listed agents. Its length of use is kept. Runs in the caller's transaction, with the value's removal. */
+  removed(secret: string): void {
+    this.db.transaction(() => {
+      for (const request of this.db.select().from(secretRequests).where(eq(secretRequests.secret, secret)).all()) {
+        if (request.state === 'pending') this.cancel(request.id);
+        else if (request.state === 'allowed') this.revoke(request.id);
+      }
+      this.db.delete(secretGrants).where(eq(secretGrants.secret, secret)).run();
+      const minutes = this.db.select().from(secretRules).where(eq(secretRules.secret, secret)).get()?.minutes ?? UNSET_RULE_MINUTES;
+      this.setRule({ secret, answer: 'ask', minutes, agents: [] });
     });
   }
 

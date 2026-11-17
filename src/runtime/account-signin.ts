@@ -3,6 +3,7 @@
  * {"signedIn":true}. Credentials and interactive/provider details stay private.
  * The caller records account/box membership only after this promise succeeds;
  * cancellation/failure cannot prove that an external sign-in was undone. */
+import { STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { spawn } from 'node:child_process';
 import type { ProcessRuntime, WorkerCommand } from './worker-process.js';
 
@@ -27,9 +28,9 @@ const native: ProcessRuntime = {
 export async function signInAccount(plan: WorkerCommand, identity: AccountSignInIdentity,
   options: { signal: AbortSignal; timeoutMs?: number }, runtime: ProcessRuntime = native): Promise<void> {
   const failed = () => new Error('Account sign-in failed');
-  const timeout = options.timeoutMs ?? 300_000;
+  const timeout = options.timeoutMs ?? STEP_DEADLINE_MAX_MS;
   const input = { account: identity.account, owner: identity.owner, provider: identity.provider, box: identity.box };
-  if (options.signal.aborted || !Number.isInteger(timeout) || timeout <= 0 || timeout > 300_000
+  if (options.signal.aborted || !validDeadline(timeout, STEP_DEADLINE_MAX_MS)
     || !plan.command || !plan.cwd || Object.values(input).some(value => typeof value !== 'string' || !value.trim())) throw failed();
   const config = { command: plan.command, args: [...plan.args], cwd: plan.cwd, env: { ...plan.env } };
   return new Promise<void>((resolve, reject) => {

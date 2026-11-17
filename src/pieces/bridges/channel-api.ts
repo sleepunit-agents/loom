@@ -1,3 +1,4 @@
+import { isDiscordId } from './discord-id.js';
 import type { Clock } from '../../core/clock.js';
 import type { SecretUse } from '../secrets/role.js';
 
@@ -19,7 +20,7 @@ export function bridgeChannelApi(input: {
   const request = input.request ?? fetch;
   return {
     async channel(id: string): Promise<Json | undefined> {
-      const valid = platform === 'discord' ? /^\d{1,20}$/.test(id) && /^\d{1,20}$/.test(workspace)
+      const valid = platform === 'discord' ? isDiscordId(id) && isDiscordId(workspace)
         : /^[A-Z][A-Z0-9]{1,199}$/.test(id) && /^T[A-Z0-9]{1,199}$/.test(workspace);
       if (!valid) return undefined;
       let expired = false, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;

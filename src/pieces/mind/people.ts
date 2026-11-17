@@ -4,7 +4,7 @@ import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
 import {resolveCardReference} from './card-references.js';
 import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js';
-import {MAX_REVISIONS} from '../../backends/cards.js';
+import {MAX_REVISIONS,fieldState,freshUntil} from '../../backends/cards.js';
 export type { PersonRecord } from './people-model.js';
 interface Row { slug: string; card_json: string; updated: string; synthesized_at: string | null; archived_at: string | null }
 const has = (db: Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
@@ -82,7 +82,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       }
       const fields = Object.entries(card.where ?? {}).map(([key,field]) => ({ key, value: Array.isArray(field.value) ? field.value.join(', ') : String(field.value),...(field.label?{label:field.label}:{}),
         ...(field.source ? {source:field.source} : {}), ...(field.verified_at ? {verifiedAt:field.verified_at} : {}),
-        state: !field.verified_at ? 'unverified' as const : now > Date.parse(field.verified_at)+(field.stale_after_days??14)*86400000 ? 'stale' as const : 'fresh' as const }));
+        state: ({ok:'fresh',stale:'stale',unverified:'unverified'} as const)[fieldState(field,now).kind] }));
       return { id,slug,...(agent ? {agent} : {}),name:card.name,card,updated:row.updated,synthesizedAt:row.synthesized_at,
         projects,...(!agent && Object.hasOwn(options.sharing().members,slug) ? {ownership:options.sharing().members[slug]}:{}),
         kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== reference ? {mergedFrom:reference} : {}) };
@@ -105,7 +105,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     for(const db of sources.values()){
       try{if(has(db,'people'))for(const raw of db.prepare('SELECT card_json FROM people WHERE archived_at IS NULL').iterate()){
         try{const card=JSON.parse((raw as {card_json:string}).card_json) as PersonCard;
-          for(const field of Object.values(card.where??{}))if(field.verified_at)add(Date.parse(field.verified_at)+(field.stale_after_days??14)*86400000+1);
+          for(const field of Object.values(card.where??{}))add((freshUntil(field)??NaN)+1);
         }catch{/* Malformed cards remain explicit read errors, not timer inputs. */}
       }}catch{/* A failed source is reported by its reader. */}
       try{if(has(db,'memories'))for(const raw of db.prepare("SELECT expires_at,metadata FROM memories WHERE archived=0 AND category IN ('user','feedback') AND expires_at IS NOT NULL").iterate()){

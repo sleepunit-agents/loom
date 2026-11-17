@@ -1,5 +1,6 @@
 /** One owner intent grants a standing project rule and answers this exact head.
  * The agent still performs any forge action through its own current checks. */
+import {COMMIT,mergeTargetFor} from './apps/merge-target.js';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
@@ -10,7 +11,7 @@ import type {approvalRulesService} from './apps/approval-rules.js';
 import {changeAnswers} from './apps/changes-answers.js';
 import {workAnswersAllowed} from './shared-work-access.js';
 const id=z.string().trim().min(1);
-const inputSchema=z.object({approval:id,change:id,head:z.string().regex(/^[a-f0-9]{40}$/),project:id,person:z.string().max(100)}).strict();
+const inputSchema=z.object({approval:id,change:id,head:z.string().regex(COMMIT),project:id,person:z.string().max(100)}).strict();
 type Input=z.infer<typeof inputSchema>;
 export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>){
  const request=(id:string)=>db.select().from(approvals).where(eq(approvals.id,id)).get();
@@ -19,7 +20,7 @@ export function registerSharedWorkAlways(operations:Operations,db:DataDatabase,s
  const binding=(input:Input)=>{
   const card=request(input.approval),row=change(input.change);
   if(!card||!row||card.kind!=='merge'||card.operation!==null||!row.agent||card.agent!==row.agent
-   ||card.target!==`${row.id}@${input.head}`||row.headCommit!==input.head||card.project!==input.project||row.project!==input.project
+   ||card.target!==mergeTargetFor(row.id,input.head)||row.headCommit!==input.head||card.project!==input.project||row.project!==input.project
    ||!card.actingFor||['unknown','?'].includes(card.actingFor))throw new OperationError('conflict','The merge request changed. Open it again.');
   if(rules.personFor(card.actingFor)!==input.person)throw new OperationError('conflict','The person for this request changed. Open it again.');
   return {card,row};

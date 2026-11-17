@@ -14,6 +14,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable } from 'node:stream';
 import type { WorkerAssignment } from './worker.js';
 import type { HarnessTraits } from './harness-traits.js';
+import { TOOL_NAME } from './body-model-tools.js';
 
 export interface HarnessReply { text: string; model: string; actions: { model: string }[] }
 export type HarnessSpawn = (command: string, args: readonly string[], options: {
@@ -47,7 +48,7 @@ const outputLimit = 1_048_576;
 export const BODY_SCRATCH = 'LOOM_BODY_SCRATCH';
 /** Every tool loom serves a body is named with this prefix, then the tool's own name. */
 export const harnessToolPrefix = 'mcp__loom_secrets__';
-const toolName = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+const toolName = TOOL_NAME;
 const toolLimit = 34;
 
 /** The tools a body may use, as their own names without the prefix. Refuses a list that is too long,

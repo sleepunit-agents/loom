@@ -1,3 +1,4 @@
+import { ageCutoff, keepUntilFor, validKeepDays, wordsKept } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries,hasPrivateInboxWords,sealPrivateInbox} from './private-inbox-words.js';
 import { inboxContentChanged } from '../tempo/volume.js';
@@ -44,9 +45,9 @@ export class CommsMessages {
   private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[], detail: TurnDetails = {}): Message {
     const { thread, cv } = this.context(input.thread), at = this.now();
     const days = commsKeepDays(this.db);
-    if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
+    if (!validKeepDays(days)) throw new Error('Invalid Comms keep time');
     const seq = (this.db.select({ seq: max(messages.seq) }).from(messages).where(eq(messages.thread, thread.id)).get()?.seq ?? 0) + 1;
-    const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: new Date(Date.parse(at) + days * 86400000).toISOString() }).returning().get();
+    const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: keepUntilFor(at, days) }).returning().get();
     // threads.last_at and conversations.last_at are two columns for one fact. They are
     // only ever written here, together, from the one time read above.
     this.db.update(threads).set({ lastAt: at }).where(eq(threads.id, thread.id)).run();
@@ -224,9 +225,7 @@ export class CommsMessages {
   async words(thread: string, seq: number): Promise<string | null> {
     const row = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
     const keepDays = () => commsKeepDays(this.db);
-    const retained = (message: Message | undefined, days: number) => !!message?.words && !!message.keepUntil
-      && Number.isInteger(days) && days >= 1 && days <= 14
-      && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+    const retained = (message: Message | undefined, days: number) => !!message?.words && wordsKept(message, days, this.now());
     const days = keepDays();
     if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
@@ -237,8 +236,8 @@ export class CommsMessages {
 
   expire(): number {
     const days = commsKeepDays(this.db);
-    if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
-    const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
+    if (!validKeepDays(days)) throw new Error('Invalid Comms keep time');
+    const at = this.now(), cutoff = ageCutoff(at, days);
     let expired=0;
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     expired+=expirePrivateBridgeWords(this.db,cutoff);

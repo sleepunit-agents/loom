@@ -3,7 +3,7 @@ import { selectedQueryFields } from '../data/queries.js';
 import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import {privateInboxAnswer,hasPrivateInboxPayload,privateInboxEnvelope,privateInboxDeadline,privateInboxQuestion,isPrivateInboxQuestion} from './private-inbox-words.js';
-import { wordsDeadline } from './retention.js';
+import { wordsDeadline, wordsKept } from './retention.js';
 import { answerable } from './answer-rule.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
@@ -41,8 +41,7 @@ export class InboxQueries {
   }
   private keepDays() { if(this.readSet)return this.readSet.days; return commsKeepDays(this.db); }
   private retainedMessage(message: typeof messages.$inferSelect | undefined, days: number): boolean {
-    return !!message?.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
-      && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+    return !!message?.words && wordsKept(message, days, this.now());
   }
   private current(viewer: Viewer, id: string) {
     if(this.readSet)return this.readSet.item(id);
@@ -227,7 +226,7 @@ export class InboxQueries {
   }
   private deadline(message: Pick<typeof messages.$inferSelect, 'at' | 'keepUntil'> | undefined): string | null {
     const days = this.keepDays();
-    if (!message?.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
+    if (!message?.keepUntil) return null;
     const at = wordsDeadline(message, days);
     return Number.isFinite(at) ? new Date(at).toISOString() : null;
   }

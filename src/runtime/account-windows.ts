@@ -17,7 +17,10 @@ export function readAccountWindows(db: DataDatabase, account: string): QuotaWind
 }
 
 /** The summary on `model_accounts` (usage, read time, reset, has room) is worked out from the windows.
- * Not exported: recordAccountWindows is its one caller, so the summary can never be written without them. */
+ * Not exported: recordAccountWindows is its one caller, so the summary can never be written without them.
+ * `has_room` has one other writer, accountUsageUnavailable, which sets it false when a provider read fails
+ * and changes no window. So do not work `has_room` out again from the windows: that would reopen admission
+ * after a failed read (currentAccountCapacity reads both). */
 function recordSummary(db: DataDatabase, input: {
   account: string; owner: string; provider: string; windows: readonly QuotaWindow[]; now: string;
 }) {

@@ -1,4 +1,5 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
+import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -14,12 +15,12 @@ import type { WorkerExecutor } from './worker.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
-const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
-const containerDeadline = z.number().int().min(1).max(300_000);
+const containerCommand = runnerCommand.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(ENV_NAME), commandString) });
+const stepDeadline = z.number().int().min(1).max(STEP_DEADLINE_MAX_MS);
 const accountCommand = z.object({
   command,
   account: z.object({ account: z.string().trim().min(1), owner: z.string().trim().min(1), provider: z.string().trim().min(1) }).strict(),
-  timeoutMs: z.number().int().min(1).max(300_000).optional(),
+  timeoutMs: stepDeadline.optional(),
 }).strict();
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
 const signInCommand = accountCommand.extend({ box: z.string().trim().min(1) });
@@ -30,7 +31,7 @@ const configSchema = z.object({
    * body's scratch directory, so that the worker after it can end them if this one is killed
    * (worker-left.ts). Left out, it is a directory under the temporary directory named for this user and machine. */
   state: commandString.startsWith('/').optional(),
-  build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), runnerCommand),
+  build: command, buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(), runners: z.record(z.string(), runnerCommand),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
@@ -38,8 +39,8 @@ const configSchema = z.object({
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
     intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(900_000).optional() }).strict().optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
-    setupTimeoutMs: containerDeadline.optional(),
-    cleanupTimeoutMs: containerDeadline.optional() }).strict().optional(),
+    setupTimeoutMs: stepDeadline.optional(),
+    cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),
 }).strict().superRefine((config, context) => {
   const accounts = config.accountUsage?.readers.map(reader => reader.account.account) ?? [];
   if (new Set(accounts).size !== accounts.length) context.addIssue({ code: 'custom', message: 'Duplicate account quota reader' });

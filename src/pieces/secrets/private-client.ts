@@ -1,17 +1,17 @@
 /** Worker/body recipient. Binary values bypass common operation envelopes.
  * One read and one metadata ACK; uncertainty erases bytes instead of replaying. */
+import {SECRET_USE_ID} from './use-id.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
+import {privateOrigin} from '../../core/private-origin.js';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
 class PendingRepository extends Error {}
 const unavailable=()=>new Error('Private secret input unavailable');
 const aliases=z.object({aliases:z.array(z.object({alias:z.string().min(1).max(200)}).strict()).max(128),pending:z.literal(true).optional()}).strict();
 export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number}){
- let origin:URL;try{origin=new URL(options.url);}catch{throw unavailable();}
+ let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
  const clock=options.clock??systemClock,request=options.fetch??fetch;
- if(origin.username||origin.password||origin.search||origin.hash||origin.pathname!=='/'
-  ||origin.protocol!=='https:'&&!(origin.protocol==='http:'&&['127.0.0.1','localhost','[::1]'].includes(origin.hostname))
-  ||!options.token||/[\0\r\n]/.test(options.token))throw unavailable();
+ if(!options.token||/[\0\r\n]/.test(options.token))throw unavailable();
  const timeout=options.timeoutMs??15000;if(!Number.isSafeInteger(timeout)||timeout<1||timeout>15000)throw unavailable();
  let closed=false;const controllers=new Set<AbortController>(),owned=new Set<Uint8Array>(),batches=new Set<Map<string,Buffer>>();
  const cancelAll=()=>{for(const controller of controllers)controller.abort();for(const bytes of owned)bytes.fill(0);for(const batch of batches){for(const bytes of batch.values())bytes.fill(0);batch.clear();}};
@@ -51,7 +51,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    const received=await post('read',input,current,signal,65536);value=received.bytes;owned.add(value);
    if(optional&&received.response.status===204){value.fill(0);owned.delete(value);return undefined;}
    const use=received.response.headers.get('x-loom-secret-use');
-   if(received.response.headers.get('content-type')?.split(';')[0]!=='application/octet-stream'||!use||!/^use-input-[a-f0-9]{64}$/.test(use)||!value.length)throw unavailable();
+   if(received.response.headers.get('content-type')?.split(';')[0]!=='application/octet-stream'||!use||!SECRET_USE_ID.test(use)||!value.length)throw unavailable();
    const ack=await post('confirm',{use,...(job?{job}:{})},current,signal,4096);
    try{if(!z.object({confirmed:z.literal(true)}).strict().safeParse(JSON.parse(ack.bytes.toString('utf8'))).success||!current())throw unavailable();}finally{ack.bytes.fill(0);}
    owned.delete(value);return value;

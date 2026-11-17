@@ -1,3 +1,4 @@
+import {SECRET_USE_ID} from './pieces/secrets/use-id.js';
 import {startupRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
  * Owners can write values in Settings; only the actual granted job receives
@@ -21,7 +22,7 @@ const readInput=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('startup'),alias:z.string().min(1).max(200)}).strict(),
  z.object({kind:z.literal('repository'),job:z.string().min(1).max(200)}).strict(),
 ]);
-const confirmInput=z.object({use:z.string().regex(/^use-input-[a-f0-9]{64}$/),job:z.string().min(1).max(200).optional()}).strict();
+const confirmInput=z.object({use:z.string().regex(SECRET_USE_ID),job:z.string().min(1).max(200).optional()}).strict();
 const binding=(row:typeof jobs.$inferSelect)=>JSON.stringify([row.id,row.agent,row.box,row.conversation,row.member,row.project,row.houseRepository,row.houseFile,row.houseBranch]);
 export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPrivateInputs;credentials:Credentials;
  readJson(request:Request,abort:AbortController):Promise<unknown>;available():boolean}){

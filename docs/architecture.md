@@ -74,11 +74,16 @@ facts in `src/shared-sharing.ts`. Parts call each other directly in process and 
 policy of their own; the `src/shared-*.ts` files are where each part meets the door.
 
 A few rules that every part needs are stated once: the slug pattern and its three lengths
-in `src/slug.ts`, how long Comms keeps words in `src/core/data/comms-days.ts`, what an
+in `src/slug.ts`, how long Comms keeps words in `src/core/data/comms-days.ts` (the limit)
+and `src/core/conversations/retention.ts` (when a message's words stop being kept), what an
 unset household has (its time zone among them) in `src/core/data/household-settings.ts`,
 how a client outside the program reads its address and token in `src/cli/connection.ts`,
 and the size of one request in `src/core/data/door-limit.ts`, which the door's three ways
-in and `loom-taskstore` share. `src/single-home.contract.test.ts` and
+in and `loom-taskstore` share. So are the address a credential may be sent to
+(`src/core/private-origin.ts`), when a card's field is stale (`src/backends/cards.ts`), a
+merge approval's target (`src/apps/merge-target.ts`), a worker's configuration limits
+(`src/runtime/worker-limits.ts`) and the id of a private secret use
+(`src/pieces/secrets/use-id.ts`). `src/single-home.contract.test.ts` and
 `src/stored-data.contract.test.ts` fail when one of these is copied again in the files
 they name.
 
@@ -213,6 +218,6 @@ history.
 ## Elsewhere
 
 - `web`: the browser app, built by Vite into `dist/web` and served by the program.
-- `scripts`: build, CI and acceptance scripts; `scripts/generate-data-schema.ts` writes `assets/data/schema.sql`. They import the build (`dist`), not `src`.
+- `scripts`: build, CI and acceptance scripts. Those that run the program import the build (`dist`), so `npx tsc -p .` comes first. Three import `src` instead, because they are run from source by `tsx` or `vitest`: `scripts/generate-data-schema.ts` (`npm run schema:generate`, which writes `assets/data/schema.sql`), `scripts/rebuild-access-actions.test.mjs` and `scripts/rebuild-work-visibility.test.mjs`. `scripts/ci-runners.test.ts` reads three test files under `src/ui` as text.
 - Test fixtures are named `*.fixture.ts` beside the tests that use them, or live in `test/fixtures`; neither is compiled into `dist`.
 - `docs/specs`: the designs each part was built from. Several describe the older program; where one disagrees with this page, the code decides.

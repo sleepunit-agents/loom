@@ -1,3 +1,4 @@
+import { parseMergeTarget } from './merge-target.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -58,7 +59,7 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
   return {
     request(input: ApprovalRequest) {
       const value = request.parse(input);
-      if (value.kind === 'merge' && !/^github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*@[0-9a-f]{40}$/.test(value.target)) throw new Error('A merge approval must name one exact commit');
+      if (value.kind === 'merge' && !parseMergeTarget(value.target)) throw new Error('A merge approval must name one exact commit');
       if ((value.kind === 'setting' || value.kind === 'dangerous') && (!value.operation || !value.changeSummary)) throw new Error('A proposed change needs an operation and before/after summary');
       if (value.operation && !operations.has(value.operation)) throw new Error('Unknown approved operation');
       return db.transaction(() => {

@@ -1,11 +1,9 @@
 /** Safe household display projection for Tempo; never expose settings wholesale. */
-import { and, eq } from 'drizzle-orm';
 import { GraphQLInt, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { householdTimezone } from '../data/household-settings.js';
-import { tempoSettings } from '../data/schema.js';
-import { defaultTimings } from './volume.js';
+import { readTimings } from './volume.js';
 const timings = new GraphQLObjectType({ name: 'TempoTimings', fields: Object.fromEntries(['settleSeconds', 'dimDays', 'muteDays'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])) });
 export function tempoQueryFields(db: DataDatabase, viewer: Viewer) {
  return { tempoTimezone: { type: GraphQLString,
@@ -16,8 +14,7 @@ export function tempoQueryFields(db: DataDatabase, viewer: Viewer) {
  tempoTimings: { type: timings,
    resolve: () => {
      if (viewer.kind !== 'member' && viewer.kind !== 'agent') return null;
-     const row = db.select().from(tempoSettings).where(and(eq(tempoSettings.whoKind, viewer.kind === 'member' ? 'person' : 'agent'), eq(tempoSettings.who, viewer.id))).get();
-     return row ? { settleSeconds: row.settleSeconds, dimDays: row.dimDays, muteDays: row.muteDays } : { ...defaultTimings };
+     return readTimings(db, { kind: viewer.kind === 'member' ? 'person' : 'agent', id: viewer.id });
    },
  } };
 }
