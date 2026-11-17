@@ -4,7 +4,7 @@ import { relaySignIn, type SignInRemote } from './account-signin-relay.js';
 const request = { id: 'signin-1', account: 'account', owner: 'member', provider: 'provider' };
 /** A stand-in for a provider's sign-in program, speaking the same files. Its last argument is the directory. */
 const program = (body: string) => ({ command: process.execPath, args: ['-e', `const fs=require('fs'),dir=process.argv.at(-1),at=n=>dir+'/'+n;${body}`], cwd: process.cwd(), env: { PATH: process.env.PATH ?? '' } });
-const waitForCode = `const t=setInterval(()=>{if(fs.existsSync(at('code'))){const c=fs.readFileSync(at('code'),'utf8');fs.unlinkSync(at('code'));clearInterval(t);if(c==='GOODCODE123')process.exit(0);fs.writeFileSync(at('why'),'The page refused that code\\nPRIVATE SECOND LINE');process.exit(1);}},20);`;
+const waitForCode = `const t=setInterval(()=>{if(fs.existsSync(at('code'))){const c=fs.readFileSync(at('code'),'utf8');fs.unlinkSync(at('code'));clearInterval(t);if(c==='GOODCODE123')process.exit(0);fs.writeFileSync(at('why'),'wrong-code\\nPRIVATE SECOND LINE');process.exit(1);}},20);`;
 function remote(codes: (string | null)[] = [], stopAfter = Infinity) {
   const calls: unknown[] = []; let asked = 0;
   const value: SignInRemote = { page: async page => { calls.push(['page', page]); }, done: async done => { calls.push(['done', done]); },
@@ -19,7 +19,7 @@ it('shows the page, hands the answered code to the program once, and reports wha
   expect(r.calls).toEqual([['page', { id: 'signin-1', link: 'https://provider.example/oauth?x=1' }], ['done', { id: 'signin-1', signedIn: true }]]);
   const bad = remote(['WRONGCODE999']);
   expect(await relaySignIn(program(`fs.writeFileSync(at('link'),'https://provider.example/oauth');${waitForCode}`), request, bad.value, options())).toBe(false);
-  expect(bad.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: false, why: 'The page refused that code' }]);
+  expect(bad.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: false, why: 'The provider did not accept the code' }]);
 });
 it('shows a device flow\'s code and waits for the program to finish by itself, never typing anything', async () => {
   const r = remote(['SHOULD-NOT-BE-USED']);
@@ -41,4 +41,13 @@ it('ends the program and says why when loom ends the request, nobody answers in 
   const missing = remote(); expect(await relaySignIn({ command: '/nonexistent/program', args: [], cwd: process.cwd(), env: {} }, request, missing.value, options())).toBe(false);
   expect((missing.calls.at(-1) as [string, { signedIn: boolean }])[1].signedIn).toBe(false);
   expect(existsSync('/tmp')).toBe(true);
+});
+it('carries none of the program\'s own words: a reason outside the list is the plain sentence', async () => {
+  const leak = `fs.writeFileSync(at('link'),'https://provider.example/oauth');setTimeout(()=>{fs.writeFileSync(at('why'),'token sk-PRIVATE-0123456789 was rejected');process.exit(1);},50);`;
+  const r = remote(); expect(await relaySignIn(program(leak), request, r.value, options())).toBe(false);
+  expect(r.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: false, why: 'The provider\'s program says the account is not signed in' }]);
+  expect(JSON.stringify(r.calls)).not.toContain('PRIVATE');
+  const proto = `fs.writeFileSync(at('link'),'https://provider.example/oauth');setTimeout(()=>{fs.writeFileSync(at('why'),'constructor');process.exit(1);},50);`;
+  const p = remote(); await relaySignIn(program(proto), request, p.value, options());
+  expect(p.calls.at(-1)).toEqual(['done', { id: 'signin-1', signedIn: false, why: 'The provider\'s program says the account is not signed in' }]);
 });

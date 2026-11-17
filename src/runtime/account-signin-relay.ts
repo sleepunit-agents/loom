@@ -6,7 +6,7 @@
  *   link        written by the program: the page a person opens
  *   user-code   written by the program, for a device flow: the short code to enter on that page
  *   code        written here, for a paste-code flow: the code the page showed (the program deletes it)
- *   why         written by the program on failure: one plain line
+ *   why         written by the program on failure: one of the words in SIGNIN_REASONS
  * Exit 0 means the provider's own program says the account is signed in. Anything else means it is not.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -24,6 +24,18 @@ export interface SignInRemote {
 export interface SignInProgram { command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>> }
 /** Longer than the provider's page and code last, shorter than loom keeps the request open. */
 export const RELAY_MS = 15 * 60_000;
+/** What a sign-in program may say about a failure: one of these words, alone on the first line of `why`.
+ * Loom shows its own sentence for the word. The program's own text is never carried, because whatever a
+ * provider's program prints could repeat the code or a token, and this text reaches a database row and
+ * the owner's inbox. */
+export const SIGNIN_REASONS: Readonly<Record<string, string>> = Object.freeze({
+  refused: 'The provider refused the sign-in',
+  'wrong-code': 'The provider did not accept the code',
+  expired: 'The page or the code ran out before the sign-in finished',
+  unreachable: 'The provider could not be reached from this machine',
+  'not-installed': 'The provider\'s program is not installed on this machine',
+});
+const UNSAID = 'The provider\'s program says the account is not signed in';
 const first = (path: string, max: number) => { try { return readFileSync(path, 'utf8').split(/\r?\n/)[0].trim().slice(0, max); } catch { return ''; } };
 
 export async function relaySignIn(program: SignInProgram, request: SignInRequest, remote: SignInRemote, options: {
@@ -56,7 +68,7 @@ export async function relaySignIn(program: SignInProgram, request: SignInRequest
     }
     if (options.signal.aborted) { if (!why) why = 'The worker stopped'; kill(); }
     else if (exit === undefined) { if (!why) why = 'Nobody finished the sign-in in time'; kill(); }
-    else { signedIn = exit === 0; if (!signedIn && !why) why = first(at('why'), 300) || 'The provider\'s program says the account is not signed in'; }
+    else { signedIn = exit === 0; if (!signedIn && !why) { const said = first(at('why'), 40); why = Object.hasOwn(SIGNIN_REASONS, said) ? SIGNIN_REASONS[said] : UNSAID; } }
   } catch { signedIn = false; if (!why) why = 'The sign-in could not be run on this machine'; kill(); }
   finally { options.signal.removeEventListener('abort', kill); try { rmSync(dir, { recursive: true, force: true }); } catch { /* nothing kept that matters */ } }
   // Tell loom even when stopping: a request left open would hold the next one back.
