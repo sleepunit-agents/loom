@@ -3,6 +3,7 @@ import {FakeClock} from '../core/clock.js';
 import {bodyStartupSecrets} from './body-secrets.js';
 import type {WorkerAssignment} from './worker.js';
 import {claude,claudeToolSettings} from './claude-body.js';
+import {isHouseSecretAlias} from '../pieces/secrets/input.js';
 const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:'cv',model:'model',account:'account',harness:'claude',brief:'',house:{repository:'r',file:'f',branch:'next'}};
 const clean:(()=>void)[]=[];afterEach(()=>{for(const close of clean.splice(0).reverse())close();vi.restoreAllMocks();});
 function fixture(values=new Map([['GITHUB_TOKEN',Buffer.from('PRIVATE_STARTUP')]]),base:NodeJS.ProcessEnv={PATH:'/usr/bin',ACCOUNT_PROFILE:'/account'}){
@@ -59,7 +60,7 @@ it.each(['failure','abort','close'])('erases already acquired buffers when a lat
  if(mode!=='failure')release(new Response(new Blob(['PRIVATE_SECOND'])));
 });
 it('erases the completed SDK batch when environment validation rejects it',async()=>{
- const f=fixture(new Map([['FIRST_TOKEN',Buffer.from('PRIVATE_FIRST')],['bad-name',Buffer.from('PRIVATE_SECOND')]])),copies:Buffer[]=[],concat=Buffer.concat;
+ const f=fixture(new Map([['FIRST_TOKEN',Buffer.from('PRIVATE_FIRST')],['ACCOUNT_PROFILE',Buffer.from('PRIVATE_SECOND')]])),copies:Buffer[]=[],concat=Buffer.concat;
  vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const bytes=concat(list,total);if(bytes.toString().startsWith('PRIVATE_'))copies.push(bytes);return bytes;});
  await expect(f.start()).rejects.toThrow();expect(copies.length).toBeGreaterThan(0);expect(copies.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.environment).toEqual(f.base);
 });
@@ -68,4 +69,12 @@ it.each([['claude','ANTHROPIC_API_KEY'],['claude','claude_config_dir'],['codex',
  const values=()=>new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]);
  const own=fixture(values());await expect(own.hook.startup({...job,harness},own.bootstrap,own.abort.signal)).rejects.toThrow(/^Startup secret environment unavailable$/);expect(own.environment).toEqual(own.base);
  const other=fixture(values());await other.hook.startup({...job,harness:harness==='agy'?'claude':'agy'},other.bootstrap,other.abort.signal);expect(other.environment[alias]).toBe('PRIVATE_STARTUP');
+});
+
+it('takes exactly the aliases the door that stores them takes, when its own machine and harness add nothing',async()=>{
+ // One rule (isHouseSecretAlias) for both: an alias the owner's door accepted must never be what stops a body.
+ for(const alias of ['DEPLOY_KEY','_x','a1','A'.repeat(200),'deploy-key','a.b','1A','A'.repeat(201),'PATH','home','NODE_OPTIONS','mcp_x','LD_PRELOAD','LOOM_BODY_SCRATCH']){
+  const f=fixture(new Map([[alias,Buffer.from('PRIVATE_STARTUP')]]),{});
+  expect([alias,await f.start().then(()=>true,()=>false)]).toEqual([alias,isHouseSecretAlias(alias)]);
+ }
 });

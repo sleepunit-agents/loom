@@ -1,20 +1,15 @@
 /** Startup values enter only this receiving child's private native environment. */
 import type {Clock} from '../core/clock.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
+import {isHouseSecretAlias} from '../pieces/secrets/input.js';
 import {bodyInput,type BodyBootstrap} from './body-bootstrap.js';
 import type {WorkerAssignment} from './worker.js';
 import {harnessReservesEnv} from './body-harnesses.js';
 const unavailable=()=>new Error('Startup secret environment unavailable');
-// Names no startup secret may take, whatever the harness: how the body finds and runs programs, where it
-// connects, what loom itself hands a body, and the tools protocol's own prefix. The names that sign a harness
-// in to its account, and the ones its adapter sets for its child, are that harness's to list (in its adapter),
-// and only the harness this job runs on is asked.
-const controls=new Set(['PATH','HOME','SHELL','ENV','BASH_ENV','XDG_CONFIG_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR']);
-function reserved(name:string,env:NodeJS.ProcessEnv,harness:string){
- const key=name.toUpperCase();
- return controls.has(key)||/^(?:NODE_|MCP_|LD_|DYLD_|LOOM_BODY_)/.test(key)
-  ||harnessReservesEnv(harness,key,env);
-}
+// What no startup secret may be called on any body is said once, in isHouseSecretAlias. A body adds what only
+// it can know: the names that sign its harness in to its account, and the ones the harness's adapter sets
+// for its child (each harness lists its own, and only the harness this job runs on is asked), and below,
+// any name its own environment already has.
 export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?:typeof fetch;clock?:Clock}={}){
  let closed=false,started=false,active:ReturnType<typeof privateSecretClient>|undefined,unlisten:(()=>void)|undefined;
  const inserted:string[]=[];
@@ -30,7 +25,7 @@ export function bodyStartupSecrets(environment:NodeJS.ProcessEnv,options:{fetch?
    aliases=await active.startup();
    const values:[string,string][]=[];
    for(const [name,bytes] of aliases){
-    if(!/^[A-Za-z_][A-Za-z0-9_]{0,199}$/.test(name)||Object.hasOwn(environment,name)||reserved(name,environment,job.harness))throw unavailable();
+    if(!isHouseSecretAlias(name)||Object.hasOwn(environment,name)||harnessReservesEnv(job.harness,name.toUpperCase(),environment))throw unavailable();
     const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);if(text.includes('\0'))throw unavailable();
     values.push([name,text]);
    }

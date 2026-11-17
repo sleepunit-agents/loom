@@ -8,13 +8,15 @@ import type {DataDatabase} from '../../core/data/database.js';
 import {jobs,secretUses,secretWriteJournal,agentHouseSecrets,secretRequests} from '../../core/data/schema.js';
 import type {SecretValueSource} from './role.js';
 import {SecretRequests,startupRequestId} from './requests.js';
-import {secretName} from './input.js';
+import {secretName,isHouseSecretAlias} from './input.js';
 export class PrivateInputError extends Error {
  constructor(readonly code:'denied'|'conflict'|'unavailable'){super('Private secret input unavailable');}
 }
 /** One hand-off. `standing` is asked each time the grant is checked: may a standing answer serve this
- * job's work now (policy.ts, standingSecretAnswerServes)? The door says. */
-export interface SecretHandOff {job:string;secret:string;attempt:string;standing():boolean}
+ * job's work now (policy.ts, standingSecretAnswerServes)? The door says. `request` is the request whose
+ * grant this hand-off rests on, for the two that have their own (a startup alias, the repository);
+ * without it any grant a body may use counts (SecretRequests.grantFor). */
+export interface SecretHandOff {job:string;secret:string;attempt:string;request?:string;standing():boolean}
 const failed=(code:'denied'|'conflict'|'unavailable'='unavailable')=>new PrivateInputError(code);
 export class SecretPrivateInputs {
  private closed=false;
@@ -25,14 +27,18 @@ export class SecretPrivateInputs {
  readonly requests:SecretRequests;
  constructor(private db:DataDatabase,private clock:Clock,private source:SecretValueSource|undefined,
   private commit:<T>(write:()=>T)=>T){this.requests=new SecretRequests(db,()=>new Date(clock.now()).toISOString());}
- startGrants(job:string,selected?:readonly string[]){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,selected));}
+ /** The worker's grant to fetch the house's repository with this secret, asking for it when it has not been asked. */
+ repositoryGrant(job:string,secret:string){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,[secret],true,'repository'));}
  /** `standing`: may a standing answer serve this job's work (policy.ts, standingSecretAnswerServes)? The door says. */
  startup(job:string,standing:boolean):{aliases:{alias:string}[];pending?:true}{
   if(this.closed)throw failed();
   return this.commit(()=>{
    const target=this.db.select().from(jobs).where(eq(jobs.id,job)).get();if(!target)throw failed('denied');
-   const configured=this.db.select().from(agentHouseSecrets).where(eq(agentHouseSecrets.agent,target.agent)).all();
-   if(configured.length>128)throw failed();
+   // An alias stored before the door held it to the one rule (input.ts, isHouseSecretAlias) is left out:
+   // the body refuses its whole batch for one name it cannot take, and that would fail every job of the agent.
+   const stored=this.db.select().from(agentHouseSecrets).where(eq(agentHouseSecrets.agent,target.agent)).all();
+   if(stored.length>128)throw failed();
+   const configured=stored.filter(row=>isHouseSecretAlias(row.alias));
    const allowed=new Set(this.requests.grantAtStart(job,configured.map(row=>row.secret),standing).map(grant=>grant.secret));
    const pending=configured.some(row=>this.db.select({state:secretRequests.state}).from(secretRequests).where(eq(secretRequests.id,startupRequestId(job,row.secret))).get()?.state==='pending');
    return {aliases:configured.filter(row=>allowed.has(row.secret)).map(({alias})=>({alias})),...(pending?{pending:true as const}:{})};
@@ -51,7 +57,7 @@ export class SecretPrivateInputs {
   if(this.delivered.size>=4096)throw failed();
   const target=this.db.select().from(jobs).where(eq(jobs.id,input.job)).get();if(!target)throw failed('denied');
   const id=secretUseId(target.agent,target.id,input.attempt);
-  const permitted=()=>this.available(current)&&this.db.select({agent:jobs.agent}).from(jobs).where(eq(jobs.id,target.id)).get()?.agent===target.agent&&!!this.requests.grantFor(input.secret,target.agent,target.id,undefined,input.standing())
+  const permitted=()=>this.available(current)&&this.db.select({agent:jobs.agent}).from(jobs).where(eq(jobs.id,target.id)).get()?.agent===target.agent&&!!this.requests.grantFor(input.secret,target.agent,target.id,input.request,input.standing())
    &&!this.db.select({id:secretWriteJournal.id}).from(secretWriteJournal).where(and(eq(secretWriteJournal.secret,input.secret),eq(secretWriteJournal.state,'prepared'))).get();
   this.commit(()=>{
    if(!permitted())throw failed('denied');

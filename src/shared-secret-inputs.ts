@@ -1,5 +1,5 @@
 import {SECRET_USE_ID} from './pieces/secrets/use-id.js';
-import {startupRequestId} from './pieces/secrets/requests.js';
+import {startupRequestId,repositoryRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
  * Owners can write values in Settings; only the actual granted job receives
  * bytes here. Runtime parent access is limited to its configured repo input.
@@ -12,7 +12,8 @@ import {startupRequestId} from './pieces/secrets/requests.js';
  * Two things here are policy.ts's and are asked of it, each time a hand-off is checked: a body is still
  * its agent in the household, for the member its work is for (rules.agentItself); and whether a standing
  * answer serves that work (standingSecretAnswerServes). A worker's read of the repository secret is the
- * worker's, before any body runs, and is not narrowed by the member the job is for. */
+ * worker's, before any body runs, and is not narrowed by the member the job is for; its grant has its own
+ * request (repositoryRequestId) and is counted for no body's read. */
 import {Hono} from 'hono';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
@@ -20,13 +21,13 @@ import type {DataDatabase} from './core/data/database.js';
 import {jobs,agentHouseSecrets,agentRunSettings,secretRequests} from './core/data/schema.js';
 import type {sharedCredentials} from './shared-credentials.js';
 import {SecretPrivateInputs,PrivateInputError} from './pieces/secrets/private-inputs.js';
-import {secretName} from './pieces/secrets/input.js';
+import {secretName,houseSecretAlias} from './pieces/secrets/input.js';
 import {holds,rules,standingSecretAnswerServes} from './policy.js';
 import {sharedSharing} from './shared-sharing.js';
 type Credentials=ReturnType<typeof sharedCredentials>;
 const readInput=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('request'),id:z.uuid(),secret:secretName}).strict(),
- z.object({kind:z.literal('startup'),alias:z.string().min(1).max(200)}).strict(),
+ z.object({kind:z.literal('startup'),alias:houseSecretAlias}).strict(),
  z.object({kind:z.literal('repository'),job:z.string().min(1).max(200)}).strict(),
 ]);
 const confirmInput=z.object({use:z.string().regex(SECRET_USE_ID),job:z.string().min(1).max(200).optional()}).strict();
@@ -71,12 +72,12 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   const input=parsed.data;
   if(input.kind==='repository'?!caller.runner:!caller.body)throw new PrivateInputError('denied');
   const selected=target(caller,input.kind==='repository'?input.job:undefined),job=selected.job;
-  let secret:string,attempt:string,current=selected.current;
+  let secret:string,attempt:string,request:string|undefined,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
   else if(input.kind==='startup'){
    if(!inputs.startup(job.id,standing(caller)).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
-   secret=row.secret;attempt='startup:'+input.alias;
+   secret=row.secret;attempt='startup:'+input.alias;request=startupRequestId(job.id,secret);
    current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret),standing(caller))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
   }else{
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
@@ -87,12 +88,12 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
    };
    if(!repositoryCurrent())throw new PrivateInputError('denied');
    if(!job.houseRepository.trim())return new Response(null,{status:204});
-   inputs.startGrants(job.id,[row.repositorySecret]);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret));
-   if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,startupRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
+   inputs.repositoryGrant(job.id,row.repositorySecret);secret=row.repositorySecret;attempt='repository';request=repositoryRequestId(job.id,secret);current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,repositoryRequestId(job.id,secret));
+   if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,repositoryRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
   }
   if(!current())throw new PrivateInputError('denied');
   // Blob snapshots bytes before erasure; Node's fast Response retains views.
-  return inputs.dispatch({job:job.id,secret,attempt,standing:()=>standing(caller)},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
+  return inputs.dispatch({job:job.id,secret,attempt,request,standing:()=>standing(caller)},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
    headers:{'content-type':'application/octet-stream','cache-control':'no-store','content-length':String(copy.byteLength),'x-loom-secret-use':use},
   });}finally{copy.fill(0);}});
  });

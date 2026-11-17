@@ -3,6 +3,7 @@
 import {SECRET_USE_ID} from './use-id.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
+import {houseSecretAlias} from './input.js';
 import {privateOrigin} from '../../core/private-origin.js';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
 class PendingRepository extends Error {}
@@ -10,7 +11,7 @@ const unavailable=()=>new Error('Private secret input unavailable');
 /** The longest one private read may take, and how long it is given when nobody says. A caller with a longer
  * deadline of its own (the worker) is cut down to this. */
 export const PRIVATE_SECRET_TIMEOUT_MS=15_000;
-const aliases=z.object({aliases:z.array(z.object({alias:z.string().min(1).max(200)}).strict()).max(128),pending:z.literal(true).optional()}).strict();
+const aliases=z.object({aliases:z.array(z.object({alias:houseSecretAlias}).strict()).max(128),pending:z.literal(true).optional()}).strict();
 export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number}){
  let origin:URL;try{origin=privateOrigin(options.url);}catch{throw unavailable();}
  const clock=options.clock??systemClock,request=options.fetch??fetch;

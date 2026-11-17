@@ -200,7 +200,9 @@ it('an owner sets what an agent\'s house is handed at start: the repository secr
  expect((await f.call('command',house)).status).toBe(200);
  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({repositorySecret:'GITHUB',houseRepository:'github:owner/house'});
  for(const bad of [{...house,agent:'nobody'},{...house,repository:'MISSING'},{...house,secrets:[{alias:'A',secret:'MISSING'}]}])expect((await f.call('command',bad)).body).toMatchObject({code:'invalid'});
- for(const bad of [{...house,secrets:[{alias:'A',secret:'GITHUB'},{alias:'A',secret:'DISCORD'}]},{...house,secrets:[{alias:'-x',secret:'GITHUB'}]}])expect((await f.call('command',bad)).status).toBe(400);
+ for(const bad of [{...house,secrets:[{alias:'A',secret:'GITHUB'},{alias:'A',secret:'DISCORD'}]},{...house,secrets:[{alias:'-x',secret:'GITHUB'}]},
+  // An alias is the one rule's: nothing the body that receives it would refuse for its name alone.
+  ...['deploy-key','a.b','PATH','node_options','LOOM_BODY_SCRATCH','A'.repeat(201)].map(alias=>({...house,secrets:[{alias,secret:'GITHUB'}]}))])expect((await f.call('command',bad)).status).toBe(400);
  expect((await f.call('command',{...house,repository:null,secrets:[]})).status).toBe(200);
  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({repositorySecret:null});
  expect(f.db.select().from(agentHouseSecrets).all()).toEqual([]);

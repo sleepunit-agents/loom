@@ -202,7 +202,8 @@ const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent
  * refuses. A body whose member has left the household or lost the agent gets nothing (agentItself).
  *
  * One hand-off is not the body's and is not narrowed: a worker fetches the house's repository with the
- * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). */
+ * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). What
+ * the worker is granted for that is asked for apart and serves no body, in anyone's work. */
 const usesSecretsOnStandingWord: Rule = all(agentItself, any(equal('workingFor', null), { is: 'forItsMember', rule: householdOwner }));
 export function standingSecretAnswerServes(v: Viewer, s: Sharing): boolean {
   return v.kind === 'agent' && holds(usesSecretsOnStandingWord, v, { agent: v.id, workingFor: v.workingFor ?? null }, s);

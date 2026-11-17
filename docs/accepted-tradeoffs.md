@@ -100,8 +100,12 @@ Entries are grouped by the part of the program they belong to.
   (`src/shared-secret-agent-commands.ts`) and by the private routes (`src/shared-secret-inputs.ts`);
   carried as `standing` into `src/pieces/secrets/requests.ts` and `private-inputs.ts`.
 - **One hand-off is not narrowed.** A worker fetches the house's repository with the agent's repository
-  secret while the job is starting, before any body runs, whoever the job is for. The grant that leaves
-  behind was settled by a rule, so the body of that job cannot use it to read the same secret.
+  secret while the job is starting, before any body runs, whoever the job is for. That hand-off has a
+  request of its own (`repositoryRequestId` in `src/pieces/secrets/requests.ts`), settled by a rule or by
+  an owner on a card that does not name the member. The grant it leaves serves that hand-off and nothing
+  else: no body's read counts it (`SecretRequests.grantFor`), whoever allowed it and whoever the job is
+  for. A secret that is both the repository secret and one of the house's startup secrets is asked for
+  twice, once for each.
 - **Why accepted.** Secrets are the household owners' records and no other member may use one. A body
   reaches no further than the member it works for, and nothing stored says which members an owner lets
   use which secret, so the only word that can cover such work is an owner's answer for the job itself.
@@ -141,7 +145,8 @@ Entries are grouped by the part of the program they belong to.
   the agent is refused at every route. The job's binding (agent,
   machine, conversation, member, project, house repository, file and branch) is recorded and must be
   unchanged, with the credential still valid, when the bytes are handed over and when the use is confirmed.
-  A requested secret needs a current grant for that secret and agent, for that job or for the agent alone
+  A requested secret needs a current grant for that secret and agent, for that job or for the agent alone,
+  and not the one a worker was given to fetch the repository
   (`SecretPrivateInputs.dispatch`); a startup secret must be an alias in that job's startup plan with a
   current grant, and still map to the same secret; the repository secret must still be the one the agent's
   run settings name. For a body in the private work of a member who is not a household owner, the grant
@@ -204,6 +209,22 @@ Entries are grouped by the part of the program they belong to.
   so this door gives them nothing they could not take; it does not make it a rule that they may.
 - What would change it: an invitation the member redeems themselves, so that no bearer in their name is
   ever shown to someone else. Then this door refuses a member other than the caller.
+
+### A startup secret's name can still stop a job on one machine or harness
+- Where: `isHouseSecretAlias` in `src/pieces/secrets/input.ts` (the one rule for an alias);
+  `src/runtime/body-secrets.ts` (what a body adds).
+- What: the door that stores a house's startup secrets, the plan loom hands a body and the body all hold an
+  alias to one rule, so an alias the door takes is not refused by the body for its shape or for being a
+  name every body runs by (`PATH`, `NODE_…`, `LOOM_BODY_…`). Two refusals remain the body's alone, and
+  each fails the job at start: an alias that the body's own environment already sets, and one that the
+  job's harness signs in with (`ANTHROPIC_API_KEY` on Claude). An alias stored before the rule that no
+  body could take is left out of the plan, so the job starts without it; saving the house's secrets
+  again refuses it by name.
+- Why accepted: the door cannot know a worker's environment, and a name one harness signs in with is an
+  ordinary secret for a house on another harness. Letting a startup secret replace either would hand a
+  job's account or its machine's settings to whoever sets aliases.
+- What would change it: workers reporting the names their environment sets. Then the door refuses those
+  for agents that run there.
 
 ### A device sign-in's user code stays in the inbox item
 - Where: `src/shared-account-signin.ts` (`runtime.signInPage`).

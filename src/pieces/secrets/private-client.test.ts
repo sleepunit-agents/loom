@@ -25,14 +25,14 @@ it('cancels a pending confirmation on the absolute deadline and disposes late re
  try{const pending=client.granted('TOKEN'),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);await started;clock.advance(15000);await refused;release(new Response(new ReadableStream({cancel})));await fetch.mock.results[1].value;await Promise.resolve();expect(cancel).toHaveBeenCalled();expect(fetch).toHaveBeenCalledTimes(2);}finally{client.close();}
 });
 it('rejects an oversized startup plan without reading any value',async()=>{
- const fetch=vi.fn<typeof globalThis.fetch>(async()=>Response.json({aliases:Array.from({length:129},(_,i)=>({alias:String(i)}))}));const client=privateSecretClient(options(fetch));try{await expect(client.startup()).rejects.toThrow(/^Private secret input unavailable$/);expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
+ const fetch=vi.fn<typeof globalThis.fetch>(async()=>Response.json({aliases:Array.from({length:129},(_,i)=>({alias:'A'+i}))}));const client=privateSecretClient(options(fetch));try{await expect(client.startup()).rejects.toThrow(/^Private secret input unavailable$/);expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
 });
 it('bounds startup plan bytes independently of alias count',async()=>{
  const fetch=vi.fn<typeof globalThis.fetch>(async()=>new Response(' '.repeat(131073)));const client=privateSecretClient(options(fetch));try{await expect(client.startup()).rejects.toThrow(/^Private secret input unavailable$/);expect(fetch).toHaveBeenCalledOnce();}finally{client.close();}
 });
 it('erases every startup value when their aggregate exceeds one MiB',async()=>{
  const values:Buffer[]=[],concat=Buffer.concat,spy=vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const bytes=concat(list,total);if(bytes.length===65536)values.push(bytes);return bytes;});
- const fetch=vi.fn<typeof globalThis.fetch>(async url=>String(url).endsWith('/startup')?Response.json({aliases:Array.from({length:17},(_,i)=>({alias:String(i)}))}):String(url).endsWith('/confirm')?Response.json({confirmed:true}):new Response(new Uint8Array(65536).fill(42),{headers:{'content-type':'application/octet-stream','x-loom-secret-use':use}}));const client=privateSecretClient(options(fetch));
+ const fetch=vi.fn<typeof globalThis.fetch>(async url=>String(url).endsWith('/startup')?Response.json({aliases:Array.from({length:17},(_,i)=>({alias:'A'+i}))}):String(url).endsWith('/confirm')?Response.json({confirmed:true}):new Response(new Uint8Array(65536).fill(42),{headers:{'content-type':'application/octet-stream','x-loom-secret-use':use}}));const client=privateSecretClient(options(fetch));
  try{await expect(client.startup()).rejects.toThrow(/^Private secret input unavailable$/);expect(values).toHaveLength(17);expect(values.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);}finally{client.close();spy.mockRestore();}
 });
 it.each(['close','abort'] as const)('synchronously erases an already confirmed startup batch on %s',async kind=>{

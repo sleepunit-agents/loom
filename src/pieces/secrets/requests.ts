@@ -75,7 +75,7 @@ export class SecretRequests {
         const answer = allow ? 'auto' : 'never';
         const old = this.db.select().from(secretRules).where(eq(secretRules.secret, row.secret)).get();
         const agents = old?.answer === answer ? this.db.select().from(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).all().map(a => ({ agent: a.agent, when: a.when })) : [];
-        const when = row.job && row.id === startupRequestId(row.job, row.secret) ? 'at_start' : 'on_request';
+        const when = row.job && (row.id === startupRequestId(row.job, row.secret) || row.id === repositoryRequestId(row.job, row.secret)) ? 'at_start' : 'on_request';
         if (!agents.some(a => a.agent === row.agent && a.when === when)) agents.push({ agent: row.agent, when });
         this.setRule({ secret: row.secret, answer, minutes: row.minutes, agents });
       }
@@ -139,18 +139,29 @@ export class SecretRequests {
   }
 
   /** A current grant of this secret to this agent: one for this job, or one for the agent and no one job.
-   * Without `standing`, only one a household owner gave for this very job. */
+   * Without `standing`, only one a household owner gave for this very job.
+   *
+   * With `request`, only the grant that request left. Without it, any grant but one: what a worker was
+   * granted to fetch the house's repository (repositoryRequestId) is the worker's hand-off, asked before
+   * any body ran and without naming the member the job is for. It serves that hand-off and nothing a
+   * body asks for, whoever settled it. */
   grantFor(secret: string, agent: string, job?: string, request?: string, standing = true): typeof secretGrants.$inferSelect | undefined {
     if (!secretHasValue(this.db, secret) || !standing && !job) return;
     const at = this.now();
-    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), request ? eq(secretGrants.request, request) : undefined,
+    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent),
+      request ? eq(secretGrants.request, request) : job ? or(isNull(secretGrants.request), ne(secretGrants.request, repositoryRequestId(job, secret))) : undefined,
       standing ? undefined : and(eq(secretGrants.job, job!), ne(secretGrants.grantedBy, BY_RULE)), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
 
   /** Startup permissions use durable requests, so expiry, denial and explicit
    * revocation survive retries and process restarts. Rule edits do not revoke
-   * an already issued grant. Aliases alone never authorize a startup handoff. */
-  grantAtStart(jobId: string, selected?: readonly string[], standing = true): (typeof secretGrants.$inferSelect)[] {
+   * an already issued grant. Aliases alone never authorize a startup handoff.
+   *
+   * `to` says whose hand-off it is: the secrets a body gives its house, or the one secret a worker fetches
+   * the house's repository with. Each has its own request, so an answer to one is never an answer to the
+   * other, even for the same secret and job. */
+  grantAtStart(jobId: string, selected?: readonly string[], standing = true, to: 'house' | 'repository' = 'house'): (typeof secretGrants.$inferSelect)[] {
+    const requestId = to === 'repository' ? repositoryRequestId : startupRequestId;
     z.string().min(1).max(200).parse(jobId);
     return this.db.transaction(() => {
       const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
@@ -160,15 +171,15 @@ export class SecretRequests {
         .where(and(eq(secretRuleAgents.agent, job.agent), eq(secretRuleAgents.when, 'at_start'))).all().filter(rule => !selected || selected.includes(rule.secret));
       for (const rule of rules) {
         if (!secretHasValue(this.db, rule.secret)) continue;
-        const id = startupRequestId(jobId, rule.secret);
+        const id = requestId(jobId, rule.secret);
         if (this.db.select().from(secretRequests).where(eq(secretRequests.id, id)).get()) continue;
         this.request({ id, secret: rule.secret, agent: job.agent, job: jobId,
           ...(job.conversation ? { conversation: job.conversation } : {}),
-          why: 'The house needs this secret when its job starts.', minutes: grantMinutes.parse(rule.minutes) }, 'at_start', standing);
+          why: to === 'repository' ? 'The worker fetches the house\'s repository with this secret before the job starts.' : 'The house needs this secret when its job starts.', minutes: grantMinutes.parse(rule.minutes) }, 'at_start', standing);
       }
       const at = Date.parse(this.now());
       return this.db.select().from(secretGrants).where(and(eq(secretGrants.job, jobId), eq(secretGrants.agent, job.agent))).all()
-        .filter(grant => (!selected || selected.includes(grant.secret)) && grant.request === startupRequestId(jobId, grant.secret)
+        .filter(grant => (!selected || selected.includes(grant.secret)) && grant.request === requestId(jobId, grant.secret)
           && (standing || grant.grantedBy !== BY_RULE)
           && this.read(grant.request).state === 'allowed' && secretHasValue(this.db, grant.secret)
           && Date.parse(grant.grantedAt) <= at && at < Date.parse(grant.expiresAt));
@@ -194,4 +205,9 @@ export class SecretRequests {
 
 export function startupRequestId(job: string, secret: string): string {
   return `q-start-${createHash('sha256').update(JSON.stringify([job, secret])).digest('hex')}`;
+}
+/** The request a worker's fetch of the house's repository files for its secret: not the startup request for
+ * the same secret, so the two are asked and answered apart. */
+export function repositoryRequestId(job: string, secret: string): string {
+  return `q-repo-${createHash('sha256').update(JSON.stringify([job, secret])).digest('hex')}`;
 }
