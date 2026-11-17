@@ -62,6 +62,12 @@ const MISSED_COUNTED = 5_000;
  * - A once-only trigger is a thing that is meant to happen once. It fires late, however late, as soon as
  *   it can, and is never dropped. Running it by hand is that one firing: its time does not fire after.
  * Running a standing trigger by hand leaves its times as they are.
+ * A step of the host's wall clock while the program runs follows from the same rule. The clock reads
+ * the wall again at least every STEP_CHECK_MS (core/clock.ts), so a time that comes after a forward
+ * step is reached while the engine is looking and fires at its time: it came due while the program was
+ * running and able to fire, and is not missed. A time the step passed over never came on this
+ * program's clock; it is found behind at the next look and meets the rule above (fired if within the
+ * grace, else `missed`), exactly as if the program had been down for that long.
  * Two other ways a time passes are not misses. A trigger that is off has no times, so turning it on (or
  * changing its times) starts from now, and a once-only trigger whose time passed while it was off cannot
  * be turned on again. A firing that fails has used its time, is logged `failed` with the stage, and is
