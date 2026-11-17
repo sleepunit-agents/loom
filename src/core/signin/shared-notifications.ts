@@ -3,13 +3,14 @@ import {readPersonalNotificationDevices} from '../data/personal-account-read.js'
  * words enter a push. Attempts are claimed before IO and never blindly retried.
  */
 import {createHash} from 'node:crypto';
+import {currentSession} from '../data/authentication.js';
 import {and,eq,getTableColumns,sql,type AnyColumn,type SQL} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Viewer} from '../../policy.js';
 import type {Clock} from '../clock.js';
 import type {DataDatabase} from '../data/database.js';
 import type {DataWrites} from '../data/writes.js';
-import {members,tokens,sessions,notificationDevices,notificationQueue,inbox} from '../data/schema.js';
+import {members,sessions,notificationDevices,notificationQueue,inbox} from '../data/schema.js';
 import {OperationError,type Operations} from '../operations/index.js';
 import {pushTransport,type PushTransport} from './push-transport.js';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -23,8 +24,9 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
  const member=(viewer:Viewer)=>viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
  const device=(endpoint:string)=>{
   const row=db.select().from(notificationDevices).where(eq(notificationDevices.endpoint,endpoint)).get();if(!row)return;
-  const session=db.select().from(sessions).where(eq(sessions.id,row.session)).get(),token=session&&db.select().from(tokens).where(eq(tokens.fingerprint,session.token)).get();
-  if(!session||session.isAgent||!token||token.kind!=='owner'||token.member!==row.member||token.revokedAt||(token.expiresAt&&Date.parse(token.expiresAt)<=clock.now())||Date.parse(session.issuedAt)+30*86400000<=clock.now()||!db.select().from(members).where(eq(members.id,row.member)).get())return;
+  // A device is pushed to only while the browser that enrolled it is still that person's signed-in browser.
+  const found=currentSession(db,row.session,clock.now());
+  if(!found||found.session.isAgent||found.viewer.kind!=='member'||found.viewer.id!==row.member)return;
   return row;
  };
  const visible=(member:string,id:string)=>db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),eq(inbox.toKind,'person'),eq(inbox.to,member),eq(inbox.state,'waiting'),eq(inbox.volume,'full'),sql`(${inbox.quietUntil} is null or ${inbox.quietUntil} <= ${new Date(clock.now()).toISOString()})`,options.visible({kind:'member',id:member},getTableColumns(inbox)))).get();

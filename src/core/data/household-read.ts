@@ -3,6 +3,7 @@
 import { asc } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
 import { browserRef } from '../signin/shared-browser.js';
+import { sessionEnds, tokenLive } from './authentication.js';
 export function readHouseholdSetup(db: DataDatabase, now: string) {
   const members = db.query.members.findMany({ orderBy: f => [asc(f.position), asc(f.id)],
     with: { memberAgentsByMember: { columns: { agent: true }, orderBy: f => asc(f.agent) } },
@@ -16,7 +17,7 @@ export function readHouseholdSetup(db: DataDatabase, now: string) {
   const sessions = db.query.sessions.findMany().sync().map(row => {
     const token = byToken.get(row.token);
     return { ref: browserRef(row.id), device: row.device, issuedAt: row.issuedAt, seenAt: row.seenAt, isAgent: row.isAgent,
-      ended: Date.parse(row.issuedAt) + (row.isAgent ? 6 * 3600000 : 30 * 86400000) <= at || !(token && !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt) > at)),
+      ended: sessionEnds(row) <= at || !(token && tokenLive(token, at)),
       member: token?.member ?? null, tokenLabel: token?.label ?? null };
   });
   return { members, agents, defaultAgent: settings?.defaultAgent ?? null,

@@ -3,23 +3,22 @@ import { sharedPasskeys } from './shared-passkeys.js';
 import { bodyLimit } from 'hono/body-limit';
 /** Shared-model sign-in links. Trusted issuers name an existing member token;
  * the HTTP door binds that token to the authenticated bearer. */
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
-import { sessions, signinLinks, tokens } from '../data/schema.js';
+import { sessions, signinLinks } from '../data/schema.js';
+import { AGENT_SESSION_MS, PERSON_SESSION_MS, credentialFingerprint as fingerprint, currentSession, freshProof, isAgentBrowser, presentedCookie, presentedCredential } from '../data/authentication.js';
 import type { Authentication } from '../live/index.js';
 import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 
-const fingerprint = (secret: string) => createHash('sha256').update(secret).digest('hex');
 const secret = () => randomBytes(32).toString('hex');
-const LINK_MS = 5 * 60_000, PROOF_MS = 10 * 60_000;
-const PERSON_MS = 30 * 86400_000, AGENT_MS = 6 * 3600_000;
+const LINK_MS = 5 * 60_000;
 function browserDevice(ua: string): { device: string; isAgent: boolean } {
-  const isAgent = /HeadlessChrome\//.test(ua);
+  const isAgent = isAgentBrowser(ua);
   const browser = isAgent ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
   const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
   return { device: system ? `${browser} on ${system}` : browser, isAgent };
@@ -43,7 +42,7 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
         db.delete(signinLinks).where(eq(signinLinks.id, link.id)).run();
         db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: browser.device,
           via: 'link', isAgent: agent, issuedAt: at, seenAt: at, provedAt: at }).run();
-        const expires = Math.min(clock.now() + (agent ? AGENT_MS : PERSON_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity);
+        const expires = Math.min(clock.now() + (agent ? AGENT_SESSION_MS : PERSON_SESSION_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity);
         return { cookie, maxAge: Math.floor((expires - clock.now()) / 1000) };
       });
     },
@@ -108,20 +107,17 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return options.issueProgram(input);
   }));
   routes.post('/api/signin/link', c => {
-    const bearer = /^Bearer ([^\s]{32,4096})$/i.exec(c.req.header('authorization') ?? '')?.[1];
-    const auth = authenticate(c.req.raw);
-    if (!auth?.valid() || auth.viewer.kind !== 'member') return c.json({ error: 'Member authentication required' }, 401);
-    const cookie = c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
-    const token = bearer ? fingerprint(bearer) : cookie ? options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,fingerprint(cookie))).get()?.token : undefined;
+    const auth = authenticate(c.req.raw), presented = presentedCredential(c.req.raw);
+    if (!auth?.valid() || auth.viewer.kind !== 'member' || !presented) return c.json({ error: 'Member authentication required' }, 401);
+    const session = presented.cookie === undefined ? undefined : fingerprint(presented.cookie);
+    const token = presented.bearer !== undefined ? fingerprint(presented.bearer) : options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,session!)).get()?.token;
     if(!token)return c.json({error:'Member authentication required'},401);
     // A browser cookie is not a new proof of identity. It must not turn an
     // aged or automated session into a fresh passkey-enrollment session.
     const freshBrowser = () => {
-      if (bearer) return true;
-      const session = cookie ? options.db.select().from(sessions).where(eq(sessions.id, fingerprint(cookie))).get() : undefined;
-      const proved = session ? Date.parse(session.provedAt) : NaN;
-      return !!session && session.token === token && !session.isAgent && Number.isFinite(proved)
-        && proved <= options.clock.now() && proved + PROOF_MS > options.clock.now();
+      if (!session) return true;
+      const found = currentSession(options.db, session, options.clock.now());
+      return !!found && found.token.fingerprint === token && freshProof(found.session, options.clock.now());
     };
     if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
     // Request input cannot choose a token/member or impersonate an agent.
@@ -137,7 +133,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return c.json({ viewer: auth?.valid() && auth.viewer.kind === 'member' ? auth.viewer : null });
   });
   routes.post('/logout', c => {
-    const cookie = c.req.header('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('loom_ui='))?.slice(8);
+    const cookie = presentedCookie(c.req.raw);
     // A stale cookie may be cleared locally, but must not authorize server
     // changes. Authenticate the cookie itself; an unrelated bearer cannot help.
     const auth = cookie ? authenticate(new Request(c.req.url, { headers: { cookie: `loom_ui=${cookie}` } })) : undefined;
@@ -161,7 +157,8 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     }
     const auth=authenticate(c.req.raw);
     if(!auth?.valid()||auth.viewer.kind!=='member')return c.json({error:'Member authentication required'},403);
-    const cookie=c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
+    // A passkey is added from the browser that is signed in; a bearer token beside the cookie adds nothing.
+    const cookie=presentedCredential(c.req.raw)?.cookie;
     if(!cookie)return c.json({error:'Sign in again before adding a passkey'},403);
     if(path==='/passkeys/options')return c.json(passkeys.registrationOptions(cookie));
     return c.json(write(()=>passkeys.register(cookie,body)));

@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {presentedCredential} from './core/data/authentication.js';
 import {guardedResponse,responseAvailability} from './core/data/guarded-response.js';
 /** MCP is an adapter over the canonical shared HTTP operations and query door. */
 import {McpServer,WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/server';
@@ -11,7 +12,7 @@ import {registerNamedTools} from './shared-mcp-named.js';
 export async function sharedMcpRequest(options:{request:Request;clock:Clock;fetch:typeof fetch;valid():boolean;agent?:string;command(name:string,input:unknown,id?:string):Promise<unknown>;publicOrigin?:string}){
  const {request}=options;
  if(!sameRequestOrigin(request,options.publicOrigin))return Response.json({error:'Cross-origin request refused'},{status:403});
- const token=/^Bearer ([^\s]{32,4096})$/i.exec(request.headers.get('authorization')??'')?.[1];
+ const token=presentedCredential(request)?.bearer;
  if(!token||!options.valid())return Response.json({error:'Authentication required'},{status:401});
  if(request.method!=='POST')return new Response(null,{status:405,headers:{allow:'POST'}});
  const guards:Array<()=>boolean>=[];
