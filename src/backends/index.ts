@@ -11,19 +11,16 @@
  * interfaces in types.ts and swap the concrete classes here. There is
  * deliberately no env-driven backend selector anymore: opinionated.
  */
-import type { KnowledgeSelection, MemorySelection } from '../config.js';
+import type { MemorySelection } from '../config.js';
 import {
   resolveSqliteDbPath,
-  resolveKnowledgeDbPath,
-  assertKnowledgePathsNotCoLocated,
   resolveFastEmbedModel,
   resolveFastEmbedCacheDir,
 } from '../config.js';
 import { SqliteVecBackend } from './sqlite-vec.js';
 import { appendRecallObservation } from './recall-log.js';
-import { SqliteKnowledgeBackend } from './sqlite-knowledge.js';
 import { FastEmbedProvider } from './fastembed.js';
-import type { MemoryBackend, EmbeddingProvider, KnowledgeBackend } from './types.js';
+import type { MemoryBackend, EmbeddingProvider } from './types.js';
 
 /**
  * Process-lifetime caches (store-convergence §Lifecycle).
@@ -85,11 +82,4 @@ export function closeAllBackends(): void {
     }
   }
   backendCache.clear();
-}
-
-export function createKnowledgeBackend(contextDir: string, selection?: KnowledgeSelection): KnowledgeBackend {
-  assertKnowledgePathsNotCoLocated(contextDir, selection);
-  return new SqliteKnowledgeBackend({
-    dbPath: resolveKnowledgeDbPath(contextDir, selection),
-  });
 }

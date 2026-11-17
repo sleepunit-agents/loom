@@ -77,8 +77,8 @@ export async function savePrefs(csrf: string, p: Prefs): Promise<number | undefi
 /** Whether an agent with a pixel sheet wears it (Appearance's "Pixel faces", the person's; on unless turned off). */
 export const PixelContext = createContext(true);
 
-/** loom's six agent marks (src/household.ts MARKS), by their colour: a look can re-point each (looks/looks.css --mark-*). */
-const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
+/** loom's six agent marks, by their colour: a look can re-point each (looks/looks.css --mark-*). */
+export const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
 /** Which of loom's six marks a colour is, if it is one. */
 export const markName = (bg: string): string | undefined => MARKS[bg.toLowerCase()];
 /** An agent's mark colour as the look wears it: the look's own for one of loom's marks (looks.css --mark-*), else the mark's. */
