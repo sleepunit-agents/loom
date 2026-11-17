@@ -12,6 +12,7 @@ import type { ModelRole } from './runtime/placement.js';
 import { liveWorker } from './shared-worker.js';
 import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
+import { claimedJobStates } from './core/data/job-states.js';
 
 const jobInput = z.object({ job: z.string().min(1) });
 const ack = z.object({ ok: z.literal(true) }).strict();
@@ -55,7 +56,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   });
   operations.register({ name: 'runtime.started', write: true, recheckPolicy: true, doors: ['http'],
     input: jobInput.extend({ build: z.string().trim().min(1) }).strict(), output: ack,
-    may: (viewer, input) => assigned(viewer, input.job, ['starting', 'running', 'waiting']),
+    may: (viewer, input) => assigned(viewer, input.job, claimedJobStates),
     run(ctx, input) {
       const result = dispatcher.started(runner(ctx.viewer), input.job, input.build);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return result;

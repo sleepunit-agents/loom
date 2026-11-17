@@ -10,11 +10,12 @@ import { Threads } from '../core/conversations/threads.js';
 import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT } from './job-exit.js';
+import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
+import { SILENCE_MS } from './silence.js';
 
 export type Job = typeof jobs.$inferSelect;
-const active = ['queued', 'starting', 'running', 'waiting'] as const;
 /** Join condition: this job is the one working in the conversation row, that is, its one job that has not ended. */
-export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, active));
+export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, unendedJobStates));
 /** One piece of work gets its first attempt and at most this many more, whatever made each attempt fail. */
 export const JOB_RETRIES = 3;
 /** How long each retry waits, by how many attempts came before it. A start that failed (no body ran) is
@@ -58,7 +59,7 @@ export class Jobs {
     return this.db.transaction(() => {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
       if (!conversation) throw new Error('Conversation not found');
-      const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, [...active]))).get();
+      const existing = this.db.select().from(jobs).where(and(eq(jobs.conversation, conversationId), inArray(jobs.state, unendedJobStates))).get();
       if (existing) return existing;
       const mail = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
       if (!mail.length) return;
@@ -111,7 +112,7 @@ export class Jobs {
   started(id: string, box: string, build: string): Job {
     return this.db.transaction(() => {
       // A worker may report "started" late or twice. Once the job is running that report changes nothing.
-      const job = this.assigned(id, box, ['starting', 'running', 'waiting']);
+      const job = this.assigned(id, box, claimedJobStates);
       if (job.state !== 'starting') return job;
       return this.db.update(jobs).set({ state: 'running', build, heardAt: this.now() }).where(eq(jobs.id, id)).returning().get()!;
     });
@@ -163,7 +164,7 @@ export class Jobs {
    * after JOB_RETRIES, and the mail then stays with the last attempt until fresh mail arrives. */
   finish(id: string, box: string, exitCode: number, logTail = ''): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
-      const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
+      const before = this.assigned(id, box, claimedJobStates);
       const at = this.now();
       // A body that says it left for a Stop is believed only while that Stop is still waiting for this job.
       const stopped = exitCode === BODY_EXIT.stopped ? this.endIfStopAsked(before, { exitCode }) : undefined;
@@ -203,7 +204,7 @@ export class Jobs {
   stop(id: string, member: string, reason: 'reset' | 'write-off'): Job {
     return this.db.transaction(() => {
       const job = this.get(id);
-      if (!active.includes(job.state as typeof active[number])) throw new Error('Job has ended');
+      if (!jobUnended(job.state)) throw new Error('Job has ended');
       return this.end(job, 'stopped', { endedBy: member, endedReason: reason, endedAt: this.now() });
     });
   }
@@ -211,11 +212,11 @@ export class Jobs {
   /** Fake-clock sweep. A job nobody has reported on for the silence interval is lost; like a failed
    * attempt it is tried again while it has attempts left (see finish). The row says in which state it
    * went silent: these are loom's own words, so they are kept for a private conversation too. */
-  sweep(silenceMs = 120_000): Job[] {
+  sweep(silenceMs = SILENCE_MS): Job[] {
     if (!Number.isFinite(silenceMs) || silenceMs <= 0) throw new Error('Invalid silence interval');
     return this.db.transaction(() => {
       const at = this.now();
-      return this.db.select().from(jobs).where(inArray(jobs.state, ['starting', 'running', 'waiting'])).all()
+      return this.db.select().from(jobs).where(inArray(jobs.state, claimedJobStates)).all()
         .filter(job => Date.parse(at) - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
         .map(job => {
           const lost = this.end(job, 'lost', { endedAt: at, logTail: `Lost while ${job.state}: its worker stopped reporting` });
@@ -236,7 +237,7 @@ export class Jobs {
     // The job working in a conversation is its one job that has not ended, so ending that job is what
     // leaves the conversation with none. Clear its working indicator in the same transaction; an
     // unobserved Stop and the last reported agent state stay.
-    if (job.conversation && active.includes(job.state as typeof active[number])) this.db.update(threads)
+    if (job.conversation && jobUnended(job.state)) this.db.update(threads)
       .set({ working: false, workingSince: null, workingBeat: null }).where(eq(threads.conversation, job.conversation)).run();
     return ended;
   }

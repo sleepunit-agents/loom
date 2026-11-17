@@ -21,6 +21,7 @@ import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
 import { harnessCannotRun, withUnknownSender } from './harness-traits.js';
+import { REPORT_MS } from './silence.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
 // way the household's list of tools an agent's body is not given still applies.
@@ -88,7 +89,7 @@ export async function bodyProgram(input: {
       if(pending||signal.aborted)return;
       pending=report().then(observe,()=>{unavailable=true;erase();nativeAbort.abort();}).finally(()=>{pending=undefined;});
     };
-    cancel=input.schedule?input.schedule.every(15_000,beat):(()=>{const timer=setInterval(beat,15_000);return()=>clearInterval(timer);})();
+    cancel=input.schedule?input.schedule.every(REPORT_MS,beat):(()=>{const timer=setInterval(beat,REPORT_MS);return()=>clearInterval(timer);})();
     exit=BODY_EXIT.startup;
     await (input.startup ?? secrets.startup)(job, bootstrap, signal);
     if (signal.aborted) throw new Error();

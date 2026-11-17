@@ -1,5 +1,6 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT } from './job-exit.js';
+import { REPORT_MS, SILENCE_MS } from './silence.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
 export interface WorkerRunPolicy {
@@ -82,8 +83,8 @@ export async function workOnce(input: {
   schedule?: WorkerSchedule; heartbeatMs?: number;
 }): Promise<WorkerResult> {
   const { control, executor } = input;
-  const interval = input.heartbeatMs ?? 15_000;
-  if (!Number.isFinite(interval) || interval <= 0 || interval >= 120_000) throw new Error('Invalid worker heartbeat interval');
+  const interval = input.heartbeatMs ?? REPORT_MS;
+  if (!Number.isFinite(interval) || interval <= 0 || interval >= SILENCE_MS) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
   let job: WorkerAssignment | undefined;
   // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.

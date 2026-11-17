@@ -4,8 +4,8 @@ import type { DataDatabase } from '../core/data/database.js';
 import { machineFacts } from './machine-facts.js';
 import { boxes, boxFacts, inbox } from '../core/data/schema.js';
 import { Conversations } from '../core/conversations/index.js';
+import { SILENCE_MS } from './silence.js';
 
-export const MACHINE_SILENCE_MS = 120_000;
 type Box = typeof boxes.$inferSelect;
 const outage = (box: Box) => `machine-silent:${JSON.stringify([box.id, box.lastSeenAt ?? box.enrolledAt])}`;
 
@@ -36,7 +36,7 @@ export class Machines {
 
   /** One private notice per owner/outage, also across service/process restarts.
    * A same-machine or report-only worker still needs to report its health. */
-  sweep(silenceMs = MACHINE_SILENCE_MS): typeof inbox.$inferSelect[] {
+  sweep(silenceMs = SILENCE_MS): typeof inbox.$inferSelect[] {
     if (!Number.isFinite(silenceMs) || silenceMs <= 0) throw new Error('Invalid silence interval');
     const at = this.now(), now = Date.parse(at);
     if (!Number.isFinite(now)) throw new Error('Invalid machine time');

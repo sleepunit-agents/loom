@@ -1,4 +1,5 @@
 import { currentAccountCapacity } from './account-windows.js';
+import { SILENCE_MS } from './silence.js';
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
@@ -7,7 +8,6 @@ import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, mode
  * Work that wants a tag runs on any allowed model carrying it, whichever family has room. */
 export interface ModelRole { model: string; provider: string; harness: string; series: string; tag?: string }
 export interface Placement { box: string; model: string; account: string; harness: string }
-export const WORKER_SILENCE_MS = 120_000;
 
 /** Both reported and owner-labelled capabilities describe the worker. */
 export function meetsNeed(facts: readonly string[], need: string): boolean {
@@ -44,7 +44,7 @@ export function selectPlacement(db: DataDatabase, input: {
     const box = db.select().from(boxes).where(eq(boxes.id, preference.box)).get();
     if (!box || box.revokedAt || box.reportOnly || !box.lastSeenAt) continue;
     const silence = now - Date.parse(box.lastSeenAt);
-    if (!Number.isFinite(silence) || silence < 0 || silence > WORKER_SILENCE_MS) continue;
+    if (!Number.isFinite(silence) || silence < 0 || silence > SILENCE_MS) continue;
     if (!(allowed.has(box.id) && (owners.has(box.owner) || allowed.get(box.id))) && !(box.hostsAny && owners.has(box.owner))) continue;
     const facts = db.select().from(boxFacts).where(eq(boxFacts.box, box.id)).all().map(row => row.fact);
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;

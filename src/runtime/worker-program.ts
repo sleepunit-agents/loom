@@ -8,6 +8,7 @@ import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js
 import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
+import { REPORT_MS } from './silence.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional() });
@@ -131,7 +132,7 @@ export async function workerProgram(input: {
         heartbeat = health().then(() => {}, () => {
           if (!abort.signal.aborted) { failed = true; abort.abort(); }
         }).finally(() => { heartbeat = undefined; });
-      }, 15_000);
+      }, REPORT_MS);
       try { await scan(); }
       finally { clearInterval(timer); await heartbeat; }
       if (failed) throw new Error('Startup health unavailable');
