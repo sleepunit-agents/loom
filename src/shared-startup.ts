@@ -2,7 +2,8 @@ import {startSharedHolder} from './shared-holder-process.js';
 import {githubBindingNames} from './pieces/changes/secrets.js';
 import { notificationKey } from './core/signin/notification-key.js';
 /** Default web startup from an explicit, already prepared shared household.
- * No importer, discovery, schema upgrade, or legacy database fallback. */
+ * No importer, discovery, or legacy database fallback. A household database this
+ * program recognises is brought up to its schema number; any other is refused. */
 import Database from 'better-sqlite3';
 import {initializeSharedHome} from './shared-initialize.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
@@ -12,7 +13,7 @@ import {constants,openSync,closeSync,fsyncSync,realpathSync} from 'node:fs';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
-import {createDataSchema,dataDatabase, upgradeDataSchema,type DataDatabase} from './core/data/database.js';
+import {dataDatabase,recogniseDataSchema,upgradeDataSchema,type DataDatabase} from './core/data/database.js';
 import {members,tokens,signinLinks} from './core/data/schema.js';
 import {ownHome} from './core/daemon-home.js';
 import {prepareOperatorHome,listenOperatorLinks} from './core/signin/operator.js';
@@ -38,29 +39,12 @@ type RootOptions=Parameters<typeof sharedRoot>[0];
 export type SharedStartupAdapters=Pick<RootOptions,'changes'|'tempo'|'secretWrites'|'secretInputs'|'bridges'|'modelRoles'|'runtimeJobEnded'|'approvedOperations'|'memoryEmbedding'>&{close?():void|Promise<void>};
 export type SharedStartupFactory=(context:{db:DataDatabase;clock:Clock;home:string})=>SharedStartupAdapters|Promise<SharedStartupAdapters>;
 const fingerprint=(value:string)=>createHash('sha256').update(value).digest('hex');
-/** The shape that matters: every table with its columns, and every index, trigger and view as written.
- * A table's own SQL text is not compared, because a column added to an existing household by an upgrade
- * is written differently from the same column in a fresh database. */
-function schema(client:Database.Database){
- const objects=client.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as {type:string;name:string;tbl_name:string;sql:string|null}[];
- return objects.map(object=>object.type==='table'
-  ?{type:object.type,name:object.name,columns:(client.prepare('SELECT name,type,"notnull" AS required,dflt_value AS fallback,pk FROM pragma_table_info(?) ORDER BY name').all(object.name))}
-  :object);
-}
 /** Read-only, before anything is opened for writing: this must be a household database this program
- * knows. Anything else is refused with its bytes untouched. */
+ * knows, at this schema number or an earlier one it can upgrade. Anything else, including an interim or
+ * hand-altered schema, is refused with its bytes untouched and belongs to the separate real-data move. */
 function recogniseDatabase(file:string){
  const current=new Database(file,{readonly:true,fileMustExist:true});
- try{
-  const known=current.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='migrations'").get()&&(current.prepare('SELECT max(number) AS number FROM migrations').get() as {number:number|null}).number;
-  if(!known)throw Error('Shared startup requires the prepared shared schema; existing data needs its separate move');
- }finally{current.close();}
-}
-/** After any upgrade. A different or interim schema belongs to the separate real-data move. */
-function checkDatabase(current:Database.Database){
- const expected=new Database(':memory:');
- try{createDataSchema(expected);if(JSON.stringify(schema(current))!==JSON.stringify(schema(expected)))throw Error('Shared startup requires the prepared shared schema; existing data needs its separate move');}
- finally{expected.close();}
+ try{recogniseDataSchema(current);}finally{current.close();}
 }
 export async function startSharedHome(options:{home:string;program?:string;host?:string;port?:number;webRoot?:string;clock?:Clock;stdout?(text:string):void;reportError?(error:unknown):void}){
  const home=resolve(options.home),clock=options.clock??systemClock;
@@ -88,8 +72,8 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   const parent=openSync(dirname(realpathSync(home)),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
   try{fsyncSync(parent);}finally{closeSync(parent);}
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
+  // Recognised again under the write lock, then upgraded; see upgradeDataSchema.
   upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
-  checkDatabase(client);
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}

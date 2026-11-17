@@ -1,11 +1,12 @@
 # Shared data schema
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
-schema is `src/core/data/schema.ts`: all 79 tables and 551 named columns in
-`model.py`, plus the eight internal bookkeeping tables listed there and three internal
-programme restriction/grant tables. The programme marker is independent of its
-record-type and operation rows, so clearing every grant cannot make a token
-ordinary. These additional tables contain no raw bearer credential. This module
+schema is `src/core/data/schema.ts`: all 81 tables in `model.py` with their named
+columns, `model_account_windows`, the eight internal bookkeeping tables listed there
+and three internal programme restriction/grant tables: 93 tables. The programme
+marker is independent of its record-type and operation rows, so clearing every grant
+cannot make a token ordinary. These additional tables contain no raw bearer
+credential. This module
 replaces per-part table definitions as each part is connected to it.
 
 Import typed table exports such as `tasks`, `taskComments`, `timingDays` and
@@ -16,11 +17,35 @@ direction and `<table>By<Column>` in reverse, for example `projectRow` and
 `taskCommentsByTask` on tasks. These names disambiguate multiple links to one table.
 
 `createDataSchema(client)` is only for a completely empty database. It refuses
-any existing schema and never imports, drops, upgrades or replaces old tables.
-The real-data move is separate work. The generated DDL is packaged in
+any existing schema and never imports, drops or replaces old tables. First install
+(`src/shared-initialize.ts`) calls it once. The generated DDL is packaged in
 `assets/data/schema.sql`; regenerate it with `npm run schema:generate`. The test
 checks both against the approved source and against a real in-memory SQLite DB.
-Nothing calls this initializer on an installed home yet.
+
+## Changing the schema
+
+The `migrations` table holds the schema number. Number 1 is the first shape; each
+entry in `upgrades` (`src/core/data/database.ts`) is the next number. A fresh
+database is created whole and marked with every number.
+
+At every start `upgradeDataSchema` first recognises the database without writing to
+it: the schema alone is copied into memory, the pending steps are run there, and the
+result must be exactly a fresh database's shape (columns, defaults, keys, foreign
+keys and their actions, CHECKs, and each index and trigger as written). Only then
+are the steps run on the real file. A foreign, interim, hand-altered or newer
+database is refused untouched; moving older data in is the separate real-data move.
+
+To change the schema:
+
+1. Edit `src/core/data/schema.ts` and run `npm run schema:generate`.
+2. Add the step to `upgrades`. An index or trigger must be written exactly as the
+   generated SQL writes it, because those are compared as text.
+3. Copy the new `assets/data/schema.sql` to
+   `src/core/data/shipped-shapes/<new number>.sql`. Never edit an earlier one.
+
+`src/core/data/upgrade.test.ts` upgrades the installation SQL of every shipped number
+and compares each table with a fresh database in full. It fails if the newest pinned
+shape is not today's `schema.sql`, so a schema change with no step cannot pass.
 
 ## Choices where the pages are silent
 
@@ -91,11 +116,7 @@ an installed module's unrestricted policy. Construct a separate schema for each
 identity/policy, and do not retain authority across session expiry or revocation.
 The policy map is copied at construction, but its functions must evaluate any
 changing sharing facts in SQL. Default relation depth is 2; supported depths are
-0–3. No HTTP route or installed-store composition uses this module yet.
-
-Still to connect: central household/project/private visibility predicates,
-authenticated GraphQL transport, Tasks `commentCount`, delta subscriptions,
-normalized client cache, Tasks tile replacement and configurable database provider.
+0–3. `src/next-data.ts` builds the served schema from it.
 
 Pinned-library limits: drizzle-graphql 0.8.5 conflates differently aliased nested
 relation requests, so this module rejects nested relation aliases before SQL,
@@ -109,13 +130,13 @@ permissive rewrite at both root and connected tables.
 ## Authenticated HTTP door
 
 `dataHttp(db, authenticate?)` is the Hono `/graphql` route, mounted by
-`listenNext` on its existing connection. It uses pinned GraphQL Yoga 6.1.0
+`src/next-data.ts` on the program's one connection. It uses pinned GraphQL Yoga 6.1.0
 ([Fetch server documentation](https://the-guild.dev/graphql/yoga-server/docs)).
 It accepts POST JSON only, refuses cross-origin browser requests (using the configured
 public origin behind a same-host TLS proxy), disables CORS,
 GraphiQL and batching, and sends `Cache-Control: no-store`. The generated schema
-has no mutations or subscriptions yet; SSE negotiation is explicitly refused.
-Subscriptions will use graphql-ws on the one websocket as consumers move.
+has no mutations: every write is a registered operation. Subscriptions use graphql-ws
+on the one websocket (`src/core/data/socket.ts`); SSE negotiation is refused.
 
 The first outside projection exposes Tasks, comments, links, projects and agent
 metadata. No session, token, passkey, plumbing or other table is reachable,

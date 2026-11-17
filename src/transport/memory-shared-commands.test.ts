@@ -49,7 +49,7 @@ async function fixture(){
  closes.push(()=>knowledgeActions.close(),()=>peopleActions.close(),()=>operations.close(),()=>data.close());
  const call=(name:string,input:unknown,id:string)=>operations.call('http',{kind:'member',id:'owner'},name,input,id);
  const read=async(query:string)=>{const response=await data.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
- return {client,db,source,operations,published,changes,call,read,tables,initialTables,failReceipt(v:boolean){failReceipt=v;},failRelationship(v:boolean){failRelationship=v;}};
+ return {client,db,source,operations,published,changes,call,read,tables,initialTables,directory,relationship,failReceipt(v:boolean){failReceipt=v;},failRelationship(v:boolean){failRelationship=v;}};
 }
 it('recovers a committed Knowledge source effect after shared receipt failure without duplicate notes',async()=>{
  const f=await fixture(),before=f.initialTables;f.failReceipt(true);
@@ -69,4 +69,35 @@ it('resumes a half-saved person into both own source files and publishes canonic
  expect(f.changes).toHaveBeenCalledWith([{type:'person',id:'commons:fictional-friend'},{type:'person',id:'fiction:fictional-friend'}]);
  expect(await f.read('{ memoryPeople { id name card { summary where { key value { text } } } } }')).toMatchObject({memoryPeople:[{id:'commons:fictional-friend',name:'Fictional friend',card:{where:[{key:'email',value:{text:'fiction@example.invalid'}}]}},{id:'fiction:fictional-friend',card:{summary:'Private relationship'}}]});
  expect(f.client.prepare('SELECT count(*) AS n FROM operation_results').get()).toEqual({n:1});expect(f.tables()).toEqual(before);
+});
+it('saves neither half of a person when the relationship half fails, so the name can be added again later',async()=>{
+ const f=await fixture(),input={name:'Fictional friend',summary:'Private relationship',channel:'email',handle:'fiction@example.invalid'};
+ f.failRelationship(true);expect(f.call('mind.personAdd',input,'first')).toMatchObject({code:'unavailable'});
+ expect(await f.read('{ memoryPeople { id } }')).toEqual({memoryPeople:[]});
+ // A different operation id: the first attempt's receipt is not what makes this one work.
+ f.failRelationship(false);expect(f.call('mind.personAdd',input,'second')).toMatchObject({ok:true,value:{slug:'fictional-friend'}});
+ expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
+});
+it('finishes a person whose relationship half alone survived a crash, on a retry with the same operation id',async()=>{
+ const f=await fixture(),input={name:'Fictional friend',summary:'Private relationship',channel:'',handle:''};
+ expect(f.call('mind.personAdd',input,'person')).toMatchObject({ok:true});
+ // As a crash between the two commits leaves it: no directory card, no directory receipt, no shared receipt.
+ const directory=new Database(f.directory);try{directory.exec('DELETE FROM people;DELETE FROM mind_operation_receipts');}finally{directory.close();}
+ f.client.exec('DELETE FROM operation_results');
+ expect(f.call('mind.personAdd',input,'person')).toMatchObject({ok:true,value:{slug:'fictional-friend'}});
+ expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
+ expect(f.call('mind.personAdd',input,'another')).toMatchObject({code:'conflict'});
+});
+it('adds a person through the card store, so its rules for a summary and for a merged address hold',async()=>{
+ const f=await fixture();
+ expect(f.call('mind.personAdd',{name:'Fictional friend',summary:'Private relationship',channel:'',handle:''},'person')).toMatchObject({ok:true});
+ const relationship=new Database(f.relationship);
+ try{
+  // A card written with a summary records when that summary was written.
+  expect(relationship.prepare("SELECT synthesized_at IS NOT NULL AS dated FROM people WHERE slug='fictional-friend'").get()).toEqual({dated:1});
+  // An address that was merged into another card leads there; a new card behind it would never be read.
+  relationship.prepare("INSERT INTO person_merges (from_slug,into_slug,merged_at,merged_by,counts_json) VALUES ('old-friend','fictional-friend','2026-11-15T00:00:00.000Z',NULL,'{}')").run();
+ }finally{relationship.close();}
+ expect(f.call('mind.personAdd',{name:'Old friend',summary:'',channel:'',handle:''},'merged')).toMatchObject({code:'conflict'});
+ expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
 });

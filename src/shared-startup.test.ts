@@ -10,7 +10,7 @@ import {once} from 'node:events';
 import {pathToFileURL} from 'node:url';
 import {WebSocket} from 'ws';
 import {createServer} from 'node:http';
-import {createDataSchema} from './core/data/database.js';
+import {createDataSchema,dataSchemaNumber} from './core/data/database.js';
 import {members,agents,memberAgents,household} from './core/data/schema.js';
 import {requestLocalLink} from './core/signin/operator.js';
 import {FakeClock} from './core/clock.js';
@@ -78,6 +78,20 @@ it('refuses an old SQLite store before preparing Memory files and preserves its 
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('separate move');
  expect(readFileSync(old)).toEqual(before);expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
 });
+it('upgrades a household installed at an earlier schema number, and refuses an interim one at that number with its exact bytes',async()=>{
+ const first=readFileSync(new URL('./core/data/shipped-shapes/1.sql',import.meta.url),'utf8'),at='2026-11-15T12:00:00.000Z';
+ const earlier=(file:string,extra='')=>{const client=new Database(file);client.exec(first+extra);client.prepare('INSERT INTO migrations (number,applied_at) VALUES (1,?)').run(at);
+  client.prepare("INSERT INTO members (id,role,joined_at) VALUES ('owner','owner',?)").run(at);
+  client.exec("INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('fiction','','','','pebble','dot');INSERT INTO member_agents (member,agent) VALUES ('owner','fiction');INSERT INTO household (default_agent,timezone) VALUES ('fiction','Asia/Tokyo')");client.close();};
+ const f=await fixture(),interim=join(f.home,'interim.db');earlier(interim,'CREATE TABLE interim_notes (words text);');
+ const before=readFileSync(interim);writeFileSync(f.config,JSON.stringify({...f.program,database:interim}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('separate move');
+ expect(readFileSync(interim)).toEqual(before);expect(existsSync(interim+'-journal')).toBe(false);expect(existsSync(interim+'-wal')).toBe(false);expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
+ const known=join(f.home,'earlier.db');earlier(known);writeFileSync(f.config,JSON.stringify({...f.program,database:known}),{mode:0o600});
+ const app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});await app.close();
+ const upgraded=new Database(known,{readonly:true});
+ try{expect(upgraded.prepare('SELECT max(number) AS number FROM migrations').get()).toEqual({number:dataSchemaNumber});expect(upgraded.prepare('SELECT id,removed_at FROM members').all()).toEqual([{id:'owner',removed_at:null}]);}finally{upgraded.close();}
+},30_000);
 it('releases the adapter, database, source listeners and home ownership after bind failure and on repeated close',async()=>{
  const f=await fixture(),module=join(f.home,'adapters.mjs');
  writeFileSync(module,"import {writeFileSync} from 'node:fs';import {join} from 'node:path';export let client,closed=0;export default ({db,home})=>{client=db.$client;return {close(){closed++;writeFileSync(join(home,'adapter-closed'),String(client.prepare('SELECT count(*) AS n FROM members').get().n));}}};",{mode:0o600});

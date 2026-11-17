@@ -1,286 +1,189 @@
 # loom at a glance
 
-Every moving part of loom and where they touch, drawn from the source.
-The diagrams are Mermaid, so GitHub renders them in place.
+What the program is today: what starts it, the parts it is built from, and where every
+table lives. For the words used here see `CONTEXT.md`; for the household database's
+design see `docs/data-schema.md`.
 
-This map is kept honest by `src/architecture.contract.test.ts`. Every
-registered MCP tool (including the MCP-App widget tools), every CLI subcommand, every `src/backends/` module
-and every SQLite table must be named on this page, or CI fails. When you
-add one of those, draw it here in the same PR.
+`src/architecture.contract.test.ts` keeps this page honest in three ways. Every file or
+directory named here in backticks must exist. Every table in `src/core/data/schema.ts`
+must be named here. Every table created anywhere else in `src/` must be named here too.
+The test cannot tell whether a sentence is true, so when you move a part, reread its
+paragraph.
 
-## The whole machine
+## What starts
 
-```mermaid
-flowchart LR
-  subgraph callers["Who calls loom"]
-    H["Harness agent<br/>Claude Code · Codex · Gemini CLI · Desktop"]
-    P["Peer identity over the mesh<br/>e.g. Mark, knowledge only"]
-    S["Shell · lanes · cron<br/>the loom CLI"]
-  end
+`package.json` installs eight executables. Only the first two open a household's data.
 
-  subgraph entry["Entry: src/index.ts"]
-    R{"first non-global token<br/>is a subcommand?"}
-    STDIO["stdio MCP<br/>default"]
-    CLI["CLI<br/>src/cli/*"]
-    HTTPF["loom serve --http<br/>--scope full · :8787<br/>bearer token optional"]
-    HTTPK["loom serve --http<br/>--scope knowledge · :8788<br/>bearer tokens required,<br/>each names the identity"]
-    G["transport/guards.ts<br/>safe bind · bearer · payload cap"]
-  end
+| Executable | Source | What it does |
+|---|---|---|
+| `loom serve` | `src/index.ts`, then `src/shared-startup.ts` | Runs the household's program: one process, one HTTP listener, one household database. |
+| `loom mcp` | `src/index.ts`, then `src/shared-mcp-stdio.ts` | A stdio MCP session that forwards to a running `loom serve` over HTTP. It opens no store. |
+| `loom-worker` | `src/worker.ts`, then `src/runtime/worker-program.ts` | Runs on a machine that does work. Asks the program for jobs, starts a body for each, reports back. |
+| `loom-body` | `src/body.ts`, then `src/runtime/body-program.ts` | One run of one agent, started only by a worker. Drives a harness (`src/runtime/body-harnesses.ts`). |
+| `loom-household`, `loom-taskstore`, `loom-token`, `loom-account`, `loom-sessions` | `src/household-client.ts`, `src/taskstore-client.ts`, `src/token-client.ts`, `src/account-client.ts`, `src/sessions-client.ts`, all over `src/cli` | Command-line clients of the running program's HTTP door. They open no store. |
 
-  subgraph surface["Tool surface"]
-    FULL["server.ts<br/>createLoomServer"]
-    KONLY["knowledge-server.ts<br/>createKnowledgeOnlyServer"]
-    subgraph wings["Tool wings: src/tools/*"]
-      IDW["Identity wing<br/>identity · dossier · update_identity<br/>bootstrap · harness_init · harness_describe · harness_patch"]
-      MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit · memory_recompute_salience<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
-      PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
-      PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence · person_merge"]
-      PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
-      KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
-      NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
-      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings · comms_title · comms_thread · describe_self<br/>turns arrive on POST /api/loom/conversations/turn<br/>raw text on POST /api/loom/audit (audit.db, encrypted)<br/>review: audit/take · audit/done · scores · findings"]
-    end
-    APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
-  end
+`loom` accepts `serve`, `mcp`, `--version` and `--help`, and nothing else. The older
+program (its own stdio server, a subcommand per verb, server-rendered pages) is gone.
 
-  subgraph engine["Engine: src/backends"]
-    FACT["index.ts<br/>cached backend per db path"]
-    VEC["sqlite-vec.ts<br/>SqliteVecBackend"]
-    EMB["fastembed.ts + embedding-runtime.ts<br/>BGE-small 384-d ONNX, CPU"]
-    KB["sqlite-knowledge.ts<br/>SqliteKnowledgeBackend"]
-    HELP["write/read helpers<br/>dedup · scope · ttl · mmr · glob · retry"]
-    SAL["salience.ts<br/>temperature + boot digest"]
-    EPI["episodes.ts<br/>the 24h tape"]
-    PROP["proposals.ts"]
-    PPL["people.ts<br/>PeopleStore · renderCard · roomBlock"]
-    CONV["conversations.ts<br/>turns · digests · the 90-day fold"]
-    PRJ["projects.ts<br/>ProjectsStore · renderProjectCard · projectBlock"]
-    CARDS["cards.ts<br/>what both kinds of card share"]
-    OBS["recall-log.ts · recorder-health.ts"]
-    MIG["migrations.ts"]
-  end
-
-  subgraph disk["On disk: $LOOM_CONTEXT_DIR"]
-    MD["IDENTITY.md · preferences.md · self-model.md<br/>projects/ · roles/ · harnesses/ · models/"]
-    MEMDB[("memories.db")]
-    KDB[("knowledge.db")]
-    NOTEDB[("notes.db (notes · note_revisions · note_files)<br/>+ note-files/ by sha256")]
-    TEL["telemetry/recall.jsonl<br/>recorder-health.json"]
-    GAPS["gaps dir<br/>recall-miss.jsonl"]
-  end
-  CACHE["~/.cache/loom/fastembed<br/>model fetched once"]
-  DOT["Harness dotfiles + skills<br/>~/.claude/CLAUDE.md · ~/.codex/AGENTS.md<br/>~/.claude/skills · ~/.agents/skills"]
-
-  H --> R
-  S --> R
-  R -- no --> STDIO --> FULL
-  R -- yes --> CLI
-  CLI -- serve --> HTTPF & HTTPK
-  H -. mesh .-> G
-  P -. mesh .-> G
-  G --> HTTPF --> FULL
-  G --> HTTPK --> KONLY
-  CLI -- "wake · recall · remember · memory · knowledge · note · person · project<br/>call the same tool functions" --> wings
-  CLI -- "inject · install" --> DOT
-  CLI -. "--url / LOOM_URL: the store verbs<br/>ship argv to POST /cli" .-> G
-  HTTPF -- "POST /cli · cli-endpoint.ts<br/>the same CLI, the server's stack" --> CLI
-
-  FULL --> wings & APPS
-  KONLY --> KW
-
-  IDW --> MD
-  IDW --> SAL & EPI & OBS
-  IDW -- "people param:<br/># In the room" --> PPL
-  MEMW --> FACT
-  PROPW --> PROP
-  PEOW --> PPL
-  PROJW --> PRJ & PPL
-  IDW -- "project param:<br/># This project" --> PRJ
-  PPL & PRJ --> CARDS
-  VEC -- "recall resolves project names" --> PRJ
-  KW --> KB
-  KW --> GAPS
-  FACT --> VEC
-  VEC --> EMB --> CACHE
-  VEC --> HELP & MIG
-  VEC --> MEMDB
-  SAL & EPI & PROP & PPL & PRJ --> MEMDB
-  PPL & PRJ --> MIG
-  OBS --> TEL
-  KB --> KDB
-```
-
-Two things this picture says that are easy to miss:
-
-- **Memory and knowledge are two stores, two backends, two files.**
-  `memories.db` is about the user and the work and is searched by vector.
-  `knowledge.db` holds facts about the world and is searched with LIKE.
-  `assertKnowledgePathsNotCoLocated` refuses to let them share a file.
-- **Person cards live on memory's side of the line.** `people` and
-  `person_revisions` are in `memories.db`, next to the `user` memories they
-  condense, never in `knowledge.db`. A card is current state (one value
-  per field, overwritten; the past only in revisions) and is descriptive,
-  never a gate: the harness keeps tiers and scopes in its own file.
-  Project cards sit beside them (`projects`, `project_revisions`,
-  `project_names`), under the same rules; a project's hub is computed at
-  read from the memories, notes and person cards already there.
-- **The knowledge-only server is smaller, not just locked down.** A peer
-  on `--scope knowledge` never sees identity or memory tools in its tool
-  list, and the knowledge wing pins `created_by` to the identity its
-  bearer token resolves to.
-
-## What a body wakes up with
-
-`identity` (`src/tools/identity.ts`) assembles one document from these
-parts, in this order. `loom wake` prints the same thing without MCP.
+## How `loom serve` is put together
 
 ```mermaid
 flowchart TB
-  A["# Identity<br/>IDENTITY.md, the terminal creed"] --> B["# Preferences<br/>preferences.md"]
-  B --> C["# Last 24h across bodies<br/>episodes.ts: the tape, time-ordered, never ranked"]
-  C --> P2["# This project<br/>projects.ts projectBlock: the card for the project param<br/>only when project is passed; a placeholder line, never a failure"]
-  P2 --> R2["# In the room<br/>people.ts roomBlock: person cards for the people param<br/>only when people is passed; best-effort, ≤ 4 cards, 6,500 chars"]
-  R2 --> D["# Top of Mind<br/>salience.ts: hottest memories first, to a token budget"]
-  D --> E["# Self-Model<br/>self-model.md"]
-  E --> F["# Mode: role<br/>roles/&lt;role&gt;.md, if a role was passed"]
-  F --> G["# Project<br/>projects/&lt;project&gt;.md"]
-  G --> H2["# Harness · # Model<br/>blocks/harness.ts · blocks/model.ts<br/>client from param › MCP peer › LOOM_CLIENT"]
-  H2 --> I["# Memories<br/>memories/INDEX.md summary, legacy"]
-  I --> J["Runtime adapter<br/>clients.ts"]
-  J --> K["Recorder warning, last<br/>recorder-health.ts, only when episode writes keep failing"]
+  CLI["loom serve<br/>src/index.ts"] --> START["src/shared-startup.ts<br/>first install · recognise and upgrade the database · local sign-in link"]
+  START --> SERVE["src/shared-serve.ts<br/>the listener"]
+  SERVE --> ROOT["src/shared-root.ts<br/>composes every part over one connection"]
+  ROOT --> DOOR["The door<br/>/graphql · /api/:piece/:operation · /mcp · sign-in routes · the built web app"]
+  ROOT --> PARTS["Parts<br/>household · sign-in · conversations · tempo · tasks · approvals · changes<br/>secrets · bridges · runtime · measuring · memory"]
+  PARTS --> DB[("loom.db<br/>src/core/data/schema.ts")]
+  PARTS -. memory only .-> FILES[("per-agent and commons files<br/>memories.db · notes.db · knowledge.db · people.db")]
+  ROOT --> HOLDER["secret holder child process<br/>src/shared-holder-process.ts"]
+  HOLDER --> HDB[("secret-holder/")]
+  WORKER["loom-worker → loom-body"] -- "HTTP, a machine's or a job's token" --> DOOR
+  BROWSER["Browser: web/"] --> DOOR
+  MCP["loom mcp"] --> DOOR
 ```
 
-`dossier` is the worker-body version. It returns preferences and
-self-model in the third person with a push-back mandate, and leaves the
-creed out.
+**Startup** (`src/shared-startup.ts`). On an empty home, `src/shared-initialize.ts` builds
+the first household beside it and publishes it in one rename. Startup then reads
+`program.json` (where the database, the Comms key and the memory files are), recognises
+the database read-only, takes ownership of the home, upgrades the database if it is at an
+earlier schema number, starts the secret holder, and serves. It prints one local sign-in
+link.
 
-## A memory's life
+**The door** (`src/shared-root.ts`). Every outside caller, whether browser, command-line
+client, MCP session, worker or body, comes through one HTTP listener:
 
-```mermaid
-flowchart LR
-  W["remember / memory_ratify"] --> DD{"dedup.ts<br/>exact restatement?"}
-  DD -- yes --> HEAT["reheat the existing row"]
-  DD -- no --> INS["insert: memories + vec_memories<br/>scope.ts sets project or global<br/>ttl.ts sets expires_at<br/>episode defaults to 48h"]
-  PQ["memory_propose"] --> PT[("proposals")] --> W
-  PT -. memory_reject .-> X["dropped"]
-  INS --> RC["recall<br/>embed query → cosine → mmr.ts<br/>stamps last_accessed"]
-  RC --> LOG["recall-log.ts → telemetry/recall.jsonl"]
-  INS --> UPD["update → memory_revisions snapshot"]
-  INS --> ARC["memory_archive · memory_merge<br/>tombstone, embedding dropped<br/>merge adds memory_supersessions"]
-  INS --> PRN["memory_prune<br/>archives expired rows, TTL elapsed tombstone<br/>stale rows only reported"]
-  INS --> DEL["forget · memory_merge hard_delete_losers<br/>journal to memory_deletions, then delete"]
-  INS --> SALN["salience.ts<br/>decays by category half-life,<br/>reheats on access"]
-```
+- `/graphql` (HTTP and WebSocket) for reads and live subscriptions: `src/next-data.ts` over
+  `src/core/data` (`http.ts`, `socket.ts`, `queries.ts`, `subscriptions.ts`). Each table's
+  visibility rule is a SQL predicate in `src/core/data/visibility.ts` and its neighbours.
+- `/api/:piece/:operation` for every write: a registered operation, checked and given a
+  retry receipt by `src/core/operations`, committed through `src/core/data/writes.ts`.
+- `/mcp`: `src/shared-mcp.ts` and `src/shared-mcp-named.ts` map MCP tool names onto those
+  same operations and queries.
+- Sign-in routes (`src/core/signin`) and the built web app (`src/shared-web.ts`, from `web`).
 
-## A person card's life
+Who the caller is comes from `src/shared-credentials.ts` and
+`src/core/data/authentication.ts`; what they may do from `src/policy.ts` over the current
+facts in `src/shared-sharing.ts`. Parts call each other directly in process and carry no
+policy of their own; the `src/shared-*.ts` files are where each part meets the door.
 
-```mermaid
-flowchart LR
-  PW["person_write<br/>merge one level deep, null removes a field"] --> TX{"BEGIN IMMEDIATE<br/>read · merge · validate · snapshot · write · prune"}
-  PV["person_verify<br/>stamps where.*.verified_at"] --> TX
-  PA["person_archive · person_restore"] --> TX
-  PR["person_revision_restore"] --> TX
-  PM["person_merge<br/>from becomes a redirect to into"] --> TX
-  TX -- "from -> into" --> MG[("person_merges")]
-  TX --> PT[("people")]
-  TX -- "previous row, newest 10 kept" --> RV[("person_revisions")]
-  PT --> RD["person · person_list · loom person show|list<br/>rendered: [ok] · [unverified] · [STALE nd]"]
-  PT --> ROOM["identity people: [...]<br/># In the room"]
-  MEM[("memories: category user,<br/>metadata.person = slug")] -. "memories_since_synthesis" .-> RD
-```
+## The parts
 
-The tagged memories stay the evidence; the card condenses them and does not
-own them. loom never generates a summary: the agent writes it, and
-`person_list`'s `memories_since_synthesis` is how a lane finds the ones that
-have fallen behind.
-
-## Where everything is stored
-
-| Store | Tables / files | Backend |
+| Part | Where | What it owns |
 |---|---|---|
-| `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
-| `memories.db` (people) | `people`, `person_revisions`, `person_merges` (a merged card's redirect: from, into, who, when, what was re-tagged) | `people.ts`, created by the `people_cards` and `person_merges` migrations; in a household `commons/people.db` holds the same tables for the directory |
-| `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md), `findings` (a grader's one line per conversation per UTC day, made by the first), `conversation_needs_answers` (how a Needs you was answered: done, dismissed or replied by the owner, or resolved by loom with its reason; who and when, never words) | `src/backends/conversations.ts`, created by the `conversations` migration (`findings` and `conversation_needs_answers` by their first write) |
-| `$LOOM_HOME/household.db` | `venues`: core's copy of every installed piece's venues, orphaned when the piece goes; `audit_reads` (who took which audit entry, never text), `conversation_strangers` (sticky: a turn came from a non-owner), `review_scores` and `scorecards` | `src/household-store.ts`, synced at install, update, remove and daemon start; `src/audit.ts` and `src/review.ts` write the review's tables |
-| `$LOOM_HOME/audit.db` | `audit_entries`: raw turn text, age-encrypted to `review.pub`, deleted on `audit/done` and 7 days after its turn. Never in a bundle or an export, nor are `review.key` and `review.pub` | `src/audit.ts` |
-| `memories.db` (projects) | `projects`, `project_revisions`, `project_names` (every live project's slug and aliases: the primary key is the uniqueness rule) | `projects.ts`, created by the `project_cards` migration |
-| `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access` | `sqlite-knowledge.ts` |
-| Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
-| Telemetry | `telemetry/recall.jsonl`, `recorder-health.json` | `recall-log.ts`, `recorder-health.ts` |
-| Gaps dir (optional) | `recall-miss.jsonl` | knowledge recall misses, input for the expansion lane |
-| `<agent dir>/notes.db` + `note-files/` | `notes`, `note_revisions`, `note_files`: the agent's notes, each with a lifespan (keep, while, short); the files stored once by sha256 | `notes.ts`; the `note` verb (loom note write · read · list · attach · sweep), `note_write` · `note_read` · `note_list` |
-| `commons/stores/<piece>.db` | `docs`, `revisions`: a piece's own collections (docs/specs/piece-storage.md) | `stores.ts`; `loom store`, `POST /api/loom/store/…` |
+| Household | `src/apps/household.ts`, `src/shared-household-proposals.ts`, `src/shared-projects.ts` | Members, agents, projects, settings; changes an agent proposes for an owner to allow. |
+| Sign-in | `src/core/signin`, `src/shared-credentials.ts` | Tokens, browser sessions, one-time links, passkeys, notification devices. |
+| Conversations | `src/core/conversations`, `src/shared-conversations.ts` | Conversations, turns, digests, the inbox, threads and their encrypted messages (`src/pieces/comms/crypto.ts`). |
+| Tempo | `src/core/tempo`, `src/shared-tempo.ts` | Triggers, their log, pauses, inbox volume and quiet times. |
+| Tasks and approvals | `src/apps/tasks.ts`, `src/apps/approvals.ts` and their neighbours in `src/apps` | Tasks, links, comments; permission requests, standing rules, the permanent record. |
+| Changes | `src/apps/changes.ts`, `src/pieces/changes` | Pull requests read from GitHub and what was answered about them. |
+| Secrets | `src/pieces/secrets`, `src/shared-secret-commands.ts` | Names, grants, requests and uses in the household database; the values only in the holder process. |
+| Bridges | `src/pieces/bridges`, `src/shared-bridge-commands.ts` | Discord and Slack connections: what came in, what was sent. |
+| Runtime | `src/runtime`, `src/shared-runtime.ts` | Machines, jobs and their placement, model accounts; the worker and body programs. |
+| Measuring | `src/core/measuring` | Daily timing roll-ups, off by default. |
+| Memory | `src/pieces/mind`, `src/backends`, `src/shared-memory.ts`, `src/shared-notes.ts`, `src/notes.ts` | Memories, person and project cards, notes and knowledge. The only part whose data is outside the household database. |
 
-## The pieces, by file
+Memory's files are opened by `src/shared-memory.ts` from the paths `program.json` declares.
+`src/backends/sqlite-vec.ts` is the memory store (vector search; embeddings from
+`src/backends/fastembed.ts`), `src/backends/sqlite-knowledge.ts` the knowledge store,
+`src/backends/people.ts` and `src/backends/projects.ts` the cards over the shared rules in
+`src/backends/cards.ts`. `src/backends/salience.ts` and `src/backends/episodes.ts` make the
+two slices a body wakes with: Top of Mind, and the tape. The tape's conversation digests
+come from the household database, handed in by `src/transport/memory-queries.ts`.
 
-| Module | Job |
+## Where every table lives
+
+A home (`~/.config/loom` unless `--home` or `LOOM_HOME` says otherwise) holds these stores.
+
+### `loom.db`: the household database
+
+Defined once, in `src/core/data/schema.ts`. `assets/data/schema.sql` is generated from it
+and creates a fresh database; `upgrades` in `src/core/data/database.ts` brings an older
+one to the same shape, and `src/core/data/shipped-shapes` pins the installation SQL of
+every schema number so `src/core/data/upgrade.test.ts` can prove it. Startup refuses a
+database it does not recognise without writing to it.
+
+| Area | Tables |
 |---|---|
-| `src/index.ts` | Routes argv to the CLI or the stdio MCP server |
-| `src/server.ts` | Full MCP server: registers every wing |
-| `src/transport/knowledge-tools.ts` | The knowledge wing, shared by both servers |
-| `src/transport/knowledge-server.ts` | Knowledge-only MCP server |
-| `src/transport/http-server.ts` | StreamableHTTP front, one server per MCP session |
-| `src/transport/guards.ts` | Safe bind, bearer check, payload cap |
-| `src/ui/*` | loom's page, at the daemon's root. `core.ts` (loom's own pages and actions), `data.ts` (their queries), `pieces.ts` (running `loom-<piece> ui …`), `vocab.ts` (the page vocabulary and its validation), `render.ts` (the page data's types and the sign-in pages), `handler.ts` (routes, sessions, the guards on actions: every page answers the app's shell, or its data as JSON). The app that draws the pages is `web/` (React, built into `dist/web/`, docs/specs/ui-app.md) |
-| `src/transport/cli-endpoint.ts` | `POST /cli`: runs a store verb's argv through `runCliLocal` (no remote mode on its path) on the server's stack (full scope only) |
-| `src/transport/mcp-app-hello.ts` | Env-gated MCP-App widget probes |
-| `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`, the ten project tools `project.ts`, which also computes the hub); the CLI calls these too |
-| `src/cli/*` | One file per subcommand |
-| `src/cli/pieces.ts` | `loom <piece>`: git-style dispatch to `loom-<piece>` on PATH; `loom pieces` lists them |
-| `src/ui/household-pages.ts` | The owner's household page: Home across every agent, the commons' knowledge, People with every agent's relationship, each agent's Setup (identity, tokens, health), adding an agent |
-| `src/bundle.ts`, `src/cli/bundle.ts` | The bundle (docs/specs/household.md, "Export and restore"): `loom export` / `loom restore` / `--drill`, age-encrypted, with each piece's own part from `loom-<piece> bundle export` / `bundle import` |
-| `src/backup.ts`, `src/backup-tick.ts`, `src/cli/backup.ts` | The nightly backup (docs/specs/keeping-watch.md): `loom backup` set, run, status, off, a drilled bundle to a git repo (one commit, force-pushed with a lease) or a directory; the daemon's 10-minute tick; core's Inbox alert and Setup's Backup row; `LOOM_ALERT_COMMAND` |
-| `src/household.ts`, `src/cli/household.ts` | The household (docs/specs/household.md): `household.json`, `tokens.json` (roles `agent:`, `owner`, `peer:`; only sha256 stored), the resolver the daemon uses per request, `loom household` and `loom token` |
-| `src/cli/remote.ts` | Remote mode: with `--url`/`LOOM_URL`, the store verbs run on a loom-http via `POST /cli` |
-| `src/blocks/*` | Harness and model manifest blocks for the identity payload |
-| `src/injection/*` | `loom inject`: managed `loom:start`/`loom:end` block in harness dotfiles |
-| `src/install/*` | `loom install`: copies the setup skill into the harness skills dir |
-| `src/backends/index.ts` | Factory: cached backend per db path, one embedder per model |
-| `src/backends/types.ts` | `MemoryBackend`, `EmbeddingProvider`, `KnowledgeBackend` interfaces |
-| `src/backends/sqlite-vec.ts` | Memory store: SQLite + sqlite-vec cosine search |
-| `src/backends/fastembed.ts` | `EmbeddingProvider` adapter |
-| `src/backends/embedding-runtime.ts` | Vendored ONNX + tokenizer runtime |
-| `src/backends/sqlite-knowledge.ts` | Knowledge store |
-| `src/backends/people-creation.ts` | Synchronous create-only person card halves on supplied existing stores |
-| `src/backends/knowledge-revisions.ts` | Save and retain the newest ten Knowledge body versions inside the caller's transaction |
-| `src/backends/knowledge-verification.ts` | Synchronous verification transaction over an open knowledge store; shared SLA and body cap rules |
-| `src/backends/migrations.ts` | Versioned schema migrations for `memories.db` |
-| `src/backends/salience.ts` | Temperature and the Top of Mind digest |
-| `src/backends/episodes.ts` | The episode tape |
-| `src/backends/proposals.ts` | Capture-propose queue |
-| `src/backends/people.ts` | Person cards: validation, render, store, the identity room block |
-| `src/backends/projects.ts` | Project cards: validation, render, store, names (project_names), the hub's memory reads, the identity project block |
-| `src/backends/cards.ts` | What person and project cards share: validation primitives, where envelopes and staleness markers, merge one level deep, no-op detection, the row store (revisions, archive/restore, revision restore, BEGIN IMMEDIATE) |
-| `src/icon-set.ts`, `src/png.ts` | A household's pixel icon sets (docs/specs/household.md): `icons/<set>/` (a manifest and 32×32 PNGs), `loom household icons`, which icons are line-only, and the set in use for the shell and `/pixel-icons/`; a PNG reader on node:zlib alone |
-| `src/backends/people-household.ts` | Person cards in a household: the commons directory (name, handles, facts) plus each agent's relationship (summary, how it talks to them, may), merged on read, split on write, and the one-time split of an existing agent's cards |
-| `src/backends/people-merge.ts` | Merge two person cards into one (person_merge, POST /api/loom/people/merge, `loom person merge`): the union of the cards in the directory and every agent's copy, every memory, proposal, conversation and turn re-tagged, and from left as an archived redirect to into |
-| `src/backends/people-ensure.ts` | Ensure a person card: a minimal card when there's none, only the missing `where` values when there is one, and a value already on another card refused (POST /api/loom/people/ensure, `loom person ensure`) |
-| `src/backends/dedup.ts` | Write-time exact-restatement key |
-| `src/backends/scope.ts` | Project vs global visibility |
-| `src/backends/ttl.ts` | TTL parsing and expiry |
-| `src/backends/mmr.ts` | Diversity re-ranking for recall |
-| `src/backends/glob.ts` | Title patterns for bulk forget |
-| `src/backends/retry.ts` | Retry on SQLITE_BUSY |
-| `src/backends/recall-log.ts` | Local recall observation log |
-| `src/backends/recorder-health.ts` | Episode-write failure ledger |
-| `src/backends/conversations.ts` | Conversations as core records: turns (metadata only, `seq` and `latency_ms` by core), digests, the retention fold, the hub's section and the tape's digests |
-| `src/backends/needs.ts` | A digest's Needs you ask: the object (ask, why, if_yes, if_no, href, refs, waits_on) or a plain string, and the lint that refuses an ask naming internal ids or lane words |
-| `src/needs-resolve.ts` | Needs you that clear themselves: each minute, what an open ask waits on (an approval, a task), read through the approvals and tasks pieces' own APIs |
-| `src/conversations.ts` | Who may write a turn, the venue's render or core's generic one, and who reads which agent's conversations |
-| `src/household-store.ts` | `$LOOM_HOME/household.db`: the venues registry, and the review's tables |
-| `src/audit.ts` | The audit log: writes by a turn's writer, the review key pair, claims, `done`, the 7-day sweep, and the one decrypt function |
-| `src/audit-take.ts` | `POST /api/loom/audit/take`: the only caller of the decrypt function, and redaction (P…, A…, M…, H…) |
-| `src/review.ts` | Model families, scores by ref, findings, the scorecards and their metadata measures |
-| `src/programs.ts` | Finding `age`, `age-keygen` and `tar` (LOOM_<NAME>, else PATH) |
+| Household | `members`, `agents`, `member_agents`, `projects`, `project_members`, `project_agents`, `project_repositories`, `agent_accounts`, `agent_sprites`, `household`, `backup_recipients`, `member_preferences` |
+| Sign-in | `tokens`, `program_tokens`, `program_record_grants`, `program_operation_grants`, `sessions`, `signin_links`, `signin_challenges`, `passkeys`, `notification_devices`, `notification_queue` |
+| Tasks | `tasks`, `task_links`, `task_comments` |
+| Conversations | `conversations`, `conversation_people`, `turns`, `digests`, `digest_items`, `agent_status`, `conversation_days`, `findings` |
+| Inbox and threads | `inbox`, `inbox_refs`, `inbox_reads`, `action_results`, `threads`, `messages`, `thread_refs`, `deleted_threads` |
+| Approvals | `approvals`, `approval_rules`, `approval_notices`, `approval_record` |
+| Tempo | `triggers`, `trigger_log`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
+| Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync` |
+| Runtime | `boxes`, `box_agents`, `box_facts`, `jobs`, `job_needs`, `agent_run_settings`, `agent_boxes`, `agent_house_secrets`, `agent_house_ports`, `agent_people`, `agent_denied_tools`, `model_accounts`, `model_account_windows`, `model_account_boxes`, `agent_models`, `account_signins` |
+| Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_files`, `bridge_raw_events`, `bridge_resume` |
+| Secrets | `secrets`, `secret_grants`, `secret_requests`, `secret_rules`, `secret_rule_agents`, `secret_uses`, `secret_changes`, `secret_write_journal` |
+| Measuring | `timing_days`, `measuring_settings` |
+| Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts), `outside_effects` |
 
-CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
-`memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `changes`, `migrate`, `pieces`, `household`, `token`, `sessions`, `export`, `restore`, `store`, `backup`. Any other name runs an
-installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).
+### `agents/<agent>/memories.db`: one per agent
 
-## Shared application
+| Tables | Made by |
+|---|---|
+| `memories`, `vec_memories` | `src/backends/sqlite-vec.ts` |
+| `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `src/backends/migrations.ts` |
+| `people`, `person_revisions`, `person_merges`: the agent's relationship cards | `src/backends/migrations.ts`, used by `src/backends/people.ts` |
+| `projects`, `project_revisions`, `project_names`: the agent's project cards | `src/backends/migrations.ts`, used by `src/backends/projects.ts` |
+| `conversation_turns`, `conversation_digests`, and this file's own `conversations` and `conversation_days` | `src/backends/conversations.ts`. Left from before conversations moved to `loom.db`. Still created, never read or written. |
+| `mind_operation_receipts`, `mind_source_migrations` | `src/pieces/mind/receipt-schema.ts`: retry receipts for writes to this file |
+| `memory_command_preparations`, `memory_command_receipts`, `memory_command_schema`, `memory_card_references`, `memory_card_schema` | `src/pieces/mind/semantic-schema-sql.ts` |
 
-`src/shared-root.ts` composes the built-in services over one app database and installs the HTTP and `/graphql` WebSocket door. The door identifies outside callers and applies the current sharing rule; built-in modules call each other directly. `src/shared-startup.ts` owns normal `serve --http` startup. `fixture` builds an older disposable test home.
+Four names here (`projects`, `conversations`, `conversation_days`, and `people` in the
+commons) also exist in other stores with other columns. A table belongs to the file it is
+in; `src/core/data/schema.ts` describes `loom.db` and nothing else.
 
-The built-in `changes` command calls the new Changes API client directly; it
-never discovers an installed executable or forwards through the legacy run adapter.
+### `agents/<agent>/notes.db`: one per agent
+
+`notes`, `note_revisions`, `note_files`, from `src/notes.ts`; the attached files sit beside
+it, stored once by content.
+
+### `commons/knowledge.db` and `commons/people.db`: shared by every agent
+
+| Store | Tables | Made by |
+|---|---|---|
+| `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` | `src/backends/sqlite-knowledge.ts` |
+| `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), and its own `mind_operation_receipts` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts` |
+
+A new person is two cards, the directory's and the adding agent's, written both or
+neither by `src/pieces/mind/people-actions.ts`.
+
+### `secret-holder/`: the holder process's own store
+
+`holder_config`, `holder_generation`, `holder_key_history`, `holder_values`,
+`holder_receipts`, `holder_aborted_writes`, from `src/pieces/secrets/holder-store.ts`.
+Secret values are here, encrypted, and nowhere else.
+
+### How each store knows its version
+
+`loom.db` holds its schema number in `migrations` and is recognised in full before it is
+touched. The others keep a number in the file header (`PRAGMA user_version`) and no table:
+
+- `memories.db`: the count of steps in `src/backends/migrations.ts` it has had. Each step
+  still decides from the file's shape whether it is pending; the number only lets an older
+  program refuse a file a newer one has changed.
+- `knowledge.db`: 1. A newer number, or a file with tables but no `pages`, is refused.
+- `people.db` and `notes.db`: no number. They are never refused.
+
+## Code that is here but not started
+
+These are compiled and imported for a helper or a type, but `loom serve` never runs them,
+and the tables they define are created by no running program:
+
+- An earlier composition: `src/core/app.ts`, `src/core/db` (`core_migrations`,
+  `core_export_required`), the receipts in `src/core/operations/index.ts`
+  (`core_operations`) and the older sign-in in `src/core/signin/index.ts` (`signin_audit`).
+- An earlier secrets store: `src/pieces/secrets/index.ts` over
+  `src/pieces/secrets/schema/001.ts` (`secrets_names`, `secrets_grants`, `secrets_requests`,
+  `secrets_meta`, `secrets_changes`, `secrets_uses`, `secrets_write_intents`,
+  `secrets_tickets`, `secrets_pending_tombstones`).
+- The file-based household (`src/household.ts`) and browser sessions (`src/ui/sessions.ts`,
+  `src/ui/session-db.ts`).
+
+## Elsewhere
+
+- `web`: the browser app, built by Vite into `dist/web` and served by the program.
+- `scripts`: build, CI and acceptance scripts; `scripts/generate-data-schema.ts` writes `assets/data/schema.sql`.
+- `docs/specs`: the designs each part was built from. Several describe the older program; where one disagrees with this page, the code decides.
