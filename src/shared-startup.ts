@@ -14,7 +14,8 @@ import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
 import {dataDatabase,recogniseDataSchema,upgradeDataSchema,type DataDatabase} from './core/data/database.js';
-import {members,tokens} from './core/data/schema.js';
+import {tokens} from './core/data/schema.js';
+import {householdOwner} from './shared-sharing.js';
 import {tokenLive} from './core/data/authentication.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
 import {ownHome} from './core/daemon-home.js';
@@ -77,7 +78,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   // The member a local sign-in is for when the operator names nobody: a current owner of the household.
-  const localOwner=()=>{const row=db.select().from(members).where(eq(members.id,program.signinMember)).get();return row?.role==='owner'&&!row.removedAt;};
+  const localOwner=()=>householdOwner(db,{kind:'member',id:program.signinMember});
   if(!localOwner())throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
   if(program.secretHolder){

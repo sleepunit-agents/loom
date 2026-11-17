@@ -8,6 +8,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
 import type { Viewer } from '../../policy.js';
+import { householdOwner } from '../../shared-sharing.js';
 import type { Clock } from '../clock.js';
 import { agents, boxes, jobs, members, tokens } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
@@ -19,7 +20,8 @@ export const sharedTokenInput = z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('agent'), agent: id, job: id.optional() }).strict(),
   z.object({ ...common, kind: z.literal('runner'), box: id }).strict(),
 ]);
-export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner';
+/** Tokens are made and revoked by a current household owner: the one owner check, under this door's name. */
+export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => householdOwner(db, viewer);
 /** A current token that stands for a member: the kind a browser session or a passkey may ride on. */
 export function currentMemberToken(db: DataDatabase, clock: Clock, id: string) {
   const found=currentToken(db,id,clock.now());
