@@ -3,6 +3,9 @@
 import {z} from 'zod';
 /** The name a tool served to a body may have. */
 export const TOOL_NAME=/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+/** The most tools a body is served besides the two secret tools: the three generic ones, the named ones
+ * (body-named-tools.ts) and room for more. A harness is told each by name, on its command line. */
+export const BODY_EXTENSION_TOOLS_MAX=62;
 export interface BodyModelTool {
  name:string;
  description:string;
@@ -13,7 +16,7 @@ export interface BodyModelTool {
  * consumes them. Extensions cannot replace the two private Secret tools. */
 export function bodyModelTools(input:readonly BodyModelTool[]=[]):readonly Readonly<BodyModelTool>[] {
  const names=new Set(['request_secret','use_secret']);
- if(input.length>32)throw new Error('Body model tools unavailable');
+ if(input.length>BODY_EXTENSION_TOOLS_MAX)throw new Error('Body model tools unavailable');
  return Object.freeze(input.map(tool=>{
   const {name,description,inputSchema,execute}=tool;
   if(typeof name!=='string'||typeof description!=='string'||!TOOL_NAME.test(name)||names.has(name)||!description.trim()||description.length>4096||!(inputSchema instanceof z.ZodObject)||typeof execute!=='function')throw new Error('Body model tools unavailable');

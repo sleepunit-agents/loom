@@ -22,7 +22,7 @@ const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of
 function nativeReply(child:ChildProcessWithoutNullStreams,args:readonly string[],actions:readonly {name:string;input:Record<string,unknown>}[]=[]){
  const session=args[args.indexOf('--session-id')+1];
  const assistant=(content:unknown[])=>({type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content}});
- const rows=[...actions.map(action=>assistant([{type:'tool_use',id:randomUUID(),name:'mcp__loom_secrets__'+action.name,input:action.input}])),assistant([{type:'text',text:'PRIVATE WORKER REPLY'}]),{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
+ const rows=[...actions.map(action=>assistant([{type:'tool_use',id:randomUUID(),name:'mcp__loom__'+action.name,input:action.input}])),assistant([{type:'text',text:'PRIVATE WORKER REPLY'}]),{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
  child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
 }
 it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async variant=>{
@@ -98,7 +98,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   try{
    expect(command).toBe('/bin/bash');expect(args[args.indexOf('--model')+1]).toBe('requested-model');expect(args).toContain('--strict-mcp-config');expect(args[args.indexOf('--setting-sources')+1]).toBe('');expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(args[args.indexOf('--permission-mode')+1]).toBe('dontAsk');expect(options.stdio).toEqual(['pipe','pipe','pipe','pipe']);
    const start=args.indexOf('--allowedTools');expect(start).toBeGreaterThan(-1);const end=args.findIndex((value,index)=>index>start&&value.startsWith('--'));allowed=args.slice(start+1,end<0?undefined:end);
-   expect(allowed).toEqual(expect.arrayContaining(['mcp__loom_secrets__loom_commands','mcp__loom_secrets__loom_command','mcp__loom_secrets__loom_query']));
+   expect(allowed).toEqual(expect.arrayContaining(['mcp__loom__loom_commands','mcp__loom__loom_command','mcp__loom__loom_query']));
   }catch(error){nativeFailure=error;throw error;}
   const actions:{name:string;input:Record<string,unknown>}[]=[];
   let words='',connection:{url:string;headers:Record<string,string>}|undefined,started=false,inputEnded=false;
@@ -112,7 +112,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['loom_commands','loom_command','loom_query']));
     const decoded=(value:unknown)=>JSON.parse((value as {content:{text:string}[]}).content[0].text);
-    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom_secrets__'+name);actions.push({name,input});const result=decoded(await protocol.callTool({name,arguments:input}));if(name==='loom_query')expect(result.errors).toBeUndefined();return result;};
+    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom__'+name);actions.push({name,input});const result=decoded(await protocol.callTool({name,arguments:input}));if(name==='loom_query')expect(result.errors).toBeUndefined();return result;};
     const catalogue=await call('loom_commands',{});
     expect(catalogue.ok).toBe(true);
     expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','household.propose','inbox.volume']));
@@ -120,7 +120,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    }finally{await protocol.close();}
   })().then(()=>{nativeActions=actions.length;nativeReply(child,args,actions);
   },error=>{nativeFailure=error;child.emit('close',1,null);});};
-  const controlPipe=new Writable({write(bytes,_encoding,done){const servers=JSON.parse(bytes.toString()).mcpServers;expect(Object.keys(servers)).toEqual(['loom_secrets']);connection=servers.loom_secrets as NonNullable<typeof connection>;nativeEndpoint=connection.url;done();},final(done){done();execute();}});
+  const controlPipe=new Writable({write(bytes,_encoding,done){const servers=JSON.parse(bytes.toString()).mcpServers;expect(Object.keys(servers)).toEqual(['loom']);connection=servers.loom as NonNullable<typeof connection>;nativeEndpoint=connection.url;done();},final(done){done();execute();}});
   const stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();},final(done){done();inputEnded=true;execute();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,controlPipe],kill:vi.fn(()=>{child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
   return child;

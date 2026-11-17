@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
+import { BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const tokenVariable = 'LOOM_BODY_TOOLS_TOKEN';
 const event = z.object({ type: z.string() }).passthrough();
@@ -30,7 +30,7 @@ export const codexBody: BodyHarness = input => {
     if (tools && used) throw harnessUnavailable(); used = true;
     if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES) throw harnessUnavailable();
-    const server = 'mcp_servers.loom_secrets.';
+    const server = `mcp_servers.${BODY_TOOLS_SERVER}.`;
     const args = ['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check',
       '--dangerously-bypass-approvals-and-sandbox', '-m', job.model, '-C', input.cwd,
       ...(tools ? ['-c', `${server}url=${quote(tools.url)}`, '-c', `${server}bearer_token_env_var=${quote(tokenVariable)}`,

@@ -134,7 +134,8 @@ export async function bodyProgram(input: {
     const replyTo=incoming.at(-1);
     if(!input.native){
       exit=BODY_EXIT.tools;
-      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
+      // `agent` is for the tools server alone: with it the body is served the named tools a terminal has (body-named-tools.ts).
+      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch,agent:job.agent};
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});

@@ -862,7 +862,11 @@ Workers derive each job's senders from its actual stored bridge receipts rather
 than trusting message words. A claim receives only its current senders' tiers.
 
 Tool patterns have 1–512 characters, cannot begin an option dash or contain NUL or
-line breaks, and can apply to all work or only guests. The same pattern may have
+line breaks, and can apply to all work or only guests. One of loom's own tools is
+written `mcp__loom__<tool>`; a pattern stored as `mcp__loom_secrets__<tool>`, the
+server's former name, is read as that. A pattern that takes away `loom_command` or
+`loom_query` takes away every named tool too (`remember`, `task_close` and the
+rest), since each is one of those two under another name. The same pattern may have
 both rules. The native receiving adapter applies the current denial rules; a
 claimed assignment keeps its snapshot across later settings edits. Failed writes
 preserve both lists, and replay never reinstates an earlier configuration.
@@ -1028,6 +1032,14 @@ and `loom_query`. It starts no listener and supplies no new credential. Discover
 uses the registered Root catalogue, command calls keep stable caller IDs and
 current Root permissions, and reads use the generated GraphQL schema. This
 projection is a composition port; the native listener/CLI wiring is separate.
+
+The same listener also serves the named tools a terminal session has
+(`remember`, `task_claim` and the rest), built by `bodyNamedTools` from the one
+definition in `src/shared-mcp-named.ts`. Each sends its command through this
+`loom_command` and its read through this `loom_query`, so it has their
+credential, their checks and their refusals, and nothing of its own. The
+listener is named `loom` for every harness (`docs/runtime/terminal.md`, "The
+same tools in a body").
 
 Mail confirmation, observed model/latency telemetry and Stop acknowledgement stay
 with the receiving runtime. The model cannot supply those fields or invoke the
