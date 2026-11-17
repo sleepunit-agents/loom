@@ -31,6 +31,3 @@ export const FEEDBACK_CATEGORY = 'feedback';
 
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
-export function isMemoryCategory(value: string): value is MemoryCategory {
-  return (MEMORY_CATEGORIES as readonly string[]).includes(value);
-}

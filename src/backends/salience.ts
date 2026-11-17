@@ -10,10 +10,7 @@
  * prose (the integrity line: loom holds the pen, unlike Anthropic's native digest
  * which is generated).
  */
-import { existsSync } from 'node:fs';
-import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
-import { runMigrations } from './migrations.js';
+import type { Database } from 'better-sqlite3';
 import { EPISODE_CATEGORY } from '../categories.js';
 import { retryWrite } from './retry.js';
 
@@ -204,9 +201,7 @@ export interface DigestRow {
 }
 
 export interface DigestOptions {
-  /** Trusted private-store selection; omitted keeps the legacy override. */
-  memorySelection?: MemorySelection;
-  /** Current canonical reads omit expired rows; legacy wrapper defaults stay unchanged. */
+  /** Leave out rows whose time has run out. */
   excludeExpired?:boolean;
   /** Approximate token budget for the whole digest. */
   tokenBudget?: number;
@@ -279,41 +274,6 @@ export function assembleDigest(rows: DigestRow[], opts: DigestOptions = {}): str
   return sections.join('\n\n');
 }
 
-// ── context-dir wrappers (open memories.db directly; no embedder needed) ──
-
-/** Open memories.db without the vector/embedder stack — salience is plain SQL. */
-function openMemoriesDb(contextDir: string, readonly: boolean, selection?: MemorySelection): Database | null {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  if (!existsSync(dbPath)) return null;
-  const db = new BetterSqlite3(dbPath, { readonly });
-  db.pragma('busy_timeout = 5000');
-  return db;
-}
-
-/** Lane entry point: recompute + store salience for a context. Returns count (or null if no store). */
-export function recomputeSalienceForContext(contextDir: string, nowMs: number, counts?: TimestampCounts, selection?: MemorySelection): number | null {
-  const db = openMemoriesDb(contextDir, false, selection);
-  if (!db) return null;
-  try {
-    // Self-heal: a store that predates the salience migration gets it here, so
-    // the lane works on any store (migrations are idempotent).
-    if (!hasColumn(db, 'memories', 'salience')) runMigrations(db, { strict: false });
-    return recomputeSalience(db, nowMs, counts);
-  } finally {
-    db.close();
-  }
-}
-
-export interface DigestAtom {
-  title: string;
-  category: string;
-  content: string;
-  salience: number;
-  tier: Tier;
-  /** Sourcing tier — null on legacy records. */
-  sourcing: string | null;
-}
-
 /**
  * Every live authored memory (not episodes) with its heat computed NOW from
  * its timestamps, hottest first. The digest reads heat this way instead of
@@ -336,42 +296,6 @@ function liveRows(db: Database, nowMs: number,excludeExpired=false): Array<Diges
       salience: heatOf({ category: r.category, created, updated, authored_at, recall_heat, recall_heat_at }, nowMs),
     }))
     .sort(compareDigestRows);
-}
-
-/**
- * Structured salience digest for a UI widget: the hottest authored atoms,
- * tier-labeled, ordered hot→cold, plus the total memory count. Same
- * assemble-not-generate view as the text digest — just shaped for rendering.
- */
-export function digestData(
-  contextDir: string,
-  limit = 40,
-  nowMs = Date.now(),
-  selection?: MemorySelection,
-): { atoms: DigestAtom[]; total: number } | null {
-  const db = openMemoriesDb(contextDir, true, selection);
-  if (!db) return null;
-  try {
-    if (!hasColumn(db, 'memories', 'salience')) return { atoms: [], total: 0 };
-    const total = (db.prepare('SELECT COUNT(*) AS n FROM memories WHERE archived = 0').get() as { n: number }).n;
-    const atoms = liveRows(db, nowMs)
-      .slice(0, limit)
-      .map(({ stored: _stored, ...r }) => ({ ...r, tier: tierOf(r.salience) }));
-    return { atoms, total };
-  } finally {
-    db.close();
-  }
-}
-
-/** Assemble the boot digest for a context, with heat read live. Returns null if no store / nothing hot. */
-export function digestForContext(contextDir: string, opts: DigestOptions = {}): string | null {
-  const db = openMemoriesDb(contextDir, true, opts.memorySelection);
-  if (!db) return null;
-  try {
-    return digestOnConnection(db,opts);
-  } finally {
-    db.close();
-  }
 }
 
 /** Read-only projection over an explicitly selected, already-owned connection. */

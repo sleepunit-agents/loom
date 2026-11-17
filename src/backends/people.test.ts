@@ -3,10 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
-import { PeopleStore, openPeopleStore, renderCard, validateCard, MAX_RENDER, type PersonCard } from './people.js';
-import { remember } from '../tools/remember.js';
-import { closeAllBackends } from './index.js';
-import { resolveSqliteDbPath } from '../config.js';
+import { PeopleStore, renderCard, validateCard, MAX_RENDER, type PersonCard } from './people.js';
+import { SqliteVecBackend } from './sqlite-vec.js';
 
 // Acceptance criteria 1–3, 6, 7, 9 and 11 of docs/specs/person-cards.md, on
 // the store itself. Criteria 4, 5 and 8 (identity) are in tools/identity-room.test.ts,
@@ -14,6 +12,13 @@ import { resolveSqliteDbPath } from '../config.js';
 
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-10-19T12:00:00.000Z');
+
+/** The agent's memory store in the same file, opened as the memory commands open it; each text gets its own vector. */
+function memoryStore(dir: string): SqliteVecBackend {
+  const vector = (text: string) => Array.from({ length: 4 }, (_, i) => text.charCodeAt(i % text.length) + i);
+  return new SqliteVecBackend({ dbPath: join(dir, 'memories.db'), notifyWrites: false },
+    { dimensions: 4, embed: async (text) => vector(text), embedBatch: async (texts) => texts.map(vector) });
+}
 
 describe('PeopleStore', () => {
   let dir: string;
@@ -28,7 +33,6 @@ describe('PeopleStore', () => {
 
   afterEach(() => {
     store.close();
-    closeAllBackends();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -105,11 +109,12 @@ describe('PeopleStore', () => {
 
     it('merge: false without summary removes it and resets synthesized_at; every tagged memory counts', async () => {
       const ctx = mkdtempSync(join(tmpdir(), 'loom-people-ctx-'));
+      const memories = memoryStore(ctx);
       try {
-        await remember(ctx, { category: 'user', title: 'pk tz', content: 'Eastern', metadata: { person: 'patrick-kells' } });
-        await remember(ctx, { category: 'user', title: 'pk terse', content: 'Concise', metadata: { person: 'patrick-kells' } });
-        await remember(ctx, { category: 'user', title: 'other', content: 'x', metadata: { person: 'someone-else' } });
-        const s = openPeopleStore(ctx)!;
+        await memories.remember({ category: 'user', title: 'pk tz', content: 'Eastern', metadata: { person: 'patrick-kells' } });
+        await memories.remember({ category: 'user', title: 'pk terse', content: 'Concise', metadata: { person: 'patrick-kells' } });
+        await memories.remember({ category: 'user', title: 'other', content: 'x', metadata: { person: 'someone-else' } });
+        const s = new PeopleStore({ dbPath: join(ctx, 'memories.db') });
         try {
           s.write({ slug: 'patrick-kells', name: 'Patrick Kells', summary: 'Field lead.' });
           expect(s.list()[0].memories_since_synthesis).toBe(0);
@@ -121,23 +126,24 @@ describe('PeopleStore', () => {
           s.close();
         }
       } finally {
-        closeAllBackends();
+        memories.close();
         rmSync(ctx, { recursive: true, force: true });
       }
     });
 
     it('memories_since_synthesis counts only memories created after the summary', async () => {
       const ctx = mkdtempSync(join(tmpdir(), 'loom-people-ctx-'));
+      const memories = memoryStore(ctx);
       try {
-        await remember(ctx, { category: 'user', title: 'old', content: 'a', metadata: { person: 'pk' } });
-        await remember(ctx, { category: 'user', title: 'new', content: 'b', metadata: { person: 'pk' } });
-        await remember(ctx, { category: 'user', title: 'gone', content: 'c', metadata: { person: 'pk' }, ttl: '1h' });
-        const db = new BetterSqlite3(resolveSqliteDbPath(ctx));
+        await memories.remember({ category: 'user', title: 'old', content: 'a', metadata: { person: 'pk' } });
+        await memories.remember({ category: 'user', title: 'new', content: 'b', metadata: { person: 'pk' } });
+        await memories.remember({ category: 'user', title: 'gone', content: 'c', metadata: { person: 'pk' }, ttl: '1h' });
+        const db = new BetterSqlite3(join(ctx, 'memories.db'));
         db.prepare("UPDATE memories SET created = ? WHERE title = 'old'").run(new Date(T0 - DAY).toISOString());
         db.prepare("UPDATE memories SET created = ? WHERE title = 'new'").run(new Date(T0 + 1000).toISOString());
         db.prepare("UPDATE memories SET expires_at = ? WHERE title = 'gone'").run(new Date(T0 - 1).toISOString());
         db.close();
-        const s = openPeopleStore(ctx, { now: () => T0 })!;
+        const s = new PeopleStore({ dbPath: join(ctx, 'memories.db'), now: () => T0 });
         try {
           s.write({ slug: 'pk', name: 'PK', summary: 'S' });
           expect(s.list()[0].memories_since_synthesis).toBe(1);
@@ -145,7 +151,7 @@ describe('PeopleStore', () => {
           s.close();
         }
       } finally {
-        closeAllBackends();
+        memories.close();
         rmSync(ctx, { recursive: true, force: true });
       }
     });

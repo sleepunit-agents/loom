@@ -611,14 +611,6 @@ export interface KnowledgeSupersededInput {
   note?: string;
 }
 
-export interface KnowledgeSupersessionRecord {
-  id: number;
-  old_slug: string;
-  new_slug: string;
-  note: string | null;
-  created: string;
-}
-
 export interface KnowledgeSupersededResult {
   old_slug: string;
   new_slug: string;

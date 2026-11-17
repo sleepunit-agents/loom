@@ -19,14 +19,12 @@ import { dirname } from 'node:path';
  * its project and the result carries `resolved_from`. An archived project is
  * reached by its slug only.
  *
- * Storage is the memory database (resolveSqliteDbPath), opened raw like the
+ * Storage is the memory database (memories.db), opened raw like the
  * people store — no embedder. The hub's memory reads live here because the
  * memories are in the same database; notes and person cards are read by
  * tools/project.ts, which knows the context dir.
  */
-import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { NOTE_PATH } from '../notes.js';
 import { refuseNewerStore, runMigrationSteps } from './migrations.js';
 import {
@@ -151,9 +149,6 @@ export function projectNameError(name: unknown): string | null {
   if (isReserved(name as string)) return `"${name as string}" is a reserved name (${RESERVED_KEYS.join(', ')})`;
   return null;
 }
-
-/** A project name's field name: the name with `-` replaced by `_` (what a person card's `where` uses). */
-export const fieldNameOf = (name: string) => name.replace(/-/g, '_');
 
 function checkWhereValue(v: unknown, path: string): void {
   if (typeof v !== 'string') fail(`${path}: must be a string (a project's state is prose)`);
@@ -313,9 +308,6 @@ export function renderProjectCard(card: ProjectCard, nowMs: number, opts: { wors
   if (where) lines.push(where);
   return lines.join('\n');
 }
-
-/** A project's names: its slug, then its aliases in the card's order. */
-export const namesOf = (card: Pick<ProjectCard, 'slug' | 'links'>): string[] => [card.slug, ...(card.links?.aliases ?? [])];
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
@@ -805,56 +797,4 @@ export function projectNameSet(db: Database, name: string): Set<string> | null {
   if (!holder) return null;
   const rows = db.prepare('SELECT name FROM project_names WHERE slug = ?').all(holder.slug) as { name: string }[];
   return new Set(rows.map((r) => r.name));
-}
-
-/**
- * Open the projects store on a context's memory database. A read-only open
- * returns null when there is no database file yet; a writable one creates it.
- */
-export function openProjectsStore(
-  contextDir: string,
-  opts: { readonly?: boolean; now?: () => number; actor?: string; selection?: MemorySelection } = {},
-): ProjectsStore | null {
-  const dbPath = resolveSqliteDbPath(contextDir, opts.selection);
-  if (opts.readonly && !existsSync(dbPath)) return null;
-  return new ProjectsStore({ dbPath, readonly: opts.readonly, now: opts.now, actor: opts.actor });
-}
-
-// ─── Identity's `project` param ──────────────────────────────────────────────
-
-const PROJECT_HEADING = '# This project';
-/** The longest name a placeholder echoes. A name that can't be a project's is cut here. */
-const ECHO_MAX = MAX_PROJECT_SLUG;
-
-/**
- * The `# This project` block for identity: the heading and the rendered card
- * (≤ 2,015 chars: the card's cap is checked at write, so it never needs
- * truncating). Best-effort as person cards: a missing, archived or
- * unreadable card gives its placeholder line, never a failure.
- */
-export function projectBlock(contextDir: string, name: string | undefined, opts: { nowMs?: number; onFailure?: (err: unknown) => void; selection?: MemorySelection } = {}): string | null {
-  if (!name) return null;
-  const echo = name.length > ECHO_MAX ? `${name.slice(0, ECHO_MAX)}…` : name;
-  const line = (text: string) => `${PROJECT_HEADING}\n${text}`;
-  if (projectNameError(name)) return line(`_(no project ${echo})_`);
-  let store: ProjectsStore | null;
-  try {
-    store = openProjectsStore(contextDir, { readonly: true, selection: opts.selection });
-  } catch (e) {
-    opts.onFailure?.(e);
-    return line(`_(project ${echo} is unreadable)_`);
-  }
-  if (!store) return line(`_(no project ${echo})_`);
-  try {
-    const found = store.resolve(name);
-    if (!found) return line(`_(no project ${echo})_`);
-    if (found.row.archived_at !== null) return line(`_(project ${echo} is archived)_`);
-    return line(renderProjectCard(found.row.card, opts.nowMs ?? Date.now()));
-  } catch (e) {
-    console.error(`[loom:identity] project card ${echo} unreadable:`, e);
-    opts.onFailure?.(e);
-    return line(`_(project ${echo} is unreadable)_`);
-  } finally {
-    store.close();
-  }
 }
