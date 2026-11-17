@@ -8,6 +8,7 @@
  *   memories       — regular table, one row per memory (payload, TTL, etc.)
  *   vec_memories   — sqlite-vec virtual table, rowid = memories.id
  */
+import { DAY_MS } from '../core/day.js';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -478,7 +479,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const staleDays = options?.staleDays ?? 30;
     const now = new Date();
     const staleThreshold = new Date(
-      now.getTime() - staleDays * 24 * 60 * 60 * 1000,
+      now.getTime() - staleDays * DAY_MS,
     );
 
     const rows = this.db
@@ -635,7 +636,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const maxDuplicates = options?.maxDuplicates ?? 20;
 
     const now = new Date();
-    const staleThreshold = new Date(now.getTime() - staleDays * 24 * 60 * 60 * 1000);
+    const staleThreshold = new Date(now.getTime() - staleDays * DAY_MS);
 
     const rows = this.db
       .prepare(

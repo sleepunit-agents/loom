@@ -1,4 +1,5 @@
 /** Computed hubs over existing private agent cards. A source is opened when its agent is first listed; one whose file is missing then stays missing until restart. */
+import { DAY_MS } from '../../core/day.js';
 import {STORE_ID} from '../../slug.js';
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
@@ -18,7 +19,7 @@ const itemSchema=z.object({title:z.string(),ref:z.string().optional(),when:z.str
 const sectionSchema=z.object({available:z.boolean(),error:z.string().optional(),items:z.array(itemSchema).optional(),groups:z.array(z.object({title:z.string(),waiting:z.boolean().optional(),items:z.array(itemSchema)}).strict()).optional(),total:z.number().int().nonnegative().optional(),counts:z.record(z.string(),z.number()).optional(),activity:z.string().optional(),expires:z.number().finite().optional(),conversationIds:z.array(z.string().min(1).max(200)).optional()}).strict();
 const sectionItems=(s:ProjectSection)=>[...(s.items??[]),...(s.groups??[]).flatMap(g=>g.items.map(i=>({...i,...(g.waiting?{waiting:true}:{})})))];
 const activeMemory='archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))';
-const day=86400000;
+const day=DAY_MS;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];

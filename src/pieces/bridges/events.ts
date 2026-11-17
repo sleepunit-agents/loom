@@ -1,3 +1,4 @@
+import { DAY_MS } from '../../core/day.js';
 import { and, eq, getTableColumns, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
@@ -16,7 +17,7 @@ export const RAW_EVENT_LIFETIME = 3_600_000;
  * details that cannot be fetched. A held message is retried for exactly as long (receiver.ts takes its
  * HELD_LIFETIME from this), so the only copy of a frame never goes before the retry that could read it stops.
  * What that costs in kept raw words is in docs/accepted-tradeoffs.md ("An unread event is kept for a day"). */
-export const UNREAD_EVENT_LIFETIME = 86_400_000;
+export const UNREAD_EVENT_LIFETIME = DAY_MS;
 /** What a drain callback says became of one event: nothing or true, it is dealt with and its frame is
  * removed; false, it could not be read yet and waits; 'recorded', its message now has a record of its own
  * and the frame is kept only until RAW_EVENT_LIFETIME after it arrived. */

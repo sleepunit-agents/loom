@@ -6,6 +6,7 @@
  * Only fingerprints are looked up; a database fingerprint is never accepted as the credential itself.
  * This issues no credentials.
  */
+import { DAY_MS } from '../day.js';
 import { createHash } from 'node:crypto';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
@@ -21,7 +22,7 @@ import type { Viewer } from '../../policy.js';
 export const credentialFingerprint = (secret: string | Uint8Array) => createHash('sha256').update(secret).digest('hex');
 
 /** How long a browser stays signed in, counted from when it signed in. An agent's browser gets hours. */
-export const PERSON_SESSION_MS = 30 * 86400_000, AGENT_SESSION_MS = 6 * 3600_000;
+export const PERSON_SESSION_MS = 30 * DAY_MS, AGENT_SESSION_MS = 6 * 3600_000;
 /** How long after a browser proved who it is it may still make a sign-in link or add a passkey. */
 export const FRESH_PROOF_MS = 10 * 60_000;
 /** A person's own browser that proved who it is a short while ago. A cookie alone is not a new proof. */

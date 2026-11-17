@@ -28,7 +28,7 @@ type Request = typeof secretRequests.$inferSelect;
 /** What a standing answer may be, for one secret or as the household's default: the columns' own choices. */
 export const secretAnswer = z.enum(household.secretsDefault.enumValues);
 export const secretRuleInput = z.object({ secret: secretName, answer: secretAnswer, minutes: grantMinutes,
-  agents: z.array(z.object({ agent: secretAgent, when: z.enum(['on_request', 'at_start']) }).strict()) }).strict();
+  agents: z.array(z.object({ agent: secretAgent, when: z.enum(secretRuleAgents.when.enumValues) }).strict()) }).strict();
 
 export class SecretRequests {
   private readonly mail: Conversations;

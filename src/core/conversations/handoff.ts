@@ -1,4 +1,5 @@
 import {handoffPeersAssigned,handoffTarget} from './handoff-access.js';
+import {MESSAGE_WORDS_MAX} from './words.js';
 /** A current native body hands a brief to another assigned agent. Labels and
  * parent place come from its live conversation, never from caller claims. */
 import {and,eq} from 'drizzle-orm';
@@ -14,7 +15,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
  const db=service.db,cvs=service.threads.conversations,current=conversationBodyScope(db,proof,privateAssignment),requireCurrent=requireBodyScope(current);
  const common=bodyOperationDefaults(current,value=>service.key.hash(value),'body-handoff');
  operations.register(operation({...common,name:'conversation.handoff',
-  input:z.object({agent:z.string().min(1).max(200),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(100_000)}).strict(),
+  input:z.object({agent:z.string().min(1).max(200),clientId:z.string().min(1).max(200),label:threadTitle,words:z.string().trim().min(1).max(MESSAGE_WORDS_MAX)}).strict(),
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
    const found=current(viewer);if(!found||input.agent===found.cv.agent||!handoffTarget(db,input.agent))return false;

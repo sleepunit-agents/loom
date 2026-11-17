@@ -1,8 +1,9 @@
 /** The normalized Change contract, ported from loom-changes. No forge writes. */
+import { DAY_MS } from '../../core/day.js';
 import { z } from 'zod';
 import { TASK_ID, taskId } from '../../slug.js';
 import { changes } from '../../core/data/schema.js';
-export const week = 7 * 86400_000;
+export const week = 7 * DAY_MS;
 export const repoId = (raw: string): string => {
   const value = raw.startsWith('github:') ? raw.slice(7) : raw;
   if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(value)) throw new Error('A GitHub repository must be owner/repo');

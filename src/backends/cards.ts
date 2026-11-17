@@ -11,6 +11,7 @@
  * transaction per mutation). This module is those rules once; people.ts and
  * projects.ts add their own shape, render and side tables.
  */
+import { DAY_MS } from '../core/day.js';
 import type { Database } from 'better-sqlite3';
 import { pathSegmentError } from '../path-safety.js';
 import { SLUG } from '../slug.js';
@@ -54,7 +55,6 @@ export const CARD_SUMMARY_MAX = 1200;
 export const CARD_FIELDS_MAX = 12;
 export const CARD_RENDER_MAX = 2000;
 const SKEW_MS = 60_000;
-const DAY_MS = 86_400_000;
 
 /**
  * The harness's gating names. Fixed here, not configured: a card that carried

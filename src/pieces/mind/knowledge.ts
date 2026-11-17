@@ -1,4 +1,5 @@
 /** Read-only projection of the existing commons knowledge store. No schema writes. */
+import { DAY_MS } from '../../core/day.js';
 import type { Database } from 'better-sqlite3';
 import {maySee,mayAct,type Viewer,type Sharing} from '../../core/index.js';
 /** The same current capability projection for GraphQL and legacy clients. */
@@ -42,7 +43,7 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
     } catch { /* an older store: no verifications table */ }
     const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, freshness_anchor, sla_class, created_by, author FROM pages WHERE status = 'active' AND (? IS NULL OR slug = ?) ORDER BY updated DESC, slug`)
       .all(detailOnly ? open : null, detailOnly ? open : null) as Array<PageRow & { id: number }>;
-    const day = 86_400_000;
+    const day = DAY_MS;
     const fresh = (r: { id: number; updated: string; verified_at?: string | null }): Freshness => {
       const at = Date.parse(r.verified_at ?? r.updated);
       const age = (nowMs - at) / day;

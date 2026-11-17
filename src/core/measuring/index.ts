@@ -1,3 +1,4 @@
+import { DAY_MS } from '../day.js';
 import type { Span, Tracer } from '@opentelemetry/api';
 import { clock as realClock, type Clock } from '../clock.js';
 
@@ -76,7 +77,7 @@ export async function createMeasuring(
   const report = () => { try { reportError(); } catch { /* diagnostics cannot break application work */ } };
   const prune = (day: string) => {
     if (!store || day <= prunedDay) return;
-    store.prune(new Date(Date.parse(day) - (keepDays - 1) * 86400_000).toISOString().slice(0, 10));
+    store.prune(new Date(Date.parse(day) - (keepDays - 1) * DAY_MS).toISOString().slice(0, 10));
     prunedDay = day;
   };
   if (store) processors.push({
@@ -119,7 +120,7 @@ export async function createMeasuring(
     catch { report(); }
     finally { writing = false; }
     // Expire idle stores too, without a polling interval or a process keepalive.
-    if (active) cancelRetention = clock.at((Math.floor(now / 86400_000) + 1) * 86400_000, retain);
+    if (active) cancelRetention = clock.at((Math.floor(now / DAY_MS) + 1) * DAY_MS, retain);
   };
   retain();
   const tracer: Tracer = provider.getTracer('loom.measuring');

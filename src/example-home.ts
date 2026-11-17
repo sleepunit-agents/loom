@@ -1,5 +1,6 @@
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
+import { DAY_MS } from './core/day.js';
 import Database from 'better-sqlite3';
 import {pathToFileURL} from 'node:url';
 import {z} from 'zod';
@@ -68,7 +69,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   // One old, still-retained reply lets the walkthrough cross a real deadline
   // on its fake clock without advancing every runtime timer for a fortnight.
   const keepDays=commsKeepDays(db);
-  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*86400000+1000).toISOString());
+  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*DAY_MS+1000).toISOString());
   const olderThread=older.threads.open({member:'alex',agent:'moss',title:'Previous shed inspection'});
   const olderReply=await older.send({thread:olderThread.id,sender:'moss',kind:'reply',words:exampleRetentionWords});
   const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');

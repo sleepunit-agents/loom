@@ -19,6 +19,7 @@
  * `.md`, or a path inside it (one of its files). A folder named in passing ("lanes write to notes/planning/") cites
  * nothing under it: that would keep a whole folder of scratch for one mention.
  */
+import { DAY_MS } from './core/day.js';
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -59,7 +60,7 @@ const blobPath = (dir: string, sha: string) => join(noteFilesDir(dir), sha.slice
 /** When a note lets go: never for keep, else its lifespan after its last change. */
 export function expiresAt(lifespan: Lifespan, updated: string): string | null {
   if (lifespan === 'keep') return null;
-  return new Date(Date.parse(updated) + LIFESPAN_DAYS[lifespan] * 86_400_000).toISOString();
+  return new Date(Date.parse(updated) + LIFESPAN_DAYS[lifespan] * DAY_MS).toISOString();
 }
 
 /** The notes store's version, kept in the file header (PRAGMA user_version). A change to its tables raises it. */

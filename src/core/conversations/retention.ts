@@ -1,8 +1,8 @@
 /** The one statement of how long a message's words are kept. Every reader, the writers that stamp a
  * limit, and the sweep that erases ask here; none of them works a deadline out for itself. */
+import { DAY_MS } from '../day.js';
 import { COMMS_DAYS_MAX } from '../data/comms-days.js';
 
-const DAY_MS = 86400000;
 /** A keep time a household can have set: whole days, from 1 to the most Setup allows. */
 export const validKeepDays = (days: number): boolean => Number.isInteger(days) && days >= 1 && days <= COMMS_DAYS_MAX;
 /** The age limit alone: when something written at `at` (milliseconds) is `days` old. */

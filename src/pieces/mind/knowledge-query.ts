@@ -1,5 +1,6 @@
 /** File-backed fields for composition into the one generated query schema.
  * These are not shared-database tables or a second endpoint. */
+import { DAY_MS } from '../../core/day.js';
 import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import {
@@ -95,8 +96,8 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
     const rows=db.prepare("SELECT updated,verified_at FROM pages WHERE status='active'").all() as Array<{updated:string;verified_at:string|null}>;
     for(const row of rows){
      const anchor=Date.parse(row.verified_at??row.updated);
-     const boundaries=[anchor+AGING_DAYS*86400_000,anchor+CHECK_DAYS*86400_000,
-      ...(row.verified_at?[Date.parse(row.verified_at)+RECENT_DAYS*86400_000]:[])];
+     const boundaries=[anchor+AGING_DAYS*DAY_MS,anchor+CHECK_DAYS*DAY_MS,
+      ...(row.verified_at?[Date.parse(row.verified_at)+RECENT_DAYS*DAY_MS]:[])];
      for(const at of boundaries)if(Number.isFinite(at)&&at>now&&(next===undefined||at<next))next=at;
     }
     return next;

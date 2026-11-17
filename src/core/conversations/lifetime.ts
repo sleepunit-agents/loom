@@ -1,3 +1,4 @@
+import { DAY_MS } from '../day.js';
 import { ageLimit } from './retention.js';
 import {handoffExpiries} from './handoff-words.js';
 import {privateInboxExpiries} from './private-inbox-words.js';
@@ -23,7 +24,7 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
     cancel?.(); cancel = undefined;
     if (closed) return;
     const now = clock.now(), days = commsKeepDays(db);
-    let next = Date.parse(new Date(now + 86400000).toISOString().slice(0,10) + 'T00:00:00.000Z');
+    let next = Date.parse(new Date(now + DAY_MS).toISOString().slice(0,10) + 'T00:00:00.000Z');
     for (const row of db.select({ at: messages.at, until: messages.keepUntil }).from(messages).where(isNotNull(messages.words)).all()) {
       const householdEnd = ageLimit(Date.parse(row.at), days), storedEnd = Date.parse(row.until ?? '');
       if (Number.isFinite(householdEnd)) next = Math.min(next, householdEnd);

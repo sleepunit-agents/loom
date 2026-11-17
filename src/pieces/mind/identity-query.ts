@@ -1,4 +1,5 @@
 /** A body's Identity is an authored, read-only view of declared private files. */
+import { DAY_MS } from '../../core/day.js';
 import {PAGE_NAME} from '../../slug.js';
 import Database from 'better-sqlite3';
 import {existsSync,readFileSync,realpathSync} from 'node:fs';
@@ -48,7 +49,7 @@ export function memoryIdentityFields(options:{sources?:MindSources;sharing():Sha
    const times=[...episodes.map(row=>row.created),...digests.map(row=>row.at)].map(at=>Date.parse(at)+opts.hours*HOUR_MS+1).filter(at=>Number.isFinite(at)&&at>now);
    if(db?.prepare("SELECT 1 FROM sqlite_schema WHERE name='memories'").get()){
     const row=db.prepare('SELECT min(julianday(expires_at)) AS at FROM memories WHERE archived=0 AND julianday(expires_at)>julianday(?)').get(new Date(now).toISOString()) as {at:number|null};
-    if(row.at!==null)times.push(Math.round((row.at-2440587.5)*86400000));
+    if(row.at!==null)times.push(Math.round((row.at-2440587.5)*DAY_MS));
    }
    const until=times.length?Math.min(...times):undefined;deadlines.set('context:'+args.agent,until);if(until!==undefined)keepReadUntil(context,until);
    return {agent:args.agent,readAt:new Date(now).toISOString(),creed:identity(source.directory,'IDENTITY.md'),preferences:identity(source.directory,'preferences.md'),selfModel:identity(source.directory,'self-model.md'),topOfMind:db?digestOnConnection(db,opts):null,recent:assembleTape(episodes,opts,digests)};

@@ -1,3 +1,4 @@
+import { DAY_MS } from '../day.js';
 import { and, eq, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, tempoSettings } from '../data/schema.js';
@@ -14,7 +15,7 @@ export function readTimings(db: DataDatabase, who: Recipient): Timings {
   const row = db.select().from(tempoSettings).where(and(eq(tempoSettings.whoKind, who.kind), eq(tempoSettings.who, who.id))).get();
   return row ? { settleSeconds: row.settleSeconds, dimDays: row.dimDays, muteDays: row.muteDays } : { ...defaultTimings };
 }
-const day = 86_400_000;
+const day = DAY_MS;
 /** How long new mail may settle before it is shown (none to a day), and how long dim and mute may last (a day
  * to ten years). The one statement of both: a household change is held to them where it is filed, and
  * `setTimings` holds every caller to them. */

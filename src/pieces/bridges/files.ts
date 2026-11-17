@@ -1,9 +1,10 @@
+import { DAY_MS } from '../../core/day.js';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeFileMessages, bridgeFiles, bridgeIncoming } from '../../core/data/schema.js';
 
-const RETENTION = 14 * 86400_000;
+const RETENTION = 14 * DAY_MS;
 
 /** Slack's attachment cache on the shared schema. The daemon calls store after
  * fetching through its credential-owning adapter. Reads use the data endpoint.

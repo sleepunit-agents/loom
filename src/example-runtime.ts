@@ -1,5 +1,6 @@
 /** Fictitious Runtime setup through the same authenticated APIs as a real worker.
  * It schedules mail, but never pretends a provider/body has executed. */
+import { DAY_MS } from './core/day.js';
 import {z} from 'zod';
 import type {sharedRoot} from './shared-root.js';
 import type {FakeClock} from './core/clock.js';
@@ -33,7 +34,7 @@ export async function exampleRuntime(root:ReturnType<typeof sharedRoot>,clock:Fa
   const workerHttp={url:'https://example.invalid',token:worker.token,signal:new AbortController().signal,fetch:async(url:Parameters<typeof fetch>[0],init?:RequestInit)=>root.http.fetch(new Request(url,init))};
   await reportWorkerHealth({...workerHttp,facts:['arch:example']});
   const {basis}=await readWorkerAccountBasis(workerHttp,identity);
-  await reportWorkerAccountUsage(workerHttp,{...identity,basis,windows:[{name:'week',usage:0.25,readAt:new Date(clock.now()).toISOString(),resetsAt:new Date(clock.now()+7*86400000).toISOString(),durationMs:7*86400000}]});
+  await reportWorkerAccountUsage(workerHttp,{...identity,basis,windows:[{name:'week',usage:0.25,readAt:new Date(clock.now()).toISOString(),resetsAt:new Date(clock.now()+7*DAY_MS).toISOString(),durationMs:7*DAY_MS}]});
   // A queued job carries its conversation's label as its title; the two example jobs are told apart by it.
   const threadTitle='Inspect the example shed';
   const thread=root.writes.run(()=>root.services.comms!.threads.open({member:'alex',agent:'moss',title:threadTitle})).value;

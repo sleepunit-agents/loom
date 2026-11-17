@@ -21,7 +21,7 @@ import { OperationError, type Operations } from './core/operations/index.js';
 import { agentSecretRequest } from './pieces/secrets/input.js';
 import type { SecretRequests } from './pieces/secrets/requests.js';
 const requestState=z.object({id:z.string(),state:z.enum(secretRequests.state.enumValues)}).strict();
-const handoff=z.object({id:z.string(),state:z.enum(['started','released','failed'])}).strict();
+const handoff=z.object({id:z.string(),state:z.enum(secretUses.state.enumValues)}).strict();
 export function registerSharedSecretAgentCommands(operations:Operations,db:DataDatabase,requests:SecretRequests,
  body:(viewer:Viewer)=>Readonly<{agent:string;job:string}>|undefined){
  const itself=(viewer:Viewer,agent:string|undefined)=>agent!==undefined&&holds(rules.agentItself,viewer,{agent},sharedSharing(db));

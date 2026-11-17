@@ -11,6 +11,7 @@
  * prose (the integrity line: loom holds the pen, unlike Anthropic's native digest
  * which is generated).
  */
+import { DAY_MS } from '../core/day.js';
 import type { Database } from 'better-sqlite3';
 import { EPISODE_CATEGORY } from '../categories.js';
 import type { Observation } from './types.js';
@@ -31,7 +32,6 @@ export const HALF_LIVES: Record<string, number> = {
 };
 export const DEFAULT_HALF_LIFE_DAYS = 30;
 
-const DAY_MS = 86_400_000;
 
 /**
  * Temperature in [0, 1]: 1.0 at the moment of last touch, 0.5 after one

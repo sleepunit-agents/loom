@@ -1,7 +1,8 @@
 /** Timer metadata from a computed hub; no content or persistent store of its own. */
+import { DAY_MS } from '../../core/day.js';
 import type {ProjectRecord} from './projects-model.js';
 import {freshUntil} from '../../backends/cards.js';
-const day=86400000;
+const day=DAY_MS;
 export function projectDeadline(record:ProjectRecord,now:number):number|undefined {
  const deadlines=Object.values(record.card.where).flatMap(field=>field.verified_at?[
   freshUntil(field)!+1,

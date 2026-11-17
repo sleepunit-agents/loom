@@ -479,8 +479,6 @@ it('writes the number of a named limit in that limit\'s home and nowhere else', 
       'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',
       'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
     { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
-      // A copy still: the file was being changed elsewhere when the others were rolled up. It is to import the name.
-      'src/core/conversations/handoff.ts': 'a copy of MESSAGE_WORDS_MAX, to be replaced by the name',
       'src/runtime/claude-body.ts': 'how many tokens one tool answer may have, a setting of the harness',
       'web/src/pieces/comms-view/index.tsx': 'the message box\'s hint, held to MESSAGE_WORDS_MAX below',
       'web/src/pieces/attention/home-composer.tsx': 'the message box\'s hint, held to MESSAGE_WORDS_MAX below',
@@ -539,7 +537,7 @@ it('cuts a job\'s log to one length at the worker, the door and the store', () =
 it('caps the words of a message once, for every door that takes them', () => {
   // A field named for words, a message, text or instructions is capped by the name, never by a number.
   const own = /\b(words|text|instructions|why|ifYes|ifNo|details):\s*z\.string\(\)(\.trim\(\))?(\.min\(1\))?\.max\(1[\d_]{5,6}\)/;
-  expect(sources('src').filter(file => own.test(text(file)))).toEqual(['src/core/conversations/handoff.ts']);
+  expect(sources('src').filter(file => own.test(text(file)))).toEqual([]);
   for (const file of ['src/core/conversations/body-output.ts', 'src/core/conversations/operations.ts', 'src/core/conversations/body-operations.ts', 'src/shared-bridge-reply.ts', 'src/core/tempo/triggers.ts', 'src/shared-work-body.ts'])
     expect(text(file), file).toContain('.max(MESSAGE_WORDS_MAX)');
 });
@@ -603,7 +601,7 @@ it('takes these choices from the columns that check them too', () => {
     .toEqual([['full', 'dim', 'mute'], ['full', 'dim', 'mute'], ['discord', 'slack'], ['running', 'done', 'failed'], ['asked', 'started', 'waiting', 'done', 'failed']]);
   // When a secret is handed over is still written out beside its column: that file was being changed
   // elsewhere when the others were rolled up. It is to read `secretRuleAgents.when.enumValues`.
-  expect(holders(/'on_request',\s*'at_start'/)).toEqual(['src/pieces/secrets/requests.ts']);
+  expect(holders(/'on_request',\s*'at_start'/)).toEqual([]);
   // The app does not import the program; its volume buttons are the column's choices, in the column's order.
   expect(/\(\[([^\]]*)\] as const\)\.map\(value => <Button/.exec(text('web/src/pieces/inbox-view/index.tsx'))?.[1].replaceAll("'", '').split(', ')).toEqual([...inbox.volume.enumValues]);
 });
@@ -644,12 +642,16 @@ it('writes out no list of three or more choices that a column already has', () =
     'src/runtime/conversation-client.ts': 'a body reading its mail and a secret request\'s state',
     // Measuring is handed its store and reads no household table; these are the kinds of thing it times.
     'src/core/measuring/index.ts': 'the kinds of timing Measuring accepts',
-    // A copy still: the file was being changed elsewhere when the others were rolled up.
-    'src/shared-secret-agent-commands.ts': 'a copy of secretUses.state, to be read from the column',
   };
   const list = /\[\s*((?:['"][\w-]+['"]\s*,\s*)+['"][\w-]+['"])\s*,?\s*\]/g;
   const copies = sources('src').filter(file => file !== 'src/core/data/schema.ts').flatMap(file => [...text(file).matchAll(list)]
     .map(found => columns.get([...found[1].matchAll(/['"]([\w-]+)['"]/g)].map(word => word[1]).sort().join(',')))
     .filter(column => column !== undefined).map(column => `${file}: ${column}`));
   expect([...new Set(copies.map(copy => copy.split(':')[0]))].sort()).toEqual(Object.keys(allowed).sort());
+});
+
+it('writes a day in milliseconds once', () => {
+  const copy = /\b86_?400_?000\b|24 ?\* ?60 ?\* ?60 ?\* ?1000/;
+  // The two others hand one harness a timeout as text, in that harness's own setting.
+  expect(sources('src').filter(file => copy.test(text(file))).sort()).toEqual(['src/core/day.ts', 'src/runtime/body-secret-tools.ts', 'src/runtime/claude-body.ts']);
 });
