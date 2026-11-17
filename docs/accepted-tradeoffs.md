@@ -367,31 +367,80 @@ Entries are grouped by the part of the program they belong to.
 ### Two bodies on one account share one sign-in directory
 
 - **What.** A container body is given its account's sign-in directory read-write (`accountLogins`). Two
-  bodies on the same account and harness, at once or one after the other, are given the same directory.
-  Each can read and change what the other's provider program wrote there, and two programs renewing the
-  sign-in at once write the same files.
+  bodies on the same account and harness are given the same directory, at once or one after the other.
+  Each can read and change what the other's provider program wrote there, and two programs can renew the
+  sign-in at the same moment. When they do, one of them may be refused by the provider (a renewal that
+  was already used) and that body's harness fails.
+- **What that failure looks like.** The body ends with its own code for a failed harness (exit 14, "body
+  harness", chosen by the body), and the job is recorded failed. It is tried again by the ordinary chain
+  when it left mail it had not confirmed: after 5 seconds, 30 seconds and 2 minutes, three times at most.
+  The retry reads the sign-in the other program just wrote. A machine that sees this more than rarely
+  sets `accountSlots` to 1 in its worker's configuration, which runs an account's bodies one after the
+  other.
 - **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
   `src/runtime/worker-container.ts`.
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
   harness and no other. A fixed mount or another entry that names the same directory, one above it or one
-  inside it stops the worker at start; so does any mounted directory that is, holds or is inside either
+  inside it stops the worker at start (another agent's mounts and the worker's own program directory
+  included); so does any mounted directory that is, holds or is inside either
   engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
   file. With `accountLogins` present, a job
-  with no exact entry does not run.
+  with no exact entry does not run. On one worker, at most `accountSlots` bodies run on an account at once
+  (4 by default; `src/runtime/worker-turns.ts`): a job beyond that waits until one has ended.
 - **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
   configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
   engine's user can reach on the machine, every account's sign-in directory included: it can start a
   container of its own with any of them mounted. "Its own directory and no other" holds for every job
   that is not given the engine.
 - **Why the rest is accepted.** A sign-in is one set of files per account, which the provider's program
-  must be able to rewrite. Two processes signed in to one account on a host share them in the same way
-  today, and both bodies already act as that account. The engine's socket was already broad authority
+  must be able to rewrite. Many processes signed in to one account share them in the same way on this
+  household's machines and have for months, and every such body already acts as that account. Running
+  an account's bodies one at a time would make a household whose jobs are mostly on one account wait
+  for no gain most of the time. The engine's socket was already broad authority
   over the machine that both an agent's run settings and the machine's operator must opt in to; the
   sign-in directories are one more thing within its reach, not a new kind of reach.
 - **What would change the answer.** A provider program that takes its sign-in from a file it does not
-  rewrite, or renews through the worker. Each body could then have a copy of its own. For nested
+  rewrite, or renews through the worker; or a lock around renewal that every body of an account takes.
+  Each body could then have a copy of its own, or renew in turn. For nested
   containers: an engine of the job's own (one that cannot see the machine's files) in place of the
   machine's socket.
+
+### A Housefile is as dangerous as the engine's builder lets it be
+
+- **What.** A worker with container bodies builds each agent's house from the repository and Housefile in
+  that agent's run settings. Every step of a Housefile runs in the engine's builder, on this machine, as
+  whatever the engine runs builds as. A build step can use the network, and can do whatever a fault in the
+  engine's builder lets it do; with a rootless engine that is bounded by the worker's own user, who can
+  read the sign-in directories and the worker's token.
+- **Where.** `buildHouse` in `src/runtime/house-image.ts`; `houseSource` in `src/runtime/house-source.ts`.
+- **What git reads on the host.** Objects: the pack a fetch brings, and the commit and tree objects that
+  say which files a commit has. No file of a repository is interpreted, by git or by the worker: the
+  worker writes the build context itself from the tree, file by file.
+- **What is enforced.** Only loom's assignment names a house, and only an agent's owners set it, for an
+  agent allowed on the machine. The worker fetches `https` addresses only, with `git` run under none of
+  the machine user's configuration or credentials. Neither the worker nor git interprets or runs
+  anything from a repository: git reads commit and tree objects, the worker reads each link's target to
+  write it, and the commit's files go to the engine unread, as a tar stream the worker writes. It adds no build argument, secret,
+  host path, socket or privilege to a build. The repository's secret goes to the fetch alone.
+- **Why the rest is accepted.** Running an agent's house is the point: whoever may set an agent's house
+  already decides what that agent's bodies run. A build is the engine's to confine, as a container is.
+- **What would change the answer.** An engine whose builds run with no network and in a sandbox of their
+  own, asked for by name; or building on a machine that holds nothing else.
+
+### A worker treats its engine's unnamed leftovers as its own to remove
+
+- **What.** After building a house's image the worker asks its engine to remove images that have no name
+  and are older than a day, and build cache unused for a week. The request is to the whole engine: an
+  unnamed image somebody else left there, for another purpose, goes too.
+- **Where.** `pruneHouses` in `src/runtime/house-image.ts`.
+- **What is enforced.** Named images are never touched except loom's own house images
+  (`localhost/loom-house-…`), of which the two newest of each house and the ten newest in all are kept.
+  Nothing is removed by force: the engine keeps what a container uses. The request for leftovers is made
+  only when no other build is running in this worker, and only for what is a day old.
+- **Why accepted.** Builds leave unnamed layers behind, most of all the ones that failed or were ended,
+  and nothing marks them as loom's. A machine that builds houses unattended filled its disk this way.
+  What has no name and is not in use is what an engine's own clean-up removes.
+- **What would change the answer.** An engine that marks what a build left with the build's own label.
 
 ### Bodies a killed worker left that cannot be told from a stranger
 

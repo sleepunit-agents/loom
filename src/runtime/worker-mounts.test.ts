@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:net';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { bodyMounts, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
+import { bodyMounts, BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
 import { UnservedJobError } from './worker.js';
 import { WORKER_STOP, WorkerStop, workerStopLine } from './worker-stop.js';
 
@@ -34,15 +34,15 @@ symlinkSync(tokenFile, join(linkHome, 'to-token')); symlinkSync(join(root, 'nowh
 const home = '/home/agent/.claude';
 const logins: AccountLogins = { a: { claude: { source: a, target: home }, codex: { source: codex, target: '/home/agent/.codex' } }, b: { claude: { source: b, target: home } } };
 const fixed: FixedMount[] = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
-const job = (account: string, harness: string) => ({ account, harness });
-const nestedJob = (account: string, harness: string) => ({ account, harness, run: { gpu: false, nestedContainers: true, ports: [] } });
+const job = (account: string, harness: string, agent = 'art') => ({ agent, account, harness });
+const nestedJob = (account: string, harness: string) => ({ agent: 'art', account, harness, run: { gpu: false, nestedContainers: true, ports: [] } });
 const stopped = (config: Parameters<typeof bodyMounts>[0], files?: Parameters<typeof bodyMounts>[1]) => {
   try { bodyMounts(config, files); } catch (error) { return error; }
   return undefined;
 };
 
 it('gives a job its own account and harness sign-in directory, read-write, and never another one', () => {
-  const mounts = bodyMounts({ accountLogins: logins, mounts: fixed });
+  const mounts = bodyMounts({ accountLogins: logins, mounts: { art: fixed } });
   expect(mounts(job('a', 'claude'))).toEqual([{ source: a, target: home, readOnly: false },
     { source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror', readOnly: true }]);
   expect(mounts(job('b', 'claude'))[0]).toEqual({ source: b, target: home, readOnly: false });
@@ -51,7 +51,7 @@ it('gives a job its own account and harness sign-in directory, read-write, and n
     for (const other of others) expect(JSON.stringify(mounts(job(account, harness)))).not.toContain(other);
 });
 it('refuses a job with no exact sign-in entry once the map is present, the way a missing account runner is refused', () => {
-  const mounts = bodyMounts({ accountLogins: logins, mounts: fixed });
+  const mounts = bodyMounts({ accountLogins: logins, mounts: { art: fixed } });
   for (const [account, harness] of [['c', 'claude'], ['b', 'codex'], ['a', 'agy'], ['constructor', 'claude'], ['a', 'toString']]) {
     let thrown: unknown;
     try { mounts(job(account, harness)); } catch (error) { thrown = error; }
@@ -63,18 +63,18 @@ it('refuses a job with no exact sign-in entry once the map is present, the way a
 });
 it('mounts nothing when nothing is configured, and only the fixed mounts when no sign-in map is', () => {
   expect(bodyMounts({})(job('a', 'claude'))).toEqual([]);
-  expect(bodyMounts({ mounts: fixed })(job('anyone', 'anything'))).toEqual([
+  expect(bodyMounts({ mounts: { art: fixed } })(job('anyone', 'anything'))).toEqual([
     { source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror', readOnly: true }]);
 });
 it('fixes the paths when it is made: a later change to the configuration object changes nothing', () => {
-  const changing = { accountLogins: { a: { claude: { source: a, target: home } } }, mounts: [{ source: mirror, target: '/house/mirror' }] };
+  const changing = { accountLogins: { a: { claude: { source: a, target: home } } }, mounts: { art: [{ source: mirror, target: '/house/mirror' }] } };
   const mounts = bodyMounts(changing);
-  changing.accountLogins.a.claude.source = b; changing.mounts[0].target = '/elsewhere'; changing.mounts.push({ source: stamps, target: '/more' });
+  changing.accountLogins.a.claude.source = b; changing.mounts.art[0].target = '/elsewhere'; changing.mounts.art.push({ source: stamps, target: '/more' });
   expect(mounts(job('a', 'claude'))).toEqual([{ source: a, target: home, readOnly: false }, { source: mirror, target: '/house/mirror', readOnly: true }]);
 });
 
 const login = (source: string, target = home) => ({ accountLogins: { a: { claude: { source, target } } } });
-const mount = (source: string, target = '/house/x') => ({ mounts: [{ source, target }] });
+const mount = (source: string, target = '/house/x') => ({ mounts: { art: [{ source, target }] } });
 it.each([
   ['a sign-in directory that is missing', login(join(root, 'missing'))],
   ['a mount that is missing', mount(join(root, 'missing'))],
@@ -93,26 +93,26 @@ it.each([
   ['the root of the container as a target', mount(mirror, '/')],
   ['a null byte in a target', mount(mirror, '/house/\0')],
   ['an empty source', mount('')],
-  ['two mounts at one target', { mounts: [{ source: stamps, target: '/house/x' }, { source: mirror, target: '/house/x' }] }],
-  ['a mount inside another mount\'s target', { mounts: [{ source: stamps, target: '/house' }, { source: mirror, target: '/house/mirror' }] }],
-  ['a mount whose target holds another\'s', { mounts: [{ source: mirror, target: '/house/mirror' }, { source: stamps, target: '/house' }] }],
-  ['a mount at a sign-in target', { ...login(a), mounts: [{ source: mirror, target: home }] }],
-  ['a mount inside a sign-in target', { ...login(a), mounts: [{ source: mirror, target: `${home}/projects` }] }],
-  ['a mount over a sign-in target', { ...login(a), mounts: [{ source: mirror, target: '/home/agent' }] }],
+  ['two mounts at one target', { mounts: { art: [{ source: stamps, target: '/house/x' }, { source: mirror, target: '/house/x' }] } }],
+  ['a mount inside another mount\'s target', { mounts: { art: [{ source: stamps, target: '/house' }, { source: mirror, target: '/house/mirror' }] } }],
+  ['a mount whose target holds another\'s', { mounts: { art: [{ source: mirror, target: '/house/mirror' }, { source: stamps, target: '/house' }] } }],
+  ['a mount at a sign-in target', { ...login(a), mounts: { art: [{ source: mirror, target: home }] } }],
+  ['a mount inside a sign-in target', { ...login(a), mounts: { art: [{ source: mirror, target: `${home}/projects` }] } }],
+  ['a mount over a sign-in target', { ...login(a), mounts: { art: [{ source: mirror, target: '/home/agent' }] } }],
   ['a mount at the nested engine socket', mount(mirror, NESTED_SOCKET_TARGET)],
   ['a mount over the nested engine socket', mount(mirror, '/var/run')],
   ['a sign-in directory at the nested engine socket', login(a, NESTED_SOCKET_TARGET)],
   // What the contract's first point needs and no target check gives: a body must not be handed another
   // job's sign-in directory under a different name.
-  ['a mount whose source is a sign-in directory', { ...login(a), mounts: [{ source: a, target: '/house/x' }] }],
-  ['a mount whose source holds a sign-in directory', { ...login(a), mounts: [{ source: join(root, 'logins'), target: '/house/x' }] }],
-  ['a mount whose source is inside a sign-in directory', { ...login(stamps), mounts: [{ source: join(stamps, 'inner'), target: '/house/x' }] }],
+  ['a mount whose source is a sign-in directory', { ...login(a), mounts: { art: [{ source: a, target: '/house/x' }] } }],
+  ['a mount whose source holds a sign-in directory', { ...login(a), mounts: { art: [{ source: join(root, 'logins'), target: '/house/x' }] } }],
+  ['a mount whose source is inside a sign-in directory', { ...login(stamps), mounts: { art: [{ source: join(stamps, 'inner'), target: '/house/x' }] } }],
   ['two accounts on one sign-in directory', { accountLogins: { a: { claude: { source: a, target: home } }, b: { claude: { source: a, target: home } } } }],
   ['one account\'s sign-in directory inside another\'s', { accountLogins: { a: { claude: { source: stamps, target: home } }, b: { claude: { source: join(stamps, 'inner'), target: home } } } }],
   // One rule for every pair of mounted directories, fixed mounts among themselves included.
-  ['one directory mounted twice', { mounts: [{ source: mirror, target: '/one' }, { source: mirror, target: '/two' }] }],
-  ['a read-only mount whose source is writable under a second name', { mounts: [{ source: join(root, 'house'), target: '/house' }, { source: stamps, target: '/stamps', readOnly: false }] }],
-  ['a mount whose source holds an earlier mount\'s', { mounts: [{ source: stamps, target: '/stamps' }, { source: join(root, 'house'), target: '/house' }] }],
+  ['one directory mounted twice', { mounts: { art: [{ source: mirror, target: '/one' }, { source: mirror, target: '/two' }] } }],
+  ['a read-only mount whose source is writable under a second name', { mounts: { art: [{ source: join(root, 'house'), target: '/house' }, { source: stamps, target: '/stamps', readOnly: false }] } }],
+  ['a mount whose source holds an earlier mount\'s', { mounts: { art: [{ source: stamps, target: '/stamps' }, { source: join(root, 'house'), target: '/house' }] } }],
   // The engine's own socket is never mounted, and no mount may be a way to it.
   ['an engine socket that is missing', { socket: join(root, 'no.sock') }],
   ['an engine socket that is a directory', { socket: engineDirectory }],
@@ -162,28 +162,28 @@ it.each([
   expect(error).toBeInstanceOf(WorkerStop); expect(error.stage).toBe('mounts');
   // Its own words and the configuration key at fault: never the path it refused.
   expect(error.message).toBe(WORKER_STOP.mounts[1]);
-  expect(error.key).toMatch(/^(container\.(mounts\[[01]\]\.(source|target)|socket|nestedSocket)|accountLogins\.[ab]\.claude\.(source|target))$/);
+  expect(error.key).toMatch(/^(container\.(mounts\.art\[[01]\]\.(source|target)|socket|nestedSocket)|accountLogins\.[ab]\.claude\.(source|target))$/);
   expect(workerStopLine('mounts', error.key)).toBe(`Worker stopped: ${WORKER_STOP.mounts[1]} (${error.key})\n`);
   expect(workerStopLine('mounts', error.key)).not.toContain(root);
 });
 it('names the configuration key at fault, the later of two that overlap, and never what is written under it', () => {
   const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
-  expect(key({ mounts: [{ source: mirror, target: '/ok' }, { source: join(root, 'missing'), target: '/x' }] })).toBe('container.mounts[1].source');
-  expect(key({ mounts: [{ source: mirror, target: 'relative' }] })).toBe('container.mounts[0].target');
-  expect(key({ mounts: [{ source: mirror, target: '/x' }, { source: stamps, target: '/x/y' }] })).toBe('container.mounts[1].target');
-  expect(key({ mounts: [{ source: mirror, target: '/x' }, { source: mirror, target: '/y' }] })).toBe('container.mounts[1].source');
-  expect(key({ mounts: [{ source: mirror, target: '/var/run' }] })).toBe('container.mounts[0].target');
-  expect(key({ ...login(a), mounts: [{ source: mirror, target: home }] })).toBe('accountLogins.a.claude.target');
-  expect(key({ ...login(a), mounts: [{ source: a, target: '/x' }] })).toBe('accountLogins.a.claude.source');
+  expect(key({ mounts: { art: [{ source: mirror, target: '/ok' }, { source: join(root, 'missing'), target: '/x' }] } })).toBe('container.mounts.art[1].source');
+  expect(key({ mounts: { art: [{ source: mirror, target: 'relative' }] } })).toBe('container.mounts.art[0].target');
+  expect(key({ mounts: { art: [{ source: mirror, target: '/x' }, { source: stamps, target: '/x/y' }] } })).toBe('container.mounts.art[1].target');
+  expect(key({ mounts: { art: [{ source: mirror, target: '/x' }, { source: mirror, target: '/y' }] } })).toBe('container.mounts.art[1].source');
+  expect(key({ mounts: { art: [{ source: mirror, target: '/var/run' }] } })).toBe('container.mounts.art[0].target');
+  expect(key({ ...login(a), mounts: { art: [{ source: mirror, target: home }] } })).toBe('accountLogins.a.claude.target');
+  expect(key({ ...login(a), mounts: { art: [{ source: a, target: '/x' }] } })).toBe('accountLogins.a.claude.source');
   expect(key({ accountLogins: { 'sub-1@example.com': { codex: { source: a, target: 'relative' } } } })).toBe('accountLogins.sub-1@example.com.codex.target');
   expect(key({ accountLogins: { a: { claude: { source: a, target: home } }, b: { claude: { source: a, target: home } } } })).toBe('accountLogins.b.claude.source');
   // A name that is not an ordinary one is quoted, so it cannot break the line it is printed on.
   expect(key({ accountLogins: { 'two\nlines': { 'a harness': { source: join(root, 'missing'), target: home } } } })).toBe('accountLogins."two\\nlines"."a harness".source');
   expect(key({ socket: join(root, 'no.sock') })).toBe('container.socket');
   expect(key({ socket, nestedSocket: engineDirectory })).toBe('container.nestedSocket');
-  expect(key({ ...mount(engineDirectory), socket })).toBe('container.mounts[0].source');
-  expect(key({ ...mount(stateDirectory), state: stateDirectory })).toBe('container.mounts[0].source');
-  expect(key({ ...mount(join(root, 'worker')), tokenFile })).toBe('container.mounts[0].source');
+  expect(key({ ...mount(engineDirectory), socket })).toBe('container.mounts.art[0].source');
+  expect(key({ ...mount(stateDirectory), state: stateDirectory })).toBe('container.mounts.art[0].source');
+  expect(key({ ...mount(join(root, 'worker')), tokenFile })).toBe('container.mounts.art[0].source');
   // No stage but this one carries a key, and a line without one is as it was.
   expect(new WorkerStop('left').key).toBeUndefined(); expect(workerStopLine('left')).toBe(`Worker stopped: ${WORKER_STOP.left[1]}\n`);
 });
@@ -195,36 +195,87 @@ it('stops the worker over a directory that belongs to another user, or where the
   expect(stopped(mount(mirror), { uid: () => undefined })).toMatchObject({ stage: 'mounts' });
 });
 it('takes a nested socket that is a real socket apart from every mounted directory', () => {
-  expect(stopped({ accountLogins: logins, mounts: fixed, nestedSocket: socket })).toBeUndefined();
+  expect(stopped({ accountLogins: logins, mounts: { art: fixed }, nestedSocket: socket })).toBeUndefined();
   // A socket is the engine's, often root's: it need not belong to the worker's user.
   expect(stopped({ nestedSocket: socket }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
   // Only a job allowed nested containers is given it, first and writable, at the one place.
-  const mounts = bodyMounts({ accountLogins: logins, mounts: fixed, socket, nestedSocket: socket, state: stateDirectory, tokenFile });
+  const mounts = bodyMounts({ accountLogins: logins, mounts: { art: fixed }, socket, nestedSocket: socket, state: stateDirectory, tokenFile });
   expect(mounts(job('a', 'claude')).map(found => found.source)).toEqual([a, stamps, mirror]);
   expect(mounts(nestedJob('a', 'claude'))).toEqual([{ source: socket, target: NESTED_SOCKET_TARGET, readOnly: false },
     { source: a, target: home, readOnly: false }, { source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror', readOnly: true }]);
   // A nested job on a machine with no nested socket is not run, and not for want of a runner.
-  const without = bodyMounts({ mounts: fixed, socket });
+  const without = bodyMounts({ mounts: { art: fixed }, socket });
   expect(() => without(nestedJob('a', 'claude'))).toThrow('Nested containers unavailable');
   expect(() => { try { without(nestedJob('a', 'claude')); } catch (error) { if (error instanceof UnservedJobError) throw error; } }).not.toThrow();
 });
 it('takes the engine socket and the worker\'s own files when no mount reaches them, existing or not', () => {
   // A socket named through a linked directory, or by a link, is taken, and mounted as it was written.
   for (const through of [join(engineLink, 'engine.sock'), socketLink]) {
-    expect(stopped({ accountLogins: logins, mounts: fixed, socket: through, nestedSocket: through, state: stateDirectory, tokenFile })).toBeUndefined();
+    expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket: through, nestedSocket: through, state: stateDirectory, tokenFile })).toBeUndefined();
     expect(bodyMounts({ socket: through, nestedSocket: through })(nestedJob('a', 'claude'))).toEqual([{ source: through, target: NESTED_SOCKET_TARGET, readOnly: false }]);
   }
   // The engine socket and the nested socket are commonly the same socket.
-  expect(stopped({ accountLogins: logins, mounts: fixed, socket, nestedSocket: socket, state: stateDirectory, tokenFile })).toBeUndefined();
-  expect(stopped({ accountLogins: logins, mounts: fixed, socket, state: join(root, 'not-made-yet'), tokenFile: join(root, 'no-token') })).toBeUndefined();
+  expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket, nestedSocket: socket, state: stateDirectory, tokenFile })).toBeUndefined();
+  expect(stopped({ accountLogins: logins, mounts: { art: fixed }, socket, state: join(root, 'not-made-yet'), tokenFile: join(root, 'no-token') })).toBeUndefined();
   // With nothing mounted the worker's own files are not looked at.
   expect(stopped({ socket, state: stateDirectory, tokenFile })).toBeUndefined();
 });
 it('reads anything but an exact false as read-only', () => {
-  const made = bodyMounts({ mounts: [{ source: stamps, target: '/a', readOnly: 'no' as unknown as boolean }, { source: mirror, target: '/b', readOnly: 0 as unknown as boolean }] })(job('a', 'claude'));
+  const made = bodyMounts({ mounts: { art: [{ source: stamps, target: '/a', readOnly: 'no' as unknown as boolean }, { source: mirror, target: '/b', readOnly: 0 as unknown as boolean }] } })(job('a', 'claude'));
   expect(made.map(found => found.readOnly)).toEqual([true, true]);
 });
 it('lets several accounts use one path inside their own containers', () => {
   // Only one sign-in directory is ever in a container, so the same target twice is not a collision.
-  expect(stopped({ accountLogins: logins, mounts: fixed })).toBeUndefined();
+  expect(stopped({ accountLogins: logins, mounts: { art: fixed } })).toBeUndefined();
+});
+
+// One worker, any agent: fixed mounts belong to an agent, and the worker's own directory goes to every body.
+const programDirectory = directory('install/loom'), markState = directory('mark/state');
+it('gives a body its own agent\'s mounts and never another agent\'s', () => {
+  const mounts = bodyMounts({ accountLogins: logins, mounts: { art: fixed, mark: [{ source: markState, target: '/house/stamps', readOnly: false }] } });
+  expect(mounts(job('a', 'claude', 'art')).map(found => found.source)).toEqual([a, stamps, mirror]);
+  expect(mounts(job('a', 'claude', 'mark'))).toEqual([{ source: a, target: home, readOnly: false }, { source: markState, target: '/house/stamps', readOnly: false }]);
+  // An agent the machine has no list for gets none, and names an object has by itself are not agents.
+  for (const agent of ['nobody', 'constructor', 'toString', '__proto__']) expect(mounts(job('a', 'claude', agent))).toEqual([{ source: a, target: home, readOnly: false }]);
+  for (const [agent, others] of [['art', [markState]], ['mark', [stamps, mirror]], ['nobody', [stamps, mirror, markState]]] as const)
+    for (const other of others) expect(JSON.stringify(mounts(job('a', 'claude', agent)))).not.toContain(other);
+});
+it('lets two agents use one place inside their own containers, and holds every agent\'s sources apart', () => {
+  // Two agents' mounts never meet in one container: the same target is no collision.
+  expect(stopped({ mounts: { art: [{ source: stamps, target: '/state' }], mark: [{ source: markState, target: '/state' }] } })).toBeUndefined();
+  const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
+  // One agent's directory under another agent's name, whole, above or below: the later entry is at fault.
+  expect(key({ mounts: { art: [{ source: stamps, target: '/state' }], mark: [{ source: stamps, target: '/other' }] } })).toBe('container.mounts.mark[0].source');
+  expect(key({ mounts: { art: [{ source: stamps, target: '/state' }], mark: [{ source: join(root, 'house'), target: '/other' }] } })).toBe('container.mounts.mark[0].source');
+  expect(key({ mounts: { art: [{ source: join(root, 'house'), target: '/house' }], mark: [{ source: mirror, target: '/other', readOnly: false }] } })).toBe('container.mounts.mark[0].source');
+  // Within one agent's list the target rule is as it was; against a sign-in directory it holds for every agent.
+  expect(key({ mounts: { art: [{ source: stamps, target: '/state' }, { source: mirror, target: '/state/inner' }] } })).toBe('container.mounts.art[1].target');
+  expect(key({ ...login(a), mounts: { mark: [{ source: markState, target: home }] } })).toBe('accountLogins.a.claude.target');
+  expect(key({ mounts: { 'an agent': [{ source: join(root, 'missing'), target: '/x' }] } })).toBe('container.mounts."an agent"[0].source');
+});
+it('gives every body the worker\'s own directory, read-only, at one place no mount may cover', () => {
+  const mounts = bodyMounts({ program: programDirectory, accountLogins: logins, mounts: { art: fixed }, socket, nestedSocket: socket });
+  const program = { source: programDirectory, target: BODY_PROGRAM_TARGET, readOnly: true };
+  expect(BODY_PROGRAM_TARGET).toBe('/opt/loom'); expect(BODY_PROGRAM).toBe('/opt/loom/dist/body.js');
+  expect(mounts(job('a', 'claude', 'mark'))).toEqual([program, { source: a, target: home, readOnly: false }]);
+  expect(mounts(nestedJob('a', 'claude')).slice(0, 3)).toEqual([{ source: socket, target: NESTED_SOCKET_TARGET, readOnly: false }, program, { source: a, target: home, readOnly: false }]);
+  // It need not belong to the worker's user: a system-wide install is root's.
+  expect(stopped({ program: programDirectory }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
+  const key = (config: Parameters<typeof bodyMounts>[0]) => (stopped(config) as WorkerStop | undefined)?.key;
+  const itself = 'the directory the worker is installed in';
+  for (const program of [join(root, 'missing'), file, link, 'install/loom', `${programDirectory}/`]) expect(key({ program })).toBe(itself);
+  // No mount may hide the body program or put something in its place.
+  for (const target of ['/opt/loom', '/opt', '/opt/loom/dist']) {
+    expect(key({ program: programDirectory, mounts: { art: [{ source: mirror, target }] } })).toBe('container.mounts.art[0].target');
+    expect(key({ program: programDirectory, ...login(a, target) })).toBe('accountLogins.a.claude.target');
+  }
+  // No agent's mount, and no sign-in directory, may be the program, hold it or be inside it: a body that
+  // could write there would change the program every other body runs.
+  expect(key({ program: programDirectory, mounts: { art: [{ source: programDirectory, target: '/x', readOnly: false }] } })).toBe('container.mounts.art[0].source');
+  expect(key({ program: programDirectory, mounts: { art: [{ source: join(root, 'install'), target: '/x' }] } })).toBe('container.mounts.art[0].source');
+  expect(key({ program: join(root, 'logins'), ...login(a) })).toBe('accountLogins.a.claude.source');
+  // Nor may the worker's own directory hold its token, its state directory or an engine socket.
+  expect(key({ program: join(root, 'worker'), tokenFile })).toBe(itself);
+  expect(key({ program: join(root, 'worker'), state: stateDirectory })).toBe(itself);
+  expect(key({ program: engineDirectory, socket })).toBe(itself);
 });

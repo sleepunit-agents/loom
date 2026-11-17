@@ -2,72 +2,126 @@
 // serves the same routes (rootless podman's). Not a test: nothing runs it but a person.
 // Usage: npx tsc -p . && node scripts/check-container-engine.mjs <socket> <directory> <image>
 //   <socket>     the engine's Unix socket
-//   <directory>  an existing directory of yours, written as its real path; it is mounted into the containers,
-//                and a file named seen-by-the-body is left in it. A symbolic link named check-link is made
-//                inside it and removed again
-//   <image>      a small image already on the engine that has /bin/sh, cat, ls, touch, id, stat and sleep
-// It uses the built worker (dist/runtime) only: the executor for the whole life of one body, and the engine
-// client for a few questions the executor never asks. Every container it makes is named loom-check-* and
-// labelled loom.box=houses-check, and is removed before it ends. It prints what the engine answered;
-// docs/runtime/worker.md ("Container bodies") says what one run against podman showed.
-import { rmdirSync, symlinkSync, rmSync, writeFileSync } from 'node:fs';
+//   <directory>  an existing, empty directory of yours, written as its real path. Two directories are made
+//                in it and mounted into the containers, and a symbolic link named check-link is made in
+//                it and removed again
+//   <image>      a small image already on the engine that has /bin/sh, cat, ls, touch, id, stat and sleep.
+//                The house this script builds is `FROM` it, so nothing is pulled
+// It needs git. It uses the built worker (dist/runtime) only: the executor for a house's whole life (its
+// repository fetched, its image built and found again, bodies started in it), and the engine client for
+// a few questions the executor never asks. The house is a repository this script makes in a temporary
+// directory and fetches by a file address, which no worker configuration can do. Its "node" is a shell
+// script, so the body program is mounted and named but never run. Every container it makes is named
+// loom-check-* and labelled loom.box=houses-check; they, the image it built and its temporary directory
+// are removed before it ends. It prints what the engine answered; docs/runtime/worker.md ("Container
+// bodies") says what one run against podman showed.
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, symlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const dist = new URL('../dist/runtime/', import.meta.url);
 const { containerWorkerExecutor } = await import(new URL('worker-container.js', dist));
 const { dockerEngine, DockerResponseError } = await import(new URL('docker-engine.js', dist));
+const { houseSource } = await import(new URL('house-source.js', dist));
 
 const [socket, directory, image] = process.argv.slice(2);
 if (!socket || !directory || !image) { console.error('usage: node scripts/check-container-engine.mjs <socket> <directory> <image>'); process.exit(2); }
-writeFileSync(join(directory, 'seen-by-the-body'), 'x');
 const real = dockerEngine(socket), calls = [];
+const noted = async (what, work) => {
+  try { const answer = await work(); calls.push(`${what} -> ok`); return answer; }
+  catch (error) { calls.push(`${what} -> ${error instanceof DockerResponseError ? `HTTP ${error.status}` : error.message}`); throw error; }
+};
 // The same client, with each call and its outcome noted.
 const engine = {
-  async json(method, path, body, signal) {
-    try { const answer = await real.json(method, path, body, signal); calls.push(`${method} ${path.split('?')[0]} -> ok`); return answer; }
-    catch (error) { calls.push(`${method} ${path.split('?')[0]} -> ${error instanceof DockerResponseError ? `HTTP ${error.status}` : error.message}`); throw error; }
-  },
+  json: (method, path, body, signal) => noted(`${method} ${decodeURIComponent(path.split('?')[0])}`, () => real.json(method, path, body, signal)),
+  build: (path, context, signal) => noted(`POST ${decodeURIComponent(path)}`, () => real.build(path, context, signal)),
   async attach(id, signal) { const stream = await real.attach(id, signal); calls.push('POST attach -> upgraded'); return stream; },
 };
 const never = new AbortController().signal;
 const say = (title, value) => console.log(`\n## ${title}\n${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`);
-const job = (id, harness) => ({ id, box: 'houses-check', agent: 'art', conversation: 'cv', model: 'm', account: 'acct', harness, brief: 'b', house: { repository: 'r', file: 'f', branch: 'b' } });
-const builder = { build: async () => image, start() { throw new Error('unused'); } };
-const sh = script => ({ command: '/bin/sh', args: ['-c', script], cwd: '/', env: { PROBE: 'value' } });
 
-async function body(title, config, harness, name, stopAfterMs) {
+// A house: a repository with a Housefile that meets the image contract, and a stand-in for node.
+const work = mkdtempSync(join(realpathSync(tmpdir()), 'loom-check-')), repository = join(work, 'house');
+const written = join(directory, 'written'), readOnly = join(directory, 'read-only');
+mkdirSync(repository); mkdirSync(written, { recursive: true }); mkdirSync(readOnly, { recursive: true });
+writeFileSync(join(readOnly, 'seen-by-the-body'), 'x');
+writeFileSync(join(repository, 'Housefile'), `FROM ${image}
+COPY check-node /usr/local/bin/check-node
+COPY body /etc/loom/body
+LABEL loom.house="1" loom.house.node="/usr/local/bin/check-node" \\
+      loom.house.body.true="/etc/loom/body/true.json" loom.house.body.echo="/etc/loom/body/echo.json" \\
+      loom.house.body.sleep="/etc/loom/body/sleep.json" loom.house.body.readonly="/etc/loom/body/readonly.json"
+ENV PROBE=from-the-image
+WORKDIR /tmp
+`);
+// Started as: check-node /opt/loom/dist/body.js /etc/loom/body/<harness>.json, with the job on stdin.
+// What a container prints is dropped by the worker, so what it found is written to the mounted directory.
+writeFileSync(join(repository, 'check-node'), `#!/bin/sh
+out=/mnt/written/$(basename "$2" .json).txt
+case "$2" in
+  */readonly.json) cat >/dev/null; touch /mnt/read-only/x 2>/dev/null && exit 9; ls /mnt/read-only >/dev/null && exit 7; exit 8 ;;
+esac
+{ echo "program: $1 $(test -f "$1" && echo present || echo MISSING)"; echo "body file: $2"; echo "PROBE=$PROBE scratch=$LOOM_BODY_SCRATCH cwd=$(pwd)"
+  echo "uid $(id -u); the mount belongs to uid $(stat -c %u /mnt/written) in here"; echo "stdin: $(cat | head -c 60)"; } > "$out" 2>&1
+case "$2" in */sleep.json) exec sleep 300 ;; */echo.json) exit 7 ;; esac
+exit 0
+`);
+chmodSync(join(repository, 'check-node'), 0o755);
+mkdirSync(join(repository, 'body'));
+for (const harness of ['true', 'echo', 'sleep', 'readonly']) writeFileSync(join(repository, 'body', `${harness}.json`), '{}\n');
+const git = (...args) => execFileSync('git', args, { cwd: repository, stdio: 'ignore',
+  env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'check', GIT_AUTHOR_EMAIL: 'check@example.invalid', GIT_COMMITTER_NAME: 'check', GIT_COMMITTER_EMAIL: 'check@example.invalid' } });
+git('init', '--quiet', '--initial-branch=main'); git('add', '--all'); git('commit', '--quiet', '--message', 'a house for the engine check');
+
+// What the worker mounts as its own directory: laid out as an install is. The stand-in node only looks
+// whether the body program is there, so this check does not depend on how this checkout was installed.
+const program = join(work, 'install');
+mkdirSync(join(program, 'dist'), { recursive: true }); writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program, 'package.json'), '{"dependencies":{}}');
+const house = { repository: `file://${repository}`, file: 'Housefile', branch: 'main' };
+const job = (id, harness, agent = 'check-written') => ({ id, box: 'houses-check', agent, conversation: 'cv', model: 'm', account: 'acct', harness, brief: 'b', house });
+const bootstrap = id => ({ origin: 'https://loom.invalid', job: id, token: Buffer.from(`body_${'a'.repeat(64)}`) });
+const container = { socket, runtime: 'crun', setupTimeoutMs: 60_000, cleanupTimeoutMs: 30_000,
+  mounts: { 'check-written': [{ source: written, target: '/mnt/written', readOnly: false }], 'check-read-only': [{ source: readOnly, target: '/mnt/read-only' }] } };
+const worker = (patch = {}, using = engine, name = 'check') => containerWorkerExecutor({ box: 'houses-check', buildTimeoutMs: 600_000, state: join(work, 'state'), container: { ...container, ...patch } },
+  { engine: using, source: houseSource({ directory: join(work, 'mirrors'), protocols: ['file'] }), name: () => name, program });
+let built;
+{
+  calls.length = 0;
+  const executor = worker();
+  let outcome;
+  try { built = await executor.build(job('job-check-build', 'true'), never); outcome = { image: built }; } catch (error) { outcome = { failed: error.message }; }
+  const first = [...calls]; calls.length = 0;
+  let again; try { again = await executor.build(job('job-check-again', 'true'), never); } catch (error) { again = `failed: ${error.message}`; }
+  executor.close();
+  say('0. a house fetched and built through the engine, then asked for again', { outcome, calls: first, again, 'calls the second time': [...calls] });
+}
+if (!built) { rmSync(work, { recursive: true, force: true }); process.exit(1); }
+
+async function body(title, harness, name, { patch = {}, agent, stopAfterMs } = {}) {
   calls.length = 0;
   let result;
   try {
-    const executor = containerWorkerExecutor({ box: 'houses-check', build: sh('true'), ...config }, { engine, builder, name: () => name });
-    const left = await executor.endLeft(never);
-    const started = executor.start(job(`job-${name}`, harness), image, never);
+    const executor = worker(patch, engine, name);
+    const left = await executor.endLeft(never), assignment = job(`job-${name}`, harness, agent);
+    const started = executor.start(assignment, built, never);
     try {
       await started.spawned;
-      await started.release();
+      await started.release(bootstrap(assignment.id));
       if (stopAfterMs) { await new Promise(resolve => setTimeout(resolve, stopAfterMs)); await started.stop(); }
       result = await started.exited;
     } catch (error) { result = { failed: error.message }; }
-    finally { await started.stop(); }
-    result = { left, ...result };
+    finally { await started.stop(); executor.close(); }
+    let found; try { found = readFileSync(join(written, `${harness}.txt`), 'utf8'); } catch { found = undefined; }
+    result = { left, ...result, 'what the body wrote to its mount': found };
   } catch (error) { result = { refused: error.message }; }
   say(title, { result, calls: [...calls] });
 }
-
-const mounts = [{ source: directory, target: '/mnt/ro' }];
-const container = { socket, runtime: 'crun', mounts, setupTimeoutMs: 60_000, cleanupTimeoutMs: 30_000 };
-const runners = {
-  // Every real body reads its envelope. One that ends without reading it can end before the worker has
-  // written it, and the worker then says its input is unavailable: on any engine, so not a finding here.
-  true: sh('cat >/dev/null; exec /bin/true'),
-  sleep: sh('cat >/dev/null; echo sleeping; exec sleep 300'),
-  echo: sh('cat; echo "to stdout: $PROBE"; echo "to stderr" >&2; ls /mnt/ro; touch /mnt/ro/written 2>/dev/null && echo "MOUNT WRITABLE" || echo "mount is read-only"; exit 7'),
-};
-await body('1. whole life of a body running /bin/true (runtime crun, one read-only mount)', { runners, container }, 'true', 'check-true');
-await body('2. a body that reads its stdin envelope to the end, writes both streams, tries the mount, exits 7', { runners, container }, 'echo', 'check-echo');
-await body('3. the same with runtime runc (an engine may run its own whichever is asked)', { runners, container: { ...container, runtime: 'runc' } }, 'true', 'check-runc');
-await body('4. a read-write mount', { runners: { rw: sh('cat >/dev/null; echo "body runs as uid $(id -u); the mount belongs to uid $(stat -c %u /mnt/ro) in here"; touch /mnt/ro/written-rw && echo wrote; exit 0') }, container: { ...container, mounts: [{ ...mounts[0], readOnly: false }] } }, 'rw', 'check-rw');
-rmSync(join(directory, 'written-rw'), { force: true });
-await body('4b. a running body the worker stops (cancellation): removal of a running container', { runners, container }, 'sleep', 'check-stop', 1500);
+await body('1. whole life of a body (runtime crun): the worker\'s program mounted, the image\'s node, body file, working directory and environment', 'true', 'check-true');
+await body('2. a body that exits 7', 'echo', 'check-echo');
+await body('3. the same with runtime runc (an engine may run its own whichever is asked)', 'true', 'check-runc', { patch: { runtime: 'runc' } });
+await body('4. another agent\'s body: its own read-only mount and not the first agent\'s (exit 7: there and not writable; 9: writable; 8: not there)', 'readonly', 'check-readonly', { agent: 'check-read-only' });
+await body('4b. a running body the worker stops (cancellation): removal of a running container', 'sleep', 'check-stop', { stopAfterMs: 1500 });
+await body('4c. a harness the image has no body file for (the job fails, with the house\'s reason)', 'absent', 'check-absent');
 
 // What the executor never asks: the raw answers, for the record.
 async function raw(title, name, patch, look = inspect => inspect.Mounts) {
@@ -106,10 +160,13 @@ await raw('11. a log driver the worker never asks for', 'check-log', spec => { s
 const volumeEngine = { ...engine, json: (method, path, spec, signal) => engine.json(method, path, method === 'POST' && path.startsWith('/containers/create') ? { ...spec, Volumes: { '/declared': {} } } : spec, signal) };
 {
   calls.length = 0;
-  const executor = containerWorkerExecutor({ box: 'houses-check', build: sh('true'), runners, container }, { engine: volumeEngine, builder, name: () => 'check-refused' });
-  const started = executor.start(job('job-refused', 'true'), image, never);
-  let outcome; try { await started.spawned; outcome = 'STARTED (wrong)'; } catch (error) { outcome = error.message; } finally { await started.stop(); }
+  const executor = worker({}, volumeEngine, 'check-refused');
+  const started = executor.start(job('job-refused', 'true'), built, never);
+  let outcome; try { await started.spawned; outcome = 'STARTED (wrong)'; } catch (error) { outcome = error.message; } finally { await started.stop(); executor.close(); }
   say('12. the worker, given a container with a volume it did not ask for', { outcome, calls: [...calls] });
 }
 const filters = encodeURIComponent(JSON.stringify({ label: ['loom.job', 'loom.box=houses-check'] }));
 say('13. containers of this check still on the engine', await real.json('GET', `/containers/json?all=1&limit=8&filters=${filters}`, undefined, never));
+// The image this check built, and everything it kept beside the directory it was given.
+say('14. the house image removed', await real.json('DELETE', `/images/${built}`, undefined, never).then(() => 'removed', error => `not removed: ${error instanceof DockerResponseError ? `HTTP ${error.status}` : error.message}`));
+rmSync(work, { recursive: true, force: true }); rmSync(written, { recursive: true, force: true }); rmSync(readOnly, { recursive: true, force: true });
