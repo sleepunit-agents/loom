@@ -523,7 +523,7 @@ describe('the stop word', () => {
     const row = f.ingress.receive({ ...f.message, id: 'stop', text: 'Stop!' });
     expect(row).toMatchObject({ state: 'dropped', reason: STOP_WORD, text: '', member: 'jonathan', conversation: null });
     expect(f.state()).toMatchObject({ state: 'stopped', endedBy: 'jonathan', endedReason: 'stop' });
-    expect(f.ingress.takeStopped()).toEqual(['job']);
+    expect(f.ingress.takeStopped()).toEqual([{ job: 'job', incoming: row.id }]);
     expect(f.ingress.takeStopped()).toEqual([]);
     // Nothing was delivered for it: one piece of mail and one turn, the first message's.
     expect(f.db.select().from(inbox).all()).toHaveLength(1);

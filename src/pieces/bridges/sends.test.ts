@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
-import { BridgeSends, reviewReply } from './sends.js';
+import { BridgeSends, STOPPED_LINE, reviewReply } from './sends.js';
 import { BridgeReplyNotSent } from './outbound.js';
 
 const opened: Database.Database[] = [];
@@ -244,4 +244,18 @@ it('processes a second committed send queued while an earlier flush is awaiting 
 });
 it('notifies standalone consumers only after queue and send states commit',async()=>{
  const f=fixture(),states:string[]=[];f.changed.mockImplementation(()=>{expect(f.client.inTransaction).toBe(false);states.push(f.read().state);});f.sends.queue({id:'reply',incoming:'in',text:'Hi'});await f.sends.flush();expect(states).toEqual(['pending','sending','sent']);
+});
+it('queues a post to a message that was not delivered only as loom\'s own line after a stop word', () => {
+  const f = fixture();
+  f.db.insert(bridgeIncoming).values([
+    { id: 'stop', connection: 'c', channel: 'channel', thread: null, isDm: false, user: 'person', text: '', postedAt: f.now(), receivedAt: f.now(), state: 'dropped', reason: 'Stop word' },
+    { id: 'stranger', connection: 'c', channel: 'channel', thread: null, isDm: false, user: 'x', text: '', postedAt: f.now(), receivedAt: f.now(), state: 'dropped', reason: 'Unknown sender' },
+  ]).run();
+  // Nothing else may be posted to a dropped message: not other words to a stop, and not this line to a stranger.
+  expect(() => f.sends.queue({ id: 'a', incoming: 'stop', text: STOPPED_LINE })).toThrow('No delivered message');
+  expect(() => f.sends.queue({ id: 'b', incoming: 'stop', text: 'Anything else', stopped: true })).toThrow('No delivered message');
+  expect(() => f.sends.queue({ id: 'c', incoming: 'stranger', text: STOPPED_LINE, stopped: true })).toThrow('No delivered message');
+  expect(() => f.sends.queue({ id: 'd', incoming: 'in', text: STOPPED_LINE, stopped: true })).toThrow('No delivered message');
+  expect(f.sends.queue({ id: 'e', incoming: 'stop', text: STOPPED_LINE, stopped: true })).toMatchObject({ state: 'pending', channel: 'channel', thread: null, text: 'Stopped here.' });
+  expect(f.sends.queue({ id: 'f', incoming: 'stop', text: STOPPED_LINE, stopped: true, held: true })).toMatchObject({ state: 'held' });
 });

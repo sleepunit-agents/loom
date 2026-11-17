@@ -7,7 +7,7 @@ import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
 import { eq } from 'drizzle-orm';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, inbox, jobs } from '../../core/data/schema.js';
+import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSends, inbox, jobs } from '../../core/data/schema.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { STOP_WORD } from './incoming.js';
 import { TAKEN_REACTION, TYPING_EVERY_MS, workingOn } from './presence.js';
@@ -119,6 +119,28 @@ it('ends the working job on the stop word through the runtime\'s Stop, and says 
   expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop' });
   expect(announced).toEqual([['job']]);
   expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+
+it('says "Stopped here." where a stop word stopped a job, through the send queue, and nowhere else', async () => {
+  let f!: ReturnType<typeof discordFixture>;
+  f = discordFixture({ stopJob: (job, member) => { new Jobs(f.db, () => new Date(f.clock.now()).toISOString()).stop(job, member, 'stop'); } });
+  f.answers.set(`POST channels/${room}/messages`, { id: '800000000000000001', channel_id: room });
+  await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const first = await f.say({ content: 'Do the long thing' });
+  // No job is working: "stop" is a message, and nothing is said back by loom.
+  expect(await f.say({ content: 'stop' })).toMatchObject({ state: 'delivered' });
+  expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: first.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  const stop = await f.say({ content: 'Stop!' });
+  expect(stop).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+  await f.daemon.idle();
+  expect(f.db.select().from(bridgeSends).all()).toMatchObject([{ id: 'stopped:' + stop.id, incoming: stop.id, channel: room, thread: null, text: 'Stopped here.', state: 'sent' }]);
+  expect(f.calls.filter(call => call.method === 'POST' && call.path === `channels/${room}/messages`).map(call => call.body)).toEqual([{ content: 'Stopped here.', allowed_mentions: { parse: ['users'], replied_user: false } }]);
+  // The same event again says nothing more.
+  f.daemon.changed(); await f.daemon.idle();
+  expect(f.db.select().from(bridgeSends).all()).toHaveLength(1);
+  expect(f.errors).toEqual([]);
 });
 
 it('reacts to a message a running job has taken, shows typing while it works, and takes the reaction off when the mail is settled', async () => {

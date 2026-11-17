@@ -2,6 +2,10 @@ import { and, eq, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import { BridgeReplyNotSent, postReply, type ReplyAttempt } from './outbound.js';
+import { STOP_WORD } from './incoming.js';
+
+/** What the bot says where a stop word stopped a job, as the earlier bridge said it. */
+export const STOPPED_LINE = 'Stopped here.';
 
 export type BridgeSend = typeof bridgeSends.$inferSelect;
 /** How long an unsent reply waits before the next attempt. The daemon flushes at least this often. */
@@ -58,7 +62,9 @@ export class BridgeSends {
     if (recovered.changes) changed();
   }
 
-  queue(input: { id: string; incoming: string; text: string; held?: boolean }): BridgeSend {
+  /** `stopped` is loom's own line after a stop word (STOPPED_LINE): the one post made to a message that
+   * was not delivered, addressed like any other to where that message was said. */
+  queue(input: { id: string; incoming: string; text: string; held?: boolean; stopped?: boolean }): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new Error('Reply needs an id and text');
     const result = this.commit(()=>this.db.transaction(tx => {
@@ -68,7 +74,7 @@ export class BridgeSends {
         return old;
       }
       const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
-      if (!incoming || incoming.state !== 'delivered') throw new Error('No delivered message for reply');
+      if (!incoming || !(input.stopped ? incoming.state === 'dropped' && incoming.reason === STOP_WORD && input.text === STOPPED_LINE : incoming.state === 'delivered')) throw new Error('No delivered message for reply');
       // The reply carries its own address, copied from the message it answers (place.ts): a message's
       // channel and thread never change, and the queue then needs no join to send.
       return tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,

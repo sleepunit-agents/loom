@@ -186,7 +186,7 @@ export class BridgeReceiver {
   }
 
   /** The jobs that stop words ended in the passes since this was last asked (incoming.ts). */
-  takeStopped(): string[] { return this.incoming.takeStopped(); }
+  takeStopped(): { job: string; incoming: string }[] { return this.incoming.takeStopped(); }
 
   /** A Discord gateway session is the bot's, not the guild's: it also carries the messages of every other
    * guild the bot has been added to. Those are not this connection's. The frame's own guild id is enough to

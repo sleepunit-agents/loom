@@ -645,7 +645,9 @@ Entries are grouped by the part of the program they belong to.
   the agent), in a place where a job of that agent's has not ended, ends that job (`ended_reason` `stop`,
   `ended_by` the member). The message is recorded as dropped with the reason `Stop word`, keeps no words and
   is never delivered or answered. With no such job, or from anybody else, the same words are an ordinary
-  message. Nothing is posted to say the job stopped.
+  message. Where a job was stopped the bot says "Stopped here.", one post through the send queue to the
+  place the stop was said (`STOPPED_LINE` in `sends.ts`); it is the only post loom makes to a message that
+  was not delivered.
 - Where: `receive` and `isStopWord` in `src/pieces/bridges/incoming.ts`; the job is ended by `Jobs.stop`
   (`src/runtime/jobs.ts`), handed in by `src/shared-root.ts`.
 - Why: a person watching an agent go wrong in a channel needs to stop it from there. The stop is taken in
@@ -653,8 +655,8 @@ Entries are grouped by the part of the program they belong to.
   finds no job and stops nothing afterwards. A job records the member who ended it, so an outside account
   with only a tier cannot stop one. The job is ended, not asked to stop: a bridge conversation has no Comms
   thread to carry a Stop a body would notice, and work that was stopped needs fresh mail to start again.
-- Would change it: wanting the agent to say it stopped, or guests to stop work they started. The first is
-  one post; the second needs a job to record an outside account as who ended it.
+- Would change it: wanting guests to stop work they started. That needs a job to record an outside
+  account as who ended it.
 
 ### A body may say more during its run, as text, a bounded number of times
 - What: `bridges.say` lets the body that holds a bridge conversation's job post one more message, to the

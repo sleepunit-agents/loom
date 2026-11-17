@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { liveDiscordReceipts } from './discord-receipts.js';
 import { slackFiles, type SlackFilesPermit } from './slack-files.js';
-import { BridgeSends } from './sends.js';
+import { BridgeSends, STOPPED_LINE } from './sends.js';
 import { bridgeReplyApi } from './reply-api.js';
 import { BridgeReplyNotSent } from './outbound.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
@@ -263,7 +263,13 @@ export class SharedBridges {
     // body write would revoke its still-streaming guarded mail response.
     if(changes()!==beforeChanges)this.notify();
     const stopped=this.receiver.takeStopped();
-    if(stopped.length){try{this.options.jobsEnded?.(stopped);}catch{this.report();}}
+    if(stopped.length){
+     try{this.options.jobsEnded?.(stopped.map(stop=>stop.job));}catch{this.report();}
+     // One short line where it was said, through the queue every post goes through. Not saying it is no
+     // reason to undo the stop, so a line that cannot be queued is reported and dropped.
+     for(const stop of stopped){try{this.sends.queue({id:'stopped:'+stop.incoming,incoming:stop.incoming,text:STOPPED_LINE,held:!this.options.effectsAllowed(),stopped:true});}catch{this.report();}}
+     this.track(this.sends.flush());
+    }
     if(!this.closed){
      const ids=this.options.db.selectDistinct({id:inbox.id}).from(inbox)
       .innerJoin(inboxRefs,eq(inboxRefs.item,inbox.id)).innerJoin(bridgeIncoming,eq(bridgeIncoming.id,inboxRefs.ref))

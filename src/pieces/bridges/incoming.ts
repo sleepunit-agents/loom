@@ -70,15 +70,15 @@ export const BOT_NOT_ADMITTED = 'Bot did not mention this agent, or bots may not
 
 export class BridgeIncoming {
   private readonly conversations: Conversations;
-  private stopped: string[] = [];
+  private stopped: { job: string; incoming: string }[] = [];
   /** `stop` ends a job the way an owner's Stop does. Without it the stop word is an ordinary message. */
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), private readonly stop?: StopJob) {
     this.conversations = new Conversations(db, now);
   }
 
-  /** The jobs stop words have ended since this was last asked, for the caller to announce once its
-   * transaction has committed. */
-  takeStopped(): string[] { return this.stopped.splice(0); }
+  /** The jobs stop words have ended since this was last asked, each with the message that said it, for
+   * the caller to announce and to answer once its transaction has committed. */
+  takeStopped(): { job: string; incoming: string }[] { return this.stopped.splice(0); }
 
   /** Atomically records the event, turn, conversation and unified inbox item.
    * Duplicate events never append a second turn. A held event is tried again
@@ -159,7 +159,7 @@ export class BridgeIncoming {
         const place = conversationPlace(connection.workspace, message, message.isDm && !message.groupDm ? link.member : null);
         const working = this.db.select({ id: jobs.id }).from(jobs).innerJoin(conversations, eq(conversations.id, jobs.conversation))
           .where(and(eq(conversations.agent, connection.agent), eq(conversations.venue, connection.platform), eq(conversations.place, place), inArray(jobs.state, unendedJobStates))).get();
-        if (working) { this.stop(working.id, link.member); this.stopped.push(working.id); state = 'dropped'; reason = STOP_WORD; }
+        if (working) { this.stop(working.id, link.member); this.stopped.push({ job: working.id, incoming: id }); state = 'dropped'; reason = STOP_WORD; }
       }
       // In a room, a person's message that addresses nobody goes to the agent that answers the room.
       if (state === 'delivered' && !message.isDm && !(message.bot || message.webhook || sender) && !addressed.has(connection.botUser)) {
