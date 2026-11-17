@@ -66,7 +66,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   const source=current(viewer);if(!source||!receipt)throw new OperationError('denied','Current body required');
   // Never use the process-cached helper connection: no other caller can join
   // this command's transaction while its embedding computation awaits.
-  const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,busyTimeout:0,deferSchema:true},(options.embedding??createEmbeddingProvider)());
+  const backend=new SqliteVecBackend({dbPath:source.path,busyTimeout:0,deferSchema:true},(options.embedding??createEmbeddingProvider)());
   try{await backend.atomicWrite(async db=>{
    const done=db.prepare('SELECT name,input_hash,result,expires FROM memory_command_receipts WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as Stored|undefined;
    if(done){check(done,receipt);return;}
@@ -99,7 +99,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
    if(!source||!agent)throw new OperationError(selected(viewer)?'unavailable':'denied',selected(viewer)?'Memory is not prepared for commands':'Current body required');
    // The memory tables are made by the first write, in its transaction. Until then there is nothing to recall.
    if(!source.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memories'").get())return {ids:[],matches:[]};
-   const backend=new SqliteVecBackend({dbPath:source.path,notifyWrites:false,deferSchema:true},(options.embedding??createEmbeddingProvider)());
+   const backend=new SqliteVecBackend({dbPath:source.path,deferSchema:true},(options.embedding??createEmbeddingProvider)());
    try{
     const matches=(await backend.recall(input)).map(row=>({id:`${agent}:${opaque(source.db,row.path)}`,score:row.relevance}));
     if(current(viewer)?.path!==source.path)throw new OperationError('denied','Memory access ended');

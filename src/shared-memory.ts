@@ -12,11 +12,8 @@ import type {Clock} from './core/clock.js';
 import type {Operations} from './core/operations/index.js';
 import {agents as agentRows} from './core/data/schema.js';
 import {householdSettings,householdTimezone} from './core/data/household-settings.js';
-import {installTouched} from './core/touched/index.js';
-import {mindTouchSources,mindTouchResolver,agentTouchSource} from './pieces/mind/binding.js';
 import type {AgentSource,MindSources} from './pieces/mind/sources.js';
 import {householdId} from './slug.js';
-import type {TouchSource} from './core/touched/index.js';
 import {peopleReader} from './pieces/mind/people.js';
 import {createProjectsReader} from './pieces/mind/projects.js';
 import {createActivityReader} from './pieces/mind/activity.js';
@@ -94,7 +91,7 @@ export function prepareAgentMemory(agent:AgentSource){
   const db=new Database(path,{fileMustExist:true});try{prepareSemanticMemory(db);}finally{db.close();}
  });
 }
-/** Run before readers and touch listeners. */
+/** Run before readers. */
 export async function prepareSharedMemorySources(options:SharedMemoryOptions|undefined){
  if(!options)return;
  const {commons,agents}=options.sources;
@@ -122,13 +119,11 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  // reader is given its name. If that fails it is reported once and tried again at the next read, and until
  // it works the agent has no Memory, as before it was added.
  const prepared=new Set(given?.agents.map(source=>source.agent)),reported=new Set<string>();
- const touches=mindTouchSources(given),touchAdded:Array<(source:TouchSource)=>void>=[];
  const sources:MindSources|undefined=given&&{commons:given.commons,get agents(){
   return given.agents.filter(source=>{
    if(prepared.has(source.agent))return true;
    try{prepareAgentMemory(source);}catch(error){if(!reported.has(source.agent)){reported.add(source.agent);report?.(error);}return false;}
    prepared.add(source.agent);
-   const touch=agentTouchSource(source);touches.push(touch);for(const tell of touchAdded)tell(touch);
    return true;
   });
  }};
@@ -142,11 +137,8 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const activity=createActivityReader(clock,{get agents(){return listed.agents;},sharing,timezone,github:()=>householdSettings(db).githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
-  return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
-   /** Told of the touch source of each agent added while the program runs, once its files are there. */
-   onTouchSource(tell:(source:TouchSource)=>void){touchAdded.push(tell);},
+  return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){
-    installTouched(operations,mindTouchResolver(touches));
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages});closers.push(knowledge.close);
     // The household's default agent, asked each time: it can be changed in Setup while the program runs.
     const agent=()=>householdSettings(db).defaultAgent??undefined;

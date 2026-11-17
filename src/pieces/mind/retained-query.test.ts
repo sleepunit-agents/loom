@@ -18,7 +18,7 @@ const owner:Viewer={kind:'member',id:'owner'};
 function fixture(legacy=false){
  const home=mkdtempSync(join(tmpdir(),'retained-memory-'));close.push(()=>rmSync(home,{recursive:true,force:true}));const path=join(home,'memories.db'),missing=join(home,'missing.db');
  const db=new Database(path);close.push(()=>db.close());
- const backend=legacy?undefined:new SqliteVecBackend({dbPath:path,notifyWrites:false},{dimensions:4,embed:async()=>[1,0,0,0],embedBatch:async texts=>texts.map(()=>[1,0,0,0])});if(backend)close.push(()=>backend.close());
+ const backend=legacy?undefined:new SqliteVecBackend({dbPath:path},{dimensions:4,embed:async()=>[1,0,0,0],embedBatch:async texts=>texts.map(()=>[1,0,0,0])});if(backend)close.push(()=>backend.close());
  const sharing:Sharing={members:{owner:{owner:true,agents:[]},coowner:{owner:false,agents:['fiction']},peer:{owner:false,agents:[]}},projects:{pond:{members:['peer'],agents:['fiction']}},services:{}};
  const reader=createProjectsReader(new FakeClock(Date.now()),{agents:[{agent:'fiction',memories:path},{agent:'ghost',memories:missing}],sharing:()=>sharing});close.push(()=>reader.close());
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:retainedQueryFields(reader)})});
