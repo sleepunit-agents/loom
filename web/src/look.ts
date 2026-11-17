@@ -18,7 +18,7 @@ export const modeOf = (l: Look): 'light' | 'dark' => LOOKS.find((x) => x.look ==
 /**
  * A saved look as loom wears it now. 000h was a look of its own until 2026-11-05; whoever chose it gets the look nearest
  * it: Daylight if they'd chosen light, else Low Light. Anything else unknown is Neon Noir. (boot.js does the same, before
- * first paint; src/ui/sessions.ts does too, for what loom keeps.)
+ * first paint.)
  */
 export function lookOf(saved: string | null | undefined, mode?: string | null): Look {
   if (saved === 'lowlight' || saved === 'daylight' || saved === 'neon') return saved;
@@ -26,7 +26,7 @@ export function lookOf(saved: string | null | undefined, mode?: string | null): 
   return 'neon';
 }
 
-/** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. `mode` is
+/** The person's Appearance, as loom keeps it (src/shared-preferences.ts): whatever they've chosen, nothing else. `mode` is
  * 000h's light or dark, read only to bring a 000h choice across (lookOf). */
 export type Prefs = { look?: Look | '000h'; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** pixel icons, where the household has a set (off unless turned on: app-icon.tsx) */ icons?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (Accessibility; off unless turned on: immersion.ts) */ zoom?: boolean; /** One window at a time on the tiled desktop (Accessibility; off unless turned on: oneWindowKept) */ oneWindow?: boolean; /** Reduce motion and Higher contrast (Accessibility: access.ts) */ motion?: Follow; contrast?: Follow; /** loom's version of them: when they last changed */ at?: number };
 
@@ -57,8 +57,7 @@ export function keep(key: string, v: string): void {
 }
 
 /** One window at a time, as this device last had it (`loom-one-window`), for first paint. A device that kept Appearance's
- * old Desktop choice (`loom-tiling`, before 2026-11-06) as One window at a time starts with it on, as loom serves it
- * (src/ui/sessions.ts oneWindowOf, the same rule). */
+ * old Desktop choice (`loom-tiling`, before 2026-11-06) as One window at a time starts with it on. */
 export function oneWindowKept(): boolean {
   try {
     const v = localStorage.getItem('loom-one-window');
