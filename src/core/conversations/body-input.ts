@@ -73,7 +73,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
    }
    if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'&&q.state==='answered'&&!q.waitsOnKind&&!q.waitsOnId){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}
    if(answerContext){if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
-   for(const line of history??[])until=Math.min(until,Date.parse(line.keepUntil));
+   for(const line of history??[])if(line.keepUntil!==null)until=Math.min(until,Date.parse(line.keepUntil));
    return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};
   });
   const thread=db.select({stop:threads.stopRequested}).from(threads).where(eq(threads.conversation,before.cv.id)).get();

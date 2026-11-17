@@ -6,6 +6,7 @@ import {privateInboxEnvelope,privateInboxDeadline,hasPrivateInboxPayload} from '
  * External runner doors must recheck their current authentication after await
  * and before committing. This service does not authenticate a machine. */
 import {prepareHistoryContext,type HistoryLine} from './history-context.js';
+import {prepareBridgeHistory} from './bridge-history.js';
 import {prepareAnswerContext,type AnswerContext} from './answer-context.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
@@ -65,6 +66,9 @@ export class ConversationMail {
     const ordinary=(item:Item,words:string|null|undefined)=>item.source==='thread'&&!!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
     const cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
     const history=items.some(item=>ordinary(item,prepared.get(item.id)))?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
+    // A bridge conversation has no thread; what was said earlier in it is its own kept words (bridge-history.ts).
+    const bridged=(item:Item,words:string|null|undefined)=>(item.source==='discord'||item.source==='slack')&&!item.thread&&item.volume==='full'&&words!==null&&words!==undefined;
+    const earlier=items.some(item=>bridged(item,prepared.get(item.id)))?prepareBridgeHistory(db,now,conversation):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
@@ -84,11 +88,11 @@ export class ConversationMail {
           throw new Error('Private message changed; prepare again');
       }
       const answerContexts=new Map(items.map(item=>[item.id,contexts.get(item.id)?.()]));
-      const dialogue=history();
+      const dialogue=history(),said=earlier();
       const taken=conversations.take(conversation, job, items.map(item => item.id));
       if(taken.length)db.update(messages).set({delivery:'sending'}).where(and(eq(messages.kind,'message'),inArray(messages.inboxItem,taken.map(item=>item.id)))).run();
       let historyAttached=false;
-      return taken.map(item => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null,includeHistory=!historyAttached&&ordinary(item,visible)&&dialogue.length>0;if(includeHistory)historyAttached=true;return {item,words:visible,...(answerContext?{answerContext}:{}),...(includeHistory?{history:dialogue}:{})};});
+      return taken.map(item => {const visible=mailWords(item.volume,words.get(item.id)??null),answerContext=visible!==null?answerContexts.get(item.id):null,includeHistory=!historyAttached&&ordinary(item,visible)&&dialogue.length>0,includeSaid=!historyAttached&&!includeHistory&&bridged(item,visible)&&said.length>0;if(includeHistory||includeSaid)historyAttached=true;return {item,words:visible,...(answerContext?{answerContext}:{}),...(includeHistory?{history:dialogue}:includeSaid?{history:said}:{})};});
     });
   }
 

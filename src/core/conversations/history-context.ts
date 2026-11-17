@@ -5,7 +5,8 @@ import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
 import { commsKeepDays } from '../data/comms-days.js';
 import { HISTORY_BYTES } from './history-limit.js';
-export type HistoryLine={seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string};
+/** `keepUntil` is when the words will be erased; null for words kept without limit (a bridge room's). */
+export type HistoryLine={seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string|null};
 export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number):Promise<()=>HistoryLine[]>{
  const {db}=comms,thread=db.select().from(threads).where(eq(threads.conversation,conversation)).get();
  const cv=db.select().from(conversations).where(eq(conversations.id,conversation)).get();

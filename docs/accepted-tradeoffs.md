@@ -638,6 +638,23 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: stale reactions after restarts being a nuisance. Then what is shown is kept in a table
   and cleared at start.
 
+### A bridge body is handed what was said, not what it did
+- What: every run is a fresh harness session. The body that takes a Discord or Slack message is handed
+  the earlier words of that conversation: the messages an earlier body finished with and what was posted
+  back, newest first up to 1 MB and a hundred lines, then in order. It is not handed what earlier bodies
+  did: the files they read, their tool results, their reasoning. Words erased at the keep time (a direct
+  conversation's) are not there to hand over, and a line due to be erased carries that time.
+- Where: `src/core/conversations/bridge-history.ts`, attached once by `prepareTake` in `mail.ts`; the body
+  accepts it in `src/runtime/conversation-client.ts`. A Comms thread's is `history-context.ts`.
+- Why: without it every message was answered as if it were the first. Handing over the words needs no
+  session to be kept: a body's container is thrown away, and the next job may run on another machine.
+  It is the conversation's own words given to the conversation's own job, so nothing is read that the
+  mail does not already show.
+- Would change it: resuming the harness's own session, as the older bridge did. That needs loom to keep a
+  conversation's session files between jobs (sealed, erased with the words) and the body program to put
+  them back before the harness starts, and the worker to carry them. Kept history is then the fallback
+  for a new harness, a new model or a session too large to keep.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

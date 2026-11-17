@@ -16,7 +16,7 @@ import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
 class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
 const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
-const historyLine=z.object({seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true})}).strict();
+const historyLine=z.object({seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true}).nullable()}).strict();
 const item=z.object({
  history:z.array(historyLine).max(100).refine(lines=>Buffer.byteLength(JSON.stringify(lines))<=HISTORY_BYTES).optional().default([]),
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),
@@ -81,7 +81,7 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
     const multipleHistories=input.items.filter(row=>row.history.length>0).length>1;
     const malformedRows=input.items.some((row,index)=>
-     (row.history.length>0&&row.source!=='thread')||
+     (row.history.length>0&&row.source!=='thread'&&row.source!=='discord'&&row.source!=='slack')||
      (index>0&&row.seq<=input.items[index-1].seq)||
      row.history.some((line,previous)=>previous>0&&line.seq<=row.history[previous-1].seq));
     if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||
@@ -94,8 +94,8 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
      const answerDeadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil),questionDeadline=row.questionKeepUntil===null?Infinity:Date.parse(row.questionKeepUntil);
      if(!Number.isFinite(answerDeadline)&&row.keepUntil!==null||!Number.isFinite(questionDeadline)&&row.questionKeepUntil!==null)throw unavailable();
      const privateWords=row.words!==null&&clock.now()<answerDeadline,questionCurrent=privateWords&&row.question!==null&&clock.now()<questionDeadline;
-     const history=privateWords?row.history.filter(line=>clock.now()<Date.parse(line.keepUntil)):[];
-     const deadline=Math.min(questionCurrent?Math.min(answerDeadline,questionDeadline):answerDeadline,...history.map(line=>Date.parse(line.keepUntil)));
+     const history=privateWords?row.history.filter(line=>line.keepUntil===null||clock.now()<Date.parse(line.keepUntil)):[];
+     const deadline=Math.min(questionCurrent?Math.min(answerDeadline,questionDeadline):answerDeadline,...history.flatMap(line=>line.keepUntil===null?[]:[Date.parse(line.keepUntil)]));
      const sinkAbort=new AbortController(),sinkSignal=AbortSignal.any([lifetime,sinkAbort.signal]);
      const cancelExpiry=privateWords&&Number.isFinite(deadline)?clock.at(deadline,()=>sinkAbort.abort()):undefined;
      if(sinkSignal.aborted||privateWords&&clock.now()>=deadline){cancelExpiry?.();sinkAbort.abort();throw unavailable();}

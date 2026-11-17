@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Bridges: a body is handed what was said earlier in its Discord or Slack conversation.** The take route attaches the conversation's earlier messages and posts (up to 1 MB and a hundred lines) to the first piece of bridge mail, as it does a Comms thread's dialogue. Before this a bridge body was given only the new message. A history line's `keepUntil` may now be `null` (words kept without limit); the body's client accepts history on `discord` and `slack` mail.
+
 - **Bridges: a taken Discord message gets 👀, and the channel shows typing while the job works.** The reaction comes off when the reply is made or the job ends. Both are best effort and are never a job's failure. Slack shows neither.
 
 - **Add `bridges.say`.** The body holding a Discord or Slack conversation's job can post more messages during its run (`{id, text}`), to where its reply will go, through the same send queue. It settles no mail; the final answer is still the reply. At most twenty posts are made for the mail one job took.
