@@ -15,14 +15,21 @@ import {clock as systemClock,type Clock} from '../core/clock.js';
 import {secretName,agentSecretRequest} from '../pieces/secrets/input.js';
 import {privateSecretClient} from '../pieces/secrets/private-client.js';
 import {bodyModelTools,type BodyModelTool} from './body-model-tools.js';
-import {harnessToolPrefix} from './body-harness.js';
+import {BODY_TOOLS_SERVER,harnessToolPrefix} from './body-harness.js';
+import {bodyNamedTools} from './body-named-tools.js';
 import {bodyConversationClient} from './conversation-client.js';
 /** The most one request to these local tools may carry, and the most secret bytes they keep to erase. */
 const TOOL_REQUEST_BYTES=1024*1024,RETAINED_SECRET_BYTES=1024*1024;
 const unavailable=()=>new Error('Private Secret tool unavailable; do not retry an uncertain value with a new attempt');
 const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable().message}]});
-export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[]}){
- const extensions=bodyModelTools(input.extraTools),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
+export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[];
+ /** The agent this body is, from the worker's assignment. With it, and with loom_command and loom_query among
+  * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
+ agent?:string;
+ /** Whether the body was given its identity in its first words; `identity` then does not repeat it. */
+ identityHanded?:boolean}){
+ const generic=bodyModelTools(input.extraTools);
+ const extensions=bodyModelTools([...generic,...(input.agent?bodyNamedTools({agent:input.agent,generic,identityHanded:input.identityHanded}):[])]),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
  const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
  const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
@@ -45,7 +52,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   if(request.method!=='POST')return new Response(null,{status:405});
   let size=0;
   const bounded=request.body?new Request(request,{body:request.body.pipeThrough(new TransformStream<Uint8Array,Uint8Array>({transform(bytes,target){size+=bytes.byteLength;if(size>TOOL_REQUEST_BYTES)throw unavailable();target.enqueue(bytes);}})),duplex:'half'} as RequestInit):request;
-  const server=new McpServer({name:'loom-secrets',version:'1'});
+  const server=new McpServer({name:BODY_TOOLS_SERVER,version:'1'});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   const run=async(work:(signal:AbortSignal)=>Promise<{content:{type:'text';text:string}[]}>,callSignal:AbortSignal)=>{
    if(closed||signal.aborted)return failed();
@@ -96,7 +103,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   listener.on('error',onAbort);input.signal.addEventListener('abort',onAbort,{once:true});
   if(signal.aborted)throw unavailable();const address=listener.address();if(!address||typeof address==='string')throw unavailable();
   authority=`127.0.0.1:${address.port}`;
-  config=Buffer.from(JSON.stringify({mcpServers:{loom_secrets:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
+  config=Buffer.from(JSON.stringify({mcpServers:{[BODY_TOOLS_SERVER]:{type:'http',url:`http://127.0.0.1:${address.port}`,headers:{Authorization:bearer},timeout:86_400_000}}}));
   return{config,close,allowsReply,allowedTools};
  }catch{await close();throw unavailable();}
 }

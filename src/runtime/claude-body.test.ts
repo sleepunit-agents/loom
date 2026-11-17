@@ -6,6 +6,7 @@ import { claudeBody } from './claude-body.js';
 import { bodyHarness } from './body-harnesses.js';
 import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.js';
 import type { WorkerAssignment } from './worker.js';
+import { bodyNamedToolNames } from './body-named-tools.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'requested-model', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
   run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [{ pattern: 'Read', guestsOnly: false }, { pattern: 'Bash(*)', guestsOnly: true }] } } };
 
@@ -22,6 +23,27 @@ it('selects the requested model, denies native tools, and reports response model
 it.each([1, 2, null] as const)('applies guest-only native denials for tier %s', async tier => {
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }];
   const result = f.run(configured, 'mail', f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-3)).toEqual(['--disallowedTools', 'Read', 'Bash(*)']); f.finish(f.rows()); await result;
+});
+it('starts no harness for a denial whose later entry would be read as an option', async () => {
+  // The store refuses a pattern that begins with a dash. One that hides the dash behind a comma is refused here.
+  const f = fixture(), configured = structuredClone(job); configured.run!.policy!.deniedTools = [{ pattern: 'Read,--dangerously-skip-permissions', guestsOnly: false }];
+  await expect(f.run(configured, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
+});
+it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a room that is denied the generic tool under it: %s', async pattern => {
+  // An owner's rule may be for guests only, and may have been stored when the tools server had its old name.
+  const f = fixture(), configured = structuredClone(job);
+  configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }];
+  configured.run!.policy!.deniedTools = [{ pattern, guestsOnly: true }];
+  const result = f.run(configured, 'mail', f.abort.signal), args = f.launch.mock.calls[0][1], denied = args.slice(args.indexOf('--disallowedTools') + 1);
+  // Each entry is its own argument, so the harness has nothing left to split; the generic tool is named as it is called now.
+  const generic = 'mcp__loom__' + /loom_(?:command|query)$/.exec(pattern)![0];
+  expect(denied).toEqual([...new Set([...pattern.split(/[ ,]/), generic, ...bodyNamedToolNames().map(name => 'mcp__loom__' + name)])]);
+  expect(denied.every(entry => !/[ ,]/.test(entry))).toBe(true);
+  expect(denied).toEqual(expect.arrayContaining(['mcp__loom__remember', 'mcp__loom__forget', 'mcp__loom__task_close', 'mcp__loom__recall']));
+  f.finish(f.rows()); await result;
+  // The same rule with no guest in the room denies nothing.
+  const g = fixture(), household = structuredClone(configured); household.run!.policy!.people = [];
+  const quiet = g.run(household, 'mail', g.abort.signal); expect(g.launch.mock.calls[0][1]).not.toContain('--disallowedTools'); g.finish(g.rows()); await quiet;
 });
 it.each(['requested-only', 'mismatch', 'foreign-session', 'error', 'synthetic', 'subagent', 'aborted', 'invalid-json', 'invalid-utf8', 'overflow'] as const)('refuses %s native output without a guessed response', async mode => {
   const f = fixture(), result = f.run(job, 'mail', f.abort.signal), rows = f.rows();
@@ -70,11 +92,11 @@ it('erases original native stdout/stderr buffers and late output after cancellat
  expect(lateOut.every(byte=>byte===0)).toBe(true);expect(lateError.every(byte=>byte===0)).toBe(true);
 });
 it('snapshots private MCP config to descriptor 3, erases its pipe bytes, and permits only its two tools',async()=>{
- const f=fixture(),secret='PRIVATE_LOCAL_CAPABILITY',input=Buffer.from(JSON.stringify({mcpServers:{loom_secrets:{type:'http',url:'http://127.0.0.1:1234',headers:{Authorization:secret}}}})),chunks:Buffer[]=[];let text='';
+ const f=fixture(),secret='PRIVATE_LOCAL_CAPABILITY',input=Buffer.from(JSON.stringify({mcpServers:{loom:{type:'http',url:'http://127.0.0.1:1234',headers:{Authorization:secret}}}})),chunks:Buffer[]=[];let text='';
  const pipe=new Writable({write(chunk,_encoding,done){chunks.push(chunk);text+=chunk.toString();done();}}),finished=new Promise<void>(resolve=>pipe.once('finish',resolve));Object.assign(f.child,{stdio:[null,null,null,pipe]});
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:input});input.fill(0);const result=run(job,'PRIVATE ACCEPTED MAIL',f.abort.signal);await finished;
- expect(JSON.parse(text).mcpServers.loom_secrets.headers.Authorization).toBe(secret);expect(chunks.length).toBeGreaterThan(0);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
- const args=f.launch.mock.calls[0][1],options=f.launch.mock.calls[0][2];expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom_secrets__request_secret','mcp__loom_secrets__use_secret']);expect(options.stdio).toEqual(['pipe','pipe','pipe','pipe']);expect(f.launch.mock.calls[0][0]).toBe('/bin/bash');expect(args.slice(0,7)).toEqual(['--noprofile','--norc','-p','-c','exec 3< <(/bin/cat <&3); exec "$@"','loom-native','/private/claude']);expect(JSON.stringify({args,options})).not.toContain(secret);expect(f.words()).toBe('PRIVATE ACCEPTED MAIL');expect(f.env).toEqual({PATH:'/usr/bin',ACCOUNT_PROFILE:'/private/account'});
+ expect(JSON.parse(text).mcpServers.loom.headers.Authorization).toBe(secret);expect(chunks.length).toBeGreaterThan(0);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ const args=f.launch.mock.calls[0][1],options=f.launch.mock.calls[0][2];expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom__request_secret','mcp__loom__use_secret']);expect(options.stdio).toEqual(['pipe','pipe','pipe','pipe']);expect(f.launch.mock.calls[0][0]).toBe('/bin/bash');expect(args.slice(0,7)).toEqual(['--noprofile','--norc','-p','-c','exec 3< <(/bin/cat <&3); exec "$@"','loom-native','/private/claude']);expect(JSON.stringify({args,options})).not.toContain(secret);expect(f.words()).toBe('PRIVATE ACCEPTED MAIL');expect(f.env).toEqual({PATH:'/usr/bin',ACCOUNT_PROFILE:'/private/account'});
  f.finish(f.rows());await result;await expect(run(job,'again',f.abort.signal)).rejects.toThrow('Native execution unavailable');expect(f.launch).toHaveBeenCalledOnce();
 });
 it('erases an unsettled private MCP pipe at cancellation before its write callback runs',async()=>{
@@ -82,15 +104,15 @@ it('erases an unsettled private MCP pipe at cancellation before its write callba
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{"private":"LOCAL_CAPABILITY"}')});const result=run(job,'mail',f.abort.signal),refused=expect(result).rejects.toThrow('Native execution unavailable');f.abort.abort();expect(chunks).toHaveLength(1);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);await refused;release();
 });
 it('snapshots composed private tool names without broadening denied native tools',async()=>{
- const f=fixture(),names=['mcp__loom_secrets__command'],pipe=new Writable({write(_chunk,_encoding,done){done();}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
+ const f=fixture(),names=['mcp__loom__command'],pipe=new Writable({write(_chunk,_encoding,done){done();}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names});names.push('Bash');const pending=run(job,'mail',f.abort.signal),args=f.launch.mock.calls[0][1];
- expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom_secrets__command']);expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await pending;
+ expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom__command']);expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await pending;
 });
-it.each([{names:[{toString:()=> 'mcp__loom_secrets__command'} as unknown as string]},{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom_secrets__command','mcp__loom_secrets__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
+it.each([{names:[{toString:()=> 'mcp__loom__command'} as unknown as string]},{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom__command','mcp__loom__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
  const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names})).toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });
 it('refuses private tool names without a private MCP configuration before launch',()=>{
- const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpTools:['mcp__loom_secrets__command']})).toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();
+ const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpTools:['mcp__loom__command']})).toThrow('Native execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });
 it('gives a body the harness\'s own tools only when the machine says so, and still withholds denied tools', async () => {
   const f = fixture();

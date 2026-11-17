@@ -6,7 +6,6 @@ import {pageSlug} from './pieces/mind/actions.js';
 import {z} from 'zod';
 import {slug as slugOf,PAGE_NAME,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID} from './slug.js';
 import {randomUUID} from 'node:crypto';
-import type {McpServer} from '@modelcontextprotocol/server';
 import {householdChanges,dangerousHouseholdChanges} from './shared-household-proposals.js';
 import {MEMORY_CATEGORIES} from './categories.js';
 import {LIFESPAN_NAMES,NOTE_PATH_MAX} from './notes.js';
@@ -21,11 +20,19 @@ type QueryReply={data?:Record<string,unknown>|null;errors?:readonly unknown[]|nu
 export interface NamedToolPorts{
  /** The authenticated agent, or undefined for a caller that is not one. */
  agent?:string;
+ /** The caller was handed its creed, preferences and Top of Mind when it started (a body is: body-memory-identity.ts).
+  * `identity` then does not repeat them unless one is asked for by name. */
+ identityHanded?:boolean;
  valid():boolean;
  query(input:{query:string;variables?:Variables}):Promise<QueryReply>;
  command(name:string,input:unknown,id:string):Promise<unknown>;
 }
 type Result={content:{type:'text';text:string}[];isError?:boolean};
+/** Where the tools are put. The terminal's door passes its MCP server; a body's tools server collects them
+ * and serves them itself (runtime/body-named-tools.ts). Both get every tool from the one list below. */
+export interface NamedToolRegistry{
+ registerTool(name:string,config:{description:string;inputSchema:z.ZodObject},handler:(args:Record<string,unknown>)=>Promise<Result>):unknown;
+}
 const say=(text:string):Result=>({content:[{type:'text',text}]});
 const refuse=(text:string):Result=>({isError:true,content:[{type:'text',text}]});
 
@@ -42,7 +49,7 @@ interface Note{path:string;body:string;lifespan:string;created:string;updated:st
 interface Page{slug:string;title:string;domain:string;updated:string;verified_at:string|null;body:string}
 interface Entry{id:string;at:string;title:string;line:string|null;where:string;what:string}
 
-export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
+export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts){
  /** A command's value, or a thrown refusal carrying the door's own words. */
  const run=async(name:string,input:unknown)=>{
   // A failure is flat: {ok:false, code, message}. Say both, so a refusal can be acted on.
@@ -69,13 +76,16 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
   });
 
  const section=z.enum(['creed','preferences','top-of-mind','self-model','last-24h','harness','model','all']);
- server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; pass piece or pieces for self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
+ server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; what you were handed when you started is not repeated unless you ask for it by name. Pass piece or pieces for creed, preferences, top-of-mind, self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
   inputSchema:z.object({agent:z.string().optional(),client:z.string().max(100).optional(),model:z.string().max(100).optional(),piece:section.optional(),pieces:z.array(section).max(8).optional(),role:z.string().max(100).optional(),project:z.string().max(100).optional()}).strict()},
-  async(args:{agent?:string;client?:string;model?:string;piece?:Section;pieces?:Section[];role?:string;project?:string}):Promise<Result>=>{
+  async(given):Promise<Result>=>{
+   // The server checked `given` against the schema above before calling.
+   const args=given as {agent?:string;client?:string;model?:string;piece?:Section;pieces?:Section[];role?:string;project?:string};
    try{
     const agent=ports.agent;if(!ports.valid()||!agent||args.agent&&args.agent!==agent)throw Error();
     const asked=[...(args.piece?[args.piece]:[]),...(args.pieces??[])],core=!asked.length,all=asked.includes('all');
-    const wants=(name:Section)=>all||asked.includes(name)||core&&(name==='creed'||name==='preferences'||name==='top-of-mind');
+    const handed=core&&!!ports.identityHanded;
+    const wants=(name:Section)=>all||asked.includes(name)||core&&!handed&&(name==='creed'||name==='preferences'||name==='top-of-mind');
     // A model page may be filed under a shorter family name: claude-fable-5-2, claude-fable-5, claude-fable.
     const family=(name:string)=>name.split('-').map((_part,index,parts)=>parts.slice(0,parts.length-index).join('-'));
     const pages:{alias:string;kind:string;name:string;heading:string}[]=[];
@@ -90,7 +100,8 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
     const parts:string[]=[],add=(heading:string,words:string|null|undefined)=>{if(words)parts.push('# '+heading+'\n\n'+words);};
     add('Identity',identity.creed);add('Preferences',identity.preferences);add('Top of Mind',identity.topOfMind);add('Self-Model',identity.selfModel);add('Last 24 hours',identity.recent);
     const shown=new Set<string>();for(const entry of pages)if(identity[entry.alias]&&!shown.has(entry.heading)){shown.add(entry.heading);add(entry.heading,identity[entry.alias]);}
-    if(core)parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client or model for their pages. Use piece: "all" for everything.\n\n- last-24h: what other bodies did recently\n- self-model: before reflection, retro or identity work\n- harness: before scheduling, delegation or harness-specific work (pass client)\n- model: when choosing or describing models (pass model)');
+    if(handed)parts.unshift('Your creed, preferences and Top of Mind were handed to this body when it started; they are not repeated here.');
+    if(core)parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client or model for their pages. Use piece: "all" for everything.\n\n- last-24h: what other bodies did recently\n- self-model: before reflection, retro or identity work\n- harness: before scheduling, delegation or harness-specific work (pass client)\n- model: when choosing or describing models (pass model)'+(handed?'\n- creed, preferences, top-of-mind: already in your first words; ask for one by name to read it again':''));
     return say('Agent: '+agent+'\n\n'+(parts.join('\n\n---\n\n')||'No Identity has been written.'));
    }catch{return refuse('Identity unavailable');}
   });

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, it, vi } from 'vitest';
 import { bodyHarness, harnessCannotRun, harnessReservesEnv, harnesses } from './body-harnesses.js';
 import { deniedTools, hasGuest } from './harness-traits.js';
@@ -59,4 +60,12 @@ it('knows which harness would refuse a job, with or without knowing the machine'
   // A runner loom has no adapter for is the machine's own business.
   expect(harnessCannotRun('house-runner', guest, 'loom')).toBe(false);
   expect(harnessCannotRun('constructor', guest, 'loom')).toBe(false);
+});
+
+it('has one harness that is told what a body is not given, and that one is told loom\'s own tools too', () => {
+  // A harness that honours denials must be handed bodyDeniedTools(deniedTools(policy)) (body-named-tools.ts), not
+  // deniedTools alone: the first adds the named tools a denied generic tool takes with it and reads the tools
+  // server's old name. A second harness that honours denials changes this list and does the same.
+  expect(Object.entries(harnesses).filter(([, harness]) => harness.honoursDeniedTools).map(([name]) => name)).toEqual(['claude']);
+  expect(readFileSync(new URL('./claude-body.ts', import.meta.url), 'utf8')).toContain('bodyDeniedTools(deniedTools(job.run?.policy))');
 });

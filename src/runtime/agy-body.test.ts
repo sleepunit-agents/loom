@@ -32,9 +32,9 @@ function fixture(input: Partial<Parameters<typeof agyBody>[0]> = {}) {
     if (existsSync(file)) { seen.config = readFileSync(file, 'utf8'); seen.mode = statSync(file).mode & 0o777; }
     return child as unknown as ChildProcessWithoutNullStreams;
   }), abort = new AbortController();
-  const config = Buffer.from(JSON.stringify({ mcpServers: { loom_secrets: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer } } } }));
+  const config = Buffer.from(JSON.stringify({ mcpServers: { loom: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer } } } }));
   const scratch = mkdtempSync(join(tmpdir(), 'agy-test-scratch-')); homes.push(scratch);
-  const run = bodyHarness('agy', { command: '/native/agy', cwd: '/house', env: { PATH: '/usr/bin', HOME: home, LOOM_BODY_SCRATCH: scratch }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
+  const run = bodyHarness('agy', { command: '/native/agy', cwd: '/house', env: { PATH: '/usr/bin', HOME: home, LOOM_BODY_SCRATCH: scratch }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom__recall', 'mcp__loom__reply'], ...input });
   config.fill(0);
   const finish = (rows: unknown[] | string, code = 0) => { child.stdout.end(typeof rows === 'string' ? rows : rows.map(value => JSON.stringify(value)).join('\n') + '\n'); child.stderr.end('PRIVATE DIAGNOSTIC'); setImmediate(() => { child.emit('exit', code); child.emit('close', code); }); };
   return { run, launch, abort, finish, words: () => words, child, seen, data, home, scratch };
@@ -46,7 +46,7 @@ it('runs agy in a private workspace that holds the tools file, with the words on
   expect(command).toBe('/native/agy');
   expect(args).toEqual(['-p', '', '--input-format', 'stream-json', '--output-format', 'stream-json', '--model', 'gemini-fictional', '--dangerously-skip-permissions', '--add-dir', '/house']);
   expect(options.cwd.startsWith(f.scratch + '/')).toBe(true); expect(options.env).toEqual({ PATH: '/usr/bin', HOME: f.home, LOOM_BODY_SCRATCH: f.scratch });
-  expect(JSON.parse(f.seen.config!)).toEqual({ mcpServers: { loom_secrets: { serverUrl: 'http://127.0.0.1:4242', headers: { Authorization: bearer }, enabledTools: ['recall', 'reply'] } } });
+  expect(JSON.parse(f.seen.config!)).toEqual({ mcpServers: { loom: { serverUrl: 'http://127.0.0.1:4242', headers: { Authorization: bearer }, enabledTools: ['recall', 'reply'] } } });
   expect(f.seen.mode).toBe(0o600); expect(statSync(f.seen.workspace!).mode & 0o777).toBe(0o700);
   expect(JSON.stringify(f.launch.mock.calls)).not.toContain('PRIVATE ACCEPTED MAIL'); expect(JSON.stringify(f.launch.mock.calls)).not.toContain('local_secret_');
   f.finish(good());

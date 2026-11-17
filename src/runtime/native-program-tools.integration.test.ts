@@ -14,6 +14,9 @@ import * as projection from './body-program-tools.js';
 import * as listener from './body-secret-tools.js';
 import {bodyProgram} from './body-program.js';
 import type {WorkerAssignment} from './worker.js';
+import {bodyNamedToolNames} from './body-named-tools.js';
+/** What the default body serves its harness: the secret tools, the generic ones, and the named ones a terminal has. */
+const served=()=>['request_secret','use_secret','loom_commands','loom_command','loom_query',...bodyNamedToolNames()];
 vi.mock('node:child_process',()=>({spawn:vi.fn()}));
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
@@ -55,10 +58,10 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
  vi.spyOn(fixture.clock,'at').mockImplementation((time,work)=>{if(waitingReported&&pollDeadline===undefined)pollDeadline=time;return at(time,work);});
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
   const names=args.slice(args.indexOf('--allowedTools')+1),nextFlag=names.findIndex(name=>name.startsWith('--'));
-  expect(names.slice(0,nextFlag<0?undefined:nextFlag)).toEqual(['request_secret','use_secret','loom_commands','loom_command','loom_query'].map(name=>'mcp__loom_secrets__'+name));
+  expect(names.slice(0,nextFlag<0?undefined:nextFlag)).toEqual(served().map(name=>'mcp__loom__'+name));
   expect(JSON.stringify({args,options})).not.toContain(fixture.token);
   let words='',ended=false,started=false;
-  const control=new Writable({write(bytes,_encoding,next){pipeBuffers.push(bytes);endpoint=JSON.parse(bytes.toString()).mcpServers.loom_secrets;expect(bytes.includes(Buffer.from(fixture.token))).toBe(false);next();}});
+  const control=new Writable({write(bytes,_encoding,next){pipeBuffers.push(bytes);endpoint=JSON.parse(bytes.toString()).mcpServers.loom;expect(bytes.includes(Buffer.from(fixture.token))).toBe(false);next();}});
   const stdin=new Writable({write(bytes,_encoding,next){words+=bytes.toString();next();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,control],kill:vi.fn(()=>{killed=true;child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
   const start=()=>{
@@ -68,7 +71,9 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
     try{
      expect(words).toBe('Use canonical tools privately');
      await model.connect(new StreamableHTTPClientTransport(new URL(endpoint!.url),{requestInit:{headers:endpoint!.headers}}));
-     expect((await model.listTools()).tools.map(tool=>tool.name)).toEqual(['request_secret','use_secret','loom_commands','loom_command','loom_query']);
+     expect((await model.listTools()).tools.map(tool=>tool.name)).toEqual(served());
+     // A named tool, as the default body serves it: for this job's agent, through the body's own credential.
+     expect(await model.callTool({name:'task_ready',arguments:{}})).toEqual({content:[{type:'text',text:'Nothing is ready.'}]});
      expect(decoded(await model.callTool({name:'loom_commands',arguments:{name:'secrets.request'}})).value.commands[0].name).toBe('secrets.request');
      expect(decoded(await model.callTool({name:'loom_query',arguments:{query:'{agents{id} members{id}}'}}))).toMatchObject({data:{agents:[{id:'art'}],members:[]}});
      const before=fixture.db.select().from(schema.household).get();

@@ -555,6 +555,37 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A second harness needing a hint of its own on a tool. Then each adapter
   adds its hints to the tools it is handed, and this one moves into the Claude adapter.
 
+### A room denied a generic tool loses every named tool, the read-only ones too
+
+- **What.** A body's named tools (`remember`, `recall`, `task_close` and the rest) are its `loom_command`
+  and `loom_query` under plain names. When a job's denied tools take either of those two away, the harness
+  is told to deny every named tool. A room denied only `loom_command` therefore loses `recall` and
+  `note_read` as well, though they only read; it keeps `loom_query`.
+- **Where.** `bodyDeniedTools` in `src/runtime/body-named-tools.ts`, called by `src/runtime/claude-body.ts`, over
+  the entries `denialEntries` reads from each stored pattern (`src/runtime/harness-traits.ts`).
+- **Why accepted.** The rule that matters is that a named tool never does what the room was denied. The
+  one definition does not say which port each tool uses, and a second list saying so could fall out of
+  step with it in the direction that lets a write through. Denying too much cannot.
+- **What is not enforced.** Denying one named tool (`mcp__loom__forget`) does not stop `loom_command` from
+  calling the operation under it. Denials are patterns over tool names, as they were before.
+- **What would change the answer.** An owner who needs a room that may read by name and not write. Then
+  each named tool states its ports where it is defined, and the denial follows that.
+
+### A body loads the terminal tools' server-side modules, and opens none of them
+
+- **What.** `src/shared-mcp-named.ts` takes its limits and choices from the modules that own them
+  (`notes.ts`, `backends/projects.ts`, `shared-household-proposals.ts` and others), and some of those
+  import `better-sqlite3`. A body now imports that file, so the body program loads those modules: 110 of
+  loom's files where it loaded 37, measured at about 160 ms and 12 MB more at a body's start. No database is opened and no
+  native code is loaded: the addon is loaded when a database is first opened, and a body opens none.
+- **Where.** `src/runtime/body-named-tools.ts`. Its test fails if building a body's named tools loads a
+  native addon.
+- **Why accepted.** The alternative is a second statement of the tools or of their limits for the body,
+  which is what the one definition exists to prevent.
+- **What would change the answer.** A house image whose node cannot load one of those modules, or the
+  start-up cost mattering. Then the body forwards named calls to loom's `/mcp`, which already runs the
+  same definition for a body's credential, or the limits move to modules that import nothing.
+
 ## Bridges and conversations
 
 ### Mail is delivered at least once

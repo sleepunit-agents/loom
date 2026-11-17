@@ -31,7 +31,7 @@ async function rootFixture(answer:'auto'|'ask'|'never'='auto',expected=Buffer.fr
 async function fixture(answer:'auto'|'ask'|'never'='auto',expected=Buffer.from(privateValue)){
  const f=await rootFixture(answer,expected),{buffers,source,abort,waiting,fetcher}=f;
  const tools=await bodySecretTools({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:abort.signal,clock:f.clock,fetch:fetcher,waiting});clean.push(()=>tools.close());
- const config=JSON.parse(tools.config.toString()).mcpServers.loom_secrets as {url:string;headers:Record<string,string>};
+ const config=JSON.parse(tools.config.toString()).mcpServers.loom as {url:string;headers:Record<string,string>};
  const client=new Client({name:'fictitious-native',version:'1'},{capabilities:{}});await client.connect(new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers:config.headers}}));clean.push(()=>client.close());
  const request=(id=randomUUID())=>client.callTool({name:'request_secret',arguments:{id,secret:'TOKEN',why:'Synthetic credential use',minutes:5}});
  const use=(request?:string,id=randomUUID())=>client.callTool({name:'use_secret',arguments:{id,secret:'TOKEN',...(request?{request}:{})}});
@@ -72,13 +72,13 @@ it.each(['allow','stop','leak-text','leak-base64'] as const)('uses the default n
  vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000)armed();return at(time,work);});
  const pipeBuffers:Buffer[]=[];
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
-  expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(JSON.stringify({args,options})).not.toContain(token);expect(args).toContain('mcp__loom_secrets__use_secret');expect(options.env).toMatchObject({MCP_TOOL_TIMEOUT:'86400000',CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:'86400000'});
+  expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(JSON.stringify({args,options})).not.toContain(token);expect(args).toContain('mcp__loom__use_secret');expect(options.env).toMatchObject({MCP_TOOL_TIMEOUT:'86400000',CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:'86400000'});
   let config:Record<string,{url:string;headers:Record<string,string>;timeout:number}>|undefined,words='',ended=false,started=false;
   const control=new Writable({write(bytes,_encoding,done){pipeBuffers.push(bytes);config=JSON.parse(bytes.toString()).mcpServers;expect(bytes.includes(Buffer.from(token))).toBe(false);done();}}),stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();}});
   const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,control],kill:vi.fn(()=>{killed=true;child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
   const start=()=>{if(started||!ended||!config)return;started=true;void(async()=>{
-   expect(config!.loom_secrets).toMatchObject({timeout:86_400_000});
-   const protocol=new Client({name:'native-model-fixture',version:'1'},{capabilities:{}}),connection=config!.loom_secrets;
+   expect(config!.loom).toMatchObject({timeout:86_400_000});
+   const protocol=new Client({name:'native-model-fixture',version:'1'},{capabilities:{}}),connection=config!.loom;
    try{
     expect(words).toBe('Use the requested credential without repeating it');expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('taken');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));
