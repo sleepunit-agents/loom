@@ -186,7 +186,7 @@ it('records a Comms Stop the same way whether the worker\'s heartbeat or the bod
     expect(f.db.select().from(jobs).all()).toHaveLength(1);
   }
 });
-it('believes a body that says it left for a Stop only while that Stop is waiting, and leaves an unnoticed Stop on the thread', () => {
+it('believes a body that says it left for a Stop only while that Stop is waiting, and a Stop its job never noticed ends with that job', () => {
   const start = (stopRequested: boolean) => {
     const f = fixture('loom'), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
     f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
@@ -196,11 +196,24 @@ it('believes a body that says it left for a Stop only while that Stop is waiting
   // No Stop is waiting, so the exit is an ordinary failure, tried again like any other.
   const claimed = start(false);
   expect(claimed.runtime.finish(claimed.job.id, 'worker', BODY_EXIT.stopped)).toMatchObject({ job: { state: 'failed', endedBy: null }, retry: { state: 'queued' } });
-  // The body finished its work without noticing the Stop: the work is done, and the Stop is still the thread's.
+  // The body finished its work without noticing the Stop: the work is done, and the Stop goes with the job it
+  // was pressed on. It is not left to stop whatever that person asks for next.
   const unnoticed = start(true);
   unnoticed.comms.take(unnoticed.conversation.id, unnoticed.job.id); unnoticed.comms.confirm(unnoticed.mail.id, unnoticed.job.id);
   expect(unnoticed.runtime.finish(unnoticed.job.id, 'worker', 0).job).toMatchObject({ state: 'done', endedBy: null });
-  expect(unnoticed.db.select().from(threadRows).get()).toMatchObject({ stopRequested: true, working: false });
+  expect(unnoticed.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
+  // The body failed without noticing the Stop: the person asked for this work to stop, so it is not tried again.
+  const failed = start(true);
+  failed.comms.take(failed.conversation.id, failed.job.id);
+  const ended = failed.runtime.finish(failed.job.id, 'worker', 1);
+  expect(ended.job).toMatchObject({ state: 'stopped', endedReason: 'stop', exitCode: 1 }); expect(ended.retry).toBeUndefined();
+  expect(failed.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
+  // The same when its worker goes silent: lost work someone asked to stop is stopped, not run again.
+  const silent = start(true);
+  silent.comms.take(silent.conversation.id, silent.job.id); silent.tick(10 * 60_000);
+  expect(silent.runtime.sweep().map(job => job.state)).toEqual(['stopped']);
+  expect(silent.db.select().from(threadRows).get()).toMatchObject({ stopRequested: false, working: false });
+  expect(silent.runtime.admit(silent.conversation.id)).toBeUndefined();
 });
 it('admits new mail during failure and in the same clock tick after termination', () => {
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;

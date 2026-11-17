@@ -206,7 +206,10 @@ export class Jobs {
    *  - before a body is running, the worker's heartbeat notices it (takeStop);
    *  - once a body is running, the body notices it on its own report, stops its work and leaves with
    *    BODY_EXIT.stopped; finish() checks that a Stop really is waiting and ends the job here.
-   * A Stop nobody noticed before the job ended some other way stays on the thread. */
+   * A Stop is pressed on the job then working, and it ends with that job whichever way that job ends:
+   *  - the job finished its work first: the work is done, and the Stop is dropped (end());
+   *  - the job failed or went silent first: it is ended here as stopped, so the work is not tried again.
+   * It is never left on the thread to stop whatever that person asks for next. */
   private endIfStopAsked(job: Job, values: Partial<Job> = {}): Job | undefined {
     const asked = this.stopAsked(job);
     if (!asked) return undefined;
@@ -243,6 +246,8 @@ export class Jobs {
       const held = (states: readonly (typeof inbox.$inferSelect)['state'][]) =>
         !!this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), inArray(inbox.state, states))).get();
       const progressed = !failed && held(['done']), unsettled = !failed && !progressed && held(['waiting', 'taken']);
+      // Work someone asked to stop is not run again because its body died before noticing.
+      if (failed || unsettled) { const asked = this.endIfStopAsked(before, { exitCode }); if (asked) return { job: asked }; }
       const job = this.end(before, failed ? 'failed' : 'done',
         { exitCode, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
       if (progressed) { this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run(); return { job }; }
@@ -303,6 +308,8 @@ export class Jobs {
       const lost = this.db.select().from(jobs).where(inArray(jobs.state, claimedJobStates)).all()
         .filter(job => now - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
         .map(job => {
+          const asked = this.endIfStopAsked(job, { endedNote: `Lost while ${job.state}: its worker stopped reporting` });
+          if (asked) return asked;
           const ended = this.end(job, 'lost', { endedAt: at, endedNote: `Lost while ${job.state}: its worker stopped reporting` });
           this.retry(job, at);
           return ended;
@@ -323,10 +330,11 @@ export class Jobs {
     // the bounded chain, or it waits for fresh mail.
     this.mail.returnTaken(job.id);
     // The job working in a conversation is its one job that has not ended, so ending that job is what
-    // leaves the conversation with none. Clear its working indicator in the same transaction; an
-    // unobserved Stop and the last reported agent state stay.
+    // leaves the conversation with none. Clear its working indicator in the same transaction, and with it a
+    // Stop that was pressed on this job and never taken: the next job there is not the one it was meant for.
+    // The last reported agent state stays.
     if (job.conversation && jobUnended(job.state)) this.db.update(threads)
-      .set({ working: false, workingSince: null, workingBeat: null }).where(eq(threads.conversation, job.conversation)).run();
+      .set({ working: false, workingSince: null, workingBeat: null, stopRequested: false }).where(eq(threads.conversation, job.conversation)).run();
     return ended;
   }
 }
