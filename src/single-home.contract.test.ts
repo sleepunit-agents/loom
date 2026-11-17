@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { agentInput, settingsInput } from './apps/household.js';
+import { COMMIT, mergeTargetFor, parseMergeTarget } from './apps/merge-target.js';
 import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
 import { keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
 import { createDataSchema } from './core/data/database.js';
@@ -182,4 +183,16 @@ it('takes Tempo\'s unset timings from the columns, and reads a row or the defaul
   } finally { client.close(); }
   const readers = sources('src').filter(file => /\.from\(tempoSettings\)/.test(text(file)));
   expect(readers).toEqual(['src/core/tempo/volume.ts']);
+});
+
+it('makes and reads a merge approval\'s target in one place', () => {
+  const head = 'a1'.repeat(20), change = 'github:Sleep-Unit/loom.web#42';
+  expect(parseMergeTarget(mergeTargetFor(change, head))).toEqual({ change, repository: 'Sleep-Unit/loom.web', head });
+  for (const bad of [change, `${change}@${head.slice(1)}`, `${change}@${head.toUpperCase()}`, `github:loom#42@${head}`, `github:a/b#0@${head}`, `${change}@${head} `])
+    expect(parseMergeTarget(bad), bad).toBeUndefined();
+  expect(COMMIT.test(head)).toBe(true);
+  expect(COMMIT.test(head + '0')).toBe(false);
+  // A card that is filed and a standing rule that reads it cannot disagree: no other file spells the format or a commit id.
+  const copies = sources('src').filter(file => file !== 'src/apps/merge-target.ts' && /\{40\}|#\[1-9\]\[0-9\]\*/.test(text(file)));
+  expect(copies).toEqual([]);
 });

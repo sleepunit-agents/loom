@@ -2,6 +2,7 @@
  * (workAnswersAllowed); there is no narrower rule per card or per change, because an
  * owner already sees every change. What is checked beyond that is that the card and
  * the change it names still exist; the exact head is checked when the answer runs. */
+import { COMMIT, parseMergeTarget } from './apps/merge-target.js';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { workAnswersAllowed } from './shared-work-access.js';
@@ -20,9 +21,9 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const answers = changeAnswers(db, service);
   const mergeTarget = (row: Approval) => {
     if (row.kind !== 'merge') return;
-    const match = /^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([0-9a-f]{40})$/.exec(row.target);
-    if (!match) throw new OperationError('conflict', 'The merge request changed. Open it again.');
-    return { id: match[1], head: match[2] };
+    const target = parseMergeTarget(row.target);
+    if (!target) throw new OperationError('conflict', 'The merge request changed. Open it again.');
+    return { id: target.change, head: target.head };
   };
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');
@@ -84,7 +85,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     },
   });
   operations.register({ name: 'changes.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, head: z.string().regex(COMMIT), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const request = approval(input.approval);
       return workAnswersAllowed(db, viewer) && !!request && !!change(input.id);

@@ -1,3 +1,4 @@
+import { mergeTargetFor } from './merge-target.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
@@ -47,7 +48,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     if (c.id !== id) throw new Error('Pull request identity differs from repository and number');
     if (!c.created || !c.updated) throw new Error('Pull request timestamps are required');
     const held = { ...c, ...(agent ? { agent } : {}) };
-    const target = `${id}@${c.head.id}`;
+    const target = mergeTargetFor(id, c.head.id);
     let answer = agent ? rule(target, agent) : undefined;
     const decision = agent ? lastApprovalAnswer(db, agent, 'merge', target) : undefined;
     if (decision) {
@@ -137,7 +138,7 @@ export function reprojectChanges(db: DataDatabase): string[] {
 export function reattributeChanges(db:DataDatabase,rule:MergeRuleReader=()=>undefined){
  return db.transaction(()=>{
   const updates=db.select().from(changes).all().map(row=>{
-   const agent=agentFor(db,row.authorLogin),waitingOn=waitsOn({state:row.state,draft:row.draft,mergeable:row.mergeable,conflicts:row.mergeable==='no',checks:{state:row.checks},review:{state:row.review},...(agent?{agent}:{})},agent?rule(`${row.id}@${row.headCommit}`,agent):undefined).group;
+   const agent=agentFor(db,row.authorLogin),waitingOn=waitsOn({state:row.state,draft:row.draft,mergeable:row.mergeable,conflicts:row.mergeable==='no',checks:{state:row.checks},review:{state:row.review},...(agent?{agent}:{})},agent?rule(mergeTargetFor(row.id,row.headCommit),agent):undefined).group;
    return{row,agent,waitingOn};
   });
   for(const {row,agent,waitingOn}of updates)if(row.agent!==agent||row.waitingOn!==waitingOn)db.update(changes).set({agent,waitingOn}).where(eq(changes.id,row.id)).run();

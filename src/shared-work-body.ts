@@ -1,3 +1,4 @@
+import {parseMergeTarget} from './apps/merge-target.js';
 import {requestApprovalWithRules} from './apps/approval-request.js';
 /** Work commands for an authenticated current body, never input-selected actors.
  * Prepared settings/dangerous actions stay with their typed proposal producers. */
@@ -18,10 +19,10 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  const source=(viewer:Viewer)=>{const {cv}=requireCurrent(viewer);return {agent:cv.agent,conversation:cv.id,askedFrom:cv.id,actingFor:cv.member??'unknown',project:cv.project,member:cv.member};};
  const merge=(viewer:Viewer,kind:string,value:string,open=false)=>{
   if(kind!=='merge')return;
-  const context=source(viewer),match=/^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([a-f0-9]{40})$/.exec(value);
-  const row=match&&db.select().from(changes).where(eq(changes.id,match[1])).get();
-  if(!row||row.headCommit!==match![2]||row.agent!==context.agent||row.project!==context.project||open&&row.state!=='open')throw new OperationError('conflict','Merge target is not the current conversation change');
-  return {change:row,head:match![2]};
+  const context=source(viewer),target=parseMergeTarget(value);
+  const row=target&&db.select().from(changes).where(eq(changes.id,target.change)).get();
+  if(!row||row.headCommit!==target!.head||row.agent!==context.agent||row.project!==context.project||open&&row.state!=='open')throw new OperationError('conflict','Merge target is not the current conversation change');
+  return {change:row,head:target!.head};
  };
  const card=(viewer:Viewer,id:string)=>{
   const context=source(viewer),row=db.select().from(approvals).where(eq(approvals.id,id)).get();

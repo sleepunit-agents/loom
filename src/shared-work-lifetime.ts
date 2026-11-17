@@ -1,5 +1,6 @@
 /** A single timer makes unused allowances expire even without a command or
  * GitHub read. Owned by the shared root; every write uses the shared publisher. */
+import {parseMergeTarget} from './apps/merge-target.js';
 import {and,eq,inArray} from 'drizzle-orm';
 import type {Clock} from './core/clock.js';
 import type {DataDatabase} from './core/data/database.js';
@@ -11,9 +12,9 @@ export function workLifetime(db:DataDatabase,clock:Clock,writes:DataWrites,repor
  const report=()=>{try{reportError(new Error('Approval expiry unavailable'));}catch{}};
  const repairable=(card:typeof approvals.$inferSelect)=>{
   if(card.kind!=='merge'||lastApprovalAnswer(db,card.agent,card.kind,card.target)?.approval!==card.id)return;
-  const match=/^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([a-f0-9]{40})$/.exec(card.target);
-  const change=match&&db.select().from(changes).where(eq(changes.id,match[1])).get();
-  return change&&change.headCommit===match![2]&&change.agent===card.agent&&change.project===card.project&&change.state==='open'&&change.waitingOn==='agent'?change:undefined;
+  const target=parseMergeTarget(card.target);
+  const change=target&&db.select().from(changes).where(eq(changes.id,target.change)).get();
+  return change&&change.headCommit===target!.head&&change.agent===card.agent&&change.project===card.project&&change.state==='open'&&change.waitingOn==='agent'?change:undefined;
  };
  const rows=()=>db.select().from(approvals).where(inArray(approvals.state,['allowed','expired'])).all();
  const expire=()=>{

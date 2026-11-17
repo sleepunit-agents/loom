@@ -1,6 +1,7 @@
 /** Trusted request composition shared by installed callers and the body door.
  * Callers supply authenticated context; this service never executes a command
  * or merge. Prepared settings/dangerous changes require explicit Allow. */
+import {parseMergeTarget} from './merge-target.js';
 import {eq} from 'drizzle-orm';
 import type {DataDatabase} from '../core/data/database.js';
 import {changes} from '../core/data/schema.js';
@@ -16,12 +17,12 @@ export function requestApprovalWithRules(db:DataDatabase,service:ReturnType<type
   const rule=lastApprovalAnswer(db,row.agent,row.kind,row.target)?.event==='deny'?undefined:rules.resolve({kind:row.kind,target:row.target,project:row.project,actingFor:row.actingFor});
   if(rule&&rule.tier!=='ask'){
    const owner={kind:'member' as const,id:rule.setBy};
-   const match=row.kind==='merge'?/^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([a-f0-9]{40})$/.exec(row.target):null;
-   const change=match?db.select().from(changes).where(eq(changes.id,match[1])).get():undefined;
+   const target=row.kind==='merge'?parseMergeTarget(row.target):undefined;
+   const change=target?db.select().from(changes).where(eq(changes.id,target.change)).get():undefined;
    if(row.kind==='merge'&&!change)throw new Error('Merge change is unavailable');
    {
     const basis=`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`;
-    if(change&&match)changeAnswers(db,service).answer({change:change.id,head:match[2],approval:row.id,member:rule.setBy,allow:true,basis});
+    if(change&&target)changeAnswers(db,service).answer({change:change.id,head:target.head,approval:row.id,member:rule.setBy,allow:true,basis});
     else service.allow(row.id,rule.setBy,basis);
    }
   }
