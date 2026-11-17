@@ -29,7 +29,10 @@ export class InboxQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
     readonly now: () => string = () => new Date().toISOString(),
     private readonly volumeAllowed: (viewer: Viewer, item: Item) => boolean = () => false,
-    private readonly volumeBatch?: (viewer: Viewer, items: Item[]) => Set<string>) {}
+    private readonly volumeBatch?: (viewer: Viewer, items: Item[]) => Set<string>,
+    /** Who may answer an item, supplied by the door from the household's rule: called once for a viewer, it
+     * returns the answer for each item on the household facts it read then. No default allow. */
+    private readonly mayAnswer: (viewer: Viewer) => (item: Item) => boolean = () => () => false) {}
 
   private allowed(viewer: Viewer) {
     const allowed = this.policy(viewer, getTableColumns(inbox));
@@ -52,7 +55,7 @@ export class InboxQueries {
   }
   canAnswer(viewer: Viewer, id: string): boolean {
     const item = this.current(viewer, id);
-    return viewer.kind === 'member' && !!item && item.to === viewer.id && answerable(item);
+    return !!item && answerable(item) && this.mayAnswer(viewer)(item);
   }
   list(viewer: Viewer, filter: InboxFilter = {}): Item[] {
     const { limit = 50, offset = 0 } = filter;
@@ -73,7 +76,9 @@ export class InboxQueries {
     const before=readInboxSet(this.db,ids,this.allowed(viewer),words);
     if(items.some(row=>JSON.stringify(row)!==JSON.stringify(before.item(row.id))))throw Error('Inbox changed; retry the query');
     const key=Object.assign(Object.create(this.key) as WordsKey,{open:(bytes:Uint8Array)=>this.key.open(bytes)});
-    const service=new InboxQueries(this.db,key,this.policy,this.now,this.volumeAllowed);
+    // One reading of the household's facts answers "can answer" for the whole page.
+    const answerer=fields.has('canAnswer')?this.mayAnswer(viewer):undefined;
+    const service=new InboxQueries(this.db,key,this.policy,this.now,this.volumeAllowed,undefined,answerer?()=>answerer:this.mayAnswer);
     service.readSet=before;
     const permissions=fields.has('canSetVolume')?this.volumeBatch?.(viewer,items):undefined;
     const deadlines:number[]=[];

@@ -137,10 +137,15 @@ const trigger: Rule = any(householdOwner,
 const recipient: Rule = first([
   [equal('toKind', 'agent'), all(names('agent', 'to'), ownsAgent('to'))],
 ], all(names('member', 'to'), ownedByMember('to')));
+/** Who may answer an inbox item: the person it is addressed to, and nobody on their behalf. This is
+ * narrower than `recipient` on purpose: a household owner may address something to another member, and
+ * set how loudly it arrives, but does not answer for them. The read side's "can answer" and every door
+ * that records an answer ask this one rule. */
+const answers: Rule = all(equal('toKind', 'person'), self('to'));
 /** Who may set how loudly an inbox item arrives: someone in the household who may address its recipient. */
 const inboxVolume: Rule = all({ is: 'currentViewer' }, recipient);
 
-export const rules = { labelled, conversation, inTalk, task, trigger, recipient, inboxVolume, agentRoster, agentSetup, ownedByMember, householdOwner,
+export const rules = { labelled, conversation, inTalk, task, trigger, recipient, inboxVolume, answers, agentRoster, agentSetup, ownedByMember, householdOwner,
   project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */

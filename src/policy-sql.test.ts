@@ -89,7 +89,7 @@ function rows(rule: Rule): Row[] {
 }
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
-const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk]];
+const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['answers', rules.answers]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
     const candidates = rows(rule), sharing = sharedSharing(db), seen = new Set<boolean>();
@@ -143,5 +143,19 @@ describe('whose a conversation is', () => {
     expect(sees(member('full'), { ...stranger, member: 'lee' })).toBe(false);
     // A room is still read by the household owner, the agent's owners and the agent.
     for (const other of [member('owner'), member('lee'), agent('mark')]) expect(sees(other, { ...stranger, direct: false })).toBe(true);
+  });
+});
+
+describe('who answers an inbox item', () => {
+  const answers = (viewer: Viewer, item: Row) => holds(rules.answers, viewer, item, sharedSharing(db));
+  it('is the person it is addressed to, and nobody on their behalf', () => {
+    const question = { toKind: 'person', to: 'lee' };
+    expect(answers({ kind: 'member', id: 'lee' }, question)).toBe(true);
+    // Setting how loudly it arrives may be done for someone by a household owner; answering may not.
+    expect(holds(rules.inboxVolume, { kind: 'member', id: 'owner' }, question, sharedSharing(db))).toBe(true);
+    for (const other of [{ kind: 'member', id: 'owner' }, { kind: 'member', id: 'full' }, { kind: 'member', id: 'sam' }, { kind: 'agent', id: 'lee' }] as Viewer[]) expect(answers(other, question)).toBe(false);
+    // Mail to an agent is not a person's to answer, even one with the same id; and someone removed answers nothing.
+    expect(answers({ kind: 'member', id: 'lee' }, { toKind: 'agent', to: 'lee' })).toBe(false);
+    expect(answers({ kind: 'member', id: 'gone' }, { toKind: 'person', to: 'gone' })).toBe(false);
   });
 });

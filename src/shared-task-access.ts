@@ -32,7 +32,7 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
   switch (command.action) {
     case 'answer': {
       const question = db.select().from(inbox).where(eq(inbox.id, command.question)).get();
-      return viewer.kind === 'member' && !!question && question.toKind === 'person' && question.to === viewer.id
+      return !!question && holds(rules.answers, viewer, question, sharing)
         && question.source === 'task' && question.waitsOnKind === 'task' && question.waitsOnId === command.id;
     }
     case 'edit': return labels({ ...task, project: command.input.project === undefined ? task.project : command.input.project });
