@@ -1,6 +1,7 @@
-/** Computed hubs over existing private agent cards. Missing sources remain missing until restart. */
+/** Computed hubs over existing private agent cards. A source is opened when its agent is first listed; one whose file is missing then stays missing until restart. */
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
+import {AgentFiles} from './sources.js';
 import {z} from 'zod';
 import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import type {Clock} from '../../core/clock.js';
@@ -24,8 +25,8 @@ export interface ProjectsOptions {agents:Array<{agent:string;memories:string}>;s
 export type ProjectsReader=ReturnType<typeof createProjectsReader>;
 /** Read-only sources and typed roles; no registry, live transport or schema initialization. */
 export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOptions){
- const sources=new Map<string,Database>();
- try{for(const a of options.agents)if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch(e){for(const db of sources.values())db.close();throw e;}
+ const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>existsSync(a.memories)?new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}):undefined);
+ try{sources.follow();}catch(e){for(const db of sources.end())db.close();throw e;}
  const allowed=(v:Viewer,agent:string)=>maySee(v,{type:'project',agent},options.sharing());
  function ids(scope?:string){if(scope!==undefined)return scope?[scope]:[];return [...sources].flatMap(([agent,db])=>has(db,'projects')?(db.prepare('SELECT slug FROM projects WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${agent}:${r.slug}`):[]);}
  function memorySection(db:Database,q:ProjectQuery,v:Viewer):ProjectSection{

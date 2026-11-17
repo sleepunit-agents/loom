@@ -1,6 +1,7 @@
 /** Activity reads existing episode stores in place; conversation content comes only from its new role. */
 import {existsSync} from 'node:fs';
 import BetterSqlite3,{type Database} from 'better-sqlite3';
+import {AgentFiles} from './sources.js';
 import {z} from 'zod';
 import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode.js';
@@ -21,8 +22,11 @@ export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;s
 /** Read-only sources and the shared Conversations port; no legacy registry or transport. */
 export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOptions){
  const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone;isoDay(clock.now(),tz());
- const sources=new Map<string,Database>(),sourceErrors=new Set<string>();
- for(const a of options.agents)try{if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch{sourceErrors.add(a.agent);}
+ const sourceErrors=new Set<string>();
+ const sources=new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>{
+  try{if(existsSync(a.memories))return new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0});}catch{sourceErrors.add(a.agent);}
+  return undefined;
+ }).follow();
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
  const conversationAllowed=(v:Viewer,agent:string)=>allowed(v,agent,'conversation')||!!options.conversations?.agents?.(v).includes(agent);
  const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||conversationAllowed(v,a.agent));
@@ -143,6 +147,6 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   }catch{/* A failed source remains an explicit reader error, not a timer failure. */}
   return next;
  }
- const reader={allowed:(v:Viewer)=>agents(v).length>0,access,window,read,nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}};
+ const reader={allowed:(v:Viewer)=>agents(v).length>0,access,window,read,nextDeadline,close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}};
  return reader;
 }

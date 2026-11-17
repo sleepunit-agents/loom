@@ -13,7 +13,7 @@ import {semanticMemoryReady,semanticCardsReady} from './semantic-schema.js';
 import {opaqueCardReference} from './card-references.js';
 import {prepareMemoryInput} from '../../tools/remember.js';
 import {proposeOnConnection,ratifyOnConnection} from '../../backends/proposals.js';
-import type {MindSources} from './sources.js';
+import {AgentFiles,type AgentSource,type MindSources} from './sources.js';
 import {PeopleStore} from '../../backends/people.js';
 import {ProjectsStore} from '../../backends/projects.js';
 import {CardError,type CardConnection} from '../../backends/cards.js';
@@ -25,10 +25,10 @@ const remember=z.object({category,title:authored.max(200),content:authored.max(6
  sourcing:z.enum(['observed','relayed','inferred','system']).optional().describe('How the memory was produced: observed first-hand, relayed by someone, inferred, or written by the system.'),provenance:z.string().max(2000).optional().describe('Where it came from: a surface, session, lane or person.')}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
 export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;embedding?():EmbeddingProvider;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void}){
- const sources=new Map<string,{path:string;db:Database.Database}>();let closed=false;
- try{for(const source of options.sources?.agents??[]){if(sources.has(source.agent))throw Error('Duplicate Memory source agent');if(existsSync(source.memories))sources.set(source.agent,{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})});}}
- catch(error){for(const source of sources.values())source.db.close();throw error;}
- const close=()=>{if(closed)return;closed=true;for(const source of sources.values())source.db.close();sources.clear();};
+ let closed=false;
+ const sources=new AgentFiles<AgentSource,{path:string;db:Database.Database}>(()=>options.sources?.agents??[],source=>existsSync(source.memories)?{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})}:undefined);
+ const close=()=>{if(closed)return;closed=true;for(const source of sources.end())source.db.close();};
+ try{sources.follow();}catch(error){close();throw error;}
  const selected=(viewer:Viewer)=>{if(closed)return;const body=options.body(viewer);return body?sources.get(body.agent):undefined;};
  const author=(viewer:Viewer)=>{const body=options.body(viewer);if(!body)throw new OperationError('denied','Current body required');return body.agent;};
  const current=(viewer:Viewer)=>{const source=selected(viewer);return source&&semanticMemoryReady(source.db)?source:undefined;};

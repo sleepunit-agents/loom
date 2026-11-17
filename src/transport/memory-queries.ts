@@ -22,7 +22,9 @@ export function memoryQueryFields(db: DataDatabase, options: {
   const hasConversations=!!db.$client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get();
   const knowledge = knowledgeQueryFields({path: options.sources?.commons.knowledge, sharing: options.sharing, now: options.now});
   try {
-    const people = peopleQueryFields({directory: options.sources?.commons.people, agents: options.sources?.agents ?? [],
+    // The list of agents is read through each time: it follows the household (pieces/mind/sources.ts).
+    const sources = options.sources;
+    const people = peopleQueryFields({directory: sources?.commons.people, get agents() { return sources?.agents ?? []; },
       sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: hasConversations ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
     try{

@@ -1,6 +1,7 @@
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
+import { AgentFiles } from './sources.js';
 import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
 import {resolveCardReference} from './card-references.js';
 import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js';
@@ -26,11 +27,16 @@ export interface PeopleReader {
 }
 export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
 export function peopleReader(options:PeopleReaderOptions):PeopleReader {
-  const sources = new Map<string, Database>(), failed=new Set<string>();
-  for (const [id,path] of [['commons',options.directory], ...options.agents.map(a => [a.agent,a.memories])] as Array<[string,string | undefined]>) {
-    try {if(path&&existsSync(path))sources.set(id,new BetterSqlite3(path,{readonly:true,fileMustExist:true,timeout:0}));}
+  const failed=new Set<string>();
+  const open=(id:string,path:string|undefined)=>{
+    try {if(path&&existsSync(path))return new BetterSqlite3(path,{readonly:true,fileMustExist:true,timeout:0});}
     catch {failed.add(id);}
-  }
+    return undefined;
+  };
+  // The directory first, then each agent's file as the list of agents has it now.
+  const sources = new AgentFiles<{agent:string;memories:string},Database>(()=>options.agents,a=>open(a.agent,a.memories));
+  const commons=open('commons',options.directory);if(commons)sources.set('commons',commons);
+  sources.follow();
   const allowed = (v:Viewer,agent?:string)=>mayReadPerson(v,agent,options.sharing());
   const available=(source:string)=>{if(failed.has(source))throw Error('People source unavailable');};
   function resolve(db: Database, slug: string) {
@@ -129,6 +135,6 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
       const db=sources.get(person.agent??'commons');if(!db||!has(db,'person_revisions'))return [];
       return (db.prepare('SELECT id,op,replaced_at AS replacedAt,actor,snapshot_json FROM person_revisions WHERE slug=? ORDER BY id DESC LIMIT ?').all(person.slug,MAX_REVISIONS) as Array<{id:number;op:string;replacedAt:string;actor:string|null;snapshot_json:string}>).map(({snapshot_json,...row})=>({...row,card:(JSON.parse(snapshot_json) as {card:PersonCard}).card}));
     },
-    close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}
+    close(){if(closed)return;closed=true;for(const db of sources.end())db.close();}
   };
 }

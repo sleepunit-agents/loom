@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 /** Normal first install, real in-process holder protocol/store, fake platform IO.
  * These fixtures do not claim physical child-process isolation. */
 import {afterEach,expect,it,vi} from 'vitest';
@@ -14,6 +15,8 @@ import * as serving from './shared-serve.js';
 import * as s from './core/data/schema.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import type {discordGateway} from './pieces/bridges/discord-gateway.js';
+// The household's first owner: who it is is in the household database, not in program.json.
+const ownerOf=(database:string)=>{const db=new Database(database,{readonly:true});try{return (db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;}finally{db.close();}};
 type InProcessHolder=Awaited<ReturnType<typeof import('../test/fixtures/shared-holder.js').inProcessSharedHolder>>;
 type Home=Awaited<ReturnType<typeof startSharedHome>>;
 const wire=vi.hoisted(()=>({slack:vi.fn<typeof bridgeSlackSocket>(),discord:vi.fn<typeof discordGateway>(),owners:[]as InProcessHolder[]}));
@@ -73,14 +76,14 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  };
  for(const [name,value]of [['TOKEN',botToken],['APP','FICTITIOUS_APP_TOKEN']])await command('secrets/set',{id:randomUUID(),name,value,mode:'add'});
  await command('bridges/command',{action:'channel',platform:'slack',workspace:'TWORK',channel:'CROOM',answers:'assistant',botsMayTalk:false});
- await command('bridges/command',{action:'person',platform:'slack',workspace:'TWORK',user:'UUSER',member:program.signinMember});
+ await command('bridges/command',{action:'person',platform:'slack',workspace:'TWORK',user:'UUSER',member:ownerOf(program.database)});
  const config={action:'connection',id:'slack-example',platform:'slack',workspace:'TWORK',botUser:'UBOT',agent:'assistant',tokenSecret:'TOKEN',appSecret:'APP',enabled:true,only:[],ignore:[]};
  await command('bridges/command',config);await connected(1);expect(transport!.beforeConnect()).toBe(true);
  await transport!.secrets.withValue('APP',async value=>{expect(value).toBe('FICTITIOUS_APP_TOKEN');});
  const raw=Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack',payload:{type:'event_callback',event_id:'incoming',team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text:'A fictitious garden question',ts:'1794765600.000001',files:[{id:'FGARDEN',name:'garden',size:20,url_private:'https://files.slack.com/files-pri/TWORK-FGARDEN/garden'}]}}}));
  await transport!.receive({},raw);clock.advance(0);await daemon.idle();
  const incoming=db.select().from(s.bridgeIncoming).get()!;
- expect(incoming).toMatchObject({state:'delivered',member:program.signinMember,connection:'slack-example'});
+ expect(incoming).toMatchObject({state:'delivered',member:ownerOf(program.database),connection:'slack-example'});
  expect(db.select().from(s.inbox).all().filter(row=>row.source==='slack')).toHaveLength(1);
  expect(db.select().from(s.conversations).where(eq(s.conversations.id,incoming.conversation!)).get()).toMatchObject({agent:'assistant',venue:'slack'});
  expect(incoming.thread).toBe('1794765600.000001');
@@ -96,7 +99,7 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  // The holder has one generation for every secret, so it moves whenever any secret is written. A move with
  // no recorded change to this connection's own secrets, and the same bytes, must not end the connection.
  const before=await owner.source.generation(),older=transport!;
- await owner.holder.set({member:program.signinMember,writeId:randomUUID()},'TOKEN',Buffer.from(botToken),'replace');
+ await owner.holder.set({member:ownerOf(program.database),writeId:randomUUID()},'TOKEN',Buffer.from(botToken),'replace');
  expect(await owner.source.generation()).not.toBe(before);daemon.changed();await daemon.idle();
  expect(older.beforeConnect()).toBe(true);expect(transport).toBe(older);
  loseReply=true;daemon.sends.queue({id:'uncertain',incoming:incoming.id,text:'A fictitious unconfirmed reply'});daemon.changed();await daemon.idle();
@@ -164,7 +167,7 @@ it('delivers Discord through normal startup and records confirmed, uncertain and
  const command=await commands(app,link),daemon=app.services.bridges.daemon!,owner=wire.owners[0],db=app.services.comms!.db,program=JSON.parse(readFileSync(join(home,'program.json'),'utf8'));
  await command('secrets/set',{id:randomUUID(),name:'TOKEN',value:'FICTITIOUS_DISCORD_TOKEN',mode:'add'});
  await command('bridges/command',{action:'channel',platform:'discord',workspace:'223456789012345678',channel:'323456789012345678',answers:'assistant',botsMayTalk:false});
- await command('bridges/command',{action:'person',platform:'discord',workspace:'223456789012345678',user:'423456789012345678',member:program.signinMember});
+ await command('bridges/command',{action:'person',platform:'discord',workspace:'223456789012345678',user:'423456789012345678',member:ownerOf(program.database)});
  await command('bridges/command',{action:'connection',id:'discord-example',platform:'discord',workspace:'223456789012345678',botUser:'123456789012345678',agent:'assistant',tokenSecret:'TOKEN',appSecret:null,enabled:true,only:[],ignore:[]});
  await daemon.idle();clock.advance(5000);await owner.source.generation();await daemon.idle();clock.advance(5000);
  await expect.poll(()=>wire.discord.mock.calls.length).toBe(1);await daemon.idle();
@@ -173,7 +176,7 @@ it('delivers Discord through normal startup and records confirmed, uncertain and
  const data={id:'523456789012345678',channel_id:'323456789012345678',guild_id:'223456789012345678',type:0,timestamp:new Date(clock.now()).toISOString(),content:'A fictitious Discord garden question',author:{id:'423456789012345678',bot:false},mentions:[],mention_roles:[]};
  const raw=Buffer.from(JSON.stringify({op:0,t:'MESSAGE_CREATE',s:1,d:data})),checkpoint={session:'fictitious-session',seq:1,url:'wss://gateway.discord.gg'};
  await options.commit({type:'MESSAGE_CREATE',seq:1,data},checkpoint,raw);clock.advance(0);await daemon.idle();
- const incoming=db.select().from(s.bridgeIncoming).get()!;expect(incoming).toMatchObject({state:'delivered',member:program.signinMember,connection:'discord-example'});
+ const incoming=db.select().from(s.bridgeIncoming).get()!;expect(incoming).toMatchObject({state:'delivered',member:ownerOf(program.database),connection:'discord-example'});
  expect(db.select().from(s.inbox).all().filter(row=>row.source==='discord')).toHaveLength(1);expect(db.select().from(s.conversations).where(eq(s.conversations.id,incoming.conversation!)).get()).toMatchObject({agent:'assistant',venue:'discord'});
  await options.commit({type:'MESSAGE_CREATE',seq:1,data},checkpoint,raw);clock.advance(0);await daemon.idle();expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(1);
  // A fresh transport sequence must also deduplicate the platform message,

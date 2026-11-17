@@ -10,11 +10,12 @@ import {createHash} from 'node:crypto';
 import {dirname,isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {constants,openSync,closeSync,fsyncSync,realpathSync} from 'node:fs';
-import {and,eq} from 'drizzle-orm';
+import {and,asc,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
 import {dataDatabase,recogniseDataSchema,upgradeDataSchema,type DataDatabase} from './core/data/database.js';
-import {tokens} from './core/data/schema.js';
+import {members,tokens} from './core/data/schema.js';
+import {householdMemorySources} from './shared-memory.js';
 import {householdOwner} from './shared-sharing.js';
 import {tokenLive} from './core/data/authentication.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
@@ -30,14 +31,23 @@ import {serveShared} from './shared-serve.js';
 import type {sharedRoot} from './shared-root.js';
 const path=z.string().refine(isAbsolute,'Use an absolute path');
 const githubBindings=z.record(z.string(),z.string()).refine(value=>{try{githubBindingNames(value);return true;}catch{return false;}},'Invalid GitHub credential bindings');
+/** Where the household's files are, and what this installation is given. Who is in the household is not
+ * here: members, owners and agents are rows in the household database and are read from it.
+ *
+ * A program.json written by an earlier build also names a member for local sign-in (`signinMember`) and
+ * lists each agent's files (`memory.sources.agents`). Both are still accepted so that file keeps working,
+ * and neither decides anything: local sign-in is for a current household owner, and an agent's files are
+ * in `<home>/agents/<its id>` for every agent in the `agents` table. */
 const programSchema=z.object({
  githubBindings:githubBindings.optional(),
- secretHolder:z.literal(true).optional(),database:path,commsKey:path,signinMember:z.string().min(1),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
+ secretHolder:z.literal(true).optional(),database:path,commsKey:path,signinMember:z.string().optional(),webRoot:path.optional(),repository:path.optional(),adapters:path.optional(),
  memory:z.object({checkingAgent:z.string().min(1),sources:z.object({
   commons:z.object({directory:path,knowledge:path,people:path}).strict(),
-  agents:z.array(z.object({agent:z.string().min(1),directory:path,memories:path}).strict()),
+  agents:z.array(z.object({agent:z.string().min(1),directory:path,memories:path}).strict()).optional(),
  }).strict()}).strict(),
 }).strict();
+/** Every agent's Memory directory is in here, named after the agent. */
+export const agentsDirectory=(home:string)=>join(home,'agents');
 type RootOptions=Parameters<typeof sharedRoot>[0];
 /** A trusted local module supplies existing outside-service ports. No request
  * or database row chooses code, credentials, checking agent, or source paths. */
@@ -59,8 +69,13 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  const webRoot=resolve(options.webRoot??program.webRoot??resolve(import.meta.dirname,'../dist/web'));
  const canonical=(path:string):string=>{try{return realpathSync(path);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const parent=resolve(path,'..');if(parent===path)throw error;return resolve(canonical(parent),relative(parent,path));}};
  const inside=(parent:string,child:string)=>{const part=relative(canonical(resolve(parent)),canonical(resolve(child)));return !part||part!=='..'&&!part.startsWith('..'+sep)&&!isAbsolute(part);};
- const directories=[...(program.secretHolder?[join(home,'secret-holder')]:[]),program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
- const files=[config,program.database,program.commsKey,program.adapters,...[program.memory.sources.commons.knowledge,program.memory.sources.commons.people,...program.memory.sources.agents.map(source=>source.memories)]];
+ const commons=program.memory.sources.commons,agentFiles=agentsDirectory(home);
+ // An earlier program.json could place an agent's files anywhere. They are now found by the one rule, so a
+ // file that places them elsewhere is refused: starting would open an empty Memory beside the real one.
+ for(const old of program.memory.sources.agents??[])if(resolve(old.directory)!==join(agentFiles,old.agent)||resolve(old.memories)!==join(agentFiles,old.agent,'memories.db'))
+  throw Error(`program.json places agent ${old.agent}'s Memory outside ${agentFiles}; move that directory to ${join(agentFiles,old.agent)}`);
+ const directories=[...(program.secretHolder?[join(home,'secret-holder')]:[]),commons.directory,agentFiles];
+ const files=[config,program.database,program.commsKey,program.adapters,commons.knowledge,commons.people];
  if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
  recogniseDatabase(program.database);
  readKey(program.commsKey);
@@ -79,9 +94,11 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   // Recognised again under the write lock, then upgraded; see upgradeDataSchema.
   upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
-  // The member a local sign-in is for when the operator names nobody: a current owner of the household.
-  const localOwner=()=>householdOwner(db,{kind:'member',id:program.signinMember});
-  if(!localOwner())throw Error('Configure an existing household owner for local sign-in');
+  // The member a local sign-in is for when the operator names nobody: a current owner of the household, the
+  // first in the household's own order. Asked each time, so when that owner is removed or made a member
+  // the next owner takes their place; the household never lets its last owner go.
+  const localOwner=()=>db.select({id:members.id}).from(members).orderBy(asc(members.position),asc(members.id)).all().map(row=>row.id).find(id=>householdOwner(db,{kind:'member',id}));
+  if(!localOwner())throw Error('A household needs an owner before anyone can sign in locally');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
   if(program.secretHolder){
    if(adapters.secretWrites||adapters.secretInputs)throw Error('Shared Secret holder ports already configured');
@@ -102,7 +119,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    }};
   }
   const publicOrigin=relyingParty(process.env)?.origin;
-  app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
+  app=await serveShared({db,clock,memory:{checkingAgent:program.memory.checkingAgent,sources:householdMemorySources(db,commons,agentFiles)},commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:request=>sameIncomingOrigin(request,publicOrigin),publicOrigin,
    changes,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
@@ -111,7 +128,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   });
   const signin=sharedSigninLinks(db,clock),issuer=sharedTokens(db,clock);
   // Adapters ran since the first check and may have changed the household.
-  if(!localOwner())throw Error('Local sign-in member is no longer allowed');
+  if(!localOwner())throw Error('A household needs an owner before anyone can sign in locally');
   // Every local sign-in of one member rides on one token row, made by the same service as any other token
   // so its rules hold here too. Nobody is ever given that row's bearer: it only anchors the browsers and
   // passkeys that came in through a local link, and revoking it in Setup ends them all.
@@ -122,8 +139,9 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   };
   /** A sign-in link for whoever can reach the operator socket: the OS user who owns this home. */
   const issue=({member,label,ttl,agent}:z.infer<typeof operatorRequest>)=>app!.writes.run(()=>{
-   if(member===undefined&&!localOwner())throw Error('Local sign-in member is no longer allowed');
-   return signin.makeLink(localToken(member??program.signinMember),{label,ttlMs:ttl*1000,agent}).path;
+   const who=member??localOwner();
+   if(who===undefined)throw Error('No household owner to sign in');
+   return signin.makeLink(localToken(who),{label,ttlMs:ttl*1000,agent}).path;
   }).value;
   operator=await listenOperatorLinks(home,publicOrigin??app.url,issue);
   // No link is made or printed at start: under a service manager this output is the log. The operator asks

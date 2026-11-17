@@ -171,7 +171,7 @@ export function sharedRoot(options: {
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
-  const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding);
+  const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding,report);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
   const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);

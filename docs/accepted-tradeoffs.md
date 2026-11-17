@@ -517,8 +517,9 @@ Entries are grouped by the part of the program they belong to.
   wrong: the store's tables would be created in it.
 - **Where.** `refuseNewerStore` in `src/backends/migrations.ts`, the constructor in `src/notes.ts`; compare
   `recogniseDataSchema` in `src/core/data/database.ts`.
-- **Why accepted.** The paths come from `program.json`, which the program writes at first install and nothing
-  else chooses. Several modules legitimately make their own tables in `memories.db` first (cards, receipts,
+- **Why accepted.** The commons paths come from `program.json`, which the program writes at first install, and
+  each agent's files are in `<home>/agents/<agent>` (`householdMemorySources` in `src/shared-memory.ts`);
+  nothing else chooses a path. Several modules legitimately make their own tables in `memories.db` first (cards, receipts,
   command bookkeeping), so "a file with other tables in it" is the normal case and "foreign" has no cheap
   definition. The household database, which a person might plausibly point at the wrong file, is recognised
   in full.

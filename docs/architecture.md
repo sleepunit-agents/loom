@@ -34,7 +34,7 @@ that it and an earlier composition kept beside the ones that run.
 
 ```mermaid
 flowchart TB
-  CLI["loom serve<br/>src/index.ts"] --> START["src/shared-startup.ts<br/>first install · recognise and upgrade the database · local sign-in link"]
+  CLI["loom serve<br/>src/index.ts"] --> START["src/shared-startup.ts<br/>first install · recognise and upgrade the database · the operator's sign-in socket"]
   START --> SERVE["src/shared-serve.ts<br/>the listener"]
   SERVE --> ROOT["src/shared-root.ts<br/>composes every part over one connection"]
   ROOT --> DOOR["The door<br/>/graphql · /api/:piece/:operation · /mcp · sign-in routes · the built web app"]
@@ -50,10 +50,19 @@ flowchart TB
 
 **Startup** (`src/shared-startup.ts`). On an empty home, `src/shared-initialize.ts` builds
 the first household beside it and publishes it in one rename. Startup then reads
-`program.json` (where the database, the Comms key and the memory files are), recognises
+`program.json` (where the database, the Comms key and the commons files are), recognises
 the database read-only, takes ownership of the home, upgrades the database if it is at an
-earlier schema number, starts the secret holder, and serves. It prints one local sign-in
-link.
+earlier schema number, starts the secret holder, and serves. It makes no sign-in link at
+start: it prints the command that asks for one (`loom signin --home <dir>`), which reaches
+the running program over a socket only the home's OS user can open.
+
+`program.json` says where things are and what this installation is given. It does not say
+who is in the household. Members, owners and agents are rows in `loom.db` and are read from
+there each time: a local sign-in that names nobody is for the first current household owner
+in the household's order, and Memory has files for every agent in the `agents` table, in
+`<home>/agents/<agent>`. A `program.json` from an earlier build also carries `signinMember`
+and `memory.sources.agents`; both are still accepted and neither is used, except that a
+listed agent whose files are somewhere other than `<home>/agents/<agent>` refuses the start.
 
 **The door** (`src/shared-root.ts`). Every outside caller, whether browser, command-line
 client, MCP session, worker or body, comes through one HTTP listener:
@@ -106,7 +115,11 @@ Choices that were made on purpose and look like oversights are listed, with why,
 | Measuring | `src/core/measuring` | Daily timing roll-ups, off by default. |
 | Memory | `src/pieces/mind`, `src/backends`, `src/shared-memory.ts`, `src/shared-notes.ts`, `src/notes.ts` | Memories, person and project cards, notes and knowledge. The only part whose data is outside the household database. |
 
-Memory's files are opened by `src/shared-memory.ts` from the paths `program.json` declares.
+Memory's files are opened by `src/shared-memory.ts`: the commons from the paths `program.json`
+declares, and one directory for each agent in the `agents` table (`householdMemorySources`).
+An agent added while the program runs has its files made whole, by the preparation every
+agent's files get at start, before any reader is given its name; a removed agent keeps its
+row and its files.
 `src/backends/sqlite-vec.ts` is the memory store (vector search; embeddings from
 `src/backends/fastembed.ts`), `src/backends/sqlite-knowledge.ts` the knowledge store,
 `src/backends/people.ts` and `src/backends/projects.ts` the cards over the shared rules in
@@ -202,13 +215,18 @@ Only `loom.db` and `knowledge.db` are checked for being the right kind of file a
 
 ## Code no program starts
 
-One thing is compiled but reached by no executable, for a stated reason.
+Two things are compiled but reached by no executable, each for a stated reason.
 
 - **The example household.** `src/example-home.ts`, `src/example-home-adapters.ts`,
   `src/example-runtime.ts` and `src/rebuild` build and check a fictitious home. They are
   run by `scripts/example-home.mjs` and the acceptance walkthrough
   (`docs/example-household.md`). The adapters file is loaded by path, from a file the
   example writes into its home, so no import names it.
+- **Two files the web app shares.** `src/ui/prose.ts` (the Markdown renderer's rules) and
+  `src/ui/project-cards.ts` (the shape of a project's cards) are imported only by `web/src`
+  (`web/src/markdown.tsx`, `web/src/kit/markdown.tsx`, `web/src/loom.ts`), which Vite builds
+  from source. They are under `src`, so `tsc` compiles them into `dist` with everything
+  else there; nothing in `dist` loads them.
 
 An agent's old conversation tables (above) are the one thing kept for the move of an older
 home's data. `docs/migration-plan.md` and `docs/migration-registry.md` describe that move;

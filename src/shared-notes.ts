@@ -4,7 +4,7 @@ import {z} from 'zod';
 import {GraphQLObjectType,GraphQLString,GraphQLNonNull,GraphQLInt,GraphQLList} from 'graphql/index.js';
 import {Notes,notesDbPath,NOTE_PATH,MAX_NOTE_BYTES} from './notes.js';
 import {mindReceipts,mindReceiptsReady} from './pieces/mind/receipt-schema.js';
-import type {MindSources} from './pieces/mind/sources.js';
+import {AgentFiles,type AgentSource,type MindSources} from './pieces/mind/sources.js';
 import {maySee,type Sharing,type Viewer} from './policy.js';
 import {OperationError,RecoveredWrite,type Operations,type WriteReceipt,type Context} from './core/operations/index.js';
 const path=z.string().max(300).regex(NOTE_PATH);
@@ -16,10 +16,9 @@ const noteSummary=new GraphQLObjectType({name:'MemoryNoteSummary',fields:{
 }});
 type Receipt=WriteReceipt;
 export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now():number}){
- const sources=new Map<string,Notes>();
- try{for(const source of options.sources?.agents??[])if(existsSync(notesDbPath(source.directory)))sources.set(source.agent,new Notes(source.directory,options.now,{prepared:true}));}
- catch(error){for(const notes of sources.values())notes.close();throw error;}
- const close=()=>{for(const notes of sources.values())notes.close();sources.clear();};
+ const sources=new AgentFiles<AgentSource,Notes>(()=>options.sources?.agents??[],source=>existsSync(notesDbPath(source.directory))?new Notes(source.directory,options.now,{prepared:true}):undefined);
+ const close=()=>{for(const notes of sources.end())notes.close();};
+ try{sources.follow();}catch(error){close();throw error;}
  const receipt=(notes:Notes,identity:Readonly<Receipt>,now:number)=>notes.atomicWrite(db=>{
   if(!mindReceiptsReady(db))throw new OperationError('unavailable','Notes are not prepared for commands');
   const prior=mindReceipts.find(db,identity,now);

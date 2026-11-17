@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { assertHomeReady } from '../home-state.js';
 import { LINK_MS } from './link-lifetime.js';
-/** `member` may be left out: the issuer then uses the member it was configured with for local sign-in.
+/** `member` may be left out: the issuer then signs in a current household owner (src/shared-startup.ts).
  * `ttl` is in seconds, at most a link's own lifetime. `agent` says the link is for an automated browser,
  * which gets the short session and may not make links or add passkeys, whatever it calls itself. */
 export const operatorRequest = z.strictObject({
