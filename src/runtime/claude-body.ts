@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
 import { SESSION_ID } from '../core/conversations/session-limit.js';
 import { deniedTools } from './harness-traits.js';
+import { bodyDeniedTools } from './body-named-tools.js';
 
 /** The spawn seam a test supplies; the same one every harness takes. */
 export type ClaudeSpawn = HarnessSpawn;
@@ -38,7 +39,8 @@ export const claudeBody: BodyHarness = input => {
     if(control&&used)throw harnessUnavailable();used=true;
     if (signal.aborted || !harnessModel.test(job.model)
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES){control?.fill(0);throw harnessUnavailable();}
-    const denied = deniedTools(job.run?.policy);
+    // With the named tools a denied generic tool takes with it, and old server names read as the present one.
+    const denied = bodyDeniedTools(deniedTools(job.run?.policy));
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw harnessUnavailable();}
     // Asked to keep a session, Claude Code writes its transcript under its own directory (sessionFiles below)
     // and can continue one by id. Otherwise nothing is written, as before. A continued session keeps its id

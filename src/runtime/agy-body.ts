@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
-import { BODY_SCRATCH, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
+import { BODY_SCRATCH, BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
 
 const conversationId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const row = z.object({ event: z.string() }).passthrough();
@@ -75,7 +75,7 @@ export const agyBody: BodyHarness = input => {
       workspace = mkdtempSync(join(scratch || tmpdir(), 'loom-body-'));
       if (tools) {
         mkdirSync(join(workspace, '.agents'), { mode: 0o700 });
-        writeFileSync(join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { loom_secrets: {
+        writeFileSync(join(workspace, '.agents', 'mcp_config.json'), JSON.stringify({ mcpServers: { [BODY_TOOLS_SERVER]: {
           serverUrl: tools.url, headers: { Authorization: tools.authorization }, enabledTools: names } } }), { mode: 0o600 });
       }
       const args = ['-p', '', '--input-format', 'stream-json', '--output-format', 'stream-json', '--model', job.model,

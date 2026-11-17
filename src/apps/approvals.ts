@@ -8,6 +8,8 @@ import { Conversations } from '../core/conversations/index.js';
 import { householdOwners } from '../shared-sharing.js';
 
 export type Approval = typeof approvals.$inferSelect;
+/** What a card's `asked_from` says when it was filed from no conversation, by an agent's terminal credential. */
+export const ASKED_FROM_TERMINAL = 'terminal';
 const request = z.object({
   kind: z.enum(approvals.kind.enumValues), target: z.string().trim().min(1),
   what: z.string().trim().min(1), why: z.string().trim().min(1), agent: z.string().min(1),

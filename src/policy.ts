@@ -403,6 +403,13 @@ export function directsAgent(v: Viewer, agent: string, s: Sharing): boolean {
 export function membersWithAgent(agent: string, s: Sharing): string[] {
   return Object.keys(s.members).filter(id => s.members[id].agents.includes(agent)).sort();
 }
+/** The people an agent's own notices and troubles go to: the members who have it on their own list, or the
+ * household's owners when nobody has it. In id order. The one reading of it: a notice the agent raises
+ * (shared-notices.ts) and loom's own notice that the agent's mail got no job (runtime/jobs.ts) both ask. */
+export function agentsPeople(agent: string, s: Sharing): string[] {
+  const has = membersWithAgent(agent, s);
+  return has.length ? has : Object.keys(s.members).filter(id => s.members[id].owner).sort();
+}
 /** May this machine be handed this agent's work? A machine is its owner's, and a removed member is nobody:
  * their machine runs nothing, whatever lists it was left on. Otherwise the agent must be in the household
  * and either
@@ -414,6 +421,56 @@ export function machineMayHost(machine: { owner: string; hostsAny: boolean }, li
   if (!owner || !s.agents?.includes(agent)) return false;
   const has = owner.agents.includes(agent);
   return listed ? has || listed.lent : machine.hostsAny && has;
+}
+
+/** Nobody: the principal of work with no member behind it that is not the agent's own. It reads no rule. */
+export const NOBODY = 'unknown';
+/** Is this principal nobody? Empty, and an older card's `?`, are too. */
+export const isNobody = (principal: string | null | undefined): boolean => !principal || principal === NOBODY || principal === '?';
+/** The principal of a household change (`household.propose`): the member whose thread it was asked in, or the
+ * household owner who filed it, or nobody. Never the agent's own account: a household change with no member
+ * behind it always asks, from a terminal and from a lane alike. */
+export const householdChangePrincipal = (member: string | null | undefined, filedBy: string | undefined): string => member ?? filedBy ?? NOBODY;
+/** The kinds of card the agent's own work reads standing rules for: its own account is for merging and for
+ * commands. For every other kind (a household setting, a dangerous action) it reads none, by any door. */
+const OWN_WORK_KINDS: readonly string[] = ['merge', 'command'];
+/** The beginning of the principal of an agent's own work: `agent:<id>`, which no member's id can be. */
+export const OWN_WORK = 'agent:';
+/** Whose standing approval rules answer for a piece of an agent's work.
+ *
+ * A standing rule has a `person`. A rule with none is the household's own: a household owner's answer, given
+ * ahead of time, for work done for a household owner. A rule that names a person answers for that person's
+ * work and nobody else's. Every piece of work has a principal, recorded on its card (`acting_for`):
+ *  - work for a member (their own thread, their trigger): that member;
+ *  - the agent's own work, done for no member: a terminal session, or a lane (a `wake` conversation with no
+ *    member). Written `agent:<id>`, which no member's id can be;
+ *  - anything else for no member (a room on a bridge, a handoff with no member): `unknown`. People outside
+ *    the household talk to an agent in a room; what is asked there is nobody's account.
+ * A handoff carries the member it was opened for (core/conversations/handoff.ts), so work handed on for a
+ * person is still that person's: the first case.
+ * `workPrincipal` names the principal; `rulesPerson` says which rules it reads. */
+export function workPrincipal(agent: string, where: { member: string | null; venue: string } | undefined): string {
+  return where?.member ?? (where === undefined || where.venue === 'wake' ? OWN_WORK + agent : NOBODY);
+}
+/** The `person` a rule of this kind must carry to answer for this principal: '' for the household's own rules,
+ * a member's id for rules naming them, or nothing when no standing rule answers and the card always asks.
+ *  - A member who is a household owner reads the household's own rules. Any other member reads only rules
+ *    that name them: an owner's rule with no person is never read for their work.
+ *  - The agent's own work reads the household's own rules, as a household owner's work does, while the agent
+ *    is in the household and some current household owner has it on their own list. An agent that only
+ *    members who are not owners have reads none: otherwise such a member would get, through the agent's lane
+ *    or terminal, an answer no rule gives their own work.
+ *    And only for merges and commands (`OWN_WORK_KINDS`): for any other kind it reads none.
+ *  - Someone removed, and nobody, read none. */
+export function rulesPerson(principal: string, kind: string, s: Sharing): string | undefined {
+  if (isNobody(principal)) return undefined;
+  if (principal.startsWith(OWN_WORK)) {
+    if (!OWN_WORK_KINDS.includes(kind)) return undefined;
+    const agent = principal.slice(OWN_WORK.length);
+    return s.agents?.includes(agent) && membersWithAgent(agent, s).some(id => s.members[id].owner) ? '' : undefined;
+  }
+  const member = entry(s.members, principal);
+  return member ? member.owner ? '' : principal : undefined;
 }
 
 /** Scheduled work: who may set a trigger, whose work its firing is, and who may fire it by hand.

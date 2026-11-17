@@ -241,6 +241,57 @@ alone. Three things change where work is filed.
   "Retiring a project". A retired project takes no task by creation, move or merge; tasks may be moved out
   of one, and it may be merged into another.
 
+## An agent's own work, and what it may raise
+
+*Added 2026-11-17, so the agent's own scripts can ask loom what a standing rule says and tell its owners
+when something is wrong.*
+
+- **Whose standing rules answer.** A standing approval rule with no person is the household's own: a household
+  owner's answer, given ahead of time, for work done for a household owner. A rule that names a person
+  answers for that person's work only. Every piece of an agent's work has a principal, kept on its card:
+  - work for a member (their own thread, their trigger) is that member's, as it always was;
+  - the agent's own work is a terminal session, or a lane for no member. It reads the household's own rules
+    while a current household owner has the agent on their own list, and none otherwise. So an agent that only
+    members who are not owners have gets nothing from an owner's rule through its lane or its terminal;
+  - a handoff carries the member it was opened for, so work handed on for a person is still that person's
+    and reads that person's rules;
+  - a room on Discord or Slack, and a handoff for no member, are nobody's and always ask: people outside the
+    household talk to an agent in a room.
+
+  The rule is `workPrincipal` and `rulesPerson` in `src/policy.ts`. The agent's own account is for merges
+  and commands: for any other kind of card it reads no rule, from a terminal and from a lane alike, and a
+  household change proposed with no member behind it always asks.
+- **Asking, filing and spending from a terminal.** `approvals.rule`, `approvals.request`, `approvals.use`,
+  `approvals.report` and `approvals.withdraw` take an agent's terminal credential as well as a body's. A
+  terminal credential acts on its own agent's merge and command cards that were filed from no conversation.
+  Nothing lists the rule table for an agent: it asks about one kind and one target.
+- **A merge target.** `github:<owner>/<repo>#<n>@<commit>` names one pull request at one exact commit. A
+  repository has one spelling in it: lower case, with no trailing `.git`. Another spelling of the same
+  repository is refused, so it is never taken for a repository loom does not read. For
+  a repository loom reads, the target must be the agent's own open change at that commit, and a card carries
+  that change's project; a rule read is held to the same target, so a wrong commit, another agent's change
+  or a closed one is refused and never answered on its words. For a repository loom does not read, loom has nothing to hold it to: the rule is
+  read, and a card filed, allowed and spent, on the target's own words. Such a card has no project, so a
+  project's rule never answers for it. Whoever merges must merge that commit and no other.
+- **Raising a notice.** `notices.raise` puts one waiting notice in the Inbox of each member who has the
+  calling agent (the household owners when nobody has it; `agentsPeople` in `src/policy.ts`), private to
+  each, and pushes to their devices. One notice per agent, key and person while it waits.
+  - *Who has the agent is read on every raise.* Someone who still has it and has the notice waiting gets its
+    words brought up to date, and is not told twice. Someone who has gained the agent gets the notice.
+    Someone who no longer has it has theirs settled as it stood.
+  - *Two things are filed without a push, then or ever:* a notice raised `quiet`, and a notice for a person
+    whose notice of that key was settled within the last ten minutes. An alert that flaps must not buzz a
+    phone each time. Such a notice is in the Inbox like any other; it is not dimmed, so no quiet time runs
+    out and pushes it later.
+  - `notices.clear` resolves the waiting notices of a key with a reason. It reads who has the agent too: the
+    agent's reason is written only for the people who have it now, and a notice still waiting for anyone
+    else is settled with a line of loom's own.
+  - Only the agent's own credential raises or clears one, for itself. The agent may learn whether its own
+    notice is still waiting, which it needs so as not to raise it twice. It is told its own key, whether the
+    notice was news, and whether any push was queued. It is told nothing else of anyone's Inbox: not who has
+    the notice, how many people or phones, who settled it or when.
+  - The limits are in `src/shared-notices.ts`.
+
 ## What the tests must pin
 
 - A household with only `"owner": "x"` behaves exactly as today, and the full

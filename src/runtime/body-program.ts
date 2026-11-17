@@ -163,7 +163,9 @@ export async function bodyProgram(input: {
     const replyTo=incoming.at(-1);
     if(!input.native){
       exit=BODY_EXIT.tools;
-      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
+      // The last two are read by the tools server and by nothing else this is spread into: with the agent's name the
+      // body is served the named tools a terminal has, and `identity` there knows what was handed over above (body-named-tools.ts).
+      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch,agent:job.agent,identityHanded:!!memory};
       programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
         readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])});

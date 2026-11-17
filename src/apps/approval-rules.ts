@@ -7,6 +7,7 @@ import type { DataDatabase } from '../core/data/database.js';
 import { OperationError } from '../core/operations/index.js';
 import { approvalRules, members, projects } from '../core/data/schema.js';
 import { householdOwners, sharedSharing } from '../shared-sharing.js';
+import { isNobody, rulesPerson } from '../policy.js';
 export const approvalRuleKind=z.enum(approvalRules.kind.enumValues);
 const scope=z.string().trim().min(1).max(256).refine(value=>!/[\u0000-\u001f\u007f]/.test(value),'Invalid scope');
 /** What a standing rule may answer: the column's own choices. */
@@ -27,12 +28,9 @@ function matches(pattern:string,text:string){
 }
 export function approvalRulesService(db:DataDatabase,now:()=>string){
   const owner=(id:string)=>householdOwners(db).includes(id);
-  /** Whose rules answer for this principal: '' (the household's own) for a current household owner, the
-   * member's own id for any other current member. Someone removed or unknown has no rules. */
-  const personFor=(actingFor:string):string|undefined=>{
-    const sharing=sharedSharing(db);
-    if(!Object.hasOwn(sharing.members,actingFor))return;
-    return sharing.members[actingFor].owner?'':actingFor;
+  /** Whose rules answer for this principal (a card's `acting_for`): policy.ts, `rulesPerson`. */
+  const personFor=(actingFor:string,kind:Rule['kind']='merge'):string|undefined=>{
+    return rulesPerson(actingFor,kind,sharedSharing(db));
   };
   const canonical=(input:RuleInput)=>{
     const value=approvalRuleInput.parse(input);
@@ -61,8 +59,8 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
      * command/approval checks. Unknown principals always ask. Named-person
      * grants never become household rules and stale setters grant nothing. */
     resolve(input:{kind:Rule['kind'];target:string;project?:string|null;actingFor:string}):Pick<Rule,'tier'|'scope'|'person'|'setBy'>|undefined{
-      if(!input.actingFor||['unknown','?'].includes(input.actingFor)||input.target.length>8192)return;
-      const person=personFor(input.actingFor);
+      if(isNobody(input.actingFor)||input.target.length>8192)return;
+      const person=personFor(input.actingFor,input.kind);
       if(person===undefined)return;
       const target=input.kind==='merge'?parseMergeTarget(input.target)?.repository:input.target;
       if(!target)return;

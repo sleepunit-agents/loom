@@ -6,14 +6,15 @@ import { codexBody } from './codex-body.js';
 import { bodyHarness } from './body-harnesses.js';
 import type { HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
+import { bodyNamedToolNames } from './body-named-tools.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gpt-fictional', account: 'sub', harness: 'codex', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
   run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [] } } };
 const bearer = 'Bearer local_secret_' + 'ab'.repeat(32);
-const toolsFile = () => Buffer.from(JSON.stringify({ mcpServers: { loom_secrets: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer }, timeout: 1 } } }));
+const toolsFile = () => Buffer.from(JSON.stringify({ mcpServers: { loom: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer }, timeout: 1 } } }));
 const good = [{ type: 'thread.started', thread_id: 't' }, { type: 'turn.started' },
   { type: 'item.completed', item: { id: 'i0', type: 'agent_message', text: 'I will look.' } },
   { type: 'item.completed', item: { id: 'i1', type: 'reasoning', text: 'thinking' } },
-  { type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'loom_secrets', tool: 'recall', status: 'completed' } },
+  { type: 'item.completed', item: { id: 'i2', type: 'mcp_tool_call', server: 'loom', tool: 'recall', status: 'completed' } },
   { type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: 'Answer é' } },
   { type: 'turn.completed', usage: { input_tokens: 1 } }];
 function fixture(input: Partial<Parameters<typeof codexBody>[0]> = {}) {
@@ -21,7 +22,7 @@ function fixture(input: Partial<Parameters<typeof codexBody>[0]> = {}) {
   let words = ''; child.stdin.on('data', data => { words += data; });
   const launch = vi.fn<HarnessSpawn>(() => child as unknown as ChildProcessWithoutNullStreams), abort = new AbortController();
   const config = toolsFile();
-  const run = bodyHarness('codex', { command: '/native/codex', cwd: '/house', env: { PATH: '/usr/bin', HOME: '/home/fictional' }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom_secrets__recall', 'mcp__loom_secrets__reply'], ...input });
+  const run = bodyHarness('codex', { command: '/native/codex', cwd: '/house', env: { PATH: '/usr/bin', HOME: '/home/fictional' }, spawn: launch, reach: 'all', mcpConfig: config, mcpTools: ['mcp__loom__recall', 'mcp__loom__reply'], ...input });
   config.fill(0);
   const finish = (rows: unknown[] | string, code = 0) => { child.stdout.end(typeof rows === 'string' ? rows : rows.map(row => JSON.stringify(row)).join('\n') + '\n'); child.stderr.end('PRIVATE DIAGNOSTIC'); setImmediate(() => { child.emit('exit', code); child.emit('close', code); }); };
   return { run, launch, abort, finish, words: () => words, child };
@@ -33,12 +34,12 @@ it('runs Codex isolated from the machine\'s own settings, with the tools bearer 
   expect(command).toBe('/native/codex');
   expect(args.slice(0, 7)).toEqual(['exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox']);
   expect(args.slice(args.indexOf('-m'), args.indexOf('-m') + 4)).toEqual(['-m', 'gpt-fictional', '-C', '/house']);
-  expect(args).toContain('mcp_servers.loom_secrets.url="http://127.0.0.1:4242"');
-  expect(args).toContain('mcp_servers.loom_secrets.bearer_token_env_var="LOOM_BODY_TOOLS_TOKEN"');
+  expect(args).toContain('mcp_servers.loom.url="http://127.0.0.1:4242"');
+  expect(args).toContain('mcp_servers.loom.bearer_token_env_var="LOOM_BODY_TOOLS_TOKEN"');
   // Codex itself holds the bearer for its tools server; the commands its shell runs are not handed it.
   expect(args).toContain('shell_environment_policy.exclude=["LOOM_BODY_TOOLS_TOKEN"]');
-  expect(args).toContain('mcp_servers.loom_secrets.enabled_tools=["recall","reply"]');
-  expect(args).toContain('mcp_servers.loom_secrets.default_tools_approval_mode="approve"');
+  expect(args).toContain('mcp_servers.loom.enabled_tools=["recall","reply"]');
+  expect(args).toContain('mcp_servers.loom.default_tools_approval_mode="approve"');
   expect(args.at(-1)).toBe('-');
   expect(JSON.stringify(args)).not.toContain('local_secret_'); expect(JSON.stringify(f.launch.mock.calls)).not.toContain('PRIVATE ACCEPTED MAIL');
   expect(options).toEqual({ cwd: '/house', env: { PATH: '/usr/bin', HOME: '/home/fictional', LOOM_BODY_TOOLS_TOKEN: 'local_secret_' + 'ab'.repeat(32) }, shell: false, detached: false, stdio: 'pipe' });
@@ -66,7 +67,7 @@ it('does not start without full reach, with tools it cannot deny, for another ha
   }
   // A denial that only applies to guests does not stop a body with no guests in the room.
   const f = fixture(), result = f.run({ ...job, run: { ...job.run!, policy: { people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: true }] } } }, 'mail', f.abort.signal); f.finish(good); await result;
-  expect(() => fixture({ mcpConfig: Buffer.from('{"mcpServers":{"loom_secrets":{"url":"https://elsewhere.example","headers":{"Authorization":"' + bearer + '"}}}}') })).toThrow('Native execution unavailable');
+  expect(() => fixture({ mcpConfig: Buffer.from('{"mcpServers":{"loom":{"url":"https://elsewhere.example","headers":{"Authorization":"' + bearer + '"}}}}') })).toThrow('Native execution unavailable');
   expect(() => fixture({ mcpTools: ['Bash'] })).toThrow('Native execution unavailable');
   expect(() => fixture({ mcpConfig: undefined })).toThrow('Native execution unavailable');
 });
@@ -74,4 +75,13 @@ it('stops the child and answers nothing when the body is told to stop', async ()
   const f = fixture(), result = f.run(job, 'mail', f.abort.signal); f.abort.abort();
   expect(f.child.kill).toHaveBeenCalledWith('SIGKILL'); setImmediate(() => f.child.emit('close', null));
   await expect(result).rejects.toThrow('Native execution unavailable');
+});
+
+it('is given every tool a body serves, the named ones too, by Codex\'s own list of enabled tools', async () => {
+  const served = ['request_secret', 'use_secret', 'loom_commands', 'loom_command', 'loom_query', ...bodyNamedToolNames()];
+  const f = fixture({ mcpTools: served.map(name => 'mcp__loom__' + name) }), result = f.run(job, 'mail', f.abort.signal);
+  const args = f.launch.mock.calls[0][1];
+  expect(args).toContain('mcp_servers.loom.enabled_tools=[' + served.map(name => JSON.stringify(name)).join(',') + ']');
+  expect(served).toEqual(expect.arrayContaining(['remember', 'task_claim', 'note_read']));
+  f.finish(good); await result;
 });

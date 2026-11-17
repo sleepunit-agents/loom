@@ -14,7 +14,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Writable } from 'node:stream';
 import type { WorkerAssignment } from './worker.js';
 import type { HarnessTraits } from './harness-traits.js';
-import { TOOL_NAME } from './body-model-tools.js';
+import { BODY_EXTENSION_TOOLS_MAX, TOOL_NAME } from './body-model-tools.js';
 
 export interface HarnessReply { text: string; model: string; actions: { model: string }[];
   /** The id of the session the harness kept for this run, when it was asked to keep one and did. */
@@ -31,10 +31,10 @@ export type HarnessSpawn = (command: string, args: readonly string[], options: {
 export interface HarnessInput {
   /** The harness's own program, from the machine's body file. */
   command: string; cwd: string; env: NodeJS.ProcessEnv; spawn?: HarnessSpawn;
-  /** Where loom's tools for this body are served: {"mcpServers":{"loom_secrets":{type:"http",url,headers:{Authorization}}}}.
+  /** Where loom's tools for this body are served: {"mcpServers":{"loom":{type:"http",url,headers:{Authorization}}}}.
    * The caller erases its copy as soon as the harness is made, so take what is needed at once. */
   mcpConfig?: Uint8Array;
-  /** The tool names the body may use, each written mcp__loom_secrets__<name>. */
+  /** The tool names the body may use, each written mcp__loom__<name>. */
   mcpTools?: readonly string[];
   /** 'loom': loom's tools only. 'all': the harness's own tools too (files, shell, the web). */
   reach?: 'loom' | 'all';
@@ -57,10 +57,14 @@ export const harnessModel = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,199}$/;
 const outputLimit = 1_048_576;
 /** Names the body's scratch directory in its environment; set by the worker, removed by it after the body. */
 export const BODY_SCRATCH = 'LOOM_BODY_SCRATCH';
+/** The name every harness is given a body's tools server under. A terminal session registers loom's own
+ * door under the same name (docs/runtime/terminal.md), so a tool has one name in both places. */
+export const BODY_TOOLS_SERVER = 'loom';
 /** Every tool loom serves a body is named with this prefix, then the tool's own name. */
-export const harnessToolPrefix = 'mcp__loom_secrets__';
+export const harnessToolPrefix = `mcp__${BODY_TOOLS_SERVER}__`;
 const toolName = TOOL_NAME;
-const toolLimit = 34;
+/** The two secret tools and the rest. */
+const toolLimit = BODY_EXTENSION_TOOLS_MAX + 2;
 
 /** The tools a body may use, as their own names without the prefix. Refuses a list that is too long,
  * repeats a name, or holds a name that is not one of loom's. */
@@ -74,7 +78,7 @@ export function harnessToolNames(tools: readonly string[]): string[] {
 export function harnessTools(config: Uint8Array | undefined): { url: string; authorization: string } | undefined {
   if (!config) return undefined;
   try {
-    const server = (JSON.parse(Buffer.from(config).toString('utf8')) as { mcpServers?: { loom_secrets?: { url?: unknown; headers?: { Authorization?: unknown } } } }).mcpServers?.loom_secrets;
+    const server = (JSON.parse(Buffer.from(config).toString('utf8')) as { mcpServers?: Record<string, { url?: unknown; headers?: { Authorization?: unknown } } | undefined> }).mcpServers?.[BODY_TOOLS_SERVER];
     const url = server?.url, authorization = server?.headers?.Authorization;
     if (typeof url !== 'string' || typeof authorization !== 'string' || !/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(url) || !/^Bearer [A-Za-z0-9._~+/=-]{16,512}$/.test(authorization)) throw harnessUnavailable();
     return { url, authorization };
