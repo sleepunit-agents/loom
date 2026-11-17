@@ -202,3 +202,31 @@ it('says which early stage failed: the machine\'s body file, or the first report
  expect(g.native).not.toHaveBeenCalled();
  expect(new Set(Object.values(BODY_EXIT)).size).toBe(Object.keys(BODY_EXIT).length);
 });
+
+it('counts outside mail that arrived after the claim as a guest in the room the harness is given',async()=>{
+ const policy={deniedTools:[{pattern:'Bash(*)',guestsOnly:true}],people:[{kind:'person' as const,person:'alice',tier:null}],mail:['mail']};
+ const claimed={...job,run:{nestedContainers:false,gpu:false,ports:[],policy}};
+ const run=async(late:boolean,fromKind:'unknown'|'person')=>{
+  const f=fixture(),bytes=Buffer.from(JSON.stringify({job:claimed,build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
+  const fetcher:typeof fetch=async(url,init)=>{
+   if(String(url).split('/').at(-1)!=='take')return f.options.fetch(url,init);
+   const first={id:'mail',seq:1,source:'thread',sourceId:null,fromKind:'person',fromId:'alice',at:'2026-11-15T00:00:00.000Z',words:'Hello',keepUntil:null,verdict:null,refs:[]};
+   return Response.json({ok:true,value:{job:'job',conversation:'cv',stopRequested:false,items:late?[first,{...first,id:'late',seq:2,fromKind,fromId:fromKind==='person'?'bob':null,words:'And me'}]:[first]}});
+  };
+  const native=vi.fn(async()=>({text:'Answer',model:'observed',actions:[]}));
+  expect(await bodyProgram({...f.options,stdin:async()=>bytes,fetch:fetcher,native})).toBe(0);
+  return (native.mock.calls[0] as unknown as [WorkerAssignment])[0].run!.policy!.people;
+ };
+ expect(await run(false,'unknown')).toEqual(policy.people);
+ // A household member who writes late is still no guest; a sender nobody vouched for is.
+ expect(await run(true,'person')).toEqual(policy.people);
+ expect(await run(true,'unknown')).toEqual([...policy.people,{kind:'unknown',person:null,tier:null}]);
+});
+it('refuses a job its harness cannot run before accepting any mail',async()=>{
+ for(const [harness,reach,deniedTools] of [['codex','loom',[]],['agy','all',[{pattern:'Bash(*)',guestsOnly:false}]]] as const){
+  const f=fixture(),bytes=Buffer.from(JSON.stringify({job:{...job,harness,run:{nestedContainers:false,gpu:false,ports:[],policy:{deniedTools,people:[]}}},build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
+  const {native:_native,...options}=f.options;
+  expect(await bodyProgram({...options,read:async()=>JSON.stringify({command:'/native/'+harness,cwd:'/house',reach}),stdin:async()=>bytes})).toBe(BODY_EXIT.assignment);
+  expect(f.calls).toEqual([]);
+ }
+});

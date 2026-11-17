@@ -26,6 +26,9 @@ export function selectPlacement(db: DataDatabase, input: {
   agent: string; now: string; roles: readonly ModelRole[]; model?: string; needs?: readonly string[];
   /** What the work asked to run on: a tag or one model's name. Only the agent's allowed models that match are tried. */
   wants?: string | null;
+  /** Whether a harness would refuse this job (see harnessCannotRun). A model whose harness would is passed
+   * over for the agent's next allowed model, so the job is not sent where it can only fail. */
+  cannotRun?: (harness: string) => boolean;
 }): Placement | undefined {
   const now = Date.parse(input.now);
   if (!Number.isFinite(now)) throw new Error('Invalid placement time');
@@ -47,7 +50,7 @@ export function selectPlacement(db: DataDatabase, input: {
     if (!(input.needs ?? []).every(need => meetsNeed(facts, need))) continue;
     for (const model of models) {
       const role = input.roles.find(role => role.model === model.model);
-      if (!role) continue;
+      if (!role || input.cannotRun?.(role.harness)) continue;
       const account = accounts.find(account => account.provider === role.provider
         && signedIn.some(binding => binding.account === account.id && binding.box === box.id));
       if (account) return { box: box.id, model: model.model, account: account.id, harness: role.harness };

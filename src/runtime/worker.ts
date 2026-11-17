@@ -7,6 +7,9 @@ export interface WorkerRunPolicy {
   deniedTools: { pattern: string; guestsOnly: boolean }[];
   /** Only senders for this job, not the agent's whole people configuration. */
   people: { kind: 'person' | 'outside' | 'unknown'; person: string | null; tier: 1 | 2 | 3 | null }[];
+  /** The inbox items `people` was read from, at claim. Mail the body takes that is not among them arrived
+   * later and its sender was never looked up. Absent from a loom older than this field. */
+  mail?: string[];
 }
 export interface WorkerRunOptions {
   policy?: WorkerRunPolicy;

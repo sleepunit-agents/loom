@@ -15,6 +15,7 @@ import {bodyMemoryIdentity} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
+import { harnessCannotRun, withUnknownSender } from './harness-traits.js';
 // `reach` is the machine operator's choice of what a body here may use. 'loom' (the default) gives it loom's
 // own tools and nothing else. 'all' gives it the harness's own tools as well: files, shell, the web. Either
 // way the household's list of tools an agent's body is not given still applies.
@@ -66,6 +67,9 @@ export async function bodyProgram(input: {
     const bridge=job.venue==='discord'||job.venue==='slack';
     const background=job.venue==='wake'||job.venue==='handoff';
     if (!Object.hasOwn(bodyHarnesses, job.harness) || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
+    // What the harness would refuse is known from the assignment and this machine's reach. Refuse now, while
+    // the mail is unaccepted and stays with the job, rather than after the message has been consumed.
+    if (!input.native && harnessCannotRun(job.harness, job.run?.policy, plan.reach)) throw new Error();
     exit=BODY_EXIT.report;
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
@@ -85,6 +89,9 @@ export async function bodyProgram(input: {
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
+    // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
+    // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
+    const claimed=job.run?.policy?.mail;let lateStranger=false;
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
@@ -93,6 +100,7 @@ export async function bodyProgram(input: {
         if(item.source!==job.venue||refs.length!==1)throw new Error();
         incoming.push(refs[0]);
       }
+      if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
       const words=bodyMailContext(item);if(words!==null)context.push(words);
     });
     if (batch.stopRequested) { await retire(); await client.status(left); return 0; }
@@ -119,7 +127,8 @@ export async function bodyProgram(input: {
     const native = input.native ?? bodyHarnesses[job.harness]({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
-    try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
+    const room=lateStranger&&job.run?.policy?{...job,run:{...job.run,policy:withUnknownSender(job.run.policy)}}:job;
+    try { answer = await native(room, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
     finally { await retire(); }
     if(stopped && !input.signal.aborted) { await client.status(left); return 0; }

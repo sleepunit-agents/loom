@@ -15,6 +15,7 @@ export const workerAssignment = z.object({
   run: z.object({ policy: z.object({
     deniedTools: z.array(z.object({ pattern: z.string().min(1), guestsOnly: z.boolean() })),
     people: z.array(z.object({ kind: z.enum(['person', 'outside', 'unknown']), person: z.string().nullable(), tier: z.union([z.literal(1), z.literal(2), z.literal(3)]).nullable() })),
+    mail: z.array(z.string().min(1)).optional(),
   }).optional(), nestedContainers: z.boolean(), gpu: z.boolean(),
     ports: z.array(z.object({ address: z.string(), port: z.number().int().min(1).max(65535) })),
   }).optional(),
