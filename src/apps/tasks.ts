@@ -3,7 +3,8 @@ import { Conversations } from '../core/conversations/index.js';
 import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
-import { tasks, taskComments, taskLinks, inbox, projects } from '../core/data/schema.js';
+import { tasks, taskComments, taskLinks, inbox } from '../core/data/schema.js';
+import { projectRefusal } from '../core/data/project-in-use.js';
 import { taskId } from '../slug.js';
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
@@ -129,7 +130,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     touch(id, {});
   };
   /** The trusted layer's own guard: a task goes nowhere a task may not be (`taskProjectRefusal`). */
-  const destination = (project: string | null) => { const refused = taskProjectRefusal(db, project); if (refused) throw new Error(refused); };
+  const requireUsable = (project: string | null) => { const refused = taskProjectRefusal(db, project); if (refused) throw new Error(refused); };
   /** The one place a task changes project, inside the caller's transaction. Says whether it moved: a task
    * already there is left alone, with no comment. */
   const moveOne = (id: string, project: string | null, actor: TaskActor): boolean => {
@@ -173,7 +174,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         // A task changes project one way: an edit that names another project is a move, with its record and its mail.
         if (project !== undefined && project !== row(id).project) {
           if (!actor) throw new Error('A change of project needs to say who made it');
-          destination(project); moveOne(id, project, person.parse(actor));
+          requireUsable(project); moveOne(id, project, person.parse(actor));
         }
         return touch(id, patch);
       });
@@ -194,7 +195,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     },
     moveToProject(ids, project, actor) {
       person.parse(actor);
-      return db.transaction(() => { destination(project); return [...new Set(ids)].filter(id => moveOne(id, project, actor)); });
+      return db.transaction(() => { requireUsable(project); return [...new Set(ids)].filter(id => moveOne(id, project, actor)); });
     },
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
@@ -240,14 +241,12 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
   };
 }
 
-/** A task's project must be one in use: a task may have no project, or one that is there and not removed.
- * Stated here once. The outside door asks it for a new task, an edit and a move (shared-task-access.ts), and
- * the service asks it again before it moves anything. The answer is why not, in the words a caller is told,
- * or nothing when the project will do. */
+/** A task may have no project, or one that is in use (core/data/project-in-use.ts, where that is stated).
+ * The outside door asks this for a new task, an edit and a move (shared-task-access.ts), and the service
+ * asks it again before it moves anything. The answer is why not, in the words a caller is told, or nothing
+ * when the project will do. */
 export function taskProjectRefusal(db: DataDatabase, project: string | null): string | undefined {
-  if (project === null) return undefined;
-  const found = db.select({ removedAt: projects.removedAt }).from(projects).where(eq(projects.id, project)).get();
-  return !found ? 'Project not found' : found.removedAt ? 'That project is removed' : undefined;
+  return project === null ? undefined : projectRefusal(db, project)?.message;
 }
 
 /** Every task filed under one project is filed under another: for a merge of the two (shared-projects.ts).

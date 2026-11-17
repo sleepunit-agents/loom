@@ -64,7 +64,9 @@ An agent that is told to work on a household project it is not on asks to be let
   wide: being on a project lets an agent read what is filed under it, and that is an owner's to say each time.
 - **Allowing it** adds that one agent to that one project. The project's name, people, other agents and
   repositories are as they were.
-- **Refused.** An agent that asks to join a project it is already on is told so, and no card is filed. A
+- **Refused.** An agent that asks to join a project it is already on is told so, and no card is filed. (A
+  body working for a member who is not on that project may not read it, so it is not told: its card is
+  filed, and refused to the owner as already so.) A
   project or agent that is removed or not there is refused to the owner when they look at the card and when
   they allow it; an agent is not told which, since it may not read a project it is not on. An owner who
   files the card is told at once.

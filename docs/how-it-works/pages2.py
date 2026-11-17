@@ -782,10 +782,11 @@ def tools():
             row("Confirm each item it has dealt with.", G + ", with a job"),
         ]),
         ("Work", "violet", [
-            row("Tasks: see what is ready, read one, create, edit, claim or hand back, comment, close or reopen.", "task_ready · task · task_create · task_edit · task_claim · task_comment · task_close"),
+            row("Tasks: see what is ready, read one, create, edit, move to another project, claim or hand back, comment, close or reopen.", "task_ready · task · task_create · task_edit · task_move_to_project · task_claim · task_comment · task_close"),
             row("Tasks: move one in the hand-kept order, put one under a parent or behind a blocker, and put a question to a person.", G),
             row("Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G + ", with a job"),
-            row("Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser. Loom carries it out.", "propose"),
+            row("Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser, merging one project into another. Loom carries it out.", "propose"),
+            row("Ask to be let onto a project it is not on. A household owner answers each such card; no standing rule does.", "propose"),
             row("See the approvals it may see, and which are still waiting.", "approvals"),
             row("Changes: read pull requests and who each is waiting on. Merge under an approval.", G),
             row("Tempo: set a trigger, stop it, or run it now.", G),

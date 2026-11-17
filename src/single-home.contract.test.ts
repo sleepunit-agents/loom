@@ -628,7 +628,12 @@ it('asks policy.ts who may move a task to another project, at the one door that 
   expect(sources('src').filter(file => /\bmoveTask\b\s*[:=]/.test(text(file)))).toEqual(['src/policy.ts']);
   for (const file of ['src/apps/tasks.ts', 'src/apps/task-command.ts']) expect(text(file), file).not.toMatch(/from '\.\.\/policy\.js'/);
   // That a task's project must be one in use is written once, with one set of refusal words; the door and the service call it.
-  expect(sources('src').filter(file => /'That project is removed'|'Project not found'/.test(text(file)))).toEqual(['src/apps/tasks.ts']);
+  expect(sources('src').filter(file => /'No project has the id '|' is removed'/.test(text(file))).sort()).toEqual(['src/core/data/project-in-use.ts', 'src/shared-projects.ts']);
+  // shared-projects.ts says that of an agent only; what is said of a project is in the one file, which tasks, joins and merges all call.
+  expect(text('src/shared-projects.ts')).not.toMatch(/'Project '|'No project /);
+  expect(text('src/shared-projects.ts').split('projectRefusal(db,').length).toBe(3);
+  expect(text('src/apps/tasks.ts')).toContain('projectRefusal(db, project)?.message');
+  expect(sources('src').filter(file => /projects\.removedAt\b/.test(text(file)) && /Refusal/.test(text(file)))).toEqual(['src/core/data/project-in-use.ts']);
   expect(door.split('taskProjectRefusal(db, ').length).toBe(3);
   expect(door).not.toMatch(/hasOwn\(sharing\.projects/);
 });

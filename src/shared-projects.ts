@@ -1,4 +1,5 @@
 import { readSharing } from './core/data/sharing.js';
+import { projectRefusal } from './core/data/project-in-use.js';
 import { repoId } from './pieces/changes/model.js';
 import { reprojectChanges } from './apps/changes.js';
 import { refileTasks } from './apps/tasks.js';
@@ -88,9 +89,8 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
   /** Why this agent cannot be added to this project as things stand, or nothing when it can. */
   joinRefusal(raw:z.input<typeof projectJoinInput>):OperationError|undefined{
    const value=projectJoinInput.parse(raw);
-   const project=db.select().from(projects).where(eq(projects.id,value.project)).get(),agent=db.select().from(agents).where(eq(agents.id,value.agent)).get();
-   if(!project)return new OperationError('not-found','No project has the id '+value.project);
-   if(project.removedAt)return new OperationError('invalid','Project '+value.project+' is removed');
+   const unusable=projectRefusal(db,value.project),agent=db.select().from(agents).where(eq(agents.id,value.agent)).get();
+   if(unusable)return new OperationError(unusable.code,unusable.message);
    if(!agent)return new OperationError('not-found','No agent has the id '+value.agent);
    if(agent.removedAt)return new OperationError('invalid','Agent '+value.agent+' is removed');
    if(db.select().from(projectAgents).where(and(eq(projectAgents.project,value.project),eq(projectAgents.agent,value.agent))).get())return alreadyOnProject(value);
@@ -107,11 +107,7 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
   mergeRefusal(raw:z.input<typeof projectMergeInput>):OperationError|undefined{
    const value=projectMergeInput.parse(raw);
    if(value.from===value.into)return new OperationError('invalid','A project cannot be merged into itself');
-   for(const project of [value.from,value.into]){
-    const row=db.select().from(projects).where(eq(projects.id,project)).get();
-    if(!row)return new OperationError('not-found','No project has the id '+project);
-    if(row.removedAt)return new OperationError('invalid','Project '+project+' is removed');
-   }
+   for(const project of [value.from,value.into]){const unusable=projectRefusal(db,project);if(unusable)return new OperationError(unusable.code,unusable.message);}
    // A repository has one project. After the merge every repository of either is the other's alone, unless a
    // third project also lists it.
    const bound=db.select().from(projectRepositories).all(),merged=[value.from,value.into];

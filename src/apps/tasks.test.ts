@@ -191,8 +191,8 @@ it('moves every task named or none, and refuses a project that is removed or not
   const untouched = () => db.select().from(taskRows).all().map(row => [row.project, row.changedAt]);
   const before = untouched();
   expect(() => tasks.moveToProject([a.id, 't-999', b.id], 'pond', actor)).toThrow('Task not found');
-  expect(() => tasks.moveToProject([a.id, b.id], 'shut', actor)).toThrow('That project is removed');
-  expect(() => tasks.moveToProject([a.id, b.id], 'nowhere', actor)).toThrow('Project not found');
+  expect(() => tasks.moveToProject([a.id, b.id], 'shut', actor)).toThrow('Project shut is removed');
+  expect(() => tasks.moveToProject([a.id, b.id], 'nowhere', actor)).toThrow('No project has the id nowhere');
   expect(untouched()).toEqual(before);
   expect([a, b].flatMap(task => tasks.get(task.id).comments)).toEqual([]);
 });
@@ -278,8 +278,8 @@ it('changes a task’s project one way: an edit that names another project is th
   expect(tasks.get(task.id)).toMatchObject({ project: 'pond', title: 'Order the pump', priority: 1 });
   expect(tasks.get(task.id).comments).toHaveLength(comments);
   // Refused as a move is, with nothing of the edit kept: a removed or missing project, and a move by nobody.
-  expect(() => tasks.edit(task.id, { project: 'shut', title: 'Never' }, other)).toThrow('That project is removed');
-  expect(() => tasks.edit(task.id, { project: 'nowhere', title: 'Never' }, other)).toThrow('Project not found');
+  expect(() => tasks.edit(task.id, { project: 'shut', title: 'Never' }, other)).toThrow('Project shut is removed');
+  expect(() => tasks.edit(task.id, { project: 'nowhere', title: 'Never' }, other)).toThrow('No project has the id nowhere');
   expect(() => tasks.edit(task.id, { project: null, title: 'Never' })).toThrow('A change of project needs to say who made it');
   expect(tasks.get(task.id)).toMatchObject({ project: 'pond', title: 'Order the pump' });
   expect(db.select().from(inbox).where(eq(inbox.id, answered.id)).get()).toMatchObject({ project: 'pond' });

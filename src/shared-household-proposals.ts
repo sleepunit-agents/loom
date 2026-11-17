@@ -26,7 +26,9 @@
  * One refusal is made at filing, and it tells the asker nothing it may not
  * read: an agent that asks to be let onto a project it is already on is told
  * so, and no card is filed. An agent reads the projects it is on (policy.ts,
- * rule `project`), so that is its own to know. A project that is removed or
+ * rule `project`), so that is its own to know. A body working for a member
+ * who is not on the project does not read it, so it is not told: its card is
+ * filed, and refused to the owner as already so. A project that is removed or
  * not there is still filed like anything else. A household owner, who may
  * file that one change too and reads the whole household, is told at filing
  * everything that stands against it.

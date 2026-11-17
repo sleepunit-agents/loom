@@ -93,8 +93,8 @@ export class Conversations {
   }
 
   /** An item filed under its source's labels holds a copy of them (send). When the source's own labels
-   * change, whoever filed the item gives it the new ones here, in the same write. Nothing else about the
-   * item changes: it is the same mail, read by whoever reads its source now. */
+   * change, whoever filed the item gives it the new ones here, in the same write. Its words, state and
+   * answer are untouched; its changed time is set, so a reader that follows changes sees it move. */
   relabel(id: string, labels: Partial<Pick<Item, 'project' | 'agent' | 'member'>>): void {
     this.item(id);
     this.db.update(inbox).set({ ...labels, changedAt: this.now() }).where(eq(inbox.id, id)).run();
