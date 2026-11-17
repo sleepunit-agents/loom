@@ -18,6 +18,7 @@ import { bodyStartupSecrets } from './body-secrets.js';
 import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {saveBodyAttachments} from './body-attachments.js';
+import {bodyFileReader} from './body-files.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
@@ -150,7 +151,8 @@ export async function bodyProgram(input: {
       exit=BODY_EXIT.tools;
       const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
       programTools=bodyProgramTools({...rootAccess,
-        onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
+        onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;},
+        readFiles:bodyFileReader(plan.cwd,[plan.cwd,input.env[BODY_SCRATCH]])});
       tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();

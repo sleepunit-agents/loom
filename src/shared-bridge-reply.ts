@@ -13,7 +13,7 @@ import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
-import type { BridgeSends } from './pieces/bridges/sends.js';
+import { SEND_FILES,SEND_FILES_BYTES,type BridgeSends } from './pieces/bridges/sends.js';
 import { HANDED_FILE_BYTES } from './pieces/bridges/files.js';
 import { OperationError,type Operations } from './core/operations/index.js';
 import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
@@ -100,7 +100,11 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   const latest=taken[0],connection=latest&&db.select({agent:bridgeConnections.agent,platform:bridgeConnections.platform}).from(bridgeConnections).where(eq(bridgeConnections.id,latest.connection)).get();
   return latest&&connection?.agent===found.cv.agent&&connection.platform===found.cv.venue?{job:found.job.id,incoming:latest.incoming,took:taken.map(row=>row.incoming)}:undefined;
  };
- operations.register({name:'bridges.say',input:z.object({id:z.uuid(),text:z.string().min(1).max(MESSAGE_WORDS_MAX)}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
+ // A post may carry files, on Discord: their bytes are kept with the post until it is settled and go out with
+ // its last part. The body program reads them from the body's own working area (runtime/body-files.ts);
+ // what arrives here is a name and bytes, bounded by SEND_FILES and SEND_FILES_BYTES.
+ operations.register({name:'bridges.say',input:z.object({id:z.uuid(),text:z.string().min(1).max(MESSAGE_WORDS_MAX),
+   files:z.array(z.object({name:z.string().min(1).max(200),contents:z.base64().min(1)}).strict()).min(1).max(SEND_FILES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),write:true,recheckPolicy:true,
   may:viewer=>!!speaking(viewer),
   inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-bridge-say-receipt-v1\0').update(JSON.stringify([speaking(actor)?.job??null,canonical])).digest('hex'),
   run(ctx,input){
@@ -108,7 +112,9 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    // Counted over everything posted for what this job took, the reply included, so a body that loops cannot flood a channel.
    const said=db.select({id:bridgeSends.id}).from(bridgeSends).where(inArray(bridgeSends.incoming,bound.took)).all();
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
-   try{sends.queue({id:input.id,incoming:bound.incoming,text:input.text,held:!effectsAllowed()});}catch{throw new OperationError('invalid','Bridge message could not be queued');}
+   const files=(input.files??[]).map(file=>({name:file.name,contents:Buffer.from(file.contents,'base64')}));
+   try{sends.queue({id:input.id,incoming:bound.incoming,text:input.text,held:!effectsAllowed(),...(files.length?{files}:{})});}catch{throw new OperationError('invalid',files.length?`Bridge message could not be queued: files are posted on Discord only, at most ${SEND_FILES} and ${SEND_FILES_BYTES} bytes together`:'Bridge message could not be queued');}
+   finally{for(const file of files)file.contents.fill(0);}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
  });

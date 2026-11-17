@@ -2,8 +2,8 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
-import { BridgeSends, STOPPED_LINE, reviewReply } from './sends.js';
+import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
+import { BridgeSends, SEND_FILES, SEND_FILES_BYTES, STOPPED_LINE, reviewReply } from './sends.js';
 import { BridgeReplyNotSent } from './outbound.js';
 
 const opened: Database.Database[] = [];
@@ -258,4 +258,63 @@ it('queues a post to a message that was not delivered only as loom\'s own line a
   expect(() => f.sends.queue({ id: 'd', incoming: 'in', text: STOPPED_LINE, stopped: true })).toThrow('No delivered message');
   expect(f.sends.queue({ id: 'e', incoming: 'stop', text: STOPPED_LINE, stopped: true })).toMatchObject({ state: 'pending', channel: 'channel', thread: null, text: 'Stopped here.' });
   expect(f.sends.queue({ id: 'f', incoming: 'stop', text: STOPPED_LINE, stopped: true, held: true })).toMatchObject({ state: 'held' });
+});
+describe('a post\'s files', () => {
+  const png = () => ({ name: '../out/plot one.png', contents: Buffer.from('PNG') });
+  const kept = (f: ReturnType<typeof fixture>) => f.db.select().from(bridgeSendFiles).all().map(row => [row.send, row.position, row.name, row.contents.toString()]);
+  it('are kept with the post, go out with its last part, and are gone once it is sent', async () => {
+    const f = fixture();
+    const long = 'a'.repeat(1500) + '\n' + 'b'.repeat(1500);
+    f.sends.queue({ id: 'reply', incoming: 'in', text: long, files: [png(), { name: 'data.csv', contents: Buffer.from('1,2') }] });
+    // A name is the last part of what was given, in plain characters; the order is the order given.
+    expect(kept(f)).toEqual([['reply', 0, 'plot_one.png', 'PNG'], ['reply', 1, 'data.csv', '1,2']]);
+    await f.sends.flush();
+    expect(f.post).toHaveBeenCalledTimes(2);
+    const calls = f.post.mock.calls as unknown as [unknown, unknown, string, { name: string; contents: Buffer }[] | undefined][];
+    expect(calls[0]).toHaveLength(3);
+    expect(calls[1][3]?.map(file => [file.name, file.contents.toString()])).toEqual([['plot_one.png', 'PNG'], ['data.csv', '1,2']]);
+    expect(f.read().state).toBe('sent');
+    expect(kept(f)).toEqual([]);
+  });
+  it('wait with a post that was only partly made, and go with the part still to come', async () => {
+    const f = fixture();
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'a'.repeat(1500) + '\n' + 'b'.repeat(1500), files: [png()] });
+    f.post.mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(new BridgeReplyNotSent(true));
+    await f.sends.flush();
+    expect(f.read().state).toBe('pending'); expect(kept(f)).toHaveLength(1);
+    f.advance(); f.advance(); f.advance(); f.advance(); f.advance(); f.advance();
+    f.post.mockClear();
+    await f.sends.flush();
+    const calls = f.post.mock.calls as unknown as [unknown, unknown, string, unknown[] | undefined][];
+    expect(calls).toHaveLength(1); expect(calls[0][3]).toHaveLength(1);
+    expect(f.read().state).toBe('sent'); expect(kept(f)).toEqual([]);
+  });
+  it('go when the post is in doubt or dismissed, and stay while it is held for a person', async () => {
+    const f = fixture();
+    f.sends.queue({ id: 'doubt', incoming: 'in', text: 'One', files: [png()] });
+    f.post.mockRejectedValueOnce(new Error('socket hang up'));
+    await f.sends.flush();
+    expect(f.read('doubt').state).toBe('uncertain'); expect(kept(f)).toEqual([]);
+    f.sends.queue({ id: 'held', incoming: 'in', text: 'Two', held: true, files: [png()] });
+    await f.sends.flush();
+    expect(kept(f)).toHaveLength(1);
+    reviewReply(f.db, 'held', 'dismiss');
+    expect(kept(f)).toEqual([]);
+    f.sends.queue({ id: 'released', incoming: 'in', text: 'Three', held: true, files: [png()] });
+    reviewReply(f.db, 'released', 'release');
+    expect(kept(f)).toHaveLength(1);
+    await f.sends.flush();
+    expect(f.read('released').state).toBe('sent'); expect(kept(f)).toEqual([]);
+  });
+  it('are refused past their count or their bytes, when empty, and on Slack, and then nothing is queued', () => {
+    const f = fixture();
+    const file = (bytes: number) => ({ name: 'f', contents: Buffer.alloc(bytes, 1) });
+    expect(() => f.sends.queue({ id: 'a', incoming: 'in', text: 'x', files: Array.from({ length: SEND_FILES + 1 }, () => file(1)) })).toThrow('Files cannot be posted');
+    expect(() => f.sends.queue({ id: 'b', incoming: 'in', text: 'x', files: [file(SEND_FILES_BYTES), file(1)] })).toThrow('Files cannot be posted');
+    expect(() => f.sends.queue({ id: 'c', incoming: 'in', text: 'x', files: [file(0)] })).toThrow('Files cannot be posted');
+    expect(f.db.select().from(bridgeSends).all()).toEqual([]); expect(kept(f)).toEqual([]);
+    expect(f.sends.queue({ id: 'd', incoming: 'in', text: 'x', files: [file(SEND_FILES_BYTES)] }).state).toBe('pending');
+    const slack = fixture('slack');
+    expect(() => slack.sends.queue({ id: 'e', incoming: 'in', text: 'x', files: [file(1)] })).toThrow('Files cannot be posted');
+  });
 });

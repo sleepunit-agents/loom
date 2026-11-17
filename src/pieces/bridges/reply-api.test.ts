@@ -59,3 +59,17 @@ it('lets a Discord post ping users and nothing else',()=>{
  // One statement of the rule: no `everyone`, no `roles`, and no ping for being replied to.
  expect(DISCORD_PINGS).toEqual({parse:['users'],replied_user:false});
 });
+it('posts files on Discord as a multipart form with the same message and pings, and refuses them for Slack before any request',async()=>{
+ const f=fixture('discord');
+ expect(await f.api.post({channel:f.channel,thread:null},'Here <@42>',[{name:'plot.png',contents:Buffer.from('PNG')},{name:'data.csv',contents:Buffer.from('1,2')}])).toEqual({id:'456'});
+ const [,options]=f.request.mock.calls[0],form=options?.body as FormData;
+ expect(form).toBeInstanceOf(FormData);
+ // No JSON content type: the form sets its own, with its boundary.
+ expect(new Headers(options?.headers).get('content-type')).toBeNull();expect(new Headers(options?.headers).get('authorization')).toBe('Bot synthetic-token');
+ expect(JSON.parse(String(form.get('payload_json')))).toEqual({content:'Here <@42>',allowed_mentions:{parse:['users'],replied_user:false},attachments:[{id:0,filename:'plot.png'},{id:1,filename:'data.csv'}]});
+ const first=form.get('files[0]') as File,second=form.get('files[1]') as File;
+ expect([first.name,await first.text(),second.name,await second.text()]).toEqual(['plot.png','PNG','data.csv','1,2']);
+ const slack=fixture('slack');
+ await expect(slack.api.post({channel:slack.channel,thread:null},'Here',[{name:'plot.png',contents:Buffer.from('PNG')}])).rejects.toMatchObject({again:false});
+ expect(slack.request).not.toHaveBeenCalled();
+});

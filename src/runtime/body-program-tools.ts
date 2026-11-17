@@ -4,6 +4,7 @@ import {z} from 'zod';
 import type {Tool} from '@modelcontextprotocol/sdk/types.js';
 import {bodyCommandClient} from './body-command-client.js';
 import type {Clock} from '../core/clock.js';
+import {BodyFileRefused,type BodyFileReader} from './body-files.js';
 const json=z.json();
 const catalogue=z.object({name:z.string().min(1).optional()}).strict();
 const command=z.object({operation:z.string().min(1),input:json,id:z.string().min(1).max(200)}).strict();
@@ -17,8 +18,10 @@ export type BodyProgramToolResult={content:{type:'text';text:string}[];isError?:
 const unavailable=():BodyProgramToolResult=>({isError:true,content:[{type:'text',text:'Body tool unavailable; outcome may be uncertain'}]});
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function bodyProgramTools(options:{url:string;token:string;signal:AbortSignal;fetch?:typeof globalThis.fetch;clock?:Clock;
- onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void}){
- const {url,token,signal,fetch,clock,onStop,onStatus}=options;
+ onStop:()=>void;onStatus:(value:{state:'working'|'waiting'|'idle'|'offline';work:string})=>void;
+ /** Reads the files a post names from the body's own working area (body-files.ts). Without it a post carries none. */
+ readFiles?:BodyFileReader}){
+ const {url,token,signal,fetch,clock,onStop,onStatus,readFiles}=options;
  const abort=new AbortController(),lifetime=AbortSignal.any([signal,abort.signal]),active=new Set<ReturnType<typeof bodyCommandClient>>();
  const tools:Tool[]=programToolDefinitions.map(([name,description,input])=>({name,description,inputSchema:z.toJSONSchema(input,{target:'draft-7'})as Tool['inputSchema']}));
  const port={tools,
@@ -41,7 +44,17 @@ export function bodyProgramTools(options:{url:string;token:string;signal:AbortSi
      if(!known.ok)return{isError:true,content:[{type:'text',text:JSON.stringify(known)}]};
      const metadata=z.object({commands:z.array(z.object({name:z.string()}).passthrough()).length(1)}).passthrough().parse(known.value);
      if(metadata.commands[0].name!==input.operation)return unavailable();
-     value=await client.command(input.operation,input.input,input.id);
+     // A post's files are named by path and read here, from the body's own working area and nowhere else.
+     // The model cannot hand over bytes of its own making under a file's name, nor a path outside that area.
+     let sent=input.input,read:{name:string;contents:Buffer}[]=[];
+     if(input.operation==='bridges.say'&&object(body)&&'files'in body){
+      const named=z.array(z.object({path:z.string().min(1)}).strict()).min(1).safeParse(body.files);
+      if(!named.success||!readFiles)return{isError:true,content:[{type:'text',text:'A post\'s files are given as [{"path": "..."}], each a file inside this body\'s working directory'}]};
+      try{read=readFiles(named.data.map(file=>file.path));}
+      catch(error){return{isError:true,content:[{type:'text',text:error instanceof BodyFileRefused?error.message:'File not available'}]};}
+      sent={...body,files:read.map(file=>({name:file.name,contents:file.contents.toString('base64')}))} as typeof input.input;
+     }
+     try{value=await client.command(input.operation,sent,input.id);}finally{for(const file of read)file.contents.fill(0);}
      if(input.operation==='conversation.status'&&object(value)&&value.ok===true){
       const status=z.object({state:z.enum(['working','waiting','idle','offline']),work:z.string()}).passthrough().parse(body);
       if(object(value.value)&&value.value.stopRequested===true){try{onStatus(status);}finally{onStop();}return unavailable();}

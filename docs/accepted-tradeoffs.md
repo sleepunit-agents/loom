@@ -664,19 +664,26 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: wanting guests to stop work they started. That needs a job to record an outside
   account as who ended it.
 
-### A body may say more during its run, as text, a bounded number of times
+### A body may say more during its run, a bounded number of times, with small files on Discord
 - What: `bridges.say` lets the body that holds a bridge conversation's job post one more message, to the
   channel and thread of the latest bridge message the job took. It goes through the send queue the reply
   uses, so it is split, receipted, held while effects are off and reviewed like a reply. It settles no mail
   and is no reply: the body's final answer is still posted as the reply. loom makes at most twenty posts
-  for the mail one job took, the reply among them. A post carries text only; a file cannot be attached.
+  for the mail one job took, the reply among them.
+  On Discord such a post may carry files: at most four, 600 KB together. The model names each by a path;
+  the body program reads it, and only a regular file inside the body's working directory or its scratch
+  directory, with every link followed, is read. The bytes are kept with the post (`bridge_send_files`)
+  until it is sent, dismissed or left in doubt, and go out with its last part. Slack posts carry no files.
 - Where: `src/shared-bridge-reply.ts` (`speaking`, `BRIDGE_POSTS_PER_JOB`); the queue is
-  `src/pieces/bridges/sends.ts`.
-- Why: an agent on a long piece of work says what it is doing, and sends a result as it has it, instead
-  of one message at the end. One queue means one rule for what a post may be and one record of what was
-  posted. The bound is there because the caller is a model.
-- Would change it: bodies needing to post files. A queued send then needs its bytes kept until the post is
-  confirmed (a table of a send's files) and a multipart post.
+  `src/pieces/bridges/sends.ts`; the limits are `send-file-limit.ts`; the path is read by
+  `src/runtime/body-files.ts`, called from `body-program-tools.ts`; the form is built in `reply-api.ts`.
+- Why: an agent on a long piece of work says what it is doing, and sends a result as it has it. One queue
+  means one rule for what a post may be and one record of what was posted. A file is named by path so
+  that what is posted is a file the body really has, and so that the bytes pass from the body program to
+  loom without the model handling them. The size is what one request through loom's door carries
+  (`DOOR_REQUEST_BYTES`, 1 MB, base64 in JSON). Slack's upload needs a scope the client's app does not have.
+- Would change it: bodies needing to post larger files. Then a post's files are sent to loom in pieces,
+  or the door's limit is raised for this one route.
 
 ### Taken and working are shown on Discord, best effort
 - What: when a running job has taken a Discord message the bot reacts 👀 to it, and while that mail is

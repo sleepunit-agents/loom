@@ -1,11 +1,15 @@
-import { and, eq, max } from 'drizzle-orm';
+import { and, asc, eq, max } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
-import { BridgeReplyNotSent, postReply, type ReplyAttempt } from './outbound.js';
+import { bridgeConnections, bridgeIncoming, bridgeSendFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
+import { BridgeReplyNotSent, postReply, replyParts, type ReplyAttempt } from './outbound.js';
 import { STOP_WORD } from './incoming.js';
 
 /** What the bot says where a stop word stopped a job, as the earlier bridge said it. */
 export const STOPPED_LINE = 'Stopped here.';
+
+export { SEND_FILES, SEND_FILES_BYTES, sendFileName } from './send-file-limit.js';
+import { SEND_FILES, SEND_FILES_BYTES, sendFileName } from './send-file-limit.js';
+export interface SendFile { name: string; contents: Buffer }
 
 export type BridgeSend = typeof bridgeSends.$inferSelect;
 /** How long an unsent reply waits before the next attempt. The daemon flushes at least this often. */
@@ -16,7 +20,7 @@ export interface SendTransport {
   ready?(connection: typeof bridgeConnections.$inferSelect): boolean;
   /** Resolve the current connection. Suppress generated mentions in platform posts.
    * Throw BridgeReplyNotSent when refusing before any request is made. */
-  post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string): Promise<{ id: string }>;
+  post(connection: typeof bridgeConnections.$inferSelect, address: { channel: string; thread: string | null }, text: string, files?: readonly SendFile[]): Promise<{ id: string }>;
 }
 
 /** A person's decision on one reply awaiting review, as one statement of the
@@ -31,6 +35,8 @@ export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 
   const changed = db.update(bridgeSends).set({ state: decision === 'release' ? 'pending' : 'dismissed' })
     .where(and(eq(bridgeSends.id, id), eq(bridgeSends.state, send.state))).run();
   if (!changed.changes) throw new Error('Reply state changed');
+  // A dismissed post is never sent: its files go now.
+  if (decision === 'dismiss') db.delete(bridgeSendFiles).where(eq(bridgeSendFiles.send, id)).run();
 }
 
 /** Trusted in-process send queue on the approved shared schema. External callers
@@ -64,10 +70,12 @@ export class BridgeSends {
 
   /** `stopped` is loom's own line after a stop word (STOPPED_LINE): the one post made to a message that
    * was not delivered, addressed like any other to where that message was said. */
-  queue(input: { id: string; incoming: string; text: string; held?: boolean; stopped?: boolean }): BridgeSend {
+  queue(input: { id: string; incoming: string; text: string; held?: boolean; stopped?: boolean; files?: readonly SendFile[] }): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new Error('Reply needs an id and text');
+    const queued: (typeof bridgeSendFiles.$inferInsert)[] = [];
     const result = this.commit(()=>this.db.transaction(tx => {
+      queued.length = 0;
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
         if (old.incoming !== input.incoming || old.text !== input.text) throw new Error('Reply id reused');
@@ -77,10 +85,18 @@ export class BridgeSends {
       if (!incoming || !(input.stopped ? incoming.state === 'dropped' && incoming.reason === STOP_WORD && input.text === STOPPED_LINE : incoming.state === 'delivered')) throw new Error('No delivered message for reply');
       // The reply carries its own address, copied from the message it answers (place.ts): a message's
       // channel and thread never change, and the queue then needs no join to send.
-      return tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,
+      // A post's files are kept with it until it is settled (bridge_send_files), and go out with its last part.
+      const files = input.files ?? [];
+      const platform = tx.select({ platform: bridgeConnections.platform }).from(bridgeConnections).where(eq(bridgeConnections.id, incoming.connection)).get()?.platform;
+      if (files.length && (platform !== 'discord' || files.length > SEND_FILES || files.some(file => !file.contents.byteLength)
+        || files.reduce((sum, file) => sum + file.contents.byteLength, 0) > SEND_FILES_BYTES)) throw new Error('Files cannot be posted');
+      files.forEach((file, position) => { queued.push({ send: input.id, position, name: sendFileName(file.name), contents: Buffer.from(file.contents) }); });
+      const row = tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread,
         text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
       }).returning().get();
+      if (queued.length) tx.insert(bridgeSendFiles).values(queued).run();
+      return row;
     }));
     this.changed();
     return result;
@@ -121,12 +137,18 @@ export class BridgeSends {
       this.changed();
       // Go on from the parts an earlier attempt, in this run or one before it, had confirmed.
       const posted = this.db.select({ last: max(bridgeSendParts.part) }).from(bridgeSendParts).where(eq(bridgeSendParts.send, send.id)).get()?.last;
+      // The files go with the last part, so a long post reads in order and its files follow it.
+      const files = this.db.select({ name: bridgeSendFiles.name, contents: bridgeSendFiles.contents }).from(bridgeSendFiles).where(eq(bridgeSendFiles.send, send.id)).orderBy(asc(bridgeSendFiles.position)).all();
+      const parts = files.length ? replyParts(connection.platform, send.text).length : 0;
+      let part = posted === null || posted === undefined ? 0 : posted + 1;
       const post = async (text: string) => {
         const current = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, connection.id)).get();
         if (this.closed || !current?.enabled || current.state !== 'connected'
           || current.platform !== connection.platform || current.workspace !== connection.workspace
           || current.botUser !== connection.botUser || current.agent !== connection.agent) throw new BridgeReplyNotSent(true);
-        return this.transport.post(current, { channel: send.channel, thread: send.thread }, text);
+        const last = files.length > 0 && part++ === parts - 1;
+        const address = { channel: send.channel, thread: send.thread };
+        return last ? this.transport.post(current, address, text, files) : this.transport.post(current, address, text);
       };
       // On record before the next part is tried: a crash between two parts leaves exactly what is out.
       const confirmed = (part: number, postedId: string) => { this.commit(() => this.db.insert(bridgeSendParts).values({ send: send.id, part, postedId }).run()); };
@@ -141,7 +163,11 @@ export class BridgeSends {
       // cannot help, and is uncertain when the platform may already have it.
       const state = attempt.done ? 'sent' : !attempt.refused ? 'uncertain' : attempt.refused.again ? 'pending' : 'held';
       if (state === 'pending') this.notBefore.set(send.id, Date.parse(this.now()) + RETRY_UNSENT);
-      this.commit(() => this.db.update(bridgeSends).set({ state }).where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run());
+      this.commit(() => {
+        this.db.update(bridgeSends).set({ state }).where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run();
+        // Sent, or in doubt and so never sent again: the post has no more use for its files.
+        if (state === 'sent' || state === 'uncertain') this.db.delete(bridgeSendFiles).where(eq(bridgeSendFiles.send, send.id)).run();
+      });
       this.changed();
     }
   }

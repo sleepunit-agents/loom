@@ -186,3 +186,16 @@ it('tells the body of a bridge conversation the brief its channel\'s rule names,
  f.root.writes.run(()=>{f.db.update(bridgeChannels).set({brief:'field'}).run();});
  expect((await f.call('bridges','briefMissing',{})).status).toBe(200);expect(notices()).toHaveLength(2);
 });
+it('takes a file on bridges.say as a name and bytes, and refuses it for Slack with the reason',async()=>{
+ const f=fixture();const incoming=await f.receive();
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
+ const contents=Buffer.from('PNG').toString('base64');
+ const refused=await f.call('bridges','say',{id:randomUUID(),text:'With a plot',files:[{name:'plot.png',contents}]});
+ expect(refused.status).toBe(400);expect(refused.body.message).toContain('files are posted on Discord only');
+ expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+ // A path is no file here: the door takes bytes, and the body program is what reads a path (body-files.ts).
+ expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:[{path:'/etc/passwd'}]})).status).toBe(400);
+ expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:[{name:'a',contents:'not base64!'}]})).status).toBe(400);
+ expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:[]})).status).toBe(400);
+ expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:Array(5).fill({name:'a',contents})})).status).toBe(400);
+});
