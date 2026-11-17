@@ -206,6 +206,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const confidence = isFeedback ? FEEDBACK_CONFIDENCE_DEFAULT : null;
     const evidenceCount = isFeedback ? 1 : 0;
 
+    // `salience` is stored and not read: heat is worked out at each read (docs/accepted-tradeoffs.md).
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,

@@ -573,7 +573,8 @@ const storeVersion = (db: Database) => db.pragma('user_version', { simple: true 
  * about which steps have run: each step still decides that from the current shape, and a store that
  * holds one feature's tables has only that feature's. The number is what lets an older program see
  * that a newer one has been here, and stop before it creates or rewrites anything.
- * Call it before any write to a store.
+ * Call it before any write to a store. It does not check that the file is a memory store at all
+ * (docs/accepted-tradeoffs.md, "Only loom.db and knowledge.db are checked").
  */
 export function refuseNewerStore(db: Database): void {
   const at = storeVersion(db);
