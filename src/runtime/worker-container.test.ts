@@ -1,4 +1,7 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Duplex } from 'node:stream';
 import { containerWorkerExecutor } from './worker-container.js';
 import { workOnce, type WorkerAssignment } from './worker.js';
@@ -305,4 +308,129 @@ it('reports a container whose process a signal ended as killed, the same stage a
   expect([137, 143].map(containerExit)).toEqual([29, 29]);
   // An exit the process made by itself is passed on as it is.
   expect([0, 1, 14, 128, 200].map(containerExit)).toEqual([0, 1, 14, 128, 200]);
+});
+
+// The three additions for houses: the runtime's name, an account's sign-in directory, the fixed mounts.
+const houseRoot = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-'));
+afterAll(() => rmSync(houseRoot, { recursive: true, force: true }));
+const houseDirectory = (name: string) => { const path = join(houseRoot, name); mkdirSync(path, { recursive: true }); return path; };
+const loginA = houseDirectory('logins/a'), loginB = houseDirectory('logins/b'), stamps = houseDirectory('stamps'), mirror = houseDirectory('mirror');
+const accountLogins = { account: { harness: { source: loginA, target: '/home/agent/.claude' } }, other: { harness: { source: loginB, target: '/home/agent/.claude' } } };
+const houseMounts = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
+/** What an engine reports of a bind mount it made. */
+const reported = (Source: string, Destination: string, RW: boolean) => ({ Type: 'bind', Source, Destination, Mode: '', RW, Propagation: 'rprivate' });
+const expectedReport = [reported(loginA, '/home/agent/.claude', true), reported(stamps, '/house/stamps', true), reported(mirror, '/house/mirror', false)];
+function house(inspected: unknown = expectedReport, container: Record<string, unknown> = { mounts: houseMounts }, logins: typeof accountLogins | null = accountLogins) {
+  const f = fixture(), original = f.engine.json.getMockImplementation()!;
+  f.engine.json.mockImplementation((method, path, body, signal) => path.endsWith('/json') ? Promise.resolve({ Mounts: inspected }) : original(method, path, body, signal));
+  const executor = containerWorkerExecutor({ ...f.config, ...(logins ? { accountLogins: logins } : {}), container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder, name: () => 'house' });
+  return { ...f, executor };
+}
+type Spec = { HostConfig: { Runtime: string; Mounts: unknown[] } };
+
+it('asks the engine for runc unless the configuration names crun, and for nothing else', async () => {
+  for (const [runtime, sent] of [[undefined, 'runc'], ['runc', 'runc'], ['crun', 'crun']] as const) {
+    const f = fixture(), executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, ...(runtime ? { runtime } : {}) } }, { engine: f.engine, builder: f.builder, name: () => 'runtime' });
+    const body = executor.start(job, 'image', f.abort.signal); await body.spawned;
+    expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Runtime).toBe(sent); await body.stop();
+  }
+  const f = fixture();
+  for (const runtime of ['kata', '', 'runc ', 'RUNC', 7])
+    expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, runtime: runtime as 'crun' } }, { engine: f.engine, builder: f.builder })).toThrow('Invalid container runtime');
+});
+it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and no other account\'s directory', async () => {
+  const f = house(), body = f.executor.start(job, 'image', f.abort.signal); await body.spawned;
+  expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
+    { Type: 'bind', Source: loginA, Target: '/home/agent/.claude', ReadOnly: false },
+    { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
+    { Type: 'bind', Source: mirror, Target: '/house/mirror', ReadOnly: true }]);
+  // Nothing sent to the engine for this job names the other account's directory.
+  expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(loginB);
+  expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
+  const other = house([reported(loginB, '/home/agent/.claude', true), ...expectedReport.slice(1)]);
+  const second = other.executor.start({ ...job, account: 'other' }, 'image', other.abort.signal); await second.spawned;
+  expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts[0]).toEqual({ Type: 'bind', Source: loginB, Target: '/home/agent/.claude', ReadOnly: false });
+  expect(JSON.stringify(other.engine.json.mock.calls)).not.toContain(loginA); await second.stop();
+});
+it('gives every body the fixed mounts when no sign-in map is configured, beside the nested socket', async () => {
+  const f = house([reported('/allowed/nested.sock', '/var/run/docker.sock', true), ...expectedReport.slice(1)], { mounts: houseMounts, nestedSocket: '/allowed/nested.sock' }, null);
+  const body = f.executor.start({ ...job, account: 'anyone', run: { gpu: false, nestedContainers: true, ports: [] } }, 'image', f.abort.signal); await body.spawned;
+  expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
+    { Type: 'bind', Source: '/allowed/nested.sock', Target: '/var/run/docker.sock' },
+    { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
+    { Type: 'bind', Source: mirror, Target: '/house/mirror', ReadOnly: true }]);
+  await body.stop();
+});
+it('with a sign-in map, fails a job that has no exact entry before the builder, the engine or the body', async () => {
+  const f = house(), original = f.executor;
+  // The harness has a runner here, so the only thing missing is its sign-in entry.
+  f.executor = containerWorkerExecutor({ ...f.config, runners: { ...f.config.runners, unlisted: plan }, accountLogins, container: { ...f.config.container, mounts: houseMounts } }, { engine: f.engine, builder: f.builder });
+  for (const assignment of [{ ...job, account: 'missing' }, { ...job, harness: 'unlisted' }]) {
+    expect(() => f.executor.build(assignment, f.abort.signal)).toThrow('configured sign-in directory');
+    expect(() => f.executor.start(assignment, 'image', f.abort.signal)).toThrow('configured sign-in directory');
+  }
+  expect(f.builder.build).not.toHaveBeenCalled(); expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.attach).not.toHaveBeenCalled();
+  // As loom sees it: the runner stage's code and the worker's own words, with no path in them.
+  const assignment = { ...job, account: 'missing' };
+  const control = { next: vi.fn(async () => assignment), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
+  expect(await workOnce({ box: 'box', control, executor: original, signal: f.abort.signal, schedule: { every: () => () => {} } })).toBe('finished');
+  expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 27, 'Worker could not start the body: runner failed', 'worker');
+  expect(control.started).not.toHaveBeenCalled(); expect(f.builder.build).not.toHaveBeenCalled(); expect(f.engine.json).not.toHaveBeenCalled();
+});
+it.each([
+  ['one more mount than it asked for', [...expectedReport, reported('/host', '/work', true)]],
+  ['an image volume beside its own', [...expectedReport, { Type: 'volume', Name: 'v', Source: '/engine/volumes/v/_data', Destination: '/data', RW: true }]],
+  ['a mount missing', expectedReport.slice(0, 2)],
+  ['none of its mounts', []],
+  ['another account\'s directory at the sign-in target', [reported(loginB, '/home/agent/.claude', true), ...expectedReport.slice(1)]],
+  ['its sign-in directory at another place', [reported(loginA, '/elsewhere', true), ...expectedReport.slice(1)]],
+  ['a read-only mount made writable', [...expectedReport.slice(0, 2), reported(mirror, '/house/mirror', true)]],
+  ['a writable mount made read-only', [reported(loginA, '/home/agent/.claude', false), ...expectedReport.slice(1)]],
+  ['a mount that does not say whether it is writable', [...expectedReport.slice(0, 2), { Type: 'bind', Source: mirror, Destination: '/house/mirror' }]],
+  ['a volume where a bind mount was asked for', [...expectedReport.slice(0, 2), { ...reported(mirror, '/house/mirror', false), Type: 'volume' }]],
+  ['one mount reported twice in place of another', [expectedReport[0], expectedReport[1], expectedReport[1]]],
+  ['something that is not a mount', [...expectedReport.slice(0, 2), null]],
+  ['no list of mounts', null],
+])('removes the container without starting it when the engine reports %s', async (_what, inspected) => {
+  const f = house(inspected), body = f.executor.start(job, 'image', f.abort.signal);
+  await expect(body.spawned).rejects.toThrow('Unexpected container storage'); await body.stop();
+  expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
+  expect(f.engine.json).toHaveBeenLastCalledWith('DELETE', `/containers/${id}?force=1&v=1`, undefined, expect.any(AbortSignal));
+});
+it('accepts the mounts it asked for in whatever order the engine lists them', async () => {
+  const f = house([...expectedReport].reverse()), body = f.executor.start(job, 'image', f.abort.signal);
+  await body.spawned; expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
+});
+it('tells loom nothing of the mounts: not a path in a failed start\'s report, and none in a finished job\'s', async () => {
+  const paths = [houseRoot, '/home/agent/.claude', '/house/stamps', '/house/mirror'];
+  const said = (control: { finish: ReturnType<typeof vi.fn>; started: ReturnType<typeof vi.fn> }) => JSON.stringify([control.finish.mock.calls, control.started.mock.calls]);
+  // A start the worker refused because the engine's mounts were not its own.
+  const refused = house([...expectedReport, reported(loginB, '/other', true)]);
+  const control = { next: vi.fn(async () => job), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
+  expect(await workOnce({ box: 'box', control, executor: refused.executor, signal: refused.abort.signal, schedule: { every: () => () => {} } })).toBe('finished');
+  expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 23, 'Worker could not start the body: launch failed', 'worker');
+  for (const path of paths) expect(said(control)).not.toContain(path);
+  // A body that ran: its envelope and the report carry the job, never where its files came from.
+  const ran = house(), finished = { next: vi.fn(async () => job), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
+  const run = workOnce({ box: 'box', control: finished, executor: ran.executor, signal: ran.abort.signal, schedule: { every: () => () => {} } });
+  await flush(); ran.socket.push(frame('done')); ran.socket.push(null); ran.wait.resolve({ StatusCode: 0 });
+  expect(await run).toBe('finished'); expect(finished.finish).toHaveBeenCalledExactlyOnceWith('job', 0, 'done', 'runner');
+  for (const path of paths) { expect(said(finished)).not.toContain(path); expect(ran.writes.join('')).not.toContain(path); }
+  // Nor do the labels or the environment the engine keeps.
+  const spec = ran.engine.json.mock.calls[0][2] as { Labels: unknown; Env: unknown };
+  for (const path of paths) expect(JSON.stringify([spec.Labels, spec.Env])).not.toContain(path);
+});
+it('does not make a worker whose mounts cannot be used, and touches neither the engine nor the builder', () => {
+  const f = fixture(), builder = vi.fn();
+  for (const patch of [{ accountLogins: { account: { harness: { source: join(houseRoot, 'missing'), target: '/home/agent/.claude' } } } },
+    { container: { ...f.config.container, mounts: [{ source: 'relative', target: '/house/x' }] } },
+    { accountLogins, container: { ...f.config.container, mounts: [{ source: mirror, target: '/home/agent/.claude' }] } }])
+    expect(() => containerWorkerExecutor({ ...f.config, ...patch }, { engine: f.engine, get builder() { builder(); return f.builder; } })).toThrow(new WorkerStop('mounts'));
+  expect(f.engine.json).not.toHaveBeenCalled(); expect(builder).not.toHaveBeenCalled();
+});
+it('fixes the mounts when the worker is made', async () => {
+  const logins = structuredClone(accountLogins), mounts = structuredClone(houseMounts), f = house(expectedReport, { mounts }, logins);
+  logins.account.harness.source = loginB; mounts[1].readOnly = false; mounts.push({ source: loginB, target: '/stolen' });
+  const body = f.executor.start(job, 'image', f.abort.signal); await body.spawned;
+  expect(JSON.stringify(f.engine.json.mock.calls[0][2])).not.toContain(loginB); await body.stop();
 });

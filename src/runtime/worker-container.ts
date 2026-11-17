@@ -13,11 +13,20 @@ import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type Work
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
+import { bodyMounts, NESTED_SOCKET_TARGET, type AccountLogins, type BodyMount, type FixedMount } from './worker-mounts.js';
+
+/** The names the worker may send as the engine's runtime. The operator states which one their engine has;
+ * nothing is discovered. */
+export const CONTAINER_RUNTIMES = ['runc', 'crun'] as const;
 
 export interface ContainerConfig {
   socket: string;
   /** Explicit opt-in on this machine as well as in the agent's run settings. */
   nestedSocket?: string;
+  /** Sent as `HostConfig.Runtime`. `runc` when left out. */
+  runtime?: typeof CONTAINER_RUNTIMES[number];
+  /** Directories of this machine given to every body's container (worker-mounts.ts). */
+  mounts?: readonly FixedMount[];
   setupTimeoutMs?: number;
   cleanupTimeoutMs?: number;
 }
@@ -26,17 +35,38 @@ function deadline(value: number | undefined, fallback: number) {
   if (!validDeadline(result, STEP_DEADLINE_MAX_MS)) throw new Error('Invalid Docker deadline');
   return result;
 }
-function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, config: ContainerConfig) {
+/** The mounts of one job's container, as the engine is asked for them and as it must report them. */
+function jobMounts(job: WorkerAssignment, config: ContainerConfig, body: readonly BodyMount[]) {
+  const asked: { Type: string; Source: string; Target: string; ReadOnly?: boolean }[] = [];
+  if (job.run?.nestedContainers) {
+    if (!config.nestedSocket?.startsWith('/') || config.nestedSocket.includes('\0')) throw new Error('Nested containers unavailable');
+    asked.push({ Type: 'bind', Source: config.nestedSocket, Target: NESTED_SOCKET_TARGET });
+  }
+  for (const mount of body) asked.push({ Type: 'bind', Source: mount.source, Target: mount.target, ReadOnly: mount.readOnly });
+  return asked;
+}
+/** The created container has exactly the mounts the worker asked for: each one a bind mount of the same
+ * source at the same place, writable or not as asked, and nothing else (an image's declared volume, a
+ * mount an engine adds by itself). The order is the engine's own. */
+function ownMounts(inspect: unknown, asked: ReturnType<typeof jobMounts>): boolean {
+  if (!inspect || typeof inspect !== 'object' || !('Mounts' in inspect) || !Array.isArray(inspect.Mounts) || inspect.Mounts.length !== asked.length) return false;
+  const left = new Map(asked.map(mount => [mount.Target, mount]));
+  for (const found of inspect.Mounts as unknown[]) {
+    if (!found || typeof found !== 'object' || !('Destination' in found) || typeof found.Destination !== 'string') return false;
+    const mount = left.get(found.Destination);
+    if (!mount || !('Type' in found) || found.Type !== 'bind' || !('Source' in found) || found.Source !== mount.Source) return false;
+    // The nested socket is asked for without saying; a directory says whether it may be written to.
+    if (mount.ReadOnly !== undefined && (!('RW' in found) || found.RW !== !mount.ReadOnly)) return false;
+    left.delete(found.Destination);
+  }
+  return left.size === 0;
+}
+function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, config: ContainerConfig, mounts: ReturnType<typeof jobMounts>) {
   if (!image.trim() || /[\s\0]/.test(image) || !plan.command || !plan.cwd.startsWith('/')) throw new Error('Invalid container command');
   const bindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
   for (const { address, port } of job.run?.ports ?? []) {
     if (!isIP(address) || !Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error('Invalid container port');
     (bindings[`${port}/tcp`] ??= []).push({ HostIp: address, HostPort: String(port) });
-  }
-  const mounts: { Type: string; Source: string; Target: string }[] = [];
-  if (job.run?.nestedContainers) {
-    if (!config.nestedSocket?.startsWith('/') || config.nestedSocket.includes('\0')) throw new Error('Nested containers unavailable');
-    mounts.push({ Type: 'bind', Source: config.nestedSocket, Target: '/var/run/docker.sock' });
   }
   // A container body's scratch directory is the container's own temporary directory: it is private to the
   // body because the container is, and it is removed with the container.
@@ -50,7 +80,7 @@ function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, c
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },
     ExposedPorts: Object.fromEntries(Object.keys(bindings).map(key => [key, {}])),
-    HostConfig: { AutoRemove: false, Privileged: false, PublishAllPorts: false, Runtime: 'runc',
+    HostConfig: { AutoRemove: false, Privileged: false, PublishAllPorts: false, Runtime: config.runtime ?? CONTAINER_RUNTIMES[0],
       LogConfig: { Type: 'none', Config: {} },
       PortBindings: bindings, Mounts: mounts,
       DeviceRequests: job.run?.gpu ? [{ Driver: '', Count: -1, Capabilities: [['gpu']] }] : [] },
@@ -101,6 +131,8 @@ function output(socket: Duplex, signal: AbortSignal) {
 export function containerWorkerExecutor(config: WorkerRunnerConfig & {
   build: WorkerCommand; buildTimeoutMs?: number;
   container: ContainerConfig;
+  /** When present, every job requires an exact account/harness sign-in directory (worker-mounts.ts). */
+  accountLogins?: AccountLogins;
   /** This machine's id, as its jobs name it: the containers it may end at start carry it as a label. */
   box: string;
   /** For the build commands, which are processes: see commandWorkerExecutor. */
@@ -108,6 +140,10 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
 }, dependencies: { engine?: DockerEngine; builder?: WorkerExecutor; name?: () => string } = {}): WorkerExecutor {
   const fixed = structuredClone(config);
   const runner = workerRunner(fixed);
+  if (fixed.container.runtime !== undefined && !CONTAINER_RUNTIMES.includes(fixed.container.runtime)) throw new Error('Invalid container runtime');
+  // Checked and fixed here, before the builder takes the state directory or anything asks the engine: a
+  // worker whose mounts cannot be used is not made (WorkerStop 'mounts').
+  const mountsFor = bodyMounts({ accountLogins: fixed.accountLogins, mounts: fixed.container.mounts });
   const engine = dependencies.engine ?? dockerEngine(fixed.container.socket);
   const builder = dependencies.builder ?? commandWorkerExecutor(fixed);
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
@@ -133,11 +169,12 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
         }
       }
     },
-    build: (job, signal, repositoryInput) => { runner(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
+    build: (job, signal, repositoryInput) => { runner(job); mountsFor(job); return repositoryInput?builder.build(job,signal,repositoryInput):builder.build(job,signal); },
     start(job, image, signal): WorkerBody {
       const assignment = structuredClone(job), plan = runner(assignment);
       if (!plan || signal.aborted) throw new Error('Container runner unavailable');
-      const spec = createSpec(assignment, image, plan, fixed.container);
+      const mounts = jobMounts(assignment, fixed.container, mountsFor(assignment));
+      const spec = createSpec(assignment, image, plan, fixed.container, mounts);
       const name = `loom-${(dependencies.name ?? randomUUID)()}`;
       if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');
       const abort = new AbortController();
@@ -166,11 +203,7 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
           // Images may declare VOLUME entries. Check the actual created mounts,
           // not just our requested HostConfig, before any image code can run.
           const inspect = await engine.json('GET', `/containers/${id}/json`, undefined, abort.signal);
-          if (!inspect || typeof inspect !== 'object' || !('Mounts' in inspect) || !Array.isArray(inspect.Mounts)
-            || inspect.Mounts.length !== (assignment.run?.nestedContainers ? 1 : 0)
-            || inspect.Mounts.some(mount => !mount || typeof mount !== 'object'
-              || mount.Type !== 'bind' || mount.Source !== fixed.container.nestedSocket || mount.Destination !== '/var/run/docker.sock'))
-            throw new Error('Unexpected container storage');
+          if (!ownMounts(inspect, mounts)) throw new Error('Unexpected container storage');
           socket = await engine.attach(id, abort.signal);
           logs = output(socket, abort.signal);
           if (abort.signal.aborted) throw new Error('Container cancelled');

@@ -242,3 +242,42 @@ it('takes a sign-in deadline up to the relay\'s own and no longer', async () => 
   const over = fixture(); over.read.mockImplementation(async path => path === '/config' ? JSON.stringify(signIn(RELAY_MS + 1)) : 'private-token');
   expect(await workerProgram(over)).toBe(WORKER_STOP.config[0]); expect(over.run).not.toHaveBeenCalled();
 });
+
+// Houses: the runtime's name, sign-in directories and fixed mounts (worker-mounts.ts holds the rules).
+it('passes the engine runtime, the sign-in directories and the fixed mounts to container execution as they were written', async () => {
+  const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
+  const configured = { ...config, accountLogins: { subscription: { claude: { source: '/logins/subscription', target: '/home/agent/.claude' } } },
+    container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: [{ source: '/house/stamps', target: '/house/stamps', readOnly: false }, { source: '/house/mirror', target: '/mirror' }] } };
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }); expect(f.executor).not.toHaveBeenCalled();
+});
+for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { container: { socket: '/s', runtime: '' } },
+  { container: { socket: '/s', mounts: [{ source: '/a', target: '/b', readOnly: 'yes' }] } }, { container: { socket: '/s', mounts: [{ source: '/a', target: '/b', propagation: 'shared' }] } },
+  { container: { socket: '/s', mounts: [{ source: '/a' }] } }, { container: { socket: '/s', mounts: { source: '/a', target: '/b' } } },
+  { container: { socket: '/s' }, accountLogins: { a: { claude: { source: '/a', target: '/b', readOnly: true } } } },
+  { container: { socket: '/s' }, accountLogins: { a: { claude: { source: '/a' } } } }, { container: { socket: '/s' }, accountLogins: { a: { source: '/a', target: '/b' } } },
+  // Sign-in directories are mounts: a worker whose bodies are processes cannot give one to one job only.
+  { accountLogins: { a: { claude: { source: '/a', target: '/b' } } } }, { accountLogins: {} }])
+  it('rejects a runtime it does not know, a misshapen mount and sign-in directories without container bodies, before the token is read', async () => {
+    const f = fixture(), containerExecutor = vi.fn();
+    f.read.mockResolvedValue(JSON.stringify({ ...config, ...patch }));
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]);
+    expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  });
+it('stops before any work is claimed when a mounted directory cannot be used, with its own line and code and no path in it', async () => {
+  const line = 'Worker stopped: a directory the configuration mounts into containers cannot be used: each must be an existing directory of this user, named by an absolute path with no symbolic link in it, and none may overlap another\n';
+  // The real container executor, so the real checks: nothing here needs an engine, and the checks come
+  // before the state directory is taken.
+  for (const patch of [{ accountLogins: { subscription: { claude: { source: '/loom-test/private-missing-login', target: '/home/agent/.claude' } } } },
+    { container: { socket: '/fake/docker.sock', mounts: [{ source: 'private-relative', target: '/house/x' }] } },
+    { container: { socket: '/fake/docker.sock', mounts: [{ source: '/loom-test/private-missing-mount', target: '/var/run/docker.sock' }] } }]) {
+    const f = fixture();
+    f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, container: { socket: '/fake/docker.sock' }, ...patch }) : 'private-token');
+    expect(await workerProgram(f)).toBe(52);
+    expect(f.error).toHaveBeenCalledExactlyOnceWith(line);
+    expect(f.run).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
+  }
+  expect(WORKER_STOP.mounts).toEqual([52, line.slice('Worker stopped: '.length, -1)]);
+  expect(line).not.toMatch(/private|loom-test/);
+});

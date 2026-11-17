@@ -147,7 +147,7 @@ said whose it was, and no stage is guessed.
 | 24 | worker enroll | Registering the body's credential with loom. |
 | 25 | worker release | Handing the started body its input. |
 | 26 | worker reap | The body's process could not be watched or reaped to its end. |
-| 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"). |
+| 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"), or no sign-in directory for the job's account and harness (see "Worker-local account sign-in directories"). |
 | 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
@@ -179,6 +179,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
+| 52 | a directory the configuration mounts into containers cannot be used: each must be an existing directory of this user, named by an absolute path with no symbolic link in it, and none may overlap another (see "Mounted directories" under "Container bodies") |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker
@@ -247,7 +248,9 @@ still runs as the configured worker command; its `build` result must name an
 image already present on that engine. The runner's command, arguments, directory
 and explicit environment apply **inside** the image. The image must contain a
 runner that consumes the same JSON envelope. This mode does not supply native
-harness adapters, account profiles, startup secrets or tool-denial enforcement.
+harness adapters, startup secrets or tool-denial enforcement. A sign-in is
+supplied only as a configured directory (see "Worker-local account sign-in
+directories").
 Docker retains environment values baked into the image; configured values
 override matching image keys. The worker's ambient environment is never copied
 into the container. Images and their baked settings are trusted house material.
@@ -258,17 +261,70 @@ unexpected mounts cause rejection and removal before starting. It releases
 the assignment on stdin only after loom's running
 acknowledgement. It requests GPU devices only for `run.gpu`; it publishes only
 the assignment's explicit TCP address/port pairs, mapping each to the same port
-inside. It uses the `runc` runtime, disables privileged mode and automatic port
-publishing, and disables Docker's persistent log driver. Output is streamed into
+inside. It asks for the `runc` runtime by name, or for `crun` when
+`container.runtime` says `"crun"`; no other name is accepted and nothing is
+discovered, so the operator states which of the two their engine has. It
+disables privileged mode and automatic port publishing, and disables Docker's persistent log driver. Output is streamed into
 the bounded in-memory log tail. A failed capability request fails the launch;
 there is no fallback to a host runner or a container with broader settings.
 
 Nested containers additionally require a local `container.nestedSocket` path.
 Only assignments with `run.nestedContainers` receive that socket at
 `/var/run/docker.sock`. This is broad authority over that configured engine;
-the local operator must deliberately opt in. No socket or host directory is
-otherwise mounted. The worker never discovers a socket or credentials from HOME
-or the ambient environment.
+the local operator must deliberately opt in. No socket is otherwise mounted, and
+no host directory except those the configuration names (next section). The
+worker never discovers a socket or credentials from HOME or the ambient
+environment.
+
+### Mounted directories
+
+`container.mounts` lists directories of this machine that every body's container
+on it is given: a little state a house keeps between bodies, or a read-only
+mirror of a repository.
+
+```json
+{
+  "container": {
+    "socket": "/run/user/1000/podman/podman.sock",
+    "runtime": "crun",
+    "mounts": [
+      {"source": "/var/lib/house/stamps", "target": "/house/stamps", "readOnly": false},
+      {"source": "/var/lib/house/mirror", "target": "/house/mirror"}
+    ]
+  }
+}
+```
+
+`readOnly` is true unless the entry says false. The rules below are checked once,
+when the worker starts. A configuration that breaks one stops the worker with
+exit code 52 before it takes any work. The same rules hold for the sign-in
+directories of `accountLogins`.
+
+- `source` is an absolute path to an existing directory that belongs to the
+  worker's user. Neither it nor any directory above it is a symbolic link: it is
+  written as its real path, with no `.`, `..`, doubled or trailing slash.
+- `target` is an absolute path inside the container, written as plainly, and not
+  `/`.
+- No target is another mount's target, or inside it. None is, holds or is inside
+  a sign-in directory's target or `/var/run/docker.sock`.
+- No mount's source is a sign-in directory, holds one or is inside one, and no
+  two sign-in entries name directories that are the same or inside one another.
+  Otherwise a body could be handed another account's sign-in under another
+  name.
+
+The paths are fixed when the worker starts; a later change to the file changes
+nothing until the worker is started again. The directory itself is looked at
+only then. One that is removed or replaced afterwards is the operator's to
+answer for.
+
+After creating a container and before starting it, the worker reads the
+container's mounts back from the engine. They must be exactly the ones it asked
+for: each a bind mount of the same source at the same target, writable or
+read-only as asked, and no others. Anything else, an image's declared volume
+included, removes the container unstarted and fails the launch (exit code 23).
+
+The paths are this machine's own. They are in no log line, no error and nothing
+sent to loom.
 
 `container.setupTimeoutMs` and `container.cleanupTimeoutMs` each default to
 30,000 and accept integers from 1 through 300,000. Setup bounds create, attach
@@ -285,6 +341,13 @@ The wire format follows Docker's [Engine API](https://docs.docker.com/reference/
 create, attach, start, wait and remove endpoints. The worker uses the explicitly
 configured local Unix socket and unversioned routes; it does not start or install
 an engine.
+
+Another engine that serves the same routes on a Unix socket is used the same
+way. Rootless podman 5.4.2 was checked: it takes these requests, reports a
+container's mounts in the same form, and honours the `none` log driver. It
+ignores the runtime's name and runs the runtime it is itself configured with,
+whichever of the two the worker asks for. It also creates a bind mount's source
+directory when that is missing, where Docker refuses the container.
 
 ### Worker-local account runner bindings
 
@@ -320,11 +383,54 @@ The builder retains its own explicit environment, and the body receives the
 selected command's environment plus the existing account/model/harness startup
 envelope after the running acknowledgement. The same selection applies to
 container entrypoint, arguments and environment. Container paths refer to files
-inside its trusted image; this adds no host credential/profile mounts.
+inside its trusted image, or to a directory mounted as the next section says;
+`accountRunners` itself mounts nothing.
 
 These bindings select a configured runner. That program must still implement its
 native harness's model choice and tool restrictions; this feature does not infer
 provider CLI flags or supply an account profile that is not locally configured.
+
+### Worker-local account sign-in directories
+
+A subscription sign-in is a directory of files that the provider's program
+rewrites when it renews. It cannot be baked into an image. With container
+bodies, `accountLogins` names that directory for each account, keyed like
+`accountRunners`: first by the account ID, then by harness.
+
+```json
+{
+  "accountLogins": {
+    "subscription-a": {
+      "claude": {"source": "/home/worker/logins/subscription-a/claude", "target": "/home/agent/.claude"}
+    },
+    "subscription-b": {
+      "claude": {"source": "/home/worker/logins/subscription-b/claude", "target": "/home/agent/.claude"}
+    }
+  }
+}
+```
+
+A job placed on an account, for a harness, gets exactly that one directory in
+its container, mounted read-write so the program can renew. No other account's
+directory, and no other harness's, is ever mounted into that container. Two
+accounts may use the same `target`, since only one of them is in any container.
+
+When this map is present, every job needs an exact account/harness entry. A job
+without one fails before the builder or the body starts (exit code 27). It never
+runs without a sign-in directory and never with another account's.
+
+`source` and `target` follow the rules of "Mounted directories", are checked
+when the worker starts (exit code 52) and are fixed from then on. The mount is
+one of those the worker expects when it reads the created container's mounts
+back. `accountLogins` needs `container`: a body run as a process is not given
+anything by a mount, so a configuration with `accountLogins` and no `container`
+is not valid (exit code 41).
+
+Two bodies on the same account and harness share the one directory, as two
+processes signed in to one account do (see "Two bodies on one account share one
+sign-in directory" in [`../accepted-tradeoffs.md`](../accepted-tradeoffs.md)).
+With a rootless engine the worker's user is the container's root, so the
+image's runner must run as a user that can write the directory.
 
 ## Home current-job selection
 

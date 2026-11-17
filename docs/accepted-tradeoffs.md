@@ -360,6 +360,23 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A harness that reports the account it ran on. The worker could then
   compare it with the placed one and fail the job.
 
+### Two bodies on one account share one sign-in directory
+
+- **What.** A container body is given its account's sign-in directory read-write (`accountLogins`). Two
+  bodies on the same account and harness, at once or one after the other, are given the same directory.
+  Each can read and change what the other's provider program wrote there, and two programs renewing the
+  sign-in at once write the same files.
+- **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
+  `src/runtime/worker-container.ts`.
+- **What is enforced.** A container gets the directory of its own job's account and harness and no other.
+  A fixed mount or another entry that names the same directory, one above it or one inside it stops the
+  worker at start. With `accountLogins` present, a job with no exact entry does not run.
+- **Why the rest is accepted.** A sign-in is one set of files per account, which the provider's program
+  must be able to rewrite. Two processes signed in to one account on a host share them in the same way
+  today, and both bodies already act as that account.
+- **What would change the answer.** A provider program that takes its sign-in from a file it does not
+  rewrite, or renews through the worker. Each body could then have a copy of its own.
+
 ### Bodies a killed worker left that cannot be told from a stranger
 
 - **What.** A worker that starts ends what a killed worker left (`src/runtime/worker-left.ts`). Three
