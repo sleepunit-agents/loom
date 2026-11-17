@@ -33,7 +33,7 @@ it('does not trust names, copies, JSON, other registries, external doors or ende
     expect(app.operations.call('direct', viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
     expect(maySee(viewer, {member:'sam'}, sharing)).toBe(false);
   }
-  for (const door of ['http', 'socket'] as const) {
+  for (const door of ['http'] as const) {
     expect(app.operations.call(door, module.viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
     expect(await app.operations.callAsync(door, module.viewer, 'tasks.private', {})).toMatchObject({code:'denied'});
   }
@@ -58,7 +58,7 @@ it('keeps schemas, door restrictions and asynchronous preparation for installed 
   expect(await module.callAsync('tasks.prepared',{value:'bad'})).toMatchObject({code:'invalid'});
   expect(await module.callAsync('tasks.prepared',{value:1})).toEqual({ok:true,value:42});
   expect(prepare).toHaveBeenCalledOnce();expect(may).not.toHaveBeenCalled();
-  app.operations.register({name:'tasks.window',doors:['socket'],input:z.object({}),output:z.null(),may,run:()=>null});
+  app.operations.register({name:'tasks.window',doors:['http'],input:z.object({}),output:z.null(),may,run:()=>null});
   expect(module.call('tasks.window',{})).toMatchObject({code:'denied'});
 });
 it('retains prepared write admission, commit and replay without policy checks', async()=>{

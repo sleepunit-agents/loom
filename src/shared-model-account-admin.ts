@@ -24,7 +24,7 @@ export function registerModelAccountAdmin(operations:Operations,db:DataDatabase,
  };
  const changed=new WeakMap<object,string>();
  const committed=(input:{account:string;box:string})=>{const id=changed.get(input);if(id){changed.delete(input);accountObservationCommitted(db,id);}};
- const common:{write:boolean;recheckPolicy:boolean;doors:Door[]}={write:true,recheckPolicy:true,doors:['http','socket']};
+ const common:{write:boolean;recheckPolicy:boolean;doors:Door[]}={write:true,recheckPolicy:true,doors:['http']};
  operations.register({...common,name:'runtime.accountCreate',
   input:z.object({provider:name,label:name}).strict(),output:z.object({id:z.string()}).strict(),
   may:(viewer,input)=>viewer.kind==='member'&&mayCreate(viewer,{type:'runtime.model-account',member:viewer.id},sharedSharing(db))&&roles().some(role=>role.provider===input.provider),

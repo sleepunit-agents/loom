@@ -105,7 +105,7 @@ function rows(rule: Rule): Row[] {
 const lookup: ParentLookup = (table, id) => db.select().from(parents[table]).where(eq(parents[table].id, id)).get();
 
 const named: [string, Rule][] = [...Object.entries(tableRules), ['inboxVolume', rules.inboxVolume], ['labelled', rules.labelled], ['inTalk', rules.inTalk], ['waitsOnReadable', rules.waitsOnReadable], ['answers', rules.answers],
-  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project]];
+  ['stopJob', rules.stopJob], ['agentItself', rules.agentItself], ['asksSignIn', rules.asksSignIn], ['currentMember', rules.currentMember], ['currentViewer', rules.currentViewer], ['project', rules.project]];
 describe.each(named)('rule %s', (_name, rule) => {
   it('gives the same answer as a predicate and as a SQL filter, for every viewer and row', () => {
     const candidates = rows(rule), sharing = sharedSharing(db), seen = new Set<boolean>();

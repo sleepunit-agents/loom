@@ -30,7 +30,11 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
   async function send(action: () => Promise<void>) {
     if (active.current) return;
     active.current = true; setBusy(true); setError('');
-    try { await action(); } catch { setError('Could not save your answer. Reconnect and try again.'); }
+    // A refusal is the program's own answer, in words written for the person answering: say it as it is.
+    try { await action(); } catch (error) {
+      const refused = error as { name?: unknown; message?: unknown } | null;
+      setError(refused?.name === 'WorkRefused' && typeof refused.message === 'string' ? refused.message : 'Could not save your answer. Reconnect and try again.');
+    }
     finally { active.current = false; setBusy(false); }
   }
   return <>
@@ -57,6 +61,7 @@ function Details({ approval: a, snapshot, actions, renderChange, inline = false 
     <section><h3>If you deny</h3><p>{a.ifNo}</p></section>
     {!change && a.changeSummary && <section><h3>Exactly what will change</h3><p className="whitespace-pre-wrap">{a.changeSummary}</p></section>}
     {change}
+    {a.problem && <section><h3>This cannot be allowed as it stands</h3><p>{a.problem}</p></section>}
     <section><h3>Exactly what this allows</h3><p>{a.kind}: {a.target}</p></section>
     <Answer key={a.id} approval={a} actions={actions} />
     {a.decidedBy && <p>Answered by {a.decidedBy}</p>}

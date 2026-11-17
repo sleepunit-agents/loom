@@ -39,7 +39,7 @@ it('uses shared receipts across registries and doors without bootstrapping any l
   s.operations.close();
   const reopened = new Operations(s.client, s.clock, s.committed, s.options);
   cleanup.push(() => reopened.close()); s.register(reopened);
-  expect(reopened.call('socket', owner, 'example.save', { name: 'pond' }, 'retry')).toEqual(result);
+  expect(reopened.call('http', owner, 'example.save', { name: 'pond' }, 'retry')).toEqual(result);
   expect(reopened.call('direct', owner, 'example.save', { name: 'changed' }, 'retry')).toMatchObject({ code: 'conflict' });
   expect(reopened.call('http', other, 'example.save', { name: 'another' }, 'retry').ok).toBe(true);
   expect(s.run).toHaveBeenCalledTimes(2);
@@ -103,7 +103,7 @@ it('recovers into shared receipts with the original deadline and preserves curre
   expect(s.operations.recoverWrite(owner, { viewer: caller, id: 'external', name: receipt.operation,
     inputHash: 'different', expires })).toMatchObject({ code: 'conflict' });
   allowed = false;
-  expect(await s.operations.callAsync('socket', owner, 'example.recover', {}, 'external')).toMatchObject({ code: 'denied' });
+  expect(await s.operations.callAsync('http', owner, 'example.recover', {}, 'external')).toMatchObject({ code: 'denied' });
   s.clock.advance(1234);
   expect(s.store.get(caller, 'external')).toBeUndefined();
 });
@@ -135,7 +135,7 @@ it('keeps committed effects and receipts successful when publication throws, wit
   expect(result).toEqual({ ok: true, value: { saved: 'pond' } });
   expect(s.client.prepare('SELECT * FROM projects').all()).toEqual([{ id: 'pond', name: 'pond', removed_at: null }]);
   expect(s.client.prepare('SELECT count(*) AS n FROM operation_results').get()).toEqual({ n: 1 });
-  expect(s.operations.call('socket', owner, 'example.save', { name: 'pond' }, 'retry')).toEqual(result);
+  expect(s.operations.call('http', owner, 'example.save', { name: 'pond' }, 'retry')).toEqual(result);
   expect(s.run).toHaveBeenCalledTimes(1);
   expect(s.committed).toHaveBeenCalledTimes(1);
 });

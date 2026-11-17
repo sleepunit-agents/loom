@@ -23,13 +23,51 @@ Entries are grouped by the part of the program they belong to.
   `decidedBy`, run settings are checked against what that owner may offer, and a rule whose setter is no
   longer an owner answers nothing. A card with nobody known behind it (a terminal session, a room) always
   asks. A card that changes a rule always asks, so a rule cannot widen the rules. If the last answer to the
-  same thing was a deny, it asks again.
+  same thing was a deny, it asks again. If the change cannot be made on the rule's word (its setter may not
+  make that change, or it cannot be made at all), the rule has answered nothing and the card waits for an
+  owner. An agent whose card a rule answers is told the card's state, so it learns whether its change was
+  made: that is the result of a change the owner let it make without asking, not a read.
 - **Checked.** A body working for a member who is not an owner: the household's own rules (even `*`) do not
   answer; a rule naming that member does, within its kind and scope only; it stops when its setter stops
   being an owner or the member leaves. Test: `src/shared-household-proposals.test.ts`, "answers a card for
   someone who is not an owner only by a rule an owner set naming that person".
 - **What would change the answer.** If rules could be set by anyone but an owner, or if a rule with no
   person ever answered for a member who is not an owner.
+
+### A household proposal that cannot be made is still filed
+- **What.** `household.propose` answers an agent the same way whatever is in the household: it does not
+  refuse because the thing named is missing, is already as asked, or could never be allowed. The card that
+  is filed holds the change asked for and not what it would replace. So an owner can be handed a card that
+  changes nothing or cannot be allowed. They are told what it would replace, and what already stands
+  against it, when they open it (`household.proposal`, owners only); their Allow is refused in the words of
+  the rule the change breaks, and the card stays until they deny it.
+- **Where.** `src/shared-household-proposals.ts` (the file header, `file`, `check`, `refusal`); the owner's
+  view is `web/src/data/work-proposal.ts`.
+- **Why accepted.** An agent may name anything in a proposal (a member, a secret rule, a token by its
+  label, a machine) and may read almost none of it. Any answer that depended on what is there would let it
+  guess and be told: "that is how it already is" confirms a member's role, "no live token has that label"
+  lists labels. The card is read by the agent and by members who have it, so the replaced value cannot be
+  on it either. An owner denying a card that cannot be made costs one tap.
+- **What is kept.** Allow still refuses a card when what it would replace has changed since it was filed.
+  The card carries a keyed digest of that value (a random part per card, under the household's Comms key),
+  which tells a reader nothing. A program run with no Comms key makes a key that lasts as long as the
+  program, so there a card left waiting over a restart is refused as changed and is asked for again.
+- **What would change the answer.** Agents being given read access to what they propose to change. Then
+  filing can refuse for what that agent may read, and the card can show it.
+
+### The notice of a person's own action is written outside any operation
+- **What.** After a signed-in window's call to a registered write, the command door writes one row to
+  `action_results` for the caller ("Saved in Tasks", "Could not save in Tasks"), whether the call
+  succeeded, failed or was denied. That insert is not a registered operation and has no `may`.
+- **Where.** `recordActionResult` in `src/shared-action-results.ts`, called by `executeCommand` in
+  `src/shared-root.ts`.
+- **Why accepted.** It is a notice about a call, so it cannot be part of that call: a refused or failed
+  operation rolls back, and the notice must still be written. The row is the caller's own, its text is one
+  of two fixed sentences with the area's name, and nothing of the request, the result or the failure goes
+  into it. It is written through the one write queue. Nothing the caller chooses decides what is written
+  or for whom.
+- **What would change the answer.** The notice carrying anything from the request or its result, or being
+  written for anyone but the caller.
 
 ### A body keeps the agent's own knowledge, whoever it is working for
 - **What.** A body doing a member's private work reaches a project, and what is labelled with its agent,
@@ -114,7 +152,10 @@ Entries are grouped by the part of the program they belong to.
   receipt. Each route carries its own gate.
 - Why accepted: every one of them answers with a credential (a token, a link, a cookie), and a registered
   write's answer is kept as a retry receipt for thirty days. The gates use the same authentication as every
-  other door, refuse program tokens, and are checked before, inside and after the write.
+  other door, refuse program tokens, and are checked before, inside and after the write. The routes that
+  hand out a credential (a token, a program token, a link, a passkey) also ask for a new proof of identity
+  through one gate, `newProof` in `src/core/data/authentication.ts`: a bearer, or a person's own browser
+  that proved who it is in the last ten minutes.
 - What would change it: a dispatcher that can run a write without keeping its answer. Then these become
   operations and the gates become `may`.
 
@@ -151,22 +192,52 @@ Entries are grouped by the part of the program they belong to.
 ### An automated browser is recognised by its own name when nobody said it was one
 - Where: `isAgentBrowser` in `src/core/data/authentication.ts`; `startBrowser` in
   `src/core/signin/shared-browser.ts`.
-- What: a browser that calls itself HeadlessChrome gets the short session and may not make links or add
-  passkeys. One that sends another User-Agent is treated as a person's unless its link was made with
-  `loom signin --agent`.
+- What: a browser that calls itself HeadlessChrome gets the short session and may not make tokens, make
+  links or add passkeys (`newProof`). One that sends another User-Agent is treated as a person's unless its
+  link was made with `loom signin --agent`.
 - Why accepted: a link is a member's credential, and whoever is handed one is that member. The limit that
   can be relied on is the one the link's maker sets; the User-Agent check only catches the automation that
   does not hide.
 - What would change it: agents being able to ask for links themselves.
 
 ### Root keys are readable on disk by their own process
-- Where: `push-vapid.json` in the home (`src/core/signin/notification-key.ts`).
-- What: the push-signing private key is stored in clear.
-- Why accepted: the program has to read it unattended. The file is created exclusively with mode 0600 and
-  read through `privateBytes`, which refuses a file that is not this OS user's, has another mode, or has a
-  second link. Whoever can read the home as that user already holds the database.
+- What: five keys are kept in clear, in files in the home. They are what the other stored secrets rest on:
+  a secret is otherwise stored sealed under one of them or as a fingerprint, apart from the exceptions
+  that have their own entries here.
+  - `push-vapid.json`: the private key that signs pushes to browsers
+    (`src/core/signin/notification-key.ts`).
+  - `comms.key`: the age identity that seals conversation words, and keys the digests made from them
+    (`src/pieces/comms/crypto.ts`).
+  - `secret-holder/identity`: the age identity that seals the household's stored secrets
+    (`src/shared-holder-storage.ts`, `src/pieces/secrets/holder-store.ts`).
+  - `secret-holder/fingerprint.key`: the key for the fingerprints the holder keeps of secret values
+    (same files).
+  - `secret-holder/daemon-fingerprint.key`: the key the holder program uses for the fingerprints it
+    hands to loom (`src/shared-holder-program.ts`).
+- Why accepted: the program has to read them unattended, with nobody there to type a passphrase. Each
+  file is created exclusively with mode 0600. The push key and the three holder keys are read through
+  `privateBytes`, which refuses a file that is not this OS user's, has another mode, or has a second link;
+  the holder's directory must be private too, and the holder is a separate process that never opens the
+  database. `comms.key` is read by `readKey`, which refuses a symbolic link, anything that is not a regular
+  file, and any mode that lets group or others in; it does not check the owner or the link count. Whoever
+  can read the home as that user already holds the database.
 - What would change it: running loom where an OS keyring or a hardware key is available to an unattended
-  service.
+  service. Then all five move there together.
+
+### A browser's push subscription keys are stored in clear
+- Where: `notification_devices.keys` in the household database, written by `notifications.subscribe` and
+  read by the sender (`src/core/signin/shared-notifications.ts`).
+- What: each enrolled browser's push keys (`p256dh` and `auth`) are kept as they were given, beside the
+  browser's push endpoint. No read door returns them: a member sees their devices by name and date only.
+- Why accepted: loom must present these keys to the push service to encrypt each push, so they cannot be
+  kept as a fingerprint. They could be sealed under the Comms key, but that key is a file in the same home
+  as the database, so sealing would protect only a copy of the database taken without the home, and against
+  that the keys are worth little: they encrypt a message to that one browser, and sending one also needs
+  the push-signing key, which is not in the database. A push carries no words (a fixed title and a link to
+  the Inbox). Sealing would also make enrolling a browser wait on the key, where it is one synchronous
+  write now.
+- What would change it: pushes carrying words, or the root keys moving out of the home (the entry above).
+  Then these are sealed under the key that moved.
 
 ### Passkey challenges are kept in memory and can be pushed out by a sustained flood
 - Where: `src/core/signin/shared-passkeys.ts`.
@@ -390,12 +461,16 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: operations gaining a result that is never stored. Then this becomes one.
 
 ### Policy is asked about the person a request names
-- What: two doors build a viewer from an id in the request and ask the read rules about it: asking
-  someone about a task (`tasks.command` `ask`) and a body's question to a person.
-- Where: `src/shared-task-access.ts`, `src/shared-conversation-questions.ts`, through `addressee` in
-  `src/policy.ts`.
+- What: three doors build a viewer from a member's id and ask the read rules about it: asking someone
+  about a task (`tasks.command` `ask`), a body's question to a person, and a body setting how loudly its
+  member's own inbox item arrives. The first two take the id from the request; the third takes it from the
+  body's credential.
+- Where: `src/shared-task-access.ts`, `src/shared-conversation-questions.ts`, `src/shared-tempo-access.ts`
+  (`volume`), through `addressee` in `src/policy.ts`.
 - Why: the question is "could the person this is addressed to read it", so that nothing is sent to
-  someone about a record they may not see. The answer only ever narrows what the caller may do.
+  someone about a record they may not see, and a body changes the volume only of an item its member
+  reads. The answer only ever narrows what the caller may do: what allows the caller is its own rule
+  (`rules.inboxVolume` for the third, whose body half is `forItsMember`).
 - Would change it: any use of such a viewer to allow, read or write something. `addressee` says so.
 
 ## Stored data

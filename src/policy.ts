@@ -189,11 +189,17 @@ const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('age
  * name, reading the state of its own request or of a secret handed to its own job. Asking grants nothing:
  * who answers a request is the household owners' (rule for `secretRequests`) or a secret rule they set. */
 const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
+/** Who may ask for a model account to be signed in on a machine. A member asks for an account and a machine
+ * they may act on: their own, or any as a household owner. A body asks on the word of the member its work
+ * is for, with that member's reach and nobody else's: not its agent's other owners', not the household
+ * owners'. Asking finishes nothing: the account's owner still has to sign in themselves. */
+const signInAsker: Rule = all(ownedByMember('accountOwner'), ownedByMember('boxOwner'));
+const asksSignIn: Rule = any(signInAsker, { is: 'forItsMember', rule: signInAsker });
 /** A member in the household now, for what every member may do for themselves (their own preferences,
  * passkeys, browsers and devices). */
 const currentMember: Rule = all(viewerIs('member'), currentViewer);
 
-export const rules = { labelled, conversation, inTalk, waitsOnReadable, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, currentMember, currentViewer,
+export const rules = { labelled, conversation, inTalk, waitsOnReadable, task, trigger, recipient, addressesRecipient, inboxVolume, answers, stopJob, agentItself, asksSignIn, currentMember, currentViewer,
   agentRoster, agentSetup, ownedByMember, householdOwner, project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */

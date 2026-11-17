@@ -44,6 +44,7 @@ import { registerSharedSecretCommands } from './shared-secret-commands.js';
  * the connection; this never bootstraps legacy tables or opens another store. */
 import { sharedTempoSettings } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
+import { createHmac, randomBytes } from 'node:crypto';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
@@ -141,6 +142,10 @@ export function sharedRoot(options: {
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
   // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
   const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume'] } = {};
+  // The household's own key when it has one. Without one (a program run with no Comms) the key lasts as long
+  // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
+  const proposalKey = options.commsKey ? undefined : randomBytes(32);
+  const proposalDigest = (words: string) => proposalKey ? createHmac('sha256', proposalKey).update(words).digest('hex') : options.commsKey!.hash('household-proposal\0' + words);
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
     { secrets: { setRule: input => late.requests!.setRule(input) },
@@ -148,7 +153,8 @@ export function sharedRoot(options: {
       machines: { revoke: id => late.revokeMachine!(id) },
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
       tempo: () => late.tempo!(),
-      measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) } });
+      measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
+      digest: proposalDigest });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;

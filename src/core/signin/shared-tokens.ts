@@ -3,7 +3,7 @@
  * Issuance is deliberately not retryable: a lost response requires a new label.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
-import { credentialFingerprint, currentToken } from '../data/authentication.js';
+import { credentialFingerprint, currentToken, tokenLive } from '../data/authentication.js';
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
@@ -36,8 +36,7 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
   const add = (value: z.infer<typeof sharedTokenInput>, fingerprint: string, madeFrom?: string) => {
     const now = clock.now();
     if (value.expiresAt && Date.parse(value.expiresAt) <= now) throw new OperationError('invalid', 'Expiry must be in the future');
-    if (db.select().from(tokens).where(and(eq(tokens.label, value.label), isNull(tokens.revokedAt))).all()
-      .some(row => !row.expiresAt || Date.parse(row.expiresAt) > now)) throw new OperationError('conflict', 'A live token already has that label');
+    if (db.select().from(tokens).where(eq(tokens.label, value.label)).all().some(row => tokenLive(row, now))) throw new OperationError('conflict', 'A live token already has that label');
     if (value.kind === 'owner' && !db.select().from(members).where(eq(members.id, value.member)).get()) throw new OperationError('invalid', 'Choose an existing member');
     if (value.kind === 'agent') {
       if (!db.select().from(agents).where(eq(agents.id, value.agent)).get()) throw new OperationError('invalid', 'Choose an existing agent');

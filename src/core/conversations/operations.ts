@@ -71,7 +71,7 @@ export function registerConversationOperations(operations: Operations, service: 
   const common = {
     refuses: true,
     // A member's own token may do these as well as a signed-in window: answering and sending are not browser-only.
-    doors: ['socket', 'http'] as ['socket', 'http'], write: true, recheckPolicy: true,
+    doors: ['http'] as ['http'], write: true, recheckPolicy: true,
     inputHash: (value: string) => service.key.hash(`conversation-operation\0${value}`),
   };
 

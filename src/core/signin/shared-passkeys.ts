@@ -1,4 +1,4 @@
-import { activeMemberToken } from './shared-tokens.js';
+import { activeMemberToken, currentMemberToken } from './shared-tokens.js';
 import { credentialKey } from './credential-key.js';
 /** WebAuthn ceremonies at the shared identity door. Challenges are short-lived,
  * bounded, and single use; registration is bound to a freshly proved browser.
@@ -9,7 +9,7 @@ import { credentialKey } from './credential-key.js';
  * takes. Challenges for adding a passkey come only from a freshly proved browser and have their own set,
  * which a stranger cannot touch. What is left is in docs/accepted-tradeoffs.md. */
 import { randomBytes } from 'node:crypto';
-import { credentialFingerprint as hash, currentSession, freshProof } from '../data/authentication.js';
+import { newProof } from '../data/authentication.js';
 import { startBrowser } from './shared-browser.js';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
@@ -23,9 +23,10 @@ export function sharedPasskeys(db:DataDatabase,clock:Clock,rp:{origin:string;rpI
   const CAP=1024,signIns=new Map<string,Issued>(),additions=new Map<string,Issued>();
   const currentToken=(id:string)=>activeMemberToken(db,clock,id);
   const fresh=(cookie:string)=>{
-    const found=currentSession(db,hash(cookie),clock.now());
-    if(!found||found.viewer.kind!=='member'||!freshProof(found.session,clock.now()))throw Error('Sign in again before adding a passkey');
-    return {session:found.session,token:found.token};
+    // The same gate of new proof as a sign-in link and a token (newProof), asked of the cookie alone.
+    const proof=newProof(db,{cookie},clock.now()),token=proof&&currentMemberToken(db,clock,proof.token);
+    if(!proof?.session||!token)throw Error('Sign in again before adding a passkey');
+    return {session:{id:proof.session},token};
   };
   const challenge=(binding:{session?:string;token?:string}={})=>{
     const set=binding.session?additions:signIns;

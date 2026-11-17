@@ -7,6 +7,8 @@ export interface Approval {
   conversation: string | null; state: 'pending' | 'allowed' | 'denied' | 'used' | 'withdrawn' | 'expired';
   ask: string; ifYes: string; ifNo: string; details: string; changeSummary: string | null;
   askedAt: string; decidedBy: string | null; expiresAt: string | null;
+  /** For a household owner looking at a waiting household card: what already stands against allowing it. Not on the card itself. */
+  problem?: string | null;
 }
 export interface Rule {
   kind: Approval['kind']; scope: string; person: string; tier: 'do' | 'tell' | 'ask'; setBy: string; setAt: string;
