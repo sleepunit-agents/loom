@@ -334,6 +334,19 @@ it('removing a bridge connection switches it off and keeps it; restoring leaves 
   await allow('restore');
   expect(f.db.select().from(bridgeConnections).get()).toMatchObject({ id: 'daily', enabled: false, removedAt: null });
 });
+it('removing an agent switches off its bridge connections and leaves another agent\'s alone; restoring leaves them off', async () => {
+  const f = fixture(), at = new Date().toISOString();
+  f.db.insert(secrets).values({ name: 'BOT', description: '', changedAt: at, changedBy: 'sam' }).run();
+  f.db.insert(bridgeConnections).values([{ id: 'marks', agent: 'mark', botUser: 'M' }, { id: 'marks-slack', agent: 'mark', botUser: 'MS', platform: 'slack' as const }, { id: 'arts', agent: 'art', botUser: 'A' }]
+    .map(row => ({ platform: 'discord' as const, workspace: 'W', tokenSecret: 'BOT', enabled: true, state: 'connected' as const, stateAt: at, ...row }))).run();
+  const allow = async (change: string) => { const filed = await f.call('household/propose', { change, input: { of: 'agent', id: 'mark' }, why: 'Tidying' }, 'art'); expect(filed.status).toBe(200); expect((await f.call('approvals/answer', { id: filed.body.value!.id, answer: 'allow' }, 'sam')).status).toBe(200); };
+  const state = () => Object.fromEntries(f.db.select().from(bridgeConnections).all().map(row => [row.id, [row.enabled, row.state, row.removedAt]]));
+  await allow('remove');
+  // The connections are switched off, not removed: they are still the agent's when it comes back.
+  expect(state()).toEqual({ marks: [false, 'disconnected', null], 'marks-slack': [false, 'disconnected', null], arts: [true, 'connected', null] });
+  await allow('restore');
+  expect(state()).toMatchObject({ marks: [false, 'disconnected', null], 'marks-slack': [false, 'disconnected', null] });
+});
 it('answers a card for someone who is not an owner only by a rule an owner set naming that person', async () => {
   const f = fixture(), at = new Date().toISOString();
   f.db.insert(conversations).values({ id: 'cv-lee', agent: 'art', member: 'lee', venue: 'loom', place: 'th', label: 'Lee', startedAt: at, lastAt: at, turnCount: 0 }).run();

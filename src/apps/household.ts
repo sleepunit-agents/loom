@@ -1,6 +1,6 @@
 /** Trusted household membership and agent appearance over the shared schema. */
 import { HH_MM } from '../core/tempo/calendar.js';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { agents, members, memberAgents, household, backupRecipients, projects, bridgeConnections } from '../core/data/schema.js';
@@ -79,7 +79,8 @@ export function householdService(db: DataDatabase, now: () => string) {
       });
     },
     /** Remove keeps the row and everything that refers to it. A removed person cannot sign in, a removed
-     * agent does not run, a removed project or connection is out of use. Restore puts it back. */
+     * agent does not run and its bridge connections are switched off, a removed project grants nobody
+     * anything (shared-sharing.ts), a removed connection is switched off. Restore puts it back. */
     setRemoved(of: Removable, id: string, removed: boolean) {
       return db.transaction(() => {
         const table = of === 'member' ? members : of === 'agent' ? agents : of === 'project' ? projects : bridgeConnections;
@@ -92,6 +93,9 @@ export function householdService(db: DataDatabase, now: () => string) {
         db.update(table).set({ removedAt: removed ? now() : null }).where(eq(table.id, id)).run();
         // A removed connection is switched off. Restoring it leaves it off until someone turns it on.
         if (of === 'bridge' && removed) db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', stateAt: now() }).where(eq(bridgeConnections.id, id)).run();
+        // A removed agent never runs, so messages to it would arrive for nobody: its connections are switched
+        // off with it. They stay its own, and stay off after a restore until someone turns them on.
+        if (of === 'agent' && removed) db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', stateAt: now() }).where(and(eq(bridgeConnections.agent, id), eq(bridgeConnections.enabled, true))).run();
         return { id };
       });
     },
