@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, boxAgents, boxes, memberAgents, members, sessions, tokens, projects } from './core/data/schema.js';
@@ -303,4 +304,31 @@ it('removing a bridge connection switches it off and keeps it; restoring leaves 
   expect(f.db.select().from(bridgeConnections).get()!.removedAt).not.toBeNull();
   await allow('restore');
   expect(f.db.select().from(bridgeConnections).get()).toMatchObject({ id: 'daily', enabled: false, removedAt: null });
+});
+it('answers a card for someone who is not an owner only by a rule an owner set naming that person', async () => {
+  const f = fixture(), at = new Date().toISOString();
+  f.db.insert(conversations).values({ id: 'cv-lee', agent: 'art', member: 'lee', venue: 'loom', place: 'th', label: 'Lee', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const ask = (days: number) => f.root.writes.run(() => f.root.services.setup.propose('art', { change: 'settings', input: { commsDays: days }, why: 'Lee asked' }, { conversation: 'cv-lee', member: 'lee', project: null })).value;
+  // A card that waits is then allowed by hand, so the next ask is not refused as a second card for the same
+  // thing (and not remembered as denied, which would make every later one ask).
+  const waits = (card: { id: string; state: string }, owner = 'sam') => { expect(card).toMatchObject({ state: 'pending', actingFor: 'lee' }); f.root.writes.run(() => f.root.services.approvals.allow(card.id, owner)); };
+  // The household's own rules are the owners' advance yes for work done for an owner. They say nothing for lee.
+  f.root.writes.run(() => { f.root.services.setup.rule({ kind: 'setting', scope: '*', person: '', tier: 'do' }, 'sam'); f.root.services.setup.rule({ kind: 'dangerous', scope: '*', person: '', tier: 'do' }, 'sam'); });
+  waits(ask(9));
+  // A rule naming lee, set by an owner, does: the change is made on that owner's word and the card says so.
+  f.root.writes.run(() => f.root.services.setup.rule({ kind: 'setting', scope: 'household:settings', person: 'lee', tier: 'do' }, 'sam'));
+  expect(ask(8)).toMatchObject({ state: 'used', decidedBy: 'sam', actingFor: 'lee' });
+  expect(f.db.select().from(household).get()).toMatchObject({ commsDays: 8 });
+  // It reaches no further than its scope: a dangerous card for lee still asks.
+  f.db.insert(tokens).values({ fingerprint: hash('y'.repeat(64)), label: 'Spare', kind: 'owner', member: 'sam', createdAt: at }).run();
+  expect(f.root.writes.run(() => f.root.services.setup.propose('art', { change: 'tokenRevoke', input: { label: 'Spare' }, why: 'Lee asked' }, { conversation: 'cv-lee', member: 'lee', project: null })).value).toMatchObject({ state: 'pending' });
+  // And it lasts only while the one who set it is a household owner, and lee is in the household.
+  f.db.insert(members).values({ id: 'olive', role: 'owner', joinedAt: at }).run();
+  f.db.update(members).set({ role: 'member' }).run();
+  f.db.update(members).set({ role: 'owner' }).where(eq(members.id, 'olive')).run();
+  waits(ask(7), 'olive');
+  f.db.update(members).set({ role: 'owner' }).where(eq(members.id, 'sam')).run();
+  f.db.update(members).set({ removedAt: at }).where(eq(members.id, 'lee')).run();
+  expect(ask(6)).toMatchObject({ state: 'pending' });
+  expect(f.db.select().from(household).get()).toMatchObject({ commsDays: 7 });
 });

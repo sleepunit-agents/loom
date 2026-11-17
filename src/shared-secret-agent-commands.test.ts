@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, jobs, boxes, tokens, sessions, secrets, secretChanges, secretRequests, secretGrants } from './core/data/schema.js';
+import { members, agents, memberAgents, jobs, boxes, tokens, sessions, secrets, secretChanges, secretRequests, secretGrants } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of clean.splice(0).reverse())await close();});
@@ -58,7 +58,8 @@ it('isolates another authenticated agent from request status',async()=>{
 });
 it('derives the request conversation from the saved bound job',async()=>{
  const f=fixture(),conversation=f.root.services.conversations.open({agent:'art',venue:'loom',place:'saved',label:'Saved private conversation',member:'owner'});
- f.root.writes.run(()=>f.db.update(jobs).set({conversation:conversation.id,member:'owner'}).where(eq(jobs.id,'job')).run());
+ // A job for a member is that member's private work, which takes the member having the agent.
+ f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(jobs).set({conversation:conversation.id,member:'owner'}).where(eq(jobs.id,'job')).run();});
  const request=await f.request();expect(f.db.select().from(secretRequests).get()).toMatchObject({id:request,job:'job',conversation:conversation.id});
 });
 it('binds operation receipts to the actual body job before replaying request metadata',async()=>{
@@ -78,9 +79,25 @@ it('binds request receipt replay to the saved conversation even for the same fre
  const f=fixture(),input={id:randomUUID(),secret:'TOKEN',why:'Use it',minutes:5},receipt=randomUUID();
  const first=f.root.services.conversations.open({agent:'art',venue:'loom',place:'first',label:'First',member:'owner'});
  const second=f.root.services.conversations.open({agent:'art',venue:'loom',place:'second',label:'Second',member:'owner'});
- f.root.writes.run(()=>f.db.update(jobs).set({conversation:first.id,member:'owner'}).where(eq(jobs.id,'job')).run());
+ f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(jobs).set({conversation:first.id,member:'owner'}).where(eq(jobs.id,'job')).run();});
  expect((await f.call('request',input,raw.body,receipt)).status).toBe(200);
  f.root.writes.run(()=>f.db.update(jobs).set({conversation:second.id}).where(eq(jobs.id,'job')).run());
  expect((await f.call('request',input,raw.body,receipt)).status).toBe(409);
  expect(f.db.select().from(secretRequests).get()?.conversation).toBe(first.id);
+});
+
+it('lets a body working for a member ask, and read its own request, only while that member has the agent',async()=>{
+ const f=fixture();
+ f.db.insert(members).values({id:'lee',role:'member',joinedAt:f.at}).run();f.db.insert(memberAgents).values({member:'lee',agent:'art'}).run();
+ f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'job')).run();
+ const mine=await f.request('agent');
+ expect((await f.call('requestStatus',{id:mine})).status).toBe(200);
+ // Lee no longer has art: the body working for lee is no longer the agent for any rule, in its own name included.
+ f.db.delete(memberAgents).run();
+ expect((await f.call('request',{id:randomUUID(),secret:'TOKEN',why:'Use it',minutes:5,scope:'agent'})).status).toBe(403);
+ expect((await f.call('request',{id:randomUUID(),secret:'TOKEN',why:'Use it',minutes:5,scope:'job'})).status).toBe(403);
+ expect((await f.call('requestStatus',{id:mine})).status).toBe(403);
+ // The agent's own terminal session, and a body whose work is for no member, are untouched.
+ expect((await f.call('requestStatus',{id:mine},raw.agent)).status).toBe(200);
+ expect((await f.call('requestStatus',{id:mine},raw.other)).status).toBe(200);
 });

@@ -1,4 +1,4 @@
-import {personalMemberExists,readPersonalAccount} from '../data/personal-account-read.js';
+import {readPersonalAccount} from '../data/personal-account-read.js';
 import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
@@ -6,10 +6,12 @@ import { sessionEnds, tokenLive as live } from '../data/authentication.js';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
-import type { Viewer } from '../../policy.js';
+import { rules, type Viewer } from '../../policy.js';
+import { sqlHolds } from '../../policy-sql.js';
+import { currentMember } from '../../shared-sharing.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
-import { members, tokens, sessions, passkeys } from '../data/schema.js';
+import { tokens, sessions, passkeys } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
 const ref = (kind: string, id: string) => createHash('sha256').update(kind+':'+id).digest('hex');
 export function sharedAccount(db: DataDatabase, clock: Clock) {
@@ -41,7 +43,7 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
   };
 }
 export function registerSharedAccount(operations: Operations, db: DataDatabase, service: ReturnType<typeof sharedAccount>) {
-  const member = (viewer: Viewer) => viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
+  const member = (viewer: Viewer) => currentMember(db, viewer);
   const reference=z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict();
   operations.register({name:'account.removePasskey',write:true,recheckPolicy:true,input:reference,output:z.object({removed:z.literal(true)}),may:member,
     run(ctx,input){const result=service.removePasskey(ctx.viewer.id,input.ref);ctx.changed('account',ctx.viewer.id);ctx.changed('core.access',ctx.viewer.id);return result;}});
@@ -55,5 +57,5 @@ export function sharedAccountFields(db: DataDatabase, clock: Clock, notification
   const push=new GraphQLObjectType({name:'PersonalNotifications',fields:{publicKey:{type:GraphQLString},devices:{type:new GraphQLList(device)}}});
   const account=new GraphQLObjectType({name:'PersonalAccount',fields:{member:{type:GraphQLString},notifications:{type:push},passkeys:{type:new GraphQLList(passkey)},sessions:{type:new GraphQLList(session)}}});
   const service=sharedAccount(db,clock);
-  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&personalMemberExists(db,viewer.id)?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
+  return {account:{type:account,resolve(_row,_args,{viewer}){return viewer.kind==='member'&&sqlHolds(db,rules.currentMember,viewer)?{...service.read(viewer.id),notifications:notifications?.(viewer.id)??{publicKey:null,devices:[]}}:null;}}};
 }

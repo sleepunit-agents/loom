@@ -7,10 +7,11 @@ import {currentSession} from '../data/authentication.js';
 import {and,eq,getTableColumns,sql,type AnyColumn,type SQL} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Viewer} from '../../policy.js';
+import {currentMember} from '../../shared-sharing.js';
 import type {Clock} from '../clock.js';
 import type {DataDatabase} from '../data/database.js';
 import type {DataWrites} from '../data/writes.js';
-import {members,sessions,notificationDevices,notificationQueue,inbox} from '../data/schema.js';
+import {sessions,notificationDevices,notificationQueue,inbox} from '../data/schema.js';
 import {OperationError,type Operations} from '../operations/index.js';
 import {pushTransport,type PushTransport} from './push-transport.js';
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
@@ -21,7 +22,7 @@ export interface SharedNotificationOptions{vapid:{publicKey:string;privateKey:st
 export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:DataWrites;config?:SharedNotificationOptions;browser(viewer:Viewer):Readonly<{session:string}>|undefined;visible(viewer:Viewer,fields:Record<string,AnyColumn>):SQL;reportError(error:unknown):void}){
  const {db,clock}=options;let lastEnrollment=db.select({at:notificationDevices.createdAt}).from(notificationDevices).all().reduce((latest,row)=>Math.max(latest,Date.parse(row.at)),clock.now()-1);let closed=false,again=false,running:Promise<void>|undefined;const aborts=new Set<AbortController>();
  const write=<T>(action:()=>T)=>{const result=options.writes.run(action);for(const _error of result.notificationErrors)try{options.reportError(Error('Push metadata notification failed'));}catch{}return result.value;};
- const member=(viewer:Viewer)=>viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
+ const member=(viewer:Viewer)=>currentMember(db,viewer);
  const device=(endpoint:string)=>{
   const row=db.select().from(notificationDevices).where(eq(notificationDevices.endpoint,endpoint)).get();if(!row)return;
   // A device is pushed to only while the browser that enrolled it is still that person's signed-in browser.

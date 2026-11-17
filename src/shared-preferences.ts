@@ -2,7 +2,8 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { memberPreferences, members } from './core/data/schema.js';
+import { memberPreferences } from './core/data/schema.js';
+import { currentMember } from './shared-sharing.js';
 import { type Operations, OperationError } from './core/operations/index.js';
 const choices = z.object({
   look: z.enum(['neon', 'lowlight', 'daylight']), ground: z.enum(['depth', 'contours', 'wash']),
@@ -15,7 +16,7 @@ export function registerSharedPreferences(operations: Operations, db: DataDataba
   operations.register({ name: 'household.setPreferences', write: true, recheckPolicy: true,
     input: choices.partial().strict().refine(input => Object.values(input).some(value => value !== undefined), 'Choose a preference'),
     output: z.object({ changedAt: z.string() }).strict(),
-    may: viewer => viewer.kind === 'member' && !!db.select().from(members).where(eq(members.id, viewer.id)).get(),
+    may: viewer => currentMember(db, viewer),
     run(ctx, patch) {
       if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
       const old = db.select().from(memberPreferences).where(eq(memberPreferences.member, ctx.viewer.id)).get();
