@@ -46,6 +46,9 @@ const programSchema=z.object({
   agents:z.array(z.object({agent:z.string().min(1),directory:path,memories:path}).strict()).optional(),
  }).strict()}).strict(),
 }).strict();
+/** A refusal to start whose words are for the operator: `loom serve` prints them. Any other failure
+ * is printed as one fixed line, because its message may quote a private file. */
+export class StartupRefusal extends Error {}
 /** Every agent's Memory directory is in here, named after the agent. */
 export const agentsDirectory=(home:string)=>join(home,'agents');
 type RootOptions=Parameters<typeof sharedRoot>[0];
@@ -72,8 +75,9 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  const commons=program.memory.sources.commons,agentFiles=agentsDirectory(home);
  // An earlier program.json could place an agent's files anywhere. They are now found by the one rule, so a
  // file that places them elsewhere is refused: starting would open an empty Memory beside the real one.
- for(const old of program.memory.sources.agents??[])if(resolve(old.directory)!==join(agentFiles,old.agent)||resolve(old.memories)!==join(agentFiles,old.agent,'memories.db'))
-  throw Error(`program.json places agent ${old.agent}'s Memory outside ${agentFiles}; move that directory to ${join(agentFiles,old.agent)}`);
+ // Compared as the files they are, so a home reached through a link is not taken for another place.
+ for(const old of program.memory.sources.agents??[])if(canonical(old.directory)!==canonical(join(agentFiles,old.agent))||canonical(old.memories)!==canonical(join(agentFiles,old.agent,'memories.db')))
+  throw new StartupRefusal(`program.json places agent ${old.agent}'s Memory outside ${agentFiles}. Move that directory to ${join(agentFiles,old.agent)}, or take the agent out of memory.sources.agents if its files are already there.`);
  const directories=[...(program.secretHolder?[join(home,'secret-holder')]:[]),commons.directory,agentFiles];
  const files=[config,program.database,program.commsKey,program.adapters,commons.knowledge,commons.people];
  if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
@@ -98,7 +102,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   // first in the household's own order. Asked each time, so when that owner is removed or made a member
   // the next owner takes their place; the household never lets its last owner go.
   const localOwner=()=>db.select({id:members.id}).from(members).orderBy(asc(members.position),asc(members.id)).all().map(row=>row.id).find(id=>householdOwner(db,{kind:'member',id}));
-  if(!localOwner())throw Error('A household needs an owner before anyone can sign in locally');
+  if(!localOwner())throw new StartupRefusal('A household needs an owner before anyone can sign in locally');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
   if(program.secretHolder){
    if(adapters.secretWrites||adapters.secretInputs)throw Error('Shared Secret holder ports already configured');
@@ -128,7 +132,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   });
   const signin=sharedSigninLinks(db,clock),issuer=sharedTokens(db,clock);
   // Adapters ran since the first check and may have changed the household.
-  if(!localOwner())throw Error('A household needs an owner before anyone can sign in locally');
+  if(!localOwner())throw new StartupRefusal('A household needs an owner before anyone can sign in locally');
   // Every local sign-in of one member rides on one token row, made by the same service as any other token
   // so its rules hold here too. Nobody is ever given that row's bearer: it only anchors the browsers and
   // passkeys that came in through a local link, and revoking it in Setup ends them all.

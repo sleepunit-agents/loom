@@ -3,15 +3,17 @@
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {randomUUID} from 'node:crypto';
-import {existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,renameSync,rmSync,statSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,renameSync,rmSync,statSync,symlinkSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname,join} from 'node:path';
 import {FakeClock} from './core/clock.js';
 import {dataDatabase} from './core/data/database.js';
 import {sharedTokens} from './core/signin/shared-tokens.js';
 import {notesDbPath} from './notes.js';
 import {hasTouchedListener} from './core/touched/index.js';
 import {startSharedHome} from './shared-startup.js';
+import {serve} from './index.js';
+import {Readable} from 'node:stream';
 vi.mock('./shared-holder-process.js',async()=>({startSharedHolder:vi.fn((await import('../test/fixtures/shared-holder.js')).inProcessSharedHolder)}));
 vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{
  readonly dimensions=4;
@@ -122,8 +124,19 @@ it('still reads a program.json from before, and takes neither its agents nor its
  // An old file that keeps an agent's Memory somewhere else is refused, not answered with an empty Memory.
  const elsewhere=join(f.home,'elsewhere');renameSync(join(agents,'assistant'),elsewhere);
  writeFileSync(f.config,JSON.stringify({...older,memory:{...older.memory,sources:{...older.memory.sources,agents:[{agent:'assistant',directory:elsewhere,memories:join(elsewhere,'memories.db')}]}}})+'\n',{mode:0o600});
- await expect(f.start()).rejects.toThrow(`move that directory to ${join(agents,'assistant')}`);
+ await expect(f.start()).rejects.toThrow(`Move that directory to ${join(agents,'assistant')}`);
  expect(existsSync(join(agents,'assistant'))).toBe(false);
+ // The operator is told why, in those words; any other refusal stays one fixed line.
+ const said:string[]=[];
+ expect(await serve(['--http','--home',f.home,'--port','0'],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:text=>said.push(text)})).toBe(2);
+ expect(said.join('')).toBe(`Startup refused. program.json places agent assistant's Memory outside ${agents}. Move that directory to ${join(agents,'assistant')}, or take the agent out of memory.sources.agents if its files are already there.\n`);
+ writeFileSync(f.config,'{"not":"a program"}\n',{mode:0o600});said.length=0;
+ expect(await serve(['--http','--home',f.home,'--port','0'],{stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:text=>said.push(text)})).toBe(2);
+ expect(said.join('')).toBe('Startup refused. Supply a private program.json for an initialized household.\n');
+ // Reached through a link, the same home is the same place: nothing is refused.
+ renameSync(elsewhere,join(agents,'assistant'));writeFileSync(f.config,JSON.stringify(older)+'\n',{mode:0o600});
+ const root=dirname(f.home),linked=root+'-linked';symlinkSync(root,linked);clean.push(()=>rmSync(linked,{force:true}));
+ const app=await startSharedHome({home:join(linked,'home'),webRoot:join(root,'web'),port:0,clock:f.clock,stdout:()=>{}});await app.close();
 });
 
 it('signs in whoever owns the household now, while it runs and at the next start',async()=>{
