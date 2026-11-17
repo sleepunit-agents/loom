@@ -96,6 +96,20 @@ export function currentSession(db: DataDatabase, id: string, now: number) {
   return { ...held, session, ends: Math.min(sessionEnds(session), held.token.expiresAt ? Date.parse(held.token.expiresAt) : Infinity) };
 }
 
+/** The new proof of identity a sign-in door asks for before it hands out a credential: a lasting token, a
+ * sign-in link or a passkey. A bearer token is one. A browser cookie is one only while it is a person's own
+ * browser that proved who it is a short while ago (freshProof): an aged session and an automated browser
+ * are not, however validly they are signed in. This is the one gate for all of those doors.
+ *
+ * It answers with the fingerprints the request rides on, and with nothing when there is no new proof. It
+ * does not say whose the bearer is or whether it is live: that is authentication's, asked beside it. */
+export function newProof(db: DataDatabase, presented: ReturnType<typeof presentedCredential>, now: number): { token: string; session?: string } | undefined {
+  if (!presented) return;
+  if (presented.bearer !== undefined) return { token: credentialFingerprint(presented.bearer) };
+  const session = credentialFingerprint(presented.cookie), found = currentSession(db, session, now);
+  return found && freshProof(found.session, now) ? { token: found.token.fingerprint, session } : undefined;
+}
+
 /** What a door learns about a request beyond who it is: the fingerprints of the token it rides on and,
  * for a browser, of its session. A door that keeps its own proof reads these; it never parses the request. */
 export type DataAuthentication = Authentication & { readonly job?: string; readonly credential: Readonly<{ token: string; session?: string }> };

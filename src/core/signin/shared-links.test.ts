@@ -432,3 +432,31 @@ it('adds a passkey only for the browser that is itself the presented credential'
   // Another member's bearer beside sam's cookie is that other member, not sam's browser.
   expect((await secure('/passkeys/options', { cookie, authorization: 'Bearer ' + other })).status).toBe(403);
 });
+
+it.each(['aged','agent'])('mints no lasting token and no program token from an %s owner browser; a bearer and a fresh browser may',async how=>{
+ const f=fixture();f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
+ const signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const issue=(path:string,headers:Record<string,string>,label:string)=>f.root.http.request('http://loom'+path,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify({kind:'owner',member:'sam',label})});
+ expect((await issue('/api/signin/token',{cookie},'fresh')).status).toBe(200);
+ f.db.update(sessions).set(how==='agent'?{isAgent:true}:{provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+ const before=f.db.select().from(tokens).all();
+ for(const path of ['/api/signin/token','/api/signin/program']){
+  const response=await issue(path,{cookie},'kept');
+  expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Sign in again before making a token'});
+ }
+ expect(f.db.select().from(tokens).all()).toEqual(before);
+ // The browser is still signed in, and the owner's own bearer is its own proof.
+ expect((await f.read(cookie)).status).toBe(200);
+ expect((await issue('/api/signin/token',{authorization:'Bearer '+credential},'kept')).status).toBe(200);
+});
+it('rechecks the browser\'s proof inside the token write',async()=>{
+ const f=fixture();f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
+ const signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const original=f.root.writes.run.bind(f.root.writes),before=f.db.select().from(tokens).all();
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+  f.db.update(sessions).set({provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+  return original(action);
+ });
+ const response=await f.root.http.request('http://loom/api/signin/token',{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({kind:'owner',member:'sam',label:'kept'})});
+ expect(response.status).toBe(403);expect(f.db.select().from(tokens).all()).toEqual(before);
+});

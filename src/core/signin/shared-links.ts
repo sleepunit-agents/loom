@@ -8,8 +8,8 @@ import { eq } from 'drizzle-orm';
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
-import { sessions, signinLinks } from '../data/schema.js';
-import { credentialFingerprint as fingerprint, currentSession, freshProof, presentedCookie, presentedCredential } from '../data/authentication.js';
+import { signinLinks } from '../data/schema.js';
+import { credentialFingerprint as fingerprint, currentSession, newProof, presentedCookie, presentedCredential } from '../data/authentication.js';
 import type { Authentication } from '../live/index.js';
 import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
@@ -54,8 +54,11 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
  * These routes are deliberately not registered operations. Each one answers with a credential (a token, a
  * sign-in link, a cookie), and a registered write's answer is kept as a retry receipt for thirty days. So
  * each carries its own gate here, on the same authentication as every other door, with program tokens
- * refused outright: owner for a token or a program token, the member's own bearer or freshly proved
- * browser for a link or a passkey, the cookie itself for logout, the one-time code for redeeming.
+ * refused outright: owner for a token or a program token, the member's own credential for a link or a
+ * passkey, the cookie itself for logout, the one-time code for redeeming. Every route that hands out a
+ * credential also asks for a new proof of identity (`proved`, below): a bearer, or a person's own freshly
+ * proved browser. A browser cookie is not a new proof, so an aged or automated browser gets no token, no
+ * link and no passkey.
  *
  * The one-time code travels in the link's path. That is what a sign-in link is: something a person can be
  * handed and open. It is good once, for five minutes at most, the page that shows it sends no referrer
@@ -86,16 +89,28 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return committed.value;
   };
   const cookieHeader = (cookie: string, maxAge: number, url: string) => browserCookie(cookie, maxAge, (options.publicOrigin ?? new URL(url).origin).startsWith('https:'));
+  // The one gate of new proof for the token, program-token and link routes (newProof; passkeys ask it too).
+  // `still` asks again, inside the write and after it: the same credential must still be a new proof.
+  const proved=(request:Request)=>{
+    const presented=presentedCredential(request),first=newProof(options.db,presented,options.clock.now());
+    return first&&{...first,still:()=>newProof(options.db,presented,options.clock.now())?.token===first.token};
+  };
+  const stale='Sign in again before making a token';
   const issueForOwner=async(c:Context,issue:(input:unknown)=>{token:string;fingerprint:string})=>{
-    const input=await c.req.json().catch(()=>null),auth=authenticate(c.req.raw);
+    const input=await c.req.json().catch(()=>null),auth=authenticate(c.req.raw),proof=proved(c.req.raw);
     if(!auth?.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
+    // A token made here can last for ever. An aged or automated owner browser must not turn its short
+    // session into one.
+    if(!proof)return c.json({error:stale},403);
     try{
       const value=write(()=>{
         if(!auth.valid()||!sharedTokenOwner(options.db,auth.viewer))throw new OperationError('denied','Household owner required');
+        if(!proof.still())throw new OperationError('denied',stale);
         return issue(input);
       });
       if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
       if(!auth.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
+      if(!proof.still())return c.json({error:stale},403);
       return c.json({ok:true,value});
     }catch(error){
       if(error instanceof OperationError)return c.json({error:error.message},({denied:403,conflict:409,invalid:400,'not-found':404,unavailable:503} as const)[error.code]);
@@ -111,20 +126,13 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return options.issueProgram(input);
   }));
   routes.post('/api/signin/link', c => {
-    const auth = authenticate(c.req.raw), presented = presentedCredential(c.req.raw);
-    if (!auth?.valid() || auth.viewer.kind !== 'member' || !presented) return c.json({ error: 'Member authentication required' }, 401);
-    const session = presented.cookie === undefined ? undefined : fingerprint(presented.cookie);
-    const token = presented.bearer !== undefined ? fingerprint(presented.bearer) : options.db.select({token:sessions.token}).from(sessions).where(eq(sessions.id,session!)).get()?.token;
-    if(!token)return c.json({error:'Member authentication required'},401);
+    const auth = authenticate(c.req.raw), proof = proved(c.req.raw);
+    if (!auth?.valid() || auth.viewer.kind !== 'member') return c.json({ error: 'Member authentication required' }, 401);
     // A browser cookie is not a new proof of identity. It must not turn an
     // aged or automated session into a fresh passkey-enrollment session: only a freshly proved browser
     // may make a link, and the browser the link signs in inherits that proof (see redeem).
-    const freshBrowser = () => {
-      if (!session) return true;
-      const found = currentSession(options.db, session, options.clock.now());
-      return !!found && found.token.fingerprint === token && freshProof(found.session, options.clock.now());
-    };
-    if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
+    if (!proof) return c.json({error:'Sign in again before making a sign-in link'},403);
+    const freshBrowser = proof.still, { token, session } = proof;
     // Request input cannot choose a token/member or impersonate an agent.
     const value=write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token, session === undefined ? {} : { from: session }); });
     // Publication hooks can end this caller after the transaction committed.
