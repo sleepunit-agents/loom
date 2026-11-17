@@ -1046,7 +1046,15 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     ).all(pageId) as KnowledgeCitation[];
   }
 
+  /** Creates a new store's tables and brings an older store up to date, all in one transaction: each
+   * change is found pending from the table's columns, so one that stopped between adding a column
+   * and filling it would never be finished. The transaction takes the write lock only at its first
+   * real change, so opening a store that is already up to date waits for no other writer. */
   private initSchema(): void {
+    this.db!.transaction(() => this.createAndUpgrade())();
+  }
+
+  private createAndUpgrade(): void {
     const statements = [
       `CREATE TABLE IF NOT EXISTS pages (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,

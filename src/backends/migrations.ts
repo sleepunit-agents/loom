@@ -3,7 +3,8 @@
  *
  * Each Migration is idempotent: the `pending` predicate checks current DB
  * state before `run` is called, so migrations are safe to re-run on every
- * backend connect. The store's version (see refuseNewerStore) only guards
+ * backend connect. runMigrations runs each step in one transaction, so a step
+ * with several statements is never left half done. The store's version (see refuseNewerStore) only guards
  * against a file a newer program has changed.
  *
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
@@ -527,7 +528,10 @@ export function runMigrations(
       continue;
     }
     try {
-      m.run(db);
+      // One transaction per step. A step is found pending from the store's shape (a column, an index,
+      // a table), so a step that stopped after its first statement would read as done for ever, its
+      // backfill or index never made. Whole or not at all keeps that question answerable.
+      db.transaction(() => m.run(db)).immediate();
       results.push({ id: m.id, description: m.description, status: 'applied' });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
