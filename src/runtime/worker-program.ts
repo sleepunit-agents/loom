@@ -1,4 +1,5 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
+import { doorTokenIn } from '../cli/connection.js';
 import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
@@ -113,7 +114,7 @@ export async function workerProgram(input: {
       } else {
         const config = usageCommand.parse(raw);
         stage = 'token';
-        const remote = config.report ? { url: config.report.url, token: (await input.read(config.report.tokenFile)).trim(), signal: abort.signal } : undefined;
+        const remote = config.report ? { url: config.report.url, token: doorTokenIn(await input.read(config.report.tokenFile)), signal: abort.signal } : undefined;
         stage = 'account';
         const windows = await observe(config, remote);
         input.output(JSON.stringify({ ...config.account, windows }) + '\n');
@@ -124,7 +125,7 @@ export async function workerProgram(input: {
     stage = 'config';
     const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
     stage = 'token';
-    const token = (await input.read(config.tokenFile)).trim();
+    const token = doorTokenIn(await input.read(config.tokenFile));
     stage = 'setup';
     const remote = { url: config.url, token, signal: abort.signal };
     const control = (input.control ?? httpWorkerControl)(config.facts === undefined ? remote : { ...remote, facts: config.facts });
