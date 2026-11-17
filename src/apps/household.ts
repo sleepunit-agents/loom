@@ -39,12 +39,14 @@ export class HouseholdError extends Error {
   constructor(readonly code: 'invalid' | 'conflict' | 'not-found', message: string) { super(message); }
 }
 export function householdService(db: DataDatabase, now: () => string) {
+  /** The household's one row, made if it is not there. Its first timezone is this server's, whichever
+   * write makes the row; a stored household choice is never replaced. */
+  const seed = (defaultAgent: string | null = null) => {
+    db.insert(household).values({defaultAgent,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}).onConflictDoNothing().run();
+  };
   return {
-    /** Initial settings belong to the household, not the first browser's zone.
-     * Seed from this server once; never replace a stored household choice. */
-    initialize(defaultAgent: string | null = null) {
-      db.insert(household).values({defaultAgent,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}).onConflictDoNothing().run();
-    },
+    /** Initial settings belong to the household, not the first browser's zone. */
+    initialize(defaultAgent: string | null = null) { seed(defaultAgent); },
     synchronizeFullOwners(){db.insert(memberAgents).select(db.select({member:members.id,agent:agents.id}).from(members).crossJoin(agents).where(eq(members.fullOwner,true))).onConflictDoNothing().run();},
     setMember(input: z.input<typeof memberInput>) {
       const value = memberInput.parse(input);
@@ -103,7 +105,7 @@ export function householdService(db: DataDatabase, now: () => string) {
       return db.transaction(() => {
         if (row.defaultAgent && !db.select({ id: agents.id }).from(agents).where(eq(agents.id, row.defaultAgent)).get())
           throw new HouseholdError('invalid', 'Unknown agent');
-        if (Object.keys(row).length) db.insert(household).values(row).onConflictDoUpdate({ target: household.singleton, set: row }).run();
+        if (Object.keys(row).length) { seed(); db.update(household).set(row).run(); }
         if (recipients) {
           db.delete(backupRecipients).run();
           if (recipients.length) db.insert(backupRecipients).values(recipients.map(recipient => ({ recipient }))).run();
@@ -115,7 +117,7 @@ export function householdService(db: DataDatabase, now: () => string) {
      * apart from the settings above; written here so the household row has one writer. */
     setSecretsDefault(raw: SecretsDefault) {
       const secretsDefault = secretsDefaultInput.parse(raw);
-      db.insert(household).values({ secretsDefault }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault } }).run();
+      db.transaction(() => { seed(); db.update(household).set({ secretsDefault }).run(); });
     },
     /** The order members or agents are listed in: every one of them, named exactly once. */
     setOrder(of: 'members' | 'agents', ids: readonly string[]) {
