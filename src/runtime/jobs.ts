@@ -41,7 +41,7 @@ export class Jobs {
 
   private keepText(job: Pick<Job, 'conversation'>): boolean {
     if (!job.conversation) return true;
-    const conversation = this.db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
+    const conversation = this.db.select({ venue: conversations.venue, member: conversations.member, direct: conversations.direct }).from(conversations)
       .where(eq(conversations.id, job.conversation)).get();
     return keepJobText(conversation);
   }

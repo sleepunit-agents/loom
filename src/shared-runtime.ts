@@ -78,7 +78,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
-      const conversation = job?.conversation ? db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
+      const conversation = job?.conversation ? db.select({ venue: conversations.venue, member: conversations.member, direct: conversations.direct }).from(conversations)
         .where(eq(conversations.id, job.conversation)).get() : undefined;
       // Private/dangling conversation output is discarded by Jobs.finish. Do
       // not retain even a guessable fingerprint of those words in a receipt.

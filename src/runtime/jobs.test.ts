@@ -237,6 +237,15 @@ it('keeps private Comms words out of the durable job brief and retry snapshots',
   expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
   expect(result.retry?.retryOf).toBe(job.id);
 });
+it('copies no words of a direct message into a job, whoever sent it', () => {
+  // A direct message from someone outside the household has no member to be private to; its words still
+  // belong in the conversation's mail and nowhere a job row can show them.
+  const f = fixture(); f.db.update(conversations).set({ direct: true }).run(); f.send();
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.brief).toBe('');
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  expect(f.runtime.finish(job.id, 'worker', 2, 'DIRECT_REPLY_MARKER')).toMatchObject({ job: { logTail: null }, retry: { brief: '' } });
+});
 for (const exitCode of [0, 2]) it(`does not retain private body output after exit ${exitCode}`, () => {
   const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
