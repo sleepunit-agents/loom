@@ -228,8 +228,53 @@ it('keeps the mirrors of the repositories fetched most recently and removes the 
   await new Promise(resolve => setTimeout(resolve, 20)); await source.fetch(houses[1], undefined, never());
   expect(mirrors()).toHaveLength(2);
   await new Promise(resolve => setTimeout(resolve, 20)); await source.fetch(houses[2], undefined, never());
-  // The oldest is gone, and nothing but mirrors was ever in the directory to remove.
-  expect(mirrors()).toHaveLength(2); expect(mirrors()).not.toContain(first[0]);
+  // The oldest goes, beside the work and not in its way, and nothing but mirrors was ever in the directory to remove.
+  await vi.waitFor(() => expect(mirrors()).toHaveLength(2)); expect(mirrors()).not.toContain(first[0]);
   // A house whose mirror was removed is simply fetched again.
-  expect(await source.fetch(houses[0], undefined, never())).toMatch(/^[0-9a-f]{40}$/); expect(mirrors()).toHaveLength(2);
+  expect(await source.fetch(houses[0], undefined, never())).toMatch(/^[0-9a-f]{40}$/); await vi.waitFor(() => expect(mirrors()).toHaveLength(2));
 });
+it('makes a job for a repository wait while that repository\'s mirror is being removed, and then fetches it clean', async () => {
+  const one = repository('removal-one', { Housefile: 'FROM scratch\n' }), two = repository('removal-two', { Housefile: 'FROM scratch\n' });
+  const directory = join(root, 'removal'), held = { release: () => {}, started: [] as string[] }, asked: string[] = [];
+  const source = houseSource({ directory, protocols: ['file'], kept: 1,
+    // A removal that takes its time: half done until it is let go.
+    remove: async path => { held.started.push(path); rmSync(join(path, 'HEAD'), { force: true }); await new Promise<void>(resolve => { held.release = resolve; }); rmSync(path, { recursive: true, force: true }); },
+    spawn: (args, env, output, input) => { asked.push(args.join(' ')); return spawn('git', [...args], { env: { ...env }, detached: true, stdio: [input ?? 'ignore', output, 'ignore'] }); } });
+  const first = { repository: one.address, file: 'Housefile', branch: 'main' }, second = { repository: two.address, file: 'Housefile', branch: 'main' };
+  await source.fetch(first, undefined, never());
+  const [mirror] = readdirSync(directory);
+  // A second repository is fetched: the first mirror is beyond the one kept, and its removal begins. The fetch does not wait for it.
+  expect(await source.fetch(second, undefined, never())).toBe(two.first);
+  await vi.waitFor(() => expect(held.started).toEqual([join(directory, mirror)]));
+  // A job for the first repository arrives while its mirror is half gone. Nothing is asked of git for it yet.
+  asked.length = 0;
+  let fetched: string | undefined; const again = source.fetch(first, undefined, never()).then(commit => { fetched = commit; });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(fetched).toBeUndefined(); expect(asked).toEqual([]);
+  // The removal ends: the mirror is made again from nothing and fetched whole.
+  held.release(); await again;
+  expect(fetched).toBe(one.first); expect(asked[0]).toContain('init');
+  expect((await all(source.context(first, one.first, never()))).toString('latin1')).toContain('FROM scratch');
+});
+it('looks again at each mirror just before it removes it: one a job has taken up meanwhile stays', async () => {
+  const repositories = ['recheck-one', 'recheck-two', 'recheck-three'].map(name => repository(name, { Housefile: 'FROM scratch\n' }));
+  const houses = repositories.map(found => ({ repository: found.address, file: 'Housefile', branch: 'main' }));
+  const directory = join(root, 'recheck'), removed: string[] = []; let release = () => {}, held = true;
+  // Two mirrors, made with room for both, the first the older.
+  const roomy = houseSource({ directory, protocols: ['file'], kept: 8 });
+  await roomy.fetch(houses[0], undefined, never()); const [older] = readdirSync(directory);
+  await new Promise(resolve => setTimeout(resolve, 20)); await roomy.fetch(houses[1], undefined, never());
+  const newer = readdirSync(directory).find(name => name !== older)!;
+  // Now with room for one: a third fetch means both of those are to go, the newer of them first. Its removal is held open.
+  const source = houseSource({ directory, protocols: ['file'], kept: 1,
+    remove: async path => { if (held) { held = false; await new Promise<void>(resolve => { release = resolve; }); } removed.push(path); rmSync(path, { recursive: true, force: true }); } });
+  await source.fetch(houses[2], undefined, never()); await vi.waitFor(() => expect(held).toBe(false));
+  // Meanwhile a job begins to read the older one, which was chosen to go before that job came.
+  const reading = source.context(houses[0], repositories[0].first, never());
+  release(); await vi.waitFor(() => expect(removed).toEqual([join(directory, newer)]));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  // It was looked at again when its turn came, found in use, and left: the read gets the whole of it.
+  expect(removed).toEqual([join(directory, newer)]); expect(existsSync(join(directory, older, 'HEAD'))).toBe(true);
+  expect((await all(reading)).toString('latin1')).toContain('FROM scratch');
+});
+

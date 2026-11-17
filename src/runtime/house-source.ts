@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, utimesSync } from 'node:f
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { houseContext, type ContextLimits } from './house-context.js';
+import { endGit, houseContext, relativeName, type ContextLimits } from './house-context.js';
 import { COMMIT } from '../apps/merge-target.js';
 import { GIT_MINIMUM } from './worker-limits.js';
 
@@ -50,8 +50,7 @@ const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const control = (text: string) => /[\0-\x1f\x7f]/.test(text);
 
 /** The Housefile's path inside the repository: relative, going nowhere but down. */
-export const houseFile = (file: unknown): file is string => typeof file === 'string' && file.length > 0 && file.length <= 512 && !control(file)
-  && !file.startsWith('/') && !file.includes('\\') && file.split('/').every(part => part !== '' && part !== '.' && part !== '..');
+export const houseFile = (file: unknown): file is string => typeof file === 'string' && file.length <= 512 && !control(file) && !file.includes('\\') && relativeName(file);
 const houseBranch = (branch: unknown): branch is string => typeof branch === 'string' && BRANCH.test(branch)
   && !branch.includes('..') && !branch.includes('//') && !branch.endsWith('/') && !branch.endsWith('.') && !branch.endsWith('.lock');
 /** The repository's address as a URL, when it is one the worker fetches. */
@@ -103,8 +102,6 @@ export const gitAvailable = (): boolean => {
     return asked.status === 0 && gitNewEnough(asked.stdout);
   } catch { return false; }
 };
-/** End a git the worker started, and whatever it started in turn: it leads a process group of its own. */
-const end = (child: ChildProcess) => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } } };
 
 export interface HouseSource {
   /** Bring the mirror of the house's repository up to its branch and say which commit that is. The secret
@@ -128,6 +125,8 @@ export function houseSource(options: {
   kept?: number;
   /** A context's limits, for a test that cannot make a gigabyte cheaply. */
   limits?: ContextLimits;
+  /** Removes a mirror; a test names one it can hold open. */
+  remove?: (mirror: string) => Promise<void>;
 }): HouseSource {
   const start = options.spawn ?? native, protocols = options.protocols ?? ['https'];
   const mirrorOf = (repository: string) => join(options.directory, `${createHash('sha256').update(repository).digest('hex').slice(0, MIRROR_DIGITS)}.git`);
@@ -137,7 +136,7 @@ export function houseSource(options: {
     let child: ChildProcess;
     try { child = start(args, env, output); } catch { reject(new HouseSourceError('git could not be run')); return; }
     const forget = child.pid ? options.started?.(child.pid) : undefined;
-    const kill = () => end(child);
+    const kill = () => endGit(child);
     signal.addEventListener('abort', kill, { once: true });
     let text = '';
     child.stdout?.on('data', (chunk: Buffer) => { if (text.length < 256) text += chunk.toString('utf8'); });
@@ -151,6 +150,26 @@ export function houseSource(options: {
   const busy = new Map<string, Promise<unknown>>();
   // Mirrors being read from just now: never removed under a context being written.
   const reading = new Map<string, number>();
+  // Mirrors being removed just now: a fetch or a read of one waits until it is gone, and then starts clean.
+  const removing = new Map<string, Promise<void>>();
+  const gone = async (mirror: string) => { for (let removal = removing.get(mirror); removal; removal = removing.get(mirror)) await removal; };
+  const remove = options.remove ?? ((mirror: string) => rm(mirror, { recursive: true, force: true }));
+  /** Remove the mirrors beyond the number kept, oldest use last. Nobody's job: it runs beside the work, one
+   * at a time. Whether a mirror is in use is asked again just before each removal, not once for them all. */
+  let tidying = false;
+  const tidy = async (latest: string) => {
+    if (tidying) return; tidying = true;
+    try {
+      const now = new Date(); utimesSync(latest, now, now);
+      const others = readdirSync(options.directory).filter(name => MIRROR.test(name)).map(name => join(options.directory, name))
+        .filter(path => path !== latest).map(path => ({ path, used: statSync(path).mtimeMs })).sort((one, other) => other.used - one.used);
+      for (const { path } of others.slice(Math.max(0, (options.kept ?? HOUSE_MIRRORS_KEPT) - 1))) {
+        if (busy.has(path) || reading.has(path) || removing.has(path)) continue;
+        const removal = remove(path).catch(() => {}).finally(() => { removing.delete(path); });
+        removing.set(path, removal); await removal;
+      }
+    } catch { /* a mirror left over is found again next time */ } finally { tidying = false; }
+  };
   return {
     fetch(house, credential, signal) {
       const url = houseAddress(house.repository, protocols);
@@ -160,6 +179,7 @@ export function houseSource(options: {
       try { if (credential !== undefined && url.protocol === 'https:') header = [[`http.${url.origin}/.extraHeader`, authorization(credential)]]; }
       catch (error) { return Promise.reject(error instanceof HouseSourceError ? error : new HouseSourceError('House repository secret is not usable')); }
       const next = (busy.get(mirror) ?? Promise.resolve()).catch(() => {}).then(async () => {
+        await gone(mirror);
         mkdirSync(options.directory, { recursive: true, mode: 0o700 });
         const plain = environment(options.directory, protocols);
         if (!existsSync(join(mirror, 'HEAD'))) await run(['init', '--quiet', '--bare', mirror], plain, signal);
@@ -169,14 +189,7 @@ export function houseSource(options: {
           house.repository, `+refs/heads/${house.branch}:refs/loom/fetched`], environment(options.directory, protocols, header), signal);
         const commit = (await run(['--git-dir', mirror, 'rev-parse', '--verify', '--quiet', 'refs/loom/fetched^{commit}'], plain, signal, 'pipe')).trim();
         if (!COMMIT.test(commit)) throw new HouseSourceError('git failed');
-        // Best effort: the mirror just used is the newest, and the oldest beyond the number kept go.
-        try {
-          const now = new Date(); utimesSync(mirror, now, now);
-          const others = readdirSync(options.directory).filter(name => MIRROR.test(name)).map(name => join(options.directory, name))
-            .filter(path => path !== mirror && !busy.has(path) && !reading.has(path)).map(path => ({ path, used: statSync(path).mtimeMs })).sort((one, other) => other.used - one.used);
-          // Removed beside the work, not in its way: a large mirror takes a while, and reports must go out meanwhile.
-          for (const { path } of others.slice(Math.max(0, (options.kept ?? HOUSE_MIRRORS_KEPT) - 1))) await rm(path, { recursive: true, force: true });
-        } catch { /* a mirror left over is found again next time */ }
+        void tidy(mirror);
         return commit;
       });
       busy.set(mirror, next);
@@ -190,7 +203,12 @@ export function houseSource(options: {
       reading.set(mirror, (reading.get(mirror) ?? 0) + 1);
       let counted = true;
       const done = () => { if (!counted) return; counted = false; const left = (reading.get(mirror) ?? 1) - 1; if (left > 0) reading.set(mirror, left); else reading.delete(mirror); };
-      const written = houseContext((args, input) => start(['--git-dir', mirror, ...args], env, 'pipe', input), commit, signal, { started: options.started, limits: options.limits });
+      const store = (args: readonly string[], input: 'pipe' | 'ignore') => start(['--git-dir', mirror, ...args], env, 'pipe', input);
+      const written = Readable.from((async function* (): AsyncGenerator<Buffer> {
+        // A removal that began before this read was counted is waited for; the read then finds what is there.
+        await gone(mirror);
+        yield* houseContext(store, commit, signal, { started: options.started, limits: options.limits });
+      })(), { objectMode: false });
       written.once('close', done);
       return written;
     },

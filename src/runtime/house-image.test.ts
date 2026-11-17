@@ -9,7 +9,7 @@ const house = { repository: 'https://example.com/org/house.git', file: 'house/Ho
 const image = houseImage(house, commit), id = `sha256:${'a'.repeat(64)}`;
 const never = () => new AbortController().signal;
 /** A guard that lets every image go but these. */
-const keeping = (names: readonly string[]) => ({ take: (name: string) => !names.includes(name), done: () => {} });
+const keeping = (names: readonly string[]) => ({ take: (name: string) => !names.includes(name), done: () => {}, used: () => undefined });
 function engine(answer: (method: string, path: string) => unknown = () => undefined) {
   const json = vi.fn(async (method: string, path: string, _body: unknown, _signal: AbortSignal) => answer(method, path));
   const build = vi.fn(async (_path: string, context: PassThrough, _signal: AbortSignal) => { context.resume(); });
@@ -151,7 +151,7 @@ it('asks whether an image may go at the moment it is about to remove it, and say
   const rows = [1, 2, 3, 4, 5].map(n => ({ name: tag('a', String(n)), built: n })), all = listing(rows), events: string[] = [];
   // A job takes hold of the oldest image while the removals before it are under way.
   let held = false;
-  const guard = { take: (name: string) => { events.push(`ask ${name.at(-1)}`); if (name === tag('a', '2')) held = true; return !(held && name === tag('a', '1')); },
+  const guard = { used: () => undefined, take: (name: string) => { events.push(`ask ${name.at(-1)}`); if (name === tag('a', '2')) held = true; return !(held && name === tag('a', '1')); },
     done: (name: string) => { events.push(`done ${name.at(-1)}`); } };
   await pruneHouses(all.made, guard, false, never());
   expect(all.removed).toEqual([tag('a', '3'), tag('a', '2')]);
@@ -159,5 +159,17 @@ it('asks whether an image may go at the moment it is about to remove it, and say
   expect(events).toEqual(['ask 3', 'done 3', 'ask 2', 'done 2', 'ask 1']);
   // Told the removal is over when the engine refuses it too.
   const refusing = listing(rows.slice(0, 3), [tag('a', '1')]), told: string[] = [];
-  await pruneHouses(refusing.made, { take: () => true, done: name => told.push(name) }, false, never()); expect(told).toEqual([tag('a', '1')]);
+  await pruneHouses(refusing.made, { take: () => true, done: name => told.push(name), used: () => undefined }, false, never()); expect(told).toEqual([tag('a', '1')]);
 });
+it('ranks images by when this worker last built or took them, and only then by the engine\'s own time', async () => {
+  // An image built again from the engine's cache keeps its old time there: the engine's clock says it is the oldest.
+  const rows = [{ name: tag('a', '1'), built: 1 }, { name: tag('a', '7'), built: 7 }, { name: tag('a', '8'), built: 8 }, { name: tag('a', '9'), built: 9 }], all = listing(rows);
+  const recent = new Map([[tag('a', '1'), 2], [tag('a', '7'), 1]]);
+  await pruneHouses(all.made, { take: () => true, done: () => {}, used: name => recent.get(name) }, false, never());
+  // The two this worker used most recently stay, the newer of them first; what it never touched goes, however new the engine says it is.
+  expect(all.removed).toEqual([tag('a', '9'), tag('a', '8')]);
+  // With nothing known of any of them (a worker just started), the engine's time decides, as before.
+  const fresh = listing(rows); await pruneHouses(fresh.made, keeping([]), false, never());
+  expect(fresh.removed).toEqual([tag('a', '7'), tag('a', '1')]);
+});
+

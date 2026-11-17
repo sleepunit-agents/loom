@@ -346,7 +346,9 @@ Housefile in it, and a branch ("Agent house settings").
    state directory (`houses/`), fetches the job's branch into it with the
    machine's `git`, and reads which commit that is. A mirror holds git's objects
    and nothing that says where they came from: no remote, and no `FETCH_HEAD`.
-   It keeps the eight mirrors used most recently.
+   It keeps the eight mirrors used most recently; older ones are removed beside
+   the work, never one being fetched or read. A job whose repository's mirror is
+   being removed waits for the removal and fetches the repository afresh.
 2. **Find or build.** The image of that repository, Housefile and commit is
    named `localhost/loom-house-<16 hex>:<commit>`. If the engine has it, it is
    used. If not, the worker streams that commit's files, as a tar it writes itself, to the
@@ -379,9 +381,18 @@ contents unread.
 
 A context has limits, and a house past one fails as a failed build (exit code
 22) before anything is sent to the engine: 100 MiB for one file, 1 GiB for the
-whole context, 50,000 files and links, and 4,096 bytes for a file's name or a
-link's target. A name must be UTF-8, relative, and have no empty, `.` or `..`
-part. Names longer than 100 bytes are written in a pax extended header.
+bytes of all the files together (the headers written around them are not
+counted), 50,000 files and links, and 4,096 bytes for a file's name or a link's
+target. The same goes for a tree the worker will not write:
+
+- a name that is not UTF-8, is absolute, or has an empty, `.` or `..` part;
+- one name twice, or a name that passes through another entry (`a` and `a/x`
+  where `a` is a file or a link), which only a hand-made tree can hold;
+- a link whose target is empty or holds a NUL byte; or whose target is not
+  UTF-8 and is longer than 100 bytes. A shorter target is written as its bytes,
+  UTF-8 or not.
+
+Names and targets longer than 100 bytes are written in a pax extended header.
 
 **git 2.32 is the oldest the worker runs.** That is what the fetch needs: no
 `FETCH_HEAD` (2.29), settings given in the environment (2.31), and no per-user
@@ -422,14 +433,20 @@ lost.
 does not depend on the worker's version, so deploying a new loom rebuilds
 nothing. After a build, once the job has its image, the worker looks after the
 disk beside whatever it does next: it lists loom's own house images, keeps the
-two newest of each house and the ten most recently built in all, and removes the
-rest. It never removes one a container uses, the one it has just built, one whose
-build is still being finished, or one a job holds: a job holds its image from the moment it knows which one it wants until
-its body has ended or the job has ended without one, and that is asked again
-at the moment of each removal. A job that wants an image whose removal is under
-way waits for the removal and builds the image again. So the counts hold for
-the images no job has: one that a job holds is kept beyond them until that job
-is over. It then asks the
+two newest of each house and the ten newest in all, and removes the rest.
+Newest means used most recently by this worker: an image is used when a job is
+given it, built or found. (The engine's own time for an image is when its last
+layer was made, which for one built again from the engine's cache is long ago;
+that time ranks only the images this worker has not used since it started.) So
+the image a build has just made is the newest of its house.
+
+Beyond those counts one kind of image is kept: one a job holds, or whose build
+is still being finished. A job holds its image from the moment it knows which
+one it wants until its body has ended or the job has ended without one, and
+that is asked again at the moment of each removal. Once nobody holds an image it
+counts like any other. An image a container uses is never removed either: the
+engine refuses. A job that wants an image whose removal is under way waits for
+the removal and builds the image again. The worker then asks the
 engine to remove images that have no name and are older than a day, and build
 cache unused for a week. That last request reaches every unnamed image on the
 engine, not only loom's (see "A worker treats its engine's unnamed leftovers as

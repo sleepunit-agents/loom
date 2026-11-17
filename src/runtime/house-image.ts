@@ -100,7 +100,13 @@ export async function houseStart(engine: DockerEngine, image: string, harness: s
  * not before: a job can take hold of an image while the removals are under way. `take` answers and, when
  * it says yes, marks the image as being removed until `done` is called for it, so that whoever wants
  * that image meanwhile can wait for the removal to be over and not find it half gone. */
-export interface HouseGuard { take(image: string): boolean; done(image: string): void }
+export interface HouseGuard {
+  take(image: string): boolean; done(image: string): void;
+  /** When this worker last built or took this image, as a number that only grows; undefined when it never
+   * has. The engine's own time for an image is when its last layer was made, which for one built again
+   * from the engine's cache is long ago: by that clock an image just built can be the oldest there is. */
+  used(image: string): number | undefined;
+}
 /** After a build: remove the house images this worker no longer needs, and what builds left behind.
  * Never one the guard holds back, never by force (the engine refuses one a container uses), never an error.
  * @returns false when the engine's images could not be listed, so that nothing was looked at: whoever
@@ -117,7 +123,8 @@ export async function pruneHouses(engine: DockerEngine, guard: HouseGuard, lefto
     const built = 'Created' in row && typeof row.Created === 'number' ? row.Created : 0;
     for (const name of row.RepoTags as unknown[]) if (houseImageName(name)) images.push({ name, built });
   }
-  images.sort((one, other) => other.built - one.built);
+  // Newest first: what this worker used most recently, then what it never touched, by the engine's time.
+  images.sort((one, other) => (guard.used(other.name) ?? -1) - (guard.used(one.name) ?? -1) || other.built - one.built);
   const perHouse = new Map<string, number>(); let kept = 0;
   for (const { name } of images) {
     const house = name.slice(0, name.indexOf(':')), count = perHouse.get(house) ?? 0;

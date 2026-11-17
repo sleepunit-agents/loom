@@ -414,8 +414,9 @@ Entries are grouped by the part of the program they belong to.
   worker writes the build context itself from the tree, file by file.
 - **What is enforced.** Only loom's assignment names a house, and only an agent's owners set it, for an
   agent allowed on the machine. The worker fetches `https` addresses only, with `git` run under none of
-  the machine user's configuration or credentials. Neither the worker nor git reads, unpacks or runs
-  anything from a repository: the commit's files go to the engine as a tar stream the worker writes. It adds no build argument, secret,
+  the machine user's configuration or credentials. Neither the worker nor git interprets or runs
+  anything from a repository: git reads commit and tree objects, the worker reads each link's target to
+  write it, and the commit's files go to the engine unread, as a tar stream the worker writes. It adds no build argument, secret,
   host path, socket or privilege to a build. The repository's secret goes to the fetch alone.
 - **Why the rest is accepted.** Running an agent's house is the point: whoever may set an agent's house
   already decides what that agent's bodies run. A build is the engine's to confine, as a container is.

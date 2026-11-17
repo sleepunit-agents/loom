@@ -706,29 +706,6 @@ it('says nothing when the disk was looked after', async () => {
   await executor.build(job, f.abort.signal); await flush();
   expect(f.engine.images.mock.calls.some(call => call[1].startsWith('/images/json'))).toBe(true); expect(said).not.toHaveBeenCalled();
 });
-it('never removes an image a job has been given until that job\'s body has ended, and then does', async () => {
-  const f = fixture(); await unbuilt(f);
-  const other = { ...job, house: { ...job.house, repository: 'https://example.com/other/house.git' } }, held = houseImage(other.house, commit);
-  // One job has its image and is about to start; newer commits of its house are then built.
-  expect(await f.executor.build(other, f.abort.signal)).toBe(held); await flush();
-  const removed: string[] = [], there = f.engine.images.getMockImplementation()!, gone = await missingImage(); let absent = '';
-  f.engine.images.mockImplementation(async (method, path, body, signal) => {
-    if (method === 'GET' && path.startsWith('/images/json')) return [{ RepoTags: [held], Created: 1 }, ...[2, 3, 4].map(n => ({ RepoTags: [`${held.slice(0, -40)}${String(n).repeat(40)}`], Created: n + 1 }))];
-    if (method === 'DELETE') { removed.push(path.slice('/images/'.length)); return undefined; }
-    if (method === 'GET' && absent && path.includes(absent)) { absent = ''; throw gone; }
-    return there(method, path, body, signal);
-  });
-  const next = async (letter: string) => { absent = letter.repeat(40); f.source.fetch.mockResolvedValue(absent); await f.executor.build({ ...other, id: `job-${letter}` }, f.abort.signal); await flush(); };
-  await next('d');
-  // Of that house the two newest stay, and the oldest too, because a job holds it.
-  expect(removed).toEqual([`${held.slice(0, -40)}${'2'.repeat(40)}`]);
-  // Its body runs and ends: the image is no longer anybody's, and the next upkeep takes it.
-  const body = f.executor.start(other, held, f.abort.signal); await body.spawned; await body.stop();
-  removed.length = 0; await next('e');
-  expect(removed).toEqual([`${held.slice(0, -40)}${'2'.repeat(40)}`, held]);
-});
-
-// Several jobs side by side on one worker (worker-turns.ts, and `slots` in worker-program.ts).
 it('does not hold another house\'s job behind a first build: the other job finds its image and runs to its end meanwhile', async () => {
   const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, turns = workerTurns({ accounts: 1 }), release = deferred<void>(); let made = false;
   const slow = { ...job, id: 'slow', agent: 'mark', account: 'other-account', house: { repository: 'https://example.com/mark/house.git', file: 'Housefile', branch: 'main' } };
@@ -812,21 +789,28 @@ function stocked(f: ReturnType<typeof fixture>, images: string[]) {
 }
 const at = (letter: string, house = job.house) => houseImage(house, letter.repeat(40));
 /** Build a commit of the job's house that is not there yet, which starts an upkeep. */
-const buildNew = async (f: ReturnType<typeof fixture>, letter: string, id = `job-${letter}`) => { f.source.fetch.mockResolvedValueOnce(letter.repeat(40)); return f.executor.build({ ...job, id }, f.abort.signal); };
+const buildNew = async (f: ReturnType<typeof fixture>, letter: string, id = `job-${letter}`) => {
+  f.source.fetch.mockResolvedValueOnce(letter.repeat(40));
+  // Built for a job that is then over without a body: nobody holds the image afterwards.
+  const image = await f.executor.build({ ...job, id }, f.abort.signal); f.executor.discard!({ ...job, id }, image); return image;
+};
 
-it('does not remove an image a job takes hold of while an upkeep is under way', async () => {
+it('does not remove an image a job holds, however far beyond the counts it falls, and removes it once the job is over', async () => {
   const f = fixture(), engine = stocked(f, [at('1'), at('2'), at('3')]), listed = deferred<void>();
-  engine.gate.listing = listed.promise;
-  // A new commit is built; its upkeep starts and waits for the engine's listing.
-  await buildNew(f, '4'); await flush(); expect(engine.removed).toEqual([]);
-  // Meanwhile the branch is back at its oldest commit, and a job finds that image there and takes it.
+  // A job is given the oldest image there is, and has not started its body yet.
   f.source.fetch.mockResolvedValueOnce('1'.repeat(40));
-  expect(await f.executor.build({ ...job, id: 'back' }, f.abort.signal)).toBe(at('1'));
-  // The listing arrives: of the three old ones two are beyond the two newest, and the one the job holds stays.
-  listed.resolve(); await flush();
-  expect(engine.removed).toEqual([at('2')]); expect(engine.present.has(at('1'))).toBe(true);
-  // The job's body starts from it.
-  const body = f.executor.start({ ...job, id: 'back' }, at('1'), f.abort.signal); await body.spawned; await body.stop();
+  expect(await f.executor.build({ ...job, id: 'holder' }, f.abort.signal)).toBe(at('1'));
+  // A newer commit is built. Its upkeep waits for the engine's listing; the two this worker has used stay, the rest go.
+  engine.gate.listing = listed.promise; await buildNew(f, '4'); await flush(); expect(engine.removed).toEqual([]);
+  listed.resolve(); engine.gate.listing = undefined; await flush();
+  expect(engine.removed).toEqual([at('3'), at('2')]);
+  // Two more are built. The held image is now the fourth newest of its house: it stays all the same, and counts for nothing else's place.
+  await buildNew(f, '5'); await flush(); await buildNew(f, '6'); await flush();
+  expect(engine.removed).toEqual([at('3'), at('2'), at('4')]); expect(engine.present.has(at('1'))).toBe(true);
+  // The job's body starts from it, and ends. The next upkeep takes it: two of the house, and no more.
+  const body = f.executor.start({ ...job, id: 'holder' }, at('1'), f.abort.signal); await body.spawned; await body.stop();
+  await buildNew(f, '7'); await flush();
+  expect([...engine.present].sort()).toEqual([at('6'), at('7')]);
 });
 it('waits for a removal that is under way before asking whether that image is there, and then builds it again', async () => {
   const f = fixture(), engine = stocked(f, [at('1'), at('2'), at('3')]), removal = deferred<void>();
@@ -862,9 +846,10 @@ it.each([
   if (how === 'run to its end') { f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); }
   const result = await run; holder?.();
   expect(result).toBe(waits ? 'abandoned' : 'finished');
-  // While the job had it, an upkeep would have kept it. Now a newer commit is built, and the upkeep that follows takes it.
-  await buildNew(f, '4'); await flush();
-  expect(engine.removed).toEqual([at('2'), at('1')]);
+  // While the job had it, an upkeep would have kept it. Now two newer commits are built: it is the third newest
+  // this worker has used, nobody holds it, and the upkeep takes it.
+  await buildNew(f, '4'); await flush(); await buildNew(f, '5'); await flush();
+  expect([...engine.present].sort()).toEqual([at('4'), at('5')]); expect(engine.removed).toContain(at('1'));
 });
 it('asks the engine to forget what builds left behind only when no other build is running', async () => {
   const f = fixture(), engine = stocked(f, []), slow = deferred<void>();
@@ -881,9 +866,9 @@ it('asks the engine to forget what builds left behind only when no other build i
   expect(engine.gate.leftovers).toBe(2);
   expect(f.engine.images.mock.calls.filter(call => call[0] === 'POST').map(call => call[1].split('?')[0])).toEqual(['/images/prune', '/build/prune']);
 });
-it('does not remove the image it has just built, though no job holds it any longer and it is the oldest there is', async () => {
+it('keeps the image it has just built because it is the newest it knows, and keeps two of a house in all when nobody holds any', async () => {
   const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, removed: string[] = [];
-  // A branch moved back: the commit being built is older than everything on the engine, by the engine's own clock.
+  // A branch moved back, and the engine built from its cache: by the engine's own clock the new image is the oldest there is.
   const building = at('1'), others = [at('7'), at('8'), at('9')]; let made = false;
   const listing = deferred<void>();
   f.engine.images.mockImplementation(async (method, path, body, signal) => {
@@ -893,35 +878,39 @@ it('does not remove the image it has just built, though no job holds it any long
     return there(method, path, body, signal);
   });
   f.engine.build.mockImplementation(async (_path, context) => { context.resume(); made = true; });
-  // Its one job is cancelled while the build runs: nobody holds the image, and the build goes on for the next that asks.
+  // Its one job is cancelled while the build runs: nobody holds the image when the upkeep that follows the build looks.
   const cancel = new AbortController(); f.source.fetch.mockResolvedValueOnce('1'.repeat(40));
   const wanted = f.executor.build({ ...job, id: 'gone' }, cancel.signal).catch(error => error as Error);
   cancel.abort(); expect(await wanted).toBeInstanceOf(Error); await flush();
-  // The upkeep that follows the build lists it as the oldest of four. It stays; the one beyond the two newest of the others goes.
   listing.resolve(); await flush();
-  expect(removed).toEqual([at('7')]);
+  // Two of the house stay and no more: the one just built, which this worker knows to be the newest, and the
+  // newest of those it never touched. Nothing is kept for having been built a moment ago.
+  expect(removed).toEqual([at('8'), at('7')]);
 });
-it('does not remove an image another upkeep finds on the engine while its build is still being finished', async () => {
+it('does not remove an image whose build is still being finished, though no job holds it and two newer ones have been used since', async () => {
   const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, removed: string[] = [];
-  // Two builds. The first has made its image on the engine and has not yet been told so; the second finishes and looks after the disk.
-  const finishing = at('1'), second = at('9'), checked = deferred<void>(); const made = new Set<string>();
+  // The first build has made its image on the engine and has not yet been told so.
+  const finishing = at('1'), checked = deferred<void>(), made: string[] = [];
   f.engine.images.mockImplementation(async (method, path, body, signal) => {
-    if (method === 'GET' && path.startsWith('/images/json')) return [{ RepoTags: [finishing], Created: 1 }, { RepoTags: [at('7')], Created: 7 }, { RepoTags: [at('8')], Created: 8 }, { RepoTags: [second], Created: 9 }];
-    if (method === 'DELETE') { removed.push(path.slice('/images/'.length)); return undefined; }
+    if (method === 'GET' && path.startsWith('/images/json')) return made.map((name, index) => ({ RepoTags: [name], Created: index + 1 }));
+    if (method === 'DELETE') { const name = path.slice('/images/'.length); removed.push(name); made.splice(made.indexOf(name), 1); return undefined; }
     const name = decodeURIComponent(path.slice('/images/'.length, -'/json'.length));
-    if (!made.has(name)) throw gone;
+    if (!made.includes(name)) throw gone;
     // The engine has the first image; the answer that says so is still on its way.
     if (name === finishing) await checked.promise;
     return there(method, path, body, signal);
   });
-  f.engine.build.mockImplementation(async (path, context) => { context.resume(); made.add(new URL(path, 'http://engine').searchParams.get('t')!); });
+  f.engine.build.mockImplementation(async (path, context) => { context.resume(); made.push(new URL(path, 'http://engine').searchParams.get('t')!); });
   const cancel = new AbortController(); f.source.fetch.mockResolvedValueOnce('1'.repeat(40));
   const first = f.executor.build({ ...job, id: 'first' }, cancel.signal).catch(error => error as Error);
   await flush(); cancel.abort(); expect(await first).toBeInstanceOf(Error);
-  // Nobody holds the first image now, it is the oldest by the engine's clock, and it is not this upkeep's own.
-  f.source.fetch.mockResolvedValueOnce('9'.repeat(40)); await f.executor.build({ ...job, id: 'second' }, f.abort.signal); await flush();
-  expect(removed).toEqual([at('7')]); expect(removed).not.toContain(finishing);
+  // Two newer commits are built and looked after. The first image is now the third this worker has used, and nobody holds it.
+  for (const letter of ['8', '9']) { await buildNew(f, letter); await flush(); }
+  expect(removed).toEqual([]); expect(made).toContain(finishing);
+  // Its build is told, and is over. It is an image like any other from then on: the next upkeep takes it.
   checked.resolve(); await flush();
+  await buildNew(f, '7'); await flush();
+  expect(removed).toEqual([at('8'), finishing]);
 });
 it('fails only that job, as a failed build, when the house\'s files cannot be written into a context', async () => {
   const f = fixture(), gone = await missingImage();

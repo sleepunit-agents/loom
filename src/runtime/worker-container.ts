@@ -210,7 +210,12 @@ export function containerWorkerExecutor(config: {
    * is known that it will never start one (`discard`): not removed meanwhile. Counted, since several jobs
    * may hold one image. */
   const inHand = new Map<string, number>();
-  const hold = (image: string, by: 1 | -1) => { const count = (inHand.get(image) ?? 0) + by; if (count > 0) inHand.set(image, count); else inHand.delete(image); };
+  /** When each image was last taken by a job, as a count that only grows: what an upkeep ranks them by. */
+  const recent = new Map<string, number>(); let takes = 0;
+  const hold = (image: string, by: 1 | -1) => {
+    const count = (inHand.get(image) ?? 0) + by; if (count > 0) inHand.set(image, count); else inHand.delete(image);
+    if (by === 1) recent.set(image, ++takes);
+  };
   /** Removals of house images under way, by image: whoever wants one of these waits for its removal to be
    * over before asking the engine whether the image is there. */
   const removing = new Map<string, { over: Promise<void>; end: () => void }>();
@@ -221,19 +226,20 @@ export function containerWorkerExecutor(config: {
       let end!: () => void; const over = new Promise<void>(resolve => { end = resolve; });
       removing.set(image, { over, end }); return true;
     },
-    done(image) { const removal = removing.get(image); removing.delete(image); removal?.end(); },
+    done(image) { const removal = removing.get(image); removing.delete(image); recent.delete(image); removal?.end(); },
+    used: image => recent.get(image),
   };
   /** Looking after the disk, after a build: old house images and what builds left behind. It is nobody's
    * job: it runs beside whatever comes next, under a limit of its own, one at a time, and a failure is
-   * said and nothing more. An image a job holds, or one being built, is kept: asked at each removal. */
+   * said and nothing more. An image a job holds, or one being built, is kept: asked at each removal. The
+   * image a build has just made is kept on merit: it is the one this worker took most recently. */
   let upkeeping: AbortController | undefined;
-  const upkeep = (built: string) => {
+  const upkeep = () => {
     if (upkeeping) return;
     const abort = upkeeping = new AbortController(), timer = setTimeout(() => abort.abort(), UPKEEP_MS);
     // What builds leave behind is asked gone only when this was the only build: another's unfinished
     // layers have no name either.
-    // The image whose build this follows stays, whoever still wants it: it was only just made.
-    void pruneHouses(engine, { take: image => image !== built && guard.take(image), done: guard.done }, builds.size <= 1, abort.signal).then(looked => looked, () => false)
+    void pruneHouses(engine, guard, builds.size <= 1, abort.signal).then(looked => looked, () => false)
       .then(looked => { clearTimeout(timer); if (upkeeping === abort) upkeeping = undefined; if (!looked && !closed) dependencies.say?.(UPKEEP_FAILED); });
   };
   let closed = false;
@@ -245,7 +251,7 @@ export function containerWorkerExecutor(config: {
       made.done = (async () => {
         if (await houseBuilt(engine, image, abort.signal)) return;
         await buildHouse(engine, image, house.file, source.context(house, commit, abort.signal), abort.signal);
-        upkeep(image);
+        upkeep();
       })().finally(() => { clearTimeout(timer); if (builds.get(image) === made) builds.delete(image); });
       void made.done.catch(() => {});
       build = made; builds.set(image, build);

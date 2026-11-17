@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, expect, it, vi } from 'vitest';
-import { houseContext, HouseContextError, type ContextLimits, type ObjectStore } from './house-context.js';
+import { CONTEXT_LIMITS, houseContext, HouseContextError, type ContextLimits, type ObjectStore } from './house-context.js';
 import { CONTEXT_ENTRIES_MAX, CONTEXT_FILE_MAX, CONTEXT_MAX, CONTEXT_NAME_MAX } from './worker-limits.js';
 
 // A real git, real repositories and the machine's own tar to read back what was written.
@@ -102,8 +102,9 @@ it('writes an empty commit as an empty tar', async () => {
   const tar = await all(houseContext(storeOf(path), git(path, ['rev-parse', 'HEAD']), never()));
   expect(tar.equals(Buffer.alloc(1024))).toBe(true);
 });
-it('states its limits once', () => {
+it('states its limits once, and holds a context to them when it is told no others', () => {
   expect([CONTEXT_FILE_MAX, CONTEXT_MAX, CONTEXT_ENTRIES_MAX, CONTEXT_NAME_MAX]).toEqual([104_857_600, 1_073_741_824, 50_000, 4_096]);
+  expect(CONTEXT_LIMITS).toEqual({ file: CONTEXT_FILE_MAX, whole: CONTEXT_MAX, entries: CONTEXT_ENTRIES_MAX, name: CONTEXT_NAME_MAX });
 });
 const roomy: ContextLimits = { file: 1_000, whole: 2_500, entries: 4, name: 60 };
 it.each([
@@ -111,7 +112,7 @@ it.each([
   ['more in all than a context may hold', { 'a': 'x'.repeat(900), 'b': 'x'.repeat(900), 'c': 'x'.repeat(900) }, 'House is too large'],
   ['more files than a context may have', { 'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5' }, 'House is too large'],
   ['a name longer than a name may be', { [`${'n'.repeat(30)}/${'n'.repeat(31)}`]: 'x' }, 'House has a file name the worker does not take'],
-  ['a link whose target is longer than a name may be', { 'link': { link: 't'.repeat(61) } }, 'House has a file that is too large'],
+  ['a link whose target is longer than a name may be', { 'link': { link: 't'.repeat(61) } }, 'House has a link the worker does not take'],
 ])('fails cleanly over %s: not a byte is written', async (_what, files, message) => {
   const house = repository(`limit-${_what.replaceAll(' ', '-')}`, files);
   const written: Buffer[] = [], stream = houseContext(storeOf(house.path), house.commit, never(), { limits: roomy });
@@ -194,4 +195,68 @@ it('fails in its own words when git cannot be run or the commit is not there', a
   const house = repository('failing', { a: 'x' });
   await expect(all(houseContext(storeOf(house.path), 'd'.repeat(40), never()))).rejects.toThrow('git failed');
   await expect(all(houseContext(() => { throw new Error('ENOENT /private/path'); }, house.commit, never()))).rejects.toThrow('git could not be run');
+});
+
+// Hand-made trees: what a push can hold now that git is not asked to check what it fetches.
+/** A commit of a tree made from these lines, each `<mode> <type> <object>\t<name>`. */
+function handmade(name: string, lines: (path: string, blob: (content: string | Buffer) => string, tree: (lines: string[]) => string) => string[]) {
+  const path = join(root, name); mkdirSync(path); git(path, ['init', '--quiet']);
+  const blob = (content: string | Buffer) => git(path, ['hash-object', '-w', '--stdin'], content);
+  const tree = (rows: string[]) => git(path, ['mktree'], rows.map(row => `${row}\n`).join(''));
+  const commit = git(path, ['commit-tree', tree(lines(path, blob, tree)), '-m', 'hand-made']);
+  return { path, commit };
+}
+const refused = async (house: { path: string; commit: string }) => {
+  const written: Buffer[] = [];
+  const failure = await (async () => { try { for await (const chunk of houseContext(storeOf(house.path), house.commit, never())) written.push(chunk as Buffer); } catch (error) { return error as Error; } })();
+  return { message: failure?.message, bytes: Buffer.concat(written).length };
+};
+it.each([
+  ['one name twice', (_path: string, blob: (content: string) => string) => [`100644 blob ${blob('one')}\ta`, `100644 blob ${blob('two')}\ta`]],
+  ['a link and a directory under one name', (_path: string, blob: (content: string) => string, tree: (rows: string[]) => string) =>
+    [`120000 blob ${blob('/somewhere/on/the/host')}\ta`, `040000 tree ${tree([`100644 blob ${blob('x')}\tx`])}\ta`]],
+  ['a file and a directory under one name', (_path: string, blob: (content: string) => string, tree: (rows: string[]) => string) =>
+    [`100644 blob ${blob('file')}\tdir`, `040000 tree ${tree([`040000 tree ${tree([`100644 blob ${blob('x')}\tx`])}\tdeeper`])}\tdir`]],
+])('refuses a tree with %s, before a byte is written: what an unpacker would make of it is not left to the unpacker', async (_what, lines) => {
+  const house = handmade(`handmade-${_what.replaceAll(' ', '-')}`, lines);
+  expect(await refused(house)).toEqual({ message: 'House has a file name the worker does not take', bytes: 0 });
+});
+it('takes names that only look alike: a file beside a directory whose name it begins, and a directory beside a file whose name it begins', async () => {
+  const house = repository('alike', { 'a': 'file\n', 'a.d/x': 'x\n', 'ab/x': 'y\n', 'dir/a': '1\n', 'dir/a-b': '2\n' });
+  expect(under(unpacked(await all(houseContext(storeOf(house.path), house.commit, never())), 'alike'))).toEqual(['a', 'a.d/x', 'ab/x', 'dir/a', 'dir/a-b']);
+});
+it.each([
+  ['an empty target', () => ''], ['a target that holds a NUL', () => Buffer.from('to\0where')],
+  ['a target that is not UTF-8 and too long for a plain header', () => Buffer.concat([Buffer.from([0xff]), Buffer.from('x'.repeat(100))])],
+])('refuses a link with %s, before a byte is written', async (_what, target) => {
+  const house = handmade(`link-${_what.replaceAll(' ', '-')}`, (_path, blob) => [`100644 blob ${blob('first, and never sent')}\ta-file`, `120000 blob ${blob(target() as string)}\tz-link`]);
+  expect(await refused(house)).toEqual({ message: 'House has a link the worker does not take', bytes: 0 });
+});
+it('writes a link whose target is not UTF-8 as its bytes, when a plain header holds it', async () => {
+  const latin = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x2e, 0x74, 0x78, 0x74]);
+  const house = handmade('link-latin', (_path, blob) => [`120000 blob ${blob(latin)}\tlink`]);
+  const out = unpacked(await all(houseContext(storeOf(house.path), house.commit, never())), 'link-latin');
+  expect(readlinkSync(join(out, 'link'), 'buffer').equals(latin)).toBe(true);
+});
+it('refuses a listing longer than its entries could make it, without reading it to an end it may not have', async () => {
+  // Three entries of at most ten bytes of name. A git that lists without end is stopped listening to, and ended.
+  const tight: ContextLimits = { file: 10, whole: 100, entries: 3, name: 10 };
+  let sent = 0, killed = false;
+  const store: ObjectStore = () => {
+    const child = Object.assign(new EventEmitter(), { pid: undefined, exitCode: null as number | null, stdout: new PassThrough(), stdin: new PassThrough(),
+      kill: () => { killed = true; clearInterval(timer); child.stdout.destroy(); return true; } });
+    const timer = setInterval(() => { sent++; child.stdout.write(listed(`n${sent}`)); }, 1);
+    return child as unknown as ChildProcess;
+  };
+  await expect(all(houseContext(store, 'c'.repeat(40), never(), { limits: tight }))).rejects.toThrow('House is too large');
+  expect(killed).toBe(true); expect(sent).toBeLessThan(200);
+});
+it('waits for a git that a signal ended, and fails', async () => {
+  const store: ObjectStore = () => {
+    const child = Object.assign(new EventEmitter(), { pid: undefined, exitCode: null as number | null, signalCode: null as string | null, stdout: new PassThrough(), stdin: new PassThrough(), kill: () => true });
+    // Killed: its output ends, it is closed, and it has no exit code, only a signal.
+    queueMicrotask(() => { child.stdout.end(); child.signalCode = 'SIGKILL'; child.emit('close', null, 'SIGKILL'); });
+    return child as unknown as ChildProcess;
+  };
+  await expect(all(houseContext(store, 'c'.repeat(40), never()))).rejects.toThrow('git failed');
 });
