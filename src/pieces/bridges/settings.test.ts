@@ -41,3 +41,16 @@ it('leaves Slack alone: a bot user id that recurs in another workspace is anothe
   f.settings.change({ ...slack, id: 'two', workspace: 'T2' });
   expect(f.enabled()).toEqual(['one', 'two']);
 });
+it('does not switch a removed connection on: it is restored first, and then enabled like any other', () => {
+  const f = fixture();
+  f.settings.change({ ...f.discord, id: 'home', workspace: 'guild-1' });
+  // What removing a connection does (apps/household.ts): the row stays, switched off and marked removed.
+  f.db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', removedAt: '2026-11-16T12:00:00.000Z' }).run();
+  expect(() => f.settings.change({ ...f.discord, id: 'home', workspace: 'guild-1' })).toThrow('Connection is removed');
+  expect(f.enabled()).toEqual([]);
+  // Its other settings can still be edited while it is off.
+  f.settings.change({ ...f.discord, id: 'home', workspace: 'guild-1', enabled: false, ignore: ['noise'] });
+  f.db.update(bridgeConnections).set({ removedAt: null }).run();
+  f.settings.change({ ...f.discord, id: 'home', workspace: 'guild-1' });
+  expect(f.enabled()).toEqual(['home']);
+});

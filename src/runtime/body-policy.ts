@@ -5,6 +5,8 @@ import { and, asc, eq, isNull, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentDeniedTools, agentPeople, bridgeIncoming, inbox, inboxRefs } from '../core/data/schema.js';
 import { incomingId, outsidePersonKey, parseInboxSourceId } from '../pieces/bridges/keys.js';
+import { inHousehold } from '../policy.js';
+import { sharedSharing } from '../shared-sharing.js';
 import type { WorkerRunPolicy } from './worker.js';
 
 export function workerPolicy(db: DataDatabase, job: { id: string; agent: string; conversation: string | null }): WorkerRunPolicy {
@@ -35,18 +37,22 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
     const keys = new Set(receipts.map(row => outsidePersonKey(item.source as 'discord' | 'slack', source.workspace, row.user)));
     return keys.size === 1 ? [...keys][0] : null;
   };
+  const sharing = sharedSharing(db);
   for (const item of items) {
     if (item.fromKind !== 'person' && item.fromKind !== 'unknown') continue;
     let kind: 'person' | 'outside' | 'unknown' = 'unknown', person: string | null = null, tier: Tier = null;
-    if (item.fromKind === 'person' && item.fromId) {
-      kind = 'person'; person = item.fromId;
+    // The item says who sent it when it arrived. Whether that member is in the household is asked now
+    // (policy.ts): mail from a member removed since is mail from outside, under the account it came from.
+    const member = item.fromKind === 'person' ? item.fromId : null;
+    if (member && inHousehold({ kind: 'member', id: member }, sharing)) {
+      kind = 'person'; person = member;
       // A tier is saved under a person's outside key and under nothing else (shared-agent-body-policy.ts).
       // Linking that person to a member changes who their messages are from, not the tier the owner gave
       // them, so the tier is still looked up by the outside account the message came from.
-      const outside = outsideKey(item, item.fromId);
+      const outside = outsideKey(item, member);
       tier = outside === null ? null : tierOf(outside);
-    } else if (item.fromKind === 'unknown') {
-      const outside = outsideKey(item, null);
+    } else {
+      const outside = outsideKey(item, member);
       if (outside !== null) { kind = 'outside'; person = outside; tier = tierOf(outside); }
     }
     people.set(JSON.stringify([kind, person]), { kind, person, tier });

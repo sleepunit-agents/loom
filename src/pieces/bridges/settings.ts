@@ -45,6 +45,9 @@ export class BridgeSettings {
      // Credential names, filters and enablement may change; a new identity needs
      // a new connection rather than reinterpretation of old private receipts.
      if(existing&&(['platform','workspace','botUser','agent'] as const).some(key=>existing[key]!==input[key]))throw Error('Connection identity is fixed');
+     // A removed connection is out of use until it is restored (apps/household.ts, setRemoved). Intake
+     // counts it as nobody's and holds what it hears, so it is not given a socket either.
+     if(existing?.removedAt&&input.enabled)throw Error('Connection is removed; restore it before enabling it');
      // A Discord bot's session hears every guild the bot is in and every direct message to it. Enabled
      // connections for one bot in two guilds would each receive, and deliver, the same direct messages
      // (docs/accepted-tradeoffs.md, "A Discord bot is connected in one guild at a time").

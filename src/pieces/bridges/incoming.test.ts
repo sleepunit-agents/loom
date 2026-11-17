@@ -360,3 +360,52 @@ it('erases the words of every direct message at the keep time, whoever it is fro
   expect(f.db.select({ text: bridgeIncoming.text }).from(bridgeIncoming).all().map(row => row.text)).toEqual(['', '', 'Room words']);
   expect(oldestPrivateBridgeWords(f.db)).toBeUndefined();
 });
+
+// Who counts in intake is a household question: a connection that is switched off or removed, or whose
+// agent is removed, is no agent's bot, and a removed member's linked account is nobody's.
+it.each([
+  ['switched off', (f: ReturnType<typeof fixture>) => { f.db.update(bridgeConnections).set({ enabled: false, state: 'disconnected' }).where(eq(bridgeConnections.id, 'peer')).run(); }],
+  ['removed', (f: ReturnType<typeof fixture>) => { f.db.update(bridgeConnections).set({ enabled: false, state: 'disconnected', removedAt: f.now() }).where(eq(bridgeConnections.id, 'peer')).run(); }],
+  ['removed and then switched on without being restored', (f: ReturnType<typeof fixture>) => { f.db.update(bridgeConnections).set({ removedAt: f.now() }).where(eq(bridgeConnections.id, 'peer')).run(); }],
+  ['the connection of a removed agent', (f: ReturnType<typeof fixture>) => { f.db.update(agents).set({ removedAt: f.now() }).where(eq(agents.id, 'mark')).run(); }],
+])('does not hold a message for a second connection of the same bot that is %s', (_, retire) => {
+  const f = fixture();
+  // The owner moved the bot to another agent: a new connection for it, and the old one retired.
+  f.db.update(bridgeConnections).set({ botUser: 'bot-art' }).where(eq(bridgeConnections.id, 'peer')).run();
+  const message = { ...f.message, mentions: ['bot-art'] };
+  expect(f.ingress.receive(message)).toMatchObject({ state: 'held', reason: 'Ambiguous connection agent' });
+  retire(f);
+  expect(f.ingress.retry(f.ingress.receive(message).id)).toMatchObject({ state: 'delivered', reason: null });
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+it('takes a retired connection\'s bot for no agent: not a peer that was addressed, and not a household sender', () => {
+  const f = fixture();
+  f.db.update(bridgeConnections).set({ enabled: false, state: 'disconnected' }).where(eq(bridgeConnections.id, 'peer')).run();
+  f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
+  // A mention of the retired bot is a mention of nobody here, so the room's own agent answers as it would anyone.
+  expect(f.ingress.receive({ ...f.message, id: 'mention', mentions: ['bot-mark'] })).toMatchObject({ state: 'delivered' });
+  // The retired bot itself is an unknown bot, not the agent it once stood for.
+  expect(f.ingress.receive({ ...f.message, id: 'bot', user: 'bot-mark', bot: true, mentions: ['bot-art'] })).toMatchObject({ state: 'dropped', reason: 'Unknown bot or bots disabled' });
+  expect(f.db.select().from(inbox).all().map(row => row.fromKind)).toEqual(['person']);
+});
+it('records a removed member\'s linked account as nobody, in a room and in a direct message', () => {
+  const f = fixture();
+  f.db.insert(members).values({ id: 'guest', role: 'member', joinedAt: f.now() }).run();
+  f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'guest-account', member: 'guest' }).run();
+  const before = f.ingress.receive({ ...f.message, id: 'before', channel: 'dm', isDm: true, user: 'guest-account' });
+  expect(before).toMatchObject({ state: 'delivered', member: 'guest' });
+  // Removing a member keeps their link (apps/household.ts); it must stop standing for them.
+  f.db.update(members).set({ removedAt: f.now() }).where(eq(members.id, 'guest')).run();
+  const room = f.ingress.receive({ ...f.message, id: 'room', user: 'guest-account' });
+  const direct = f.ingress.receive({ ...f.message, id: 'after', channel: 'dm', isDm: true, user: 'guest-account' });
+  expect(room).toMatchObject({ state: 'delivered', member: null });
+  expect(direct).toMatchObject({ state: 'delivered', member: null });
+  // Not the private conversation they had as a member.
+  expect(direct.conversation).not.toBe(before.conversation);
+  expect(f.db.select().from(conversations).where(eq(conversations.id, direct.conversation!)).get()).toMatchObject({ member: null, direct: true });
+  expect(f.db.select({ fromKind: inbox.fromKind, fromId: inbox.fromId }).from(inbox).where(eq(inbox.conversation, direct.conversation!)).all()).toEqual([{ fromKind: 'unknown', fromId: null }]);
+  expect(f.db.select({ fromKind: inbox.fromKind, fromId: inbox.fromId }).from(inbox).where(eq(inbox.conversation, room.conversation!)).all()).toEqual([{ fromKind: 'unknown', fromId: null }]);
+  // Restored, the link stands for them again.
+  f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'guest')).run();
+  expect(f.ingress.receive({ ...f.message, id: 'restored', channel: 'dm', isDm: true, user: 'guest-account' })).toMatchObject({ member: 'guest', conversation: before.conversation });
+});

@@ -5,6 +5,7 @@ import { createDataSchema } from '../core/data/database.js';
 import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, agentPeople, agentDeniedTools, inbox, inboxRefs, jobs, bridgeIncoming } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { workerPolicy } from './body-policy.js';
+import { hasGuest } from './harness-traits.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
 function fixture(platform: 'discord' | 'slack' = 'discord') {
@@ -154,3 +155,17 @@ for (const sourceId of [null, 'not-json', '{}', '["w","room"]', '["w","room","m"
     expect(f.read().people).toEqual([{ kind: 'unknown', person: null, tier: null }]);
   });
 }
+
+it('counts a member removed since their mail arrived as an outside sender, so the guests-only rules apply', () => {
+  const f = fixture();
+  f.db.insert(members).values({ id: 'guest', role: 'member', joinedAt: '2026-11-14T12:00:00.000Z' }).run();
+  f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'linked', member: 'guest' }).run();
+  const linked = f.receive('linked', 'linked', 'linked-dm'), job = { id: 'other-job', agent: 'art', conversation: linked.conversation };
+  expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'guest', tier: null }]);
+  expect(hasGuest(workerPolicy(f.db, job))).toBe(false);
+  f.db.update(members).set({ removedAt: '2026-11-14T12:00:00.000Z' }).where(eq(members.id, 'guest')).run();
+  // Their outside account still names them for the tier the agent's owner gave it, and nothing more.
+  const key = JSON.stringify(['discord', 'w', 'linked']);
+  expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'outside', person: key, tier: null }]);
+  expect(hasGuest(workerPolicy(f.db, job))).toBe(true);
+});
