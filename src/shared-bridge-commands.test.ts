@@ -48,6 +48,10 @@ it('releases held sends but never requeues an uncertain send; dismissal retains 
  f.db.insert(bridgeIncoming).values({id:'incoming',connection:'discord',channel:'room',isDm:false,user:'outside',text:'Words',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
  for(const state of ['held','uncertain'] as const)f.db.insert(bridgeSends).values({id:state,incoming:'incoming',connection:'discord',channel:'room',text:'Reply',state,createdAt:f.at}).run();
  expect((await f.call({action:'review',id:'uncertain',decision:'release'})).status).toBe(400);
+ // The door and the service read one shape, and a reply's id is taken as sent: neither trims a padded id into this reply's.
+ expect((await f.call({action:'review',id:' held ',decision:'release'})).status).toBe(403);
+ expect(()=>f.root.services.bridges.settings.change({action:'review',id:' held ',decision:'release'})).toThrow('Unknown send');
+ expect(f.db.select().from(bridgeSends).where(eq(bridgeSends.id,'held')).get()?.state).toBe('held');
  expect((await f.call({action:'review',id:'held',decision:'release'})).status).toBe(200);
  expect((await f.call({action:'review',id:'uncertain',decision:'dismiss'})).status).toBe(200);
  expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state])).toEqual([['held','pending'],['uncertain','dismissed']]);
