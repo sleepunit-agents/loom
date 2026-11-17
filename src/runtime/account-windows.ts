@@ -4,7 +4,7 @@ import { accountCompletion, accountObservationCommitted } from './account-comple
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { modelAccounts, modelAccountWindows } from '../core/data/schema.js';
-import { recordAccountUsage, accountUsageUnavailable } from './account-usage.js';
+import { accountUsageUnavailable } from './account-usage.js';
 import { accountCapacity, type QuotaWindow } from './quota.js';
 
 type Identity = { account: string; owner: string; provider: string };
@@ -14,6 +14,33 @@ export function readAccountWindows(db: DataDatabase, account: string): QuotaWind
   return db.select().from(modelAccountWindows).where(eq(modelAccountWindows.account, account)).all()
     .map(row => ({ name: row.window, usage: row.usage, readAt: row.usageReadAt,
       resetsAt: row.resetsAt, durationMs: row.durationMs, reserve: row.reserve }));
+}
+
+/** The summary on `model_accounts` (usage, read time, reset, has room) is worked out from the windows.
+ * Not exported: recordAccountWindows is its one caller, so the summary can never be written without them. */
+function recordSummary(db: DataDatabase, input: {
+  account: string; owner: string; provider: string; windows: readonly QuotaWindow[]; now: string;
+}) {
+  const capacity = accountCapacity(input.windows, input.now);
+  const readings = input.windows.map(window => window.readAt).filter((at): at is string => at !== null);
+  const oldest = readings.length === input.windows.length && readings.length
+    ? Math.min(...readings.map(Date.parse)) : null;
+  const usageReadAt = oldest === null || readings.some(at => Date.parse(at) > Date.parse(input.now))
+    ? null : new Date(oldest).toISOString();
+  const resetsAt = input.windows.length && input.windows.every(window => window.resetsAt !== null) ? new Date(Math.min(...input.windows.map(window => Date.parse(window.resetsAt!)))).toISOString() : null;
+  const usage = capacity.windows.length && capacity.windows.every(window => window.estimatedUsage !== null)
+    ? Math.min(1, Math.max(...capacity.windows.map(window => window.estimatedUsage!))) : null;
+  const result = db.transaction(() => {
+    const before = db.select().from(modelAccounts).where(eq(modelAccounts.id, input.account)).get();
+    if (!before || before.owner !== input.owner || before.provider !== input.provider) throw new Error('Account changed during refresh');
+    // An older asynchronous refresh must not replace a more recent reading.
+    if (usageReadAt !== null && before.usageReadAt !== null && Date.parse(usageReadAt) < Date.parse(before.usageReadAt))
+      return { recorded: false as const, account: before };
+    const account = db.update(modelAccounts).set({ usage, usageReadAt, resetsAt, hasRoom: capacity.hasRoom })
+      .where(eq(modelAccounts.id, input.account)).returning().get()!;
+    return { recorded: true as const, account };
+  }, { behavior: 'immediate' });
+  return result;
 }
 
 /** A provider response is the complete set of active limits. An older reading
@@ -28,7 +55,7 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
     if (windows.some(row => row.readAt !== null && before.some(old => old.name === row.name
       && old.readAt !== null && Date.parse(old.readAt) <= Date.parse(now)
       && Date.parse(old.readAt) > Date.parse(row.readAt!)))) return false;
-    const result = recordAccountUsage(db, { ...identity, windows, now });
+    const result = recordSummary(db, { ...identity, windows, now });
     if (!result.recorded) return false;
     db.delete(modelAccountWindows).where(eq(modelAccountWindows.account, identity.account)).run();
     for (const row of windows) db.insert(modelAccountWindows).values({ account: identity.account,
