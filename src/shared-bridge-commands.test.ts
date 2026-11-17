@@ -5,7 +5,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members,agents,secrets,tokens,memberAgents,bridgeConnections,bridgeChannelFilters,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeFiles } from './core/data/schema.js';
+import { conversations,members,agents,secrets,tokens,memberAgents,bridgeConnections,bridgeChannelFilters,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeFiles } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const close:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{for(const f of close.splice(0).reverse())await f();});
@@ -97,3 +97,28 @@ it('keeps retained receipts scoped to one connection identity while permitting c
  expect((await f.call({...f.config,tokenSecret:'APP'})).status).toBe(200);
 });
 
+
+it('lets the people a direct message is shown to review a reply in it, since the owner role does not show it',async()=>{
+ const f=fixture();f.root.services.bridges.settings.change(f.config);
+ const other='d'.repeat(64);f.db.insert(members).values({id:'other',role:'member',joinedAt:f.at}).run();f.db.insert(tokens).values({fingerprint:createHash('sha256').update(other).digest('hex'),label:'other',kind:'owner',member:'other',createdAt:f.at}).run();
+ // The member's own direct message with art, a direct message from somebody who is not linked, and a room.
+ f.db.insert(conversations).values([{id:'own',agent:'art',venue:'discord',place:'dm:1',label:'',member:'member',direct:true,startedAt:f.at,lastAt:f.at,turnCount:0},
+  {id:'outside',agent:'art',venue:'discord',place:'dm:2',label:'',direct:true,startedAt:f.at,lastAt:f.at,turnCount:0},{id:'room',agent:'art',venue:'discord',place:'room',label:'',startedAt:f.at,lastAt:f.at,turnCount:0}]).run();
+ for(const [id,isDm,member] of [['own',true,'member'],['outside',true,null],['room',false,null]] as const){
+  f.db.insert(bridgeIncoming).values({id,connection:'discord',channel:id,isDm,member,conversation:id,user:'u-'+id,text:'Words',postedAt:f.at,receivedAt:f.at,state:'delivered'}).run();
+  for(const state of ['held','uncertain'] as const)f.db.insert(bridgeSends).values({id:id+'-'+state,incoming:id,connection:'discord',channel:id,text:'Reply',state,createdAt:f.at}).run();
+ }
+ const review=async(id:string,decision:'release'|'dismiss',token:string)=>(await f.call({action:'review',id,decision},token)).status;
+ const state=(id:string)=>f.db.select().from(bridgeSends).where(eq(bridgeSends.id,id)).get()!.state;
+ // Nobody but its member reads the member's own direct message, so nobody else decides about a reply in it.
+ for(const token of [credential.owner,other,credential.agent])for(const id of ['own-held','own-uncertain'])expect([id,await review(id,'dismiss',token)]).toEqual([id,403]);
+ expect(await review('own-held','release',credential.member)).toBe(200);expect(state('own-held')).toBe('pending');
+ expect(await review('own-uncertain','release',credential.member)).toBe(400);expect(await review('own-uncertain','dismiss',credential.member)).toBe(200);expect(state('own-uncertain')).toBe('dismissed');
+ // A direct message from anybody else is shown to art's owners. The owner here does not have art.
+ expect(await review('outside-held','release',credential.owner)).toBe(403);expect(await review('outside-held','release',other)).toBe(403);
+ expect(await review('outside-held','release',credential.member)).toBe(200);expect(await review('outside-uncertain','dismiss',credential.member)).toBe(200);
+ // A room's reply stays the household owners': having the agent shows it and does not decide about it.
+ expect(await review('room-held','release',credential.member)).toBe(403);expect(await review('room-held','release',credential.agent)).toBe(403);
+ expect(await review('room-held','release',credential.owner)).toBe(200);expect(await review('room-uncertain','dismiss',credential.owner)).toBe(200);
+ expect(await review('missing','dismiss',credential.owner)).toBe(403);
+});
