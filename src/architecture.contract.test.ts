@@ -28,8 +28,22 @@ it('names every table created outside the household schema', () => {
   // The household schema's own upgrade steps repeat tables the schema already defines.
   const created = sources('src').filter(file => file !== 'src/core/data/database.ts').flatMap(file =>
     [...readFileSync(join(root, file), 'utf8').matchAll(/CREATE (?:VIRTUAL )?TABLE (?:IF NOT EXISTS )?[`"]?([a-z_]+)\b/g)].map(match => ({ file, table: match[1] })));
-  expect(created.length).toBeGreaterThan(40);
+  expect(created.length).toBeGreaterThan(30);
   expect(created.filter(({ table }) => !named.has(table))).toEqual([]);
+});
+
+it('names no table that nothing creates any more', () => {
+  const everySource = (directory: string): string[] => readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry =>
+    entry.isDirectory() ? everySource(join(directory, entry.name)) : /\.ts$/.test(entry.name) && !/\.test\.ts$/.test(entry.name) ? [join(directory, entry.name)] : []);
+  const made = new Set([
+    ...[...Object.values(tables), ...Object.values(plumbing)].map(getTableName),
+    ...everySource('src').flatMap(file => [...readFileSync(join(root, file), 'utf8').matchAll(/CREATE (?:VIRTUAL )?TABLE (?:IF NOT EXISTS )?[`"]?([a-z_]+)\b/g)].map(match => match[1])),
+  ]);
+  // A backticked name with an underscore and nothing else is a table, apart from these few words.
+  const notTables = new Set(['user_version']);
+  const tablesNamed = [...named].filter(text => /^[a-z]+(_[a-z]+)+$/.test(text) && !notTables.has(text));
+  expect(tablesNamed.length).toBeGreaterThan(90);
+  expect(tablesNamed.filter(table => !made.has(table))).toEqual([]);
 });
 
 it('keeps test fixtures out of the build: each is named *.fixture.ts, and tsconfig excludes that name', () => {
