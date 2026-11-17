@@ -371,7 +371,8 @@ Entries are grouped by the part of the program they belong to.
   was built on (`docs/runtime/worker.md`, "The core house"). So each house is built again on its first job
   of a new week, and on its first job after a loom whose core changed.
 - **What that costs.** Once a week on each machine: the core's own build (it downloads the system's
-  packages, Node, Claude Code and Codex; a house of the same contents took about ten minutes on a small
+  packages, Node, Claude Code and Codex, and made an image of 1.29 GB when it was built once through
+  rootless podman 5.4.2 on 2026-11-17; a house of the same contents took about ten minutes on that
   machine), then each house's own steps after `FROM`, which run again because the layers under them
   changed. The first job of the week for each house waits for that, reported as starting, within
   `buildTimeoutMs`. A machine without the network, or a week in which a download address is down, builds
@@ -443,7 +444,9 @@ Entries are grouped by the part of the program they belong to.
     (`.oauth_refresh.lock`, and an older-style `<directory>.lock` beside the directory), reads the
     sign-in again once it holds the lock, and does not renew when another process already has (it counts
     that as a race resolved). The same pattern, a lock and a check of whether the file changed on disk,
-    is in that program's source at 2.1.88. **Read, not tested here:** no run on this household's machines
+    is in that program's source at 2.1.88. A run of the core house on 2026-11-17 showed Claude Code 2.1.326 there with the pinned checksum,
+    its sign-in place set to the mounted directory, and that directory writable. **Read, not tested
+    here:** no run on this household's machines
     has made two bodies renew at once and watched the outcome.
   - *Codex, looked at in version 0.162.1*: **not established.** Its program knows the error "refresh token
     was already used", which is what a lost race would be, and holds the word `flock`; whether it locks or

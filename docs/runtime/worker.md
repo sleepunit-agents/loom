@@ -827,8 +827,7 @@ an engine.
 Another engine that serves the same routes on a Unix socket is used the same
 way. `scripts/check-container-engine.mjs` runs the built worker against a socket
 you name (a house fetched and built, bodies started in it, then the raw answers
-to a few requests) and prints what the engine took and what it refused. The
-script as it now is has not yet been run against an engine. It builds a
+to a few requests) and prints what the engine took and what it refused. It builds a
 stand-in core house and a house on it and starts bodies in the fixed layout.
 With `--core` it also builds the real core house from `house/core` (which
 downloads the harnesses and takes some minutes) and runs two bodies on it, one
@@ -838,8 +837,35 @@ through one name only, one in a house whose own `ENV` names the three
 Claude Code's checksum against the pins, what `claude --version` and
 `codex --version` print, where each harness looks for its sign-in (the
 variable, the link and whether the mounted directory can be written; no sign-in
-is read), every file of the repository, and the three `LOOM_HOUSE_` values. Its earlier form, which started bodies in an image already there, was
-run against rootless podman 5.4.2 on 2026-11-17 and showed: podman takes these requests, reports a
+is read), every file of the repository, and the three `LOOM_HOUSE_` values.
+
+**One run, with `--core`, on 2026-11-17**, against rootless podman 5.4.2 with
+crun and git 2.47.3, on x86-64; it ended with exit code 0. What it showed:
+
+- The real core house built through the engine, 1.29 GB, with the labels
+  `loom.house="2"` and `loom.house.harnesses="claude codex"`, no volume and no
+  user.
+- podman took the core's local name from the `LOOM_CORE` build argument: houses
+  were built `FROM` it with nothing pulled.
+- A house with no Housefile built on it, and its body found every file of the
+  commit, the one its `.dockerignore` would have left out among them.
+- In a body: node v24.18.1 at `/usr/local/bin/node`; Claude Code 2.1.326, whose
+  installed file has the pinned checksum; Codex 0.164.0; each answered
+  `--version`. `HOME` was `/home/agent`, the working directory
+  `/home/agent/repo`, the user id 0.
+- Claude Code's sign-in place was `/run/loom/login/claude` (the variable),
+  Codex's `auth.json` a link into `/run/loom/login/codex`, and the mounted
+  sign-in directory could be written.
+- A house whose image sets `HOME` and the three `LOOM_HOUSE_` names itself still
+  gave its body the worker's values.
+- The upkeep after a build removed a house image of the earlier naming that the
+  previous worker had left.
+
+What that run did not show: a harness signing in or renewing from the mounted
+directory, a model being called, or two bodies renewing at once.
+
+An earlier form of the script, which started bodies in an image already there,
+was run against the same podman on the same day and showed: podman takes these requests, reports a
 container's mounts in the same form, and honours the `none` log driver. It
 ignores the runtime's name and runs the runtime it is itself configured with,
 whichever of the two the worker asks for. It also creates a bind mount's source
@@ -984,8 +1010,10 @@ house points it:
 
 What this rests on: the household's earlier houses ran Claude Code 2.1.309 with
 that variable and Codex 0.162.1 through that link, and their sign-ins were
-renewed in those directories. Neither has been run yet in the core house, with
-the versions it pins.
+renewed in those directories. In the core house, with the versions it pins,
+one run on 2026-11-17 showed the variable set, the link in place and the mounted
+directory writable (see "Container bodies", the engine check); no harness has
+yet signed in or renewed from there.
 
 With a rootless engine the worker's user is the container's root, so the
 image's `USER` must be one that can write the directory; the core house's is.
