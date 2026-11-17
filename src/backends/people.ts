@@ -25,6 +25,7 @@ import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
   checkEnvelope, slugError, renderWhereLine, oneLine, byName, mergeLevel, withoutNulls, stampWhere, whereCounts,
   hasTable, RESERVED_KEYS, isReserved, type CardRowBase, type RevisionMeta, type RevisionOp, type CardConnection,
+  CARD_NAME_MAX, CARD_SUMMARY_MAX, CARD_FIELDS_MAX, CARD_RENDER_MAX,
 } from './cards.js';
 
 export { SLUG_RE, RESERVED_KEYS, fieldState, type FieldState, type RevisionOp } from './cards.js';
@@ -35,13 +36,14 @@ export { CardError as PersonCardError } from './cards.js';
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
 export const MAX_SLUG = PERSON_CARD_SLUG_MAX;
-const MAX_NAME = 80;
-const MAX_SUMMARY = 1200;
-const MAX_FIELDS = 12;
-const MAX_STRING = 200;
+const MAX_NAME = CARD_NAME_MAX;
+const MAX_SUMMARY = CARD_SUMMARY_MAX;
+const MAX_FIELDS = CARD_FIELDS_MAX;
+/** The longest text value a card field holds, a way to reach the person included. */
+export const MAX_STRING = 200;
 const MAX_ARRAY = 8;
 const MAX_MAY = 8;
-export const MAX_RENDER = 2000;
+export const MAX_RENDER = CARD_RENDER_MAX;
 
 const TOP_KEYS = ['slug', 'name', 'summary', 'where', 'how', 'may'];
 const WRITE_KEYS = [...TOP_KEYS, 'merge'];

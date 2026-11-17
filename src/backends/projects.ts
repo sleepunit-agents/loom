@@ -31,6 +31,7 @@ import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt, checkEnvelope,
   slugError, renderWhereLine, oneLine, mergeLevel, withoutNulls, stampWhere, whereCounts, hasTable, isReserved,
   RESERVED_KEYS, type CardRowBase, type RevisionMeta, type CardConnection,
+  CARD_NAME_MAX, CARD_SUMMARY_MAX, CARD_FIELDS_MAX, CARD_RENDER_MAX,
 } from './cards.js';
 
 export { CardError as ProjectCardError } from './cards.js';
@@ -39,15 +40,15 @@ import { PROJECT_CARD_SLUG_MAX } from '../slug.js';
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
 export const MAX_PROJECT_SLUG = PROJECT_CARD_SLUG_MAX;
-const MAX_NAME = 80;
-const MAX_SUMMARY = 1200;
+const MAX_NAME = CARD_NAME_MAX;
+const MAX_SUMMARY = CARD_SUMMARY_MAX;
 const MAX_GOAL = 400;
 const MAX_WHERE_VALUE = 400;
-const MAX_FIELDS = 12;
+const MAX_FIELDS = CARD_FIELDS_MAX;
 const MAX_LIST = 16;
 const MAX_LINK = 200;
 const MAX_EPIC = 64;
-export const MAX_PROJECT_RENDER = 2000;
+export const MAX_PROJECT_RENDER = CARD_RENDER_MAX;
 const MAX_REASON = 200;
 
 export const STATUSES = ['active', 'paused', 'done'] as const;

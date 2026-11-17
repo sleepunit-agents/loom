@@ -1,8 +1,9 @@
 import type { Database } from 'better-sqlite3';
 import type { Clock } from '../../core/clock.js';
 import type { OpenItem, SweepPart } from '../../core/tempo/sweep.js';
+import { CHECK_DAYS } from './knowledge.js';
 
-const CHECK_INTERVAL = 30 * 86_400_000;
+const CHECK_INTERVAL = CHECK_DAYS * 86_400_000;
 
 /** Trusted sweep contribution, routed to the explicitly configured checking agent.
  * Reads metadata only; delivering a reminder never counts as checking a page.

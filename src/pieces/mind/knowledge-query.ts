@@ -10,6 +10,7 @@ import { maySee, type Sharing, type Viewer } from '../../core/index.js';
 import { knowledgeView, knowledgeAccess } from './knowledge.js';
 import {knowledgeSweep} from './knowledge-sweep.js';
 import type {SweepPart} from '../../core/tempo/sweep.js';
+import {MAX_REVISIONS} from '../../backends/cards.js';
 
 /** The outside door supplies the authenticated viewer, never a query argument. */
 export interface MemoryQueryContext { viewer: Viewer }
@@ -59,7 +60,7 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
    if(!allowed(context))return [];
    try{return db?.prepare(`SELECT r.id,r.slug,r.body,r.op,r.replaced_at AS replacedAt,r.actor
     FROM page_revisions r JOIN pages p ON p.id=r.page_id
-    WHERE p.slug=? AND p.status='active' ORDER BY r.id DESC LIMIT 10`).all(source.slug)??[];}
+    WHERE p.slug=? AND p.status='active' ORDER BY r.id DESC LIMIT ?`).all(source.slug,MAX_REVISIONS)??[];}
    catch{throw new GraphQLError('Knowledge history is unavailable');}
   }},
  } });

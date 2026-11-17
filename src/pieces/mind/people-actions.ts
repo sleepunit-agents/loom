@@ -4,6 +4,8 @@ import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
 import { mindReceipts, mindReceiptsReady } from './receipt-schema.js';
+import { CARD_NAME_MAX, CARD_SUMMARY_MAX } from '../../backends/cards.js';
+import { MAX_STRING } from '../../backends/people.js';
 export interface NewPerson { slug:string; name:string; summary:string; channel:string; handle:string; actor:string }
 /** Composition injects the synchronous card validator/writer, with no schema opening. */
 export type PersonCreator = (db:BetterSqlite3.Database,input:NewPerson,now:number,half:'directory'|'relationship')=>void;
@@ -28,7 +30,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
     }
   };
   operations.register(operation({name:'mind.personAdd',write:true,recover,
-    input:z.object({name:z.string().trim().min(1).max(80),summary:z.string().trim().max(1200).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(200).default('')}).strict(),output:z.unknown(),
+    input:z.object({name:z.string().trim().min(1).max(CARD_NAME_MAX),summary:z.string().trim().max(CARD_SUMMARY_MAX).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(MAX_STRING).default('')}).strict(),output:z.unknown(),
     may:v=>mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd') && !!options.agent && mayAct(v,{type:'person',agent:options.agent},options.sharing(),'act','mind.personAdd'),
     run(ctx,input){
       if(sources.length!==2 || !options.agent) throw new OperationError('not-found','People sources are absent');

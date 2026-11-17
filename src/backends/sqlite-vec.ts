@@ -52,6 +52,7 @@ import { computeExpiresAt, isExpired } from './ttl.js';
 import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
 import { refuseNewerStore, runMigrations } from './migrations.js';
+import { MAX_REVISIONS } from './cards.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
 import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
@@ -88,8 +89,6 @@ export interface SqliteVecConfig {
   onRecall?: (obs: RecallObservation) => void;
 }
 
-/** Body snapshots retained per memory; oldest pruned beyond this cap (mirrors knowledge wing). */
-const MAX_REVISIONS_PER_MEMORY = 10;
 
 interface MemoryRow {
   id: number;
@@ -1177,7 +1176,7 @@ export class SqliteVecBackend implements MemoryBackend {
              SELECT id FROM memory_revisions WHERE memory_id = ? ORDER BY id DESC LIMIT ?
            )`,
         )
-        .run(memoryId, memoryId, MAX_REVISIONS_PER_MEMORY),
+        .run(memoryId, memoryId, MAX_REVISIONS),
     );
     return Number(result.lastInsertRowid);
   }

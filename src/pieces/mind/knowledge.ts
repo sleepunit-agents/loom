@@ -8,7 +8,8 @@ export function knowledgeAccess(viewer:Viewer,sharing:Sharing){return {id:'knowl
  canRecheck:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeRecheck')};}
 
 interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null; freshness_anchor?: string | null; sla_class?: string | null }
-const CHECK_DAYS = 30;
+/** How long a check of a page stands. The page shows it as due after this, and the sweep raises it then. */
+export const CHECK_DAYS = 30;
 export type Freshness = 'fresh' | 'aging' | 'due';
 export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; freshness_anchor?: string; sla_class?: string; fresh: Freshness; by?: string;
   /** Confirmed in the last RECENT_DAYS: Knowledge's Recently verified. */
