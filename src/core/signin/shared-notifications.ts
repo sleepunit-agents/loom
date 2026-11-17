@@ -64,6 +64,15 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
    operations.register({name:'notifications.removeDevice',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(SHA256_HEX)}).strict(),output:z.object({removed:z.literal(true)}).strict(),may:member,run(ctx,input){const row=db.select().from(notificationDevices).where(eq(notificationDevices.member,ctx.viewer.id)).all().find(row=>ref(row.endpoint)===input.ref);if(!row)throw new OperationError('not-found','Device not found');remove(row.endpoint);ctx.changed('notifications',ctx.viewer.id);return{removed:true as const};}});
   },
   publish(member:string,ids:readonly string[]){if(closed||!options.config)return false;write(()=>{for(const target of db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all())for(const item of ids){if(device(target.endpoint)&&visible(member,item))db.insert(notificationQueue).values({id:hash(JSON.stringify([target.endpoint,item])),device:target.endpoint,item,queuedAt:new Date(clock.now()).toISOString()}).onConflictDoNothing().run();}});kick();return running??Promise.resolve();},
+  /** Queue a push inside the caller's own write, and say how many devices it was queued for. `publish`
+   * opens a write of its own; a registered operation is already in one. Sent by `flush` once that commits. */
+  enqueue(member:string,ids:readonly string[]){
+   if(closed||!options.config)return 0;let queued=0;
+   for(const target of db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all())for(const item of ids)
+    if(device(target.endpoint)&&visible(member,item))queued+=db.insert(notificationQueue).values({id:hash(JSON.stringify([target.endpoint,item])),device:target.endpoint,item,queuedAt:new Date(clock.now()).toISOString()}).onConflictDoNothing().run().changes;
+   return queued;
+  },
+  flush(){kick();},
   close(){closed=true;for(const abort of aborts)abort.abort();return running??Promise.resolve();},
  };
 }

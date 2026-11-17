@@ -65,6 +65,7 @@ import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
 import { workLifetime } from './shared-work-lifetime.js';
 import { registerSharedWorkBody } from './shared-work-body.js';
+import { registerSharedNotices } from './shared-notices.js';
 import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
@@ -197,6 +198,7 @@ export function sharedRoot(options: {
   // Whose memory a command works on is the caller's own agent's, on proof of its credential. A body working
   // for a member is that agent only while the member has the agent (rules.agentItself), the same answer
   // the memory reads give it.
+  registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes);
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
   memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);

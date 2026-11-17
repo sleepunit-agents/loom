@@ -704,6 +704,15 @@ it('decides whose standing rules answer for a piece of work in policy.ts and now
   expect(text('src/shared-household-proposals.ts')).not.toMatch(/workPrincipal|OWN_WORK/);
 });
 
+it('states the limits of a notice an agent raises once, and takes who raises it from policy.ts', () => {
+  const notices = text('src/shared-notices.ts');
+  expect(sources('src').filter(file => /NOTICE_(TITLE|DETAIL|WHY|KEYS)_MAX\s*=|NOTICE_PUSH_AGAIN_MS\s*=/.test(text(file)))).toEqual(['src/shared-notices.ts']);
+  expect(notices).toContain('holds(rules.agentItself,viewer,{agent:found.agent},sharedSharing(db))');
+  // Who it is for is who has the agent, by policy's one reading of that; it writes no Inbox row itself.
+  expect(notices).toContain('membersWithAgent(name,sharedSharing(db))');
+  expect(notices).not.toMatch(/\.(insert|update|delete)\(/);
+});
+
 it('asks policy.ts which agents Home shows', () => {
   const home = text('src/core/data/comms-home.ts');
   expect(home).toContain("mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work')");

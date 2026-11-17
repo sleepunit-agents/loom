@@ -100,6 +100,13 @@ export class Conversations {
     this.db.update(inbox).set({ ...labels, changedAt: this.now() }).where(eq(inbox.id, id)).run();
   }
 
+  /** A waiting notice whose producer says it again in newer words: the same item, with its words replaced.
+   * Its volume and its place are left as they are, so saying a thing again does not announce it again. */
+  restate(id: string, said: { words: string; why: string | null }): void {
+    if (this.item(id).state !== 'waiting') throw new Error('Only a waiting item can be restated');
+    this.db.update(inbox).set({ words: said.words, why: said.why, changedAt: this.now() }).where(eq(inbox.id, id)).run();
+  }
+
   /** Work-source facts keep their own scope. Their reply to an agent in a
    * private conversation must carry that conversation's current labels. A
    * different member's private source can never be relabelled into it. */
