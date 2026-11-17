@@ -1,7 +1,11 @@
 /** Trusted metadata service. External operations authenticate callers and check
- * Settings ownership before invoking answer/setRule/revoke. No value enters it. */
+ * Settings ownership before invoking answer/setRule/revoke. No value enters it.
+ *
+ * `standing` is the door's answer to one question of policy.ts (standingSecretAnswerServes): may a
+ * standing answer serve this work? Where it may not, a rule or the household default never allows a
+ * request (it can still refuse one), and only a grant a household owner gave for that very job counts. */
 import { createHash, randomUUID } from 'node:crypto';
-import { and, eq, sql, isNull, or } from 'drizzle-orm';
+import { and, eq, ne, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
@@ -15,6 +19,10 @@ const requestInput = z.object({ id: z.string().min(1).max(200), secret: secretNa
   job: z.string().min(1).optional(), conversation: z.string().min(1).optional(), why: requestReason, minutes: duration }).strict();
 /** How long a standing answer lets a secret be used when no rule has said. */
 const UNSET_RULE_MINUTES = 30;
+/** Who answered, on a request or a grant that a rule or the household default settled. Any other value is
+ * the member who answered. A member whose id is this word is taken for a rule where the two differ, and
+ * that only ever refuses. */
+export const BY_RULE = 'rule';
 export type SecretRequestInput = z.input<typeof requestInput>;
 type Request = typeof secretRequests.$inferSelect;
 export const secretRuleInput = z.object({ secret: secretName, answer: z.enum(['ask', 'auto', 'never']), minutes: duration,
@@ -24,7 +32,7 @@ export class SecretRequests {
   private readonly mail: Conversations;
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) { this.mail = new Conversations(db, now); }
 
-  request(raw: SecretRequestInput, when: 'on_request' | 'at_start' = 'on_request'): Request {
+  request(raw: SecretRequestInput, when: 'on_request' | 'at_start' = 'on_request', standing = true): Request {
     const input = requestInput.parse(raw);
     return this.db.transaction(() => {
       const old = this.db.select().from(secretRequests).where(eq(secretRequests.id, input.id)).get();
@@ -33,20 +41,23 @@ export class SecretRequests {
         return old;
       }
       if (!this.db.select().from(secrets).where(eq(secrets.name, input.secret)).get() || !secretHasValue(this.db, input.secret)) throw new Error('Unknown secret');
+      const job = input.job ? this.db.select().from(jobs).where(eq(jobs.id, input.job)).get() : undefined;
+      // An answer for the agent and no one job is a standing answer.
+      if (!standing && !input.job) throw new Error('This work asks for a secret one job at a time');
       if (input.job) {
-        const job = this.db.select().from(jobs).where(eq(jobs.id, input.job)).get();
         if (!job || job.agent !== input.agent || (input.conversation && job.conversation !== input.conversation)) throw new Error('Job does not belong to this agent and conversation');
       }
       if (input.conversation && this.db.select().from(conversations).where(eq(conversations.id, input.conversation)).get()?.agent !== input.agent) throw new Error('Conversation does not belong to this agent');
       const row = this.db.insert(secretRequests).values({ ...input, state: 'pending', always: false, askedAt: this.now() }).returning().get();
       const rule = this.db.select().from(secretRules).where(eq(secretRules.secret, input.secret)).get();
       const applies = rule && this.db.select().from(secretRuleAgents).where(and(eq(secretRuleAgents.secret, input.secret), eq(secretRuleAgents.agent, input.agent), eq(secretRuleAgents.when, when))).get();
-      const decision = rule ? applies ? rule.answer : 'ask' : householdSettings(this.db).secretsDefault;
-      if (decision !== 'ask') return this.settle(row, 'rule', decision === 'auto', false, Math.min(input.minutes, rule?.minutes ?? input.minutes));
+      const settled = rule ? applies ? rule.answer : 'ask' : householdSettings(this.db).secretsDefault;
+      const decision = settled === 'auto' && !standing ? 'ask' : settled;
+      if (decision !== 'ask') return this.settle(row, BY_RULE, decision === 'auto', false, Math.min(input.minutes, rule?.minutes ?? input.minutes));
       const owners = householdOwners(this.db);
       if (!owners.length) throw new Error('A secret request needs a household owner');
       for (const owner of owners) this.mail.send({ toKind: 'person', to: owner, source: 'secret-request', sourceId: row.id, conversation: input.conversation,
-        fromKind: 'agent', fromId: input.agent, agent: input.agent, words: `Allow ${input.agent} to use ${input.secret} for ${input.minutes} minutes?`, why: input.why, answers: 'yes-no', waitsOnKind: 'secret-request', waitsOnId: row.id, refs: [row.id] });
+        fromKind: 'agent', fromId: input.agent, agent: input.agent, words: `Allow ${input.agent} to use ${input.secret} for ${input.minutes} minutes${job?.member ? `, in its private work for ${job.member}` : ''}?`, why: input.why, answers: 'yes-no', waitsOnKind: 'secret-request', waitsOnId: row.id, refs: [row.id] });
       return row;
     });
   }
@@ -125,16 +136,19 @@ export class SecretRequests {
     });
   }
 
-  grantFor(secret: string, agent: string, job?: string, request?: string): typeof secretGrants.$inferSelect | undefined {
-    if (!secretHasValue(this.db, secret)) return;
+  /** A current grant of this secret to this agent: one for this job, or one for the agent and no one job.
+   * Without `standing`, only one a household owner gave for this very job. */
+  grantFor(secret: string, agent: string, job?: string, request?: string, standing = true): typeof secretGrants.$inferSelect | undefined {
+    if (!secretHasValue(this.db, secret) || !standing && !job) return;
     const at = this.now();
-    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), request ? eq(secretGrants.request, request) : undefined, sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
+    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), request ? eq(secretGrants.request, request) : undefined,
+      standing ? undefined : and(eq(secretGrants.job, job!), ne(secretGrants.grantedBy, BY_RULE)), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
 
   /** Startup permissions use durable requests, so expiry, denial and explicit
    * revocation survive retries and process restarts. Rule edits do not revoke
    * an already issued grant. Aliases alone never authorize a startup handoff. */
-  grantAtStart(jobId: string, selected?: readonly string[]): (typeof secretGrants.$inferSelect)[] {
+  grantAtStart(jobId: string, selected?: readonly string[], standing = true): (typeof secretGrants.$inferSelect)[] {
     z.string().min(1).max(200).parse(jobId);
     return this.db.transaction(() => {
       const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
@@ -148,11 +162,12 @@ export class SecretRequests {
         if (this.db.select().from(secretRequests).where(eq(secretRequests.id, id)).get()) continue;
         this.request({ id, secret: rule.secret, agent: job.agent, job: jobId,
           ...(job.conversation ? { conversation: job.conversation } : {}),
-          why: 'The house needs this secret when its job starts.', minutes: duration.parse(rule.minutes) }, 'at_start');
+          why: 'The house needs this secret when its job starts.', minutes: duration.parse(rule.minutes) }, 'at_start', standing);
       }
       const at = Date.parse(this.now());
       return this.db.select().from(secretGrants).where(and(eq(secretGrants.job, jobId), eq(secretGrants.agent, job.agent))).all()
         .filter(grant => (!selected || selected.includes(grant.secret)) && grant.request === startupRequestId(jobId, grant.secret)
+          && (standing || grant.grantedBy !== BY_RULE)
           && this.read(grant.request).state === 'allowed' && secretHasValue(this.db, grant.secret)
           && Date.parse(grant.grantedAt) <= at && at < Date.parse(grant.expiresAt));
     });

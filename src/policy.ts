@@ -189,6 +189,24 @@ const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('age
  * name, reading the state of its own request or of a secret handed to its own job. Asking grants nothing:
  * who answers a request is the household owners' (rule for `secretRequests`) or a secret rule they set. */
 const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
+/** Using a secret. Secrets are the household owners' (tableRules.secrets): no other member reads one, sets
+ * one or answers for one. An agent uses a secret on a household owner's word, and that word comes two ways:
+ *  - a standing answer: a secret rule, the household default, or a grant made for the agent and no one job;
+ *  - an owner's own answer to a request for one job.
+ * A standing answer is about the agent, so it serves the agent's own work (a terminal session, a job that
+ * is for no member) and work it does for a household owner. It does not serve a body doing the private
+ * work of a member who is not a household owner: that member may not use the secret themselves, and the
+ * body reaches no further than they do (Viewer.workingFor). There, a rule or the default never allows a
+ * request, a request for the agent and no one job is refused, and the only grant that counts is one a
+ * household owner gave for that very job, on a card that names the member. A rule that says never still
+ * refuses. A body whose member has left the household or lost the agent gets nothing (agentItself).
+ *
+ * One hand-off is not the body's and is not narrowed: a worker fetches the house's repository with the
+ * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). */
+const usesSecretsOnStandingWord: Rule = all(agentItself, any(equal('workingFor', null), { is: 'forItsMember', rule: householdOwner }));
+export function standingSecretAnswerServes(v: Viewer, s: Sharing): boolean {
+  return v.kind === 'agent' && holds(usesSecretsOnStandingWord, v, { agent: v.id, workingFor: v.workingFor ?? null }, s);
+}
 /** Who may ask for a model account to be signed in on a machine. A member asks for an account and a machine
  * they may act on: their own, or any as a household owner. A body asks on the word of the member its work
  * is for, with that member's reach and nobody else's: not its agent's other owners', not the household
