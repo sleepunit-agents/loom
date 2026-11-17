@@ -55,6 +55,31 @@ describe('upgrading a household database', () => {
     expect(made.prepare('SELECT count(*) AS n FROM migrations').get()).toEqual({ n: dataSchemaNumber });
   });
 
+  it('rebuilds conversations in step 6 with every row and everything that points at them kept', () => {
+    const old = household(5);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO conversations (id, agent, venue, place, label, started_at, last_at, turn_count) VALUES ('room', 'art', 'discord', 'r', 'room', '${at}', '${at}', 1), ('dm', 'art', 'discord', 'd', 'dm', '${at}', '${at}', 1);
+      INSERT INTO jobs (id, agent, conversation, title, state, brief, model, started_by_kind, started_by, house_repository, house_file, house_branch, queued_at) VALUES ('job', 'art', 'room', 't', 'running', '', 'm', 'agent', 'art', 'r', 'f', 'b', '${at}');
+      UPDATE conversations SET job = 'job' WHERE id = 'room';
+      INSERT INTO turns (conversation, seq, at, kind, from_kind) VALUES ('room', 1, '${at}', 'message', 'unknown'), ('dm', 1, '${at}', 'message', 'unknown');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO secrets (name, description, changed_at, changed_by) VALUES ('s', '', '${at}', 'sam');
+      INSERT INTO bridge_connections (id, platform, agent, workspace, bot_user, token_secret, enabled, state, state_at) VALUES ('c', 'discord', 'art', 'w', 'bot', 's', 1, 'connected', '${at}');
+      INSERT INTO bridge_incoming (id, connection, channel, is_dm, user, text, posted_at, received_at, state, conversation) VALUES ('m1', 'c', 'd', 1, 'u', 'hi', '${at}', '${at}', 'delivered', 'dm'), ('m2', 'c', 'r', 0, 'u', 'hi', '${at}', '${at}', 'delivered', 'room');
+      INSERT INTO bridge_resume (connection, session, sequence, resume_url) VALUES ('c', 'session', 4, 'wss://resume')`);
+    upgradeDataSchema(old, () => '2026-11-16T00:00:00.000Z');
+    expect(old.prepare('SELECT id, direct, turn_count FROM conversations ORDER BY id').all()).toEqual([{ id: 'dm', direct: 1, turn_count: 1 }, { id: 'room', direct: 0, turn_count: 1 }]);
+    expect(old.prepare('SELECT count(*) AS n FROM turns').get()).toEqual({ n: 2 });
+    expect(old.prepare('SELECT conversation FROM jobs').get()).toEqual({ conversation: 'room' });
+    // A message from before the step has no admission fields; a cursor from before names no credential and is gone.
+    expect(old.prepare("SELECT mentions, bot FROM bridge_incoming WHERE id = 'm1'").get()).toEqual({ mentions: null, bot: null });
+    expect(old.prepare('SELECT count(*) AS n FROM bridge_resume').get()).toEqual({ n: 0 });
+    // Foreign keys are enforced again afterwards, on the rebuilt table and towards it.
+    expect(old.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(() => old.prepare("INSERT INTO turns (conversation, seq, at, kind, from_kind) VALUES ('nowhere', 1, ?, 'message', 'unknown')").run(at)).toThrow('FOREIGN KEY');
+    expect(() => old.prepare("DELETE FROM conversations WHERE id = 'room'").run()).toThrow('FOREIGN KEY');
+  });
+
   it('refuses a database from a newer program', () => {
     const made = fresh();
     made.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(dataSchemaNumber + 1, at);

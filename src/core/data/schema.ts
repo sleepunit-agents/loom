@@ -204,6 +204,7 @@ export const sessions = sqliteTable('sessions', {
   issuedAt: text('issued_at').notNull(),
   seenAt: text('seen_at').notNull(),
   provedAt: text('proved_at').notNull(),
+  passkey: text('passkey').references((): AnySQLiteColumn => passkeys.id),
 }, t => [
   check('sessions_issued_at_utc', utc(t.issuedAt)),
   check('sessions_seen_at_utc', utc(t.seenAt)),
@@ -341,11 +342,12 @@ export const conversations = sqliteTable('conversations', {
   venue: text('venue', { enum: ["loom", "discord", "slack", "wake", "handoff"] }).notNull(),
   place: text('place').notNull(),
   label: text('label').notNull(),
-  job: text('job').references((): AnySQLiteColumn => jobs.id),
+  direct: integer('direct', { mode: 'boolean' }).notNull().default(false),
   startedAt: text('started_at').notNull(),
   lastAt: text('last_at').notNull(),
   turnCount: integer('turn_count').notNull(),
 }, t => [
+  check('conversations_direct_boolean', sql`${t.direct} in (0, 1)`),
   check('conversations_started_at_utc', utc(t.startedAt)),
   check('conversations_last_at_utc', utc(t.lastAt)),
   check('conversations_venue_choice', sql`${t.venue} in ('loom', 'discord', 'slack', 'wake', 'handoff')`),
@@ -1157,7 +1159,16 @@ export const bridgeIncoming = sqliteTable('bridge_incoming', {
   state: text('state', { enum: ["pending", "held", "dropped", "delivered"] }).notNull(),
   reason: text('reason'),
   conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
+  mentions: text('mentions'),
+  repliesTo: text('replies_to'),
+  parent: text('parent'),
+  groupDm: integer('group_dm', { mode: 'boolean' }),
+  bot: integer('bot', { mode: 'boolean' }),
+  webhook: integer('webhook', { mode: 'boolean' }),
 }, t => [
+  check('bridge_incoming_group_dm_boolean', sql`${t.groupDm} in (0, 1)`),
+  check('bridge_incoming_bot_boolean', sql`${t.bot} in (0, 1)`),
+  check('bridge_incoming_webhook_boolean', sql`${t.webhook} in (0, 1)`),
   check('bridge_incoming_posted_at_utc', utc(t.postedAt)),
   check('bridge_incoming_received_at_utc', utc(t.receivedAt)),
   check('bridge_incoming_delivered_at_utc', utc(t.deliveredAt)),
@@ -1468,7 +1479,6 @@ export const conversationsRelations = relations(conversations, ({ one, many }) =
   agentRow: one(agents, { fields: [conversations.agent], references: [agents.id], relationName: 'conversations_agent' }),
   projectRow: one(projects, { fields: [conversations.project], references: [projects.id], relationName: 'conversations_project' }),
   memberRow: one(members, { fields: [conversations.member], references: [members.id], relationName: 'conversations_member' }),
-  jobRow: one(jobs, { fields: [conversations.job], references: [jobs.id], relationName: 'conversations_job' }),
   conversationPeopleByConversation: many(conversationPeople, { relationName: 'conversation_people_conversation' }),
   turnsByConversation: many(turns, { relationName: 'turns_conversation' }),
   digestsByConversation: many(digests, { relationName: 'digests_conversation' }),
@@ -1640,7 +1650,6 @@ export const boxFactsRelations = relations(boxFacts, ({ one }) => ({
 
 export const jobsRelations = relations(jobs, ({ one, many }) => ({
   tokensByJob: many(tokens, { relationName: 'tokens_job' }),
-  conversationsByJob: many(conversations, { relationName: 'conversations_job' }),
   inboxByJob: many(inbox, { relationName: 'inbox_job' }),
   agentRow: one(agents, { fields: [jobs.agent], references: [agents.id], relationName: 'jobs_agent' }),
   projectRow: one(projects, { fields: [jobs.project], references: [projects.id], relationName: 'jobs_project' }),
@@ -1821,18 +1830,6 @@ export const operationResults = sqliteTable('operation_results', {
   expiresAt: text('expires_at').notNull(),
 }, t => [
   check('operationResults_expiresAt_utc', utc(t.expiresAt)),primaryKey({ columns: [t.caller, t.id] }), index('operation_results_expiry_idx').on(t.expiresAt)]);
-export const outsideEffects = sqliteTable('outside_effects', {
-  id: text('id').primaryKey().notNull(),
-  operation: text('operation').notNull(),
-  target: text('target').notNull(),
-  createdAt: text('created_at').notNull(),
-  releasedAt: text('released_at'),
-  completedAt: text('completed_at'),
-}, t => [
-  check('outsideEffects_createdAt_utc', utc(t.createdAt)),
-  check('outsideEffects_releasedAt_utc', utc(t.releasedAt)),
-  check('outsideEffects_completedAt_utc', utc(t.completedAt)),
-]);
 export const notificationQueue = sqliteTable('notification_queue', {
   id: text('id').primaryKey().notNull(),
   device: text('device').notNull().references(() => notificationDevices.endpoint),
@@ -1866,6 +1863,7 @@ export const bridgeResume = sqliteTable('bridge_resume', {
   session: text('session').notNull(),
   sequence: integer('sequence').notNull(),
   resumeUrl: text('resume_url').notNull(),
+  identity: text('identity').notNull(),
 });
 export const secretWriteJournal = sqliteTable('secret_write_journal', {
   id: text('id').primaryKey().notNull(),
@@ -1888,7 +1886,7 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
 export const plumbing = {
-  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, outsideEffects, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
 
 export const tables = {
   members,
@@ -2068,6 +2066,8 @@ export const polymorphicReferences = [
   { table: inbox, kind: 'to_kind', id: 'to', targets: { person: members, agent: agents } },
   { table: tempoSettings, kind: 'who_kind', id: 'who', targets: { person: members, agent: agents } },
   { table: approvalRules, id: 'person', targets: { '': members }, emptyIsAbsent: true },
+  { table: triggerEdits, kind: 'by_kind', id: 'by', targets: { member: members, agent: agents } },
+  { table: accountSignins, kind: 'asked_by_kind', id: 'asked_by', targets: { member: members, agent: agents } },
 ] as const;
 
 /** Lifecycle constraints that need triggers rather than static SQLite CHECKs. */

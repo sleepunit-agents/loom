@@ -40,13 +40,11 @@ export async function exampleRuntime(root:ReturnType<typeof sharedRoot>,clock:Fa
   const publicTrigger=await ownerCommand('tempo.set',{ownerKind:'agent',owner:'moss',sourceKind:'time',times:new Date(clock.now()).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'moss',instructions:'Inspect the shared garden path.',note:'Inspect the shared garden path'},z.object({id:z.string()}).strict());
   // Advance normal settlement, never sleep or manufacture a job row/state.
   clock.advance(exampleSettleMs);
-  const response=await root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+ownerToken,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id title state box}}'})});
-  const result=z.object({data:z.object({currentJobs:z.array(z.object({id:z.string(),title:z.string(),state:z.string(),box:z.string().nullable()}))})}).safeParse(await response.json());
+  const response=await root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+ownerToken,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id title state box conversation}}'})});
+  const result=z.object({data:z.object({currentJobs:z.array(z.object({id:z.string(),title:z.string(),state:z.string(),box:z.string().nullable(),conversation:z.string().nullable()}))})}).safeParse(await response.json());
   const publicConversation=root.services.conversations.open({agent:'moss',venue:'wake',place:publicTrigger.id,label:'Inspect the shared garden path'});
-  const expectedJob=root.services.conversations.conversation(thread.conversation).job;
-  const expectedPublicJob=root.services.conversations.conversation(publicConversation.id).job;
-  const job=result.success?result.data.data.currentJobs.find(job=>job.id===expectedJob&&job.state==='queued'&&job.box===null):undefined;
-  const publicJob=result.success?result.data.data.currentJobs.find(job=>job.id===expectedPublicJob&&job.state==='queued'&&job.box===null):undefined;
+  const job=result.success?result.data.data.currentJobs.find(job=>job.conversation===thread.conversation&&job.state==='queued'&&job.box===null):undefined;
+  const publicJob=result.success?result.data.data.currentJobs.find(job=>job.conversation===publicConversation.id&&job.state==='queued'&&job.box===null):undefined;
   if(!response.ok||!job||!publicJob)throw Error('Example Runtime did not schedule its inbox through Tempo: HTTP '+response.status+'; '+(result.success?JSON.stringify(result.data.data.currentJobs):'invalid query response'));
   return{box,account:identity.account,conversation:thread.conversation,thread:thread.id,job,publicJob,publicTrigger:publicTrigger.id};
  }finally{root.writes.run(()=>root.services.signin.revoke(worker.fingerprint));}

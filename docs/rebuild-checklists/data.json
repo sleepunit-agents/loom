@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "565b3bb013711b4f826860c48267cf775d5740d2d75b1704ac56b95d7c8355ec",
+  "sourceSha256": "c91c9b3bac670e6d0c170ef34349d3e20415d55ec16c60df1a852863dd50cec7",
   "promises": [
     {
       "id": "data-001",
@@ -123,36 +123,31 @@
     },
     {
       "id": "data-019",
-      "promise": "outside_effects Things that reach outside loom (a push notification, a send to Discord, starting a body). On a staging copy these wait here to be let through by hand.",
-      "source": "docs/how-it-works/site/data.html"
-    },
-    {
-      "id": "data-020",
       "promise": "notification_queue Notifications waiting to be sent to each device, and whether each arrived.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-021",
+      "id": "data-020",
       "promise": "signin_challenges Passkey challenges in flight. Each lives a few minutes.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-022",
+      "id": "data-021",
       "promise": "bridge_raw_events Events exactly as Discord and Slack sent them, kept up to an hour until they are turned into incoming messages. The one place loom stores something it does not look inside.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-023",
-      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart.",
+      "id": "data-022",
+      "promise": "bridge_resume Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-024",
+      "id": "data-023",
       "promise": "secret_write_journal A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
-      "id": "data-025",
+      "id": "data-024",
       "promise": "The real GraphQL websocket carries data after sign-in without protocol errors.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {

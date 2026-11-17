@@ -7,7 +7,7 @@ import { harnessCannotRun } from './harness-traits.js';
 import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads, triggers } from '../core/data/schema.js';
-import { Jobs, type Job } from './jobs.js';
+import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
 export class Dispatcher {
@@ -19,8 +19,8 @@ export class Dispatcher {
   private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
     if(!job.conversation)return undefined;
     return this.db.select({id:threads.id}).from(threads)
-      .innerJoin(conversations,eq(conversations.id,threads.conversation))
-      .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id),eq(conversations.agent,job.agent),eq(conversations.venue,'loom'))).get();
+      .innerJoin(conversations,eq(conversations.id,threads.conversation)).innerJoin(jobs,workingIn(job.id))
+      .where(and(eq(conversations.id,job.conversation),eq(conversations.agent,job.agent),eq(conversations.venue,'loom'))).get();
   }
   /** Polls also report machine health when idle or report-only. Placement and
    * claim share one transaction, so a second poll cannot receive the same job. */

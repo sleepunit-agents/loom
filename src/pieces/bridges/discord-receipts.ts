@@ -1,15 +1,17 @@
 /** The Discord resume cursor for one authenticated connection lifetime, kept in
  * the database so a restart resumes the session and Discord replays what was
  * posted while this program was down. The raw frame and the cursor commit in
- * one transaction before the cursor is exposed. The cursor row names only its
- * connection, not the credential it was made under: composition forgets it
- * when the connection's own secrets change (see SharedBridges.retire). */
+ * one transaction before the cursor is exposed. The cursor row records the
+ * identity of the credential it was made under, and only a lifetime with that
+ * same identity is given it: after a secret or a secret name changes, the next
+ * lifetime finds no cursor and identifies afresh, however the change and a
+ * crash were ordered. */
 import type { BridgeReceiver } from './receiver.js';
 import type { DiscordCheckpoint } from './discord-gateway.js';
-export function liveDiscordReceipts(receiver:Pick<BridgeReceiver,'discord'|'checkpoint'|'reset'>,connection:string,current:()=>boolean){
+export function liveDiscordReceipts(receiver:Pick<BridgeReceiver,'discord'|'checkpoint'|'reset'>,connection:string,identity:string,current:()=>boolean){
  const ended=()=>Error('Discord receipt lifetime ended');
  const stored=():DiscordCheckpoint|undefined=>{
-  const row=receiver.checkpoint(connection);
+  const row=receiver.checkpoint(connection,identity);
   return row&&{session:row.session,url:row.resumeUrl,seq:row.sequence};
  };
  return {
@@ -19,7 +21,7 @@ export function liveDiscordReceipts(receiver:Pick<BridgeReceiver,'discord'|'chec
    const saved=stored();
    // A new session, a new resume address or a rewind needs the gateway's reset first.
    if(saved&&(saved.session!==next.session||saved.url!==next.url||saved.seq>next.seq))throw ended();
-   receiver.discord(connection,raw,{session:next.session,sequence:next.seq,resumeUrl:next.url});
+   receiver.discord(connection,raw,{session:next.session,sequence:next.seq,resumeUrl:next.url,identity});
    if(!current())throw ended();
   },
   /** Discord refused the session: forget the cursor so the next connect identifies afresh. */

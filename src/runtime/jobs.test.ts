@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, notInArray } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
@@ -9,6 +9,8 @@ import { BODY_EXIT } from './job-exit.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
+/** The job working in the conversation: its one job that has not ended. */
+const working = (f: { db: ReturnType<typeof createDataSchema> }) => f.db.select().from(jobs).where(notInArray(jobs.state, ['done', 'failed', 'lost', 'stopped'])).all().map(job => job.id);
 function fixture(venue: 'loom' | 'handoff' | 'wake' = 'wake') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
@@ -35,7 +37,7 @@ it('admits nonempty inbox once and snapshots house, model, labels and needs', ()
   expect(f.db.select().from(jobNeeds).all()).toEqual([{ job: job.id, need: 'gpu' }]);
   f.db.update(agentRunSettings).set({ houseFile: 'changed' }).run();
   expect(f.runtime.get(job.id).houseFile).toBe('Housefile');
-  expect(f.db.select().from(conversations).get()?.job).toBe(job.id);
+  expect(working(f)).toEqual([job.id]);
 });
 it('claims once, rejects other workers, takes mail only when running and preserves confirmed receipts', () => {
   const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
@@ -55,7 +57,7 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   expect(f.runtime.heartbeat(job.id, 'worker', 'running')).toMatchObject({ state: 'running', heardAt: f.now() });
   expect(f.runtime.finish(job.id, 'worker', 0, 'complete').job).toMatchObject({ state: 'done', exitCode: 0, logTail: 'complete', build: 'image' });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'done', job: job.id, doneAt: receipt.doneAt });
-  expect(f.db.select().from(conversations).get()?.job).toBeNull();
+  expect(working(f)).toEqual([]);
   expect(() => f.runtime.heartbeat(job.id, 'worker', 'running')).toThrow();
 });
 it('retries a failed start three times as new linked jobs, without retrying the exhausted chain on old mail', () => {
@@ -69,7 +71,7 @@ it('retries a failed start three times as new linked jobs, without retrying the 
     expect(result.job.state).toBe('failed');
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
     expect(result.retry).toMatchObject({ retryOf: job.id, houseFile: 'Housefile', model: 'primary', box: null, state: 'queued' });
-    expect(f.db.select().from(conversations).get()?.job).toBe(result.retry!.id);
+    expect(working(f)).toEqual([result.retry!.id]);
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id });
     expect(f.runtime.admit(f.conversation.id)?.id).toBe(result.retry!.id);
     expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
@@ -119,7 +121,7 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   const retry = f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
   expect(retry).toMatchObject({ state: 'queued', box: null });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
-  expect(f.db.select().from(conversations).get()?.job).toBe(retry.id);
+  expect(working(f)).toEqual([retry.id]);
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
 });
 it('records a Comms Stop the same way whether the worker\'s heartbeat or the body\'s own exit brings the news', () => {

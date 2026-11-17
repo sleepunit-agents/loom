@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { liveDiscordReceipts } from './discord-receipts.js';
 import { slackFiles, type SlackFilesPermit } from './slack-files.js';
 import { BridgeSends } from './sends.js';
@@ -35,7 +36,7 @@ export interface SharedBridgeOptions {
  slack?:typeof bridgeSlackSocket;
 }
 type Life={connection:Connection;key:string;generation:string;stamp:number;active:boolean;authenticated:boolean;
- secrets:ReturnType<typeof sharedBridgeSecretUse>;receipts?:ReturnType<typeof liveDiscordReceipts>;channels?:ReturnType<BridgeChannels['bind']>;
+ secrets:ReturnType<typeof sharedBridgeSecretUse>;channels?:ReturnType<BridgeChannels['bind']>;
  transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
 const configuration=(row:Connection)=>JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,row.enabled]);
 export class SharedBridges {
@@ -102,10 +103,6 @@ export class SharedBridges {
   for(const _error of result.notificationErrors)this.report();
  }
  private retire(life:Life){
-  // A resume cursor outlives a restart, a pause and a lost socket, but not the credential it was made
-  // under: when this connection's own secrets or secret names changed, the next lifetime identifies afresh.
-  const row=this.options.db.select().from(bridgeConnections).where(eq(bridgeConnections.id,life.connection.id)).get();
-  if(life.receipts&&!this.closed&&row&&(this.stamp(life.connection)!==life.stamp||row.tokenSecret!==life.connection.tokenSecret)){try{this.receiver.reset(row.id);}catch{this.report();}}
   life.active=false;life.retry?.();life.channels?.close();life.secrets.close();
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
@@ -174,7 +171,10 @@ export class SharedBridges {
    life.authenticated=true;
    const state=(value:Connection['state'])=>{if(current()){this.state(row.id,value);if(value==='connected')this.track(this.sends.flush());}};
    if(row.platform==='discord'){
-    const receipts=life.receipts=liveDiscordReceipts(this.receiver,row.id,current);
+    // A resume cursor outlives a restart, a pause and a lost socket, but not the credential it was made
+    // under: the cursor is stored under this identity and a lifetime with another finds none.
+    const identity=createHash('sha256').update(JSON.stringify([row.id,row.platform,row.workspace,row.agent,row.botUser,row.tokenSecret,String(life.stamp)])).digest('hex');
+    const receipts=liveDiscordReceipts(this.receiver,row.id,identity,current);
     if(!current())throw Error();
     life.transport=(this.options.discord??discordGateway)({bot:row.botUser,tokenSecret:row.tokenSecret,secrets:life.secrets,clock:this.options.clock,beforeConnect:current,state,
      load:()=>{if(!current())throw Error();return receipts.checkpoint();},

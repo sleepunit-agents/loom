@@ -58,9 +58,9 @@ export class BridgeReceiver {
     this.events.retain(connection, frame.payload.event_id, raw);
   }
 
-  checkpoint(connection: string): BridgeCheckpoint | undefined {
+  checkpoint(connection: string, identity: string): BridgeCheckpoint | undefined {
     this.connection(connection, 'discord');
-    return this.events.checkpoint(connection);
+    return this.events.checkpoint(connection, identity);
   }
   reset(connection: string): void {
     this.connection(connection, 'discord');

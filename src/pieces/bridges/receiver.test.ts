@@ -37,7 +37,7 @@ function fixture() {
   const slack = (envelope = 'ack1', eventId = 'ev1', type = 'message') => Buffer.from(JSON.stringify({ type: 'events_api', envelope_id: envelope,
     payload: { type: 'event_callback', event_id: eventId, team_id: 'w', event: { type, channel: 'room', ts: '1794432000.000001', user: 'user', text: 'Friday?' } },
   }, null, 2));
-  const checkpoint = (sequence = 1) => ({ session: 'session', sequence, resumeUrl: 'wss://gateway.discord.gg/' });
+  const checkpoint = (sequence = 1) => ({ session: 'session', sequence, resumeUrl: 'wss://gateway.discord.gg/', identity: 'identity' });
   return { client, db, clock, now, receiver, channels, raw, discord, slack, checkpoint, expired };
 }
 
@@ -173,14 +173,14 @@ it('recovers a retained Discord message after reopening and uses the durable res
   f.receiver.discord('discord', f.discord(), f.checkpoint());
   f.receiver.close();
   const next = new BridgeReceiver(f.db, f.clock, f.channels);
-  expect(next.checkpoint('discord')).toEqual(f.checkpoint());
+  expect(next.checkpoint('discord', 'identity')).toEqual(f.checkpoint());
   expect(next.drain('discord')).toBe(1);
   // Replayed platform message in the same/new dispatch still has one delivery.
   next.discord('discord', f.discord(2), f.checkpoint(2));
   next.drain('discord');
   expect(f.db.select().from(turns).all()).toHaveLength(1);
   next.reset('discord');
-  expect(next.checkpoint('discord')).toBeUndefined();
+  expect(next.checkpoint('discord', 'identity')).toBeUndefined();
   next.close();
 });
 
@@ -204,7 +204,7 @@ it('rejects mismatched source/checkpoint, oversized and malformed receipts befor
   expect(() => f.receiver.slack('slack', Buffer.alloc(1024 * 1024 + 1))).toThrow('size');
   expect(() => f.receiver.slack('slack', Buffer.from('{'))).toThrow();
   expect(f.raw()).toEqual([]);
-  expect(f.receiver.checkpoint('discord')).toBeUndefined();
+  expect(f.receiver.checkpoint('discord', 'identity')).toBeUndefined();
 });
 
 it('fails malformed messages without consuming their retained bytes or writing a delivery', () => {
@@ -250,7 +250,7 @@ it('bounds discovery by receipts examined and deduplicates targets in arrival or
   expect(f.receiver.missingChannels('discord', 3)).toEqual(['room']);
   expect(f.receiver.missingChannels('discord', 4)).toEqual(['room', 'other']);
   expect(f.raw()).toHaveLength(4);
-  expect(f.receiver.checkpoint('discord')).toEqual(f.checkpoint(4));
+  expect(f.receiver.checkpoint('discord', 'identity')).toEqual(f.checkpoint(4));
   for (const limit of [0, 65, 1.5, NaN]) expect(() => f.receiver.missingChannels('discord', limit)).toThrow('limit');
 });
 

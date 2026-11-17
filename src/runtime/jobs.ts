@@ -12,6 +12,8 @@ import { BODY_EXIT } from './job-exit.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
+/** Join condition: this job is the one working in the conversation row, that is, its one job that has not ended. */
+export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, active));
 /** One piece of work gets its first attempt and at most this many more, whatever made each attempt fail. */
 export const JOB_RETRIES = 3;
 export class Jobs {
@@ -76,7 +78,6 @@ export class Jobs {
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
       this.delivery(job.id,'held');
-      this.db.update(conversations).set({ job: job.id }).where(eq(conversations.id, conversationId)).run();
       return job;
     }, { behavior: 'immediate' });
   }
@@ -116,14 +117,15 @@ export class Jobs {
     });
   }
 
-  /** A Comms Stop asked for on this job's thread and not yet taken. Only the job its conversation
-   * currently points at, for the agent it still belongs to, can be meant; a thread nobody opened has no
+  /** A Comms Stop asked for on this job's thread and not yet taken. Only the job now working in the
+   * conversation (its one job that has not ended), for the agent it still belongs to, can be meant; a thread nobody opened has no
    * one to record as having ended it. */
   private stopAsked(job: Pick<Job, 'id' | 'agent' | 'conversation'>): { thread: string; member: string } | undefined {
     if (!job.conversation) return undefined;
     const row = this.db.select({ thread: threads.id, stop: threads.stopRequested, member: conversations.member }).from(threads)
       .innerJoin(conversations, eq(conversations.id, threads.conversation))
-      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id), eq(conversations.agent, job.agent), eq(conversations.venue, 'loom'))).get();
+      .innerJoin(jobs, workingIn(job.id))
+      .where(and(eq(conversations.id, job.conversation), eq(conversations.agent, job.agent), eq(conversations.venue, 'loom'))).get();
     return row?.stop && row.member ? { thread: row.thread, member: row.member } : undefined;
   }
 
@@ -188,7 +190,6 @@ export class Jobs {
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
     this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(unconfirmed).run();
     this.delivery(retry.id,'held');
-    if (before.conversation) this.db.update(conversations).set({ job: retry.id }).where(eq(conversations.id, before.conversation)).run();
     return retry;
   }
 
@@ -226,14 +227,11 @@ export class Jobs {
     // What a finished body left unconfirmed is fresh mail for the next admission. After a stop, a failure
     // or a loss it stays with this job: retry() hands it to a successor, or it waits for fresh mail.
     if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
-    if (job.conversation) {
-      const detached=this.db.update(conversations).set({job:null})
-        .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();
-      // This exact body has ended. Clear its working indicator in the same
-      // transaction; an unobserved Stop and the last reported agent state stay.
-      if(detached)this.db.update(threads).set({working:false,workingSince:null,workingBeat:null})
-        .where(eq(threads.conversation,detached.id)).run();
-    }
+    // The job working in a conversation is its one job that has not ended, so ending that job is what
+    // leaves the conversation with none. Clear its working indicator in the same transaction; an
+    // unobserved Stop and the last reported agent state stay.
+    if (job.conversation && active.includes(job.state as typeof active[number])) this.db.update(threads)
+      .set({ working: false, workingSince: null, workingBeat: null }).where(eq(threads.conversation, job.conversation)).run();
     return ended;
   }
 }
