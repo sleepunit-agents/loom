@@ -3,7 +3,7 @@ import { createHmac, createSecretKey } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { household, secretGrants, secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
+import { household, secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { secretName, secretAgent } from './pieces/secrets/input.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
@@ -54,13 +54,7 @@ export function registerSharedSecretCommands(operations:Operations, db:DataDatab
         switch(input.action){
           case 'answer':requests.answer(input.id,ctx.viewer.id,input.allow,input.always);break;
           case 'cancel':requests.cancel(input.id);break;
-          case 'revoke':{
-            const grant=db.select().from(secretGrants).where(eq(secretGrants.id,input.id)).get();
-            if(!grant)throw Error('Unknown grant');
-            if(grant.request)requests.revoke(grant.request);
-            else db.delete(secretGrants).where(eq(secretGrants.id,input.id)).run();
-            break;
-          }
+          case 'revoke':requests.revokeGrant(input.id);break;
         }
       }catch(error){throw new OperationError('invalid',refusal(error,'Secret change could not complete'));}
       ctx.changed('secrets','metadata');return {saved:true as const};
