@@ -55,6 +55,9 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:agentSecretRequest},(args,extra)=>run(async signal=>{
    const client=metadata(signal);try{return{content:[{type:'text',text:JSON.stringify(await client.requestSecret(args))}]};}finally{client.close();}
   },extra.mcpReq.signal));
+  // `_meta` below is one harness's own hint (Claude Code lifts its cap on a tool result's size for a tool that
+  // says so); the others ignore a key they do not know. It rides on the one tool definition every harness
+  // is served, because the body's tools server has no per-harness copy of a tool.
   server.registerTool('use_secret',{description:'Acquire a granted private credential for this body. Optional request waits for that request to be answered. The value is base64, not text. Never repeat the value in a conversation reply. Reuse the attempt UUID after uncertainty; do not silently create another attempt.',inputSchema:z.object({id:z.uuid(),secret:secretName,request:z.uuid().optional()}).strict(),_meta:{'anthropic/maxResultSizeChars':131072}},(args,extra)=>run(async signal=>{
    const client=metadata(signal),privateInput=privateSecretClient({...input,clock,signal});let value:Buffer|undefined,waitingHere=false;
    try{

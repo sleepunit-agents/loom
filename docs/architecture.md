@@ -130,10 +130,11 @@ An agent added while the program runs has its files made whole, by the preparati
 agent's files get at start, before any reader is given its name; a removed agent keeps its
 row and its files.
 `src/backends/sqlite-vec.ts` is the memory store (vector search; embeddings from
-`src/backends/fastembed.ts`), `src/backends/sqlite-knowledge.ts` the knowledge store,
+`src/backends/fastembed.ts`), `src/backends/sqlite-knowledge.ts` the knowledge store's tables and its upgrade,
 `src/backends/people.ts` and `src/backends/projects.ts` the cards over the shared rules in
 `src/backends/cards.ts`. A knowledge page is written only through
-`src/backends/knowledge-writes.ts`, by the store and by the door's page actions alike, and
+`src/backends/knowledge-writes.ts`, by the door's page actions (`src/pieces/mind/actions.ts`), which are
+the program's only writer of pages, and
 a receipt for a write to one of these files only through `src/pieces/mind/receipt-schema.ts`.
 `src/backends/salience.ts` and `src/backends/episodes.ts` make the
 two slices a body wakes with: Top of Mind, and the tape. The tape's conversation digests
@@ -187,14 +188,16 @@ in; `src/core/data/schema.ts` describes `loom.db` and nothing else.
 ### `agents/<agent>/notes.db`: one per agent
 
 `notes`, `note_revisions`, `note_files`, from `src/notes.ts`; the attached files sit beside
-it, stored once by content.
+it, stored once by content. Also `mind_operation_receipts` and `mind_source_migrations`
+(`src/pieces/mind/receipt-schema.ts`): retry receipts for `memory.noteWrite`, kept in the
+file the note is in.
 
 ### `commons/knowledge.db` and `commons/people.db`: shared by every agent
 
 | Store | Tables | Made by |
 |---|---|---|
-| `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` | `src/backends/sqlite-knowledge.ts` |
-| `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), and its own `mind_operation_receipts` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts` |
+| `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/sqlite-knowledge.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
+| `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), and its own `mind_operation_receipts` and `mind_source_migrations` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts`; the receipt tables by `src/pieces/mind/receipt-schema.ts` |
 
 A new person is two cards, the directory's and the adding agent's, written by
 `src/pieces/mind/people-actions.ts`. A refusal or a failure on either side saves neither.
@@ -211,14 +214,35 @@ Secret values are here, encrypted, and nowhere else.
 ### How each store knows its version
 
 `loom.db` holds its schema number in `migrations` and is recognised in full before it is
-touched. The others keep a number in the file header (`PRAGMA user_version`) and no table:
+touched. Each of the other stores keeps one number for its own tables in the file header
+(`PRAGMA user_version`):
 
 - `memories.db` and `people.db`: how many steps of `src/backends/migrations.ts` the newest
   program to prepare the file knows. Each step still decides from the file's shape whether
   it is pending, and runs whole or not at all; the number only lets an older program refuse
   a file a newer one has changed.
-- `knowledge.db`: 1. A newer number, or a file with tables but no `pages`, is refused.
+- `knowledge.db`: 1. A newer number, or a file with tables but no `pages`, is refused. What an
+  older file lacks is added from its shape (`upgradeKnowledgeStore`).
 - `notes.db`: 1. A newer number is refused.
+- `secret-holder/holder.db`: 1 (`src/pieces/secrets/holder-store.ts`). A newer number is
+  refused by the holder process when it opens the store; a file from before the number was
+  kept reads 0, has the same tables, and is marked 1.
+
+The door's bookkeeping in the Memory files is versioned apart from that, in three small
+tables that record each numbered step with its text: `mind_source_migrations` (the receipt
+table, in every Memory file), and `memory_command_schema` and `memory_card_schema` (in each
+`memories.db`). A command compares them with what this program knows before it writes
+(`mindReceiptsReady`, `semanticMemoryReady`, `semanticCardsReady`).
+
+Every start of `loom serve` runs these checks on every Memory file before any reader or
+command has it (`prepareSharedMemorySources` in `src/shared-memory.ts`, and
+`prepareAgentMemory` for an agent added while the program runs): the header number is
+compared, the store's pending steps are run, and the bookkeeping tables of a file that has
+them are checked and brought up to date. A file a newer program has changed, or whose
+bookkeeping is not this program's, stops the start with a line that names the file, and is
+left as it is. A fresh file is made whole under a temporary name first. A file that was
+already there and never had the bookkeeping tables is not given them; see
+`docs/accepted-tradeoffs.md`.
 
 Only `loom.db` and `knowledge.db` are checked for being the right kind of file at all; see
 `docs/accepted-tradeoffs.md`.
