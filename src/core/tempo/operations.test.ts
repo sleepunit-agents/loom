@@ -35,7 +35,7 @@ function fixture() {
   });
   tempo.start();
   closes.push(() => { tempo.close(); operations.close(); client.close(); });
-  const call = (name: string, input: unknown, id: string) => operations.call('mcp', { kind: 'agent', id: 'art' }, name, input, id);
+  const call = (name: string, input: unknown, id: string) => operations.call('http', { kind: 'agent', id: 'art' }, name, input, id);
   const trigger = { id: 'tr', ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: now(), lifespan: 'once', targetKind: 'inbox', toKind: 'agent', to: 'art', note: 'Work', instructions: 'Check delivery' };
   return { client, db, clock, now, tempo, writes, operations, call, trigger, conversation, accesses, admissions, mail, allow(value: boolean) { allowed = value; } };
 }
