@@ -6,6 +6,12 @@ import { isDiscordId } from './discord-id.js';
 import type { Clock } from '../../core/clock.js';
 import type { SecretUse } from '../secrets/role.js';
 import { BridgeReplyNotSent } from './outbound.js';
+/** What a post by loom may ping on Discord, said once: a person or a bot whose mention the agent wrote
+ * (`<@id>`), and nothing else. `@everyone`, `@here` and every role stay words; a post is never made as a
+ * Discord reply, so nobody is pinged for being answered. A bot is woken only by a written mention
+ * (incoming.ts), so this is also the one way an agent calls on another. Slack posts ping nobody: their
+ * text is escaped below. */
+export const DISCORD_PINGS={parse:['users'],replied_user:false} as const;
 const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
 export function bridgeReplyApi(input:{platform:'discord'|'slack';tokenSecret:string;secrets:SecretUse;clock:Clock;current():boolean;request?:typeof fetch}){
  return {async post(address:{channel:string;thread:string|null},text:string):Promise<{id:string}>{
@@ -23,7 +29,7 @@ export function bridgeReplyApi(input:{platform:'discord'|'slack';tokenSecret:str
    requested=true;
    const response=await (input.request??fetch)(discord?`https://discord.com/api/v10/channels/${address.channel}/messages`:'https://slack.com/api/chat.postMessage',{
     method:'POST',redirect:'error',signal:abort.signal,headers:{Authorization:discord?`Bot ${token}`:`Bearer ${token}`,'Content-Type':'application/json'},
-    body:JSON.stringify(discord?{content:text,allowed_mentions:{parse:[],replied_user:false}}:{channel:address.channel,text:text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),mrkdwn:false,parse:'none',link_names:false,unfurl_links:false,unfurl_media:false,...(address.thread?{thread_ts:address.thread}:{})}),
+    body:JSON.stringify(discord?{content:text,allowed_mentions:DISCORD_PINGS}:{channel:address.channel,text:text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'),mrkdwn:false,parse:'none',link_names:false,unfurl_links:false,unfurl_media:false,...(address.thread?{thread_ts:address.thread}:{})}),
    });
    try{
     reader=response.body?.getReader();if(!current()||!response.ok||response.redirected||!reader)throw Error();

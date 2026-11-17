@@ -157,7 +157,7 @@ it('delivers Discord through normal startup and records confirmed, uncertain and
   if(url.pathname==='/api/v10/guilds/223456789012345678')return Response.json({id:'223456789012345678',unavailable:false});
   if(url.pathname==='/api/v10/channels/323456789012345678')return Response.json({id:'323456789012345678',guild_id:'223456789012345678',type:0,name:'garden'});
   if(url.pathname==='/api/v10/channels/323456789012345678/messages'){
-   posts++;expect(init?.method).toBe('POST');expect(JSON.parse(String(init?.body))).toMatchObject({allowed_mentions:{parse:[],replied_user:false}});
+   posts++;expect(init?.method).toBe('POST');expect(JSON.parse(String(init?.body))).toMatchObject({allowed_mentions:{parse:['users'],replied_user:false}});
    if(loseReply)throw Error('Fictitious lost Discord receipt');return Response.json({id:'623456789012345678',channel_id:'323456789012345678'});
   }
   throw Error('Unexpected platform endpoint');
