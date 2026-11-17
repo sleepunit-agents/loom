@@ -8,7 +8,10 @@ import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
 import { keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
 import { createDataSchema } from './core/data/database.js';
 import { privateOrigin } from './core/private-origin.js';
-import { agents, household } from './core/data/schema.js';
+import { agents, household, measuringSettings, members, tempoSettings } from './core/data/schema.js';
+import { DEFAULT_MEASURING, KEEP_DAYS_MAX, validKeepDays as validMeasuringDays } from './core/measuring/index.js';
+import { measuringValues } from './core/measuring/change.js';
+import { defaultTimings, readTimings } from './core/tempo/volume.js';
 import { DEFAULT_STALE_DAYS, fieldState, freshUntil } from './backends/cards.js';
 import { MAX_SLUG } from './backends/people.js';
 import { MAX_PROJECT_SLUG } from './backends/projects.js';
@@ -145,4 +148,38 @@ it('checks an address a credential is sent to in one place', () => {
   expect(copies).toEqual([]);
   for (const file of ['src/runtime/worker-http.ts', 'src/runtime/conversation-client.ts', 'src/runtime/body-command-client.ts', 'src/runtime/body-bootstrap.ts', 'src/pieces/secrets/private-client.ts', 'src/shared-mcp-stdio.ts'])
     expect(text(file), file).toContain('privateOrigin(');
+});
+
+it('states the range of Measuring\'s local history once in code, agreeing with the column\'s check', () => {
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z');
+    db.insert(measuringSettings).values({}).run();
+    expect(db.select().from(measuringSettings).get()?.keepDays).toBe(DEFAULT_MEASURING.keep_days);
+    const values = { on: true, send_outside: true, outside_address: 'https://monitor.example/v1/traces' };
+    for (const [days, allowed] of [[0, true], [1, true], [KEEP_DAYS_MAX, true], [-1, false], [KEEP_DAYS_MAX + 1, false]] as const) {
+      const set = () => db.update(measuringSettings).set({ keepDays: days }).run();
+      if (allowed) set(); else expect(set, String(days)).toThrow(/measuring_settings_keep_days_range/);
+      expect(validMeasuringDays(days), String(days)).toBe(allowed);
+      expect(measuringValues.safeParse({ ...values, keep_days: days }).success, String(days)).toBe(allowed);
+    }
+  } finally { client.close(); }
+  const copies = sources('src').filter(file => !['src/core/measuring/index.ts', 'src/core/data/schema.ts'].includes(file) && /keep_?[dD]ays[^\n]*\b3650\b/.test(text(file)));
+  expect(copies).toEqual([]);
+});
+
+it('takes Tempo\'s unset timings from the columns, and reads a row or the defaults in one place', () => {
+  const client = new Database(':memory:');
+  try {
+    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z');
+    db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: '2026-11-16T00:00:00.000Z' }).run();
+    db.insert(tempoSettings).values({ whoKind: 'person', who: 'owner' }).run();
+    const { whoKind: _kind, who: _who, ...stored } = db.select().from(tempoSettings).get()!;
+    expect(stored).toEqual(defaultTimings);
+    expect(readTimings(db, { kind: 'agent', id: 'nobody' })).toEqual(defaultTimings);
+    db.update(tempoSettings).set({ dimDays: 3 }).run();
+    expect(readTimings(db, { kind: 'person', id: 'owner' })).toEqual({ ...defaultTimings, dimDays: 3 });
+  } finally { client.close(); }
+  const readers = sources('src').filter(file => /\.from\(tempoSettings\)/.test(text(file)));
+  expect(readers).toEqual(['src/core/tempo/volume.ts']);
 });

@@ -90,8 +90,9 @@ A step may also remove data, and steps 6 and 7 do. What each removed and why is 
   bytes; raw bridge events are opaque bytes with their own expiry column.
 - Internal bookkeeping uses named operation, identity, state and time columns.
   No secret value is stored in the schema or its write journal.
-- Measuring's local retention defaults to 90 days, bounded to 1–3650, matching
-  the existing Measuring module. Measuring is off by default.
+- Measuring's local retention defaults to 90 days, bounded to 0–3650, matching
+  the Measuring module. Zero keeps no local history and is accepted only when
+  measurements are sent outside. Measuring is off by default.
 - Backups retain seven copies by default, at 03:00 UTC until the household sets
   its timezone. Inbox settle time defaults to five seconds and dim to one day.
 - Immutable approval audit rows and thread deletion markers reject edits. Thread

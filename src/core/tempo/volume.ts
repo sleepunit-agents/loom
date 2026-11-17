@@ -5,8 +5,15 @@ import type { Clock } from '../clock.js';
 
 export type Recipient = { kind: 'person' | 'agent'; id: string };
 export type Volume = 'full' | 'dim' | 'mute';
-export const defaultTimings = Object.freeze({ settleSeconds: 5, dimDays: 1, muteDays: 7 });
 export type Timings = { settleSeconds: number; dimDays: number; muteDays: number };
+/** What a person or agent has until they change it: the columns' own defaults, read from the schema. */
+export const defaultTimings: Readonly<Timings> = Object.freeze({ settleSeconds: tempoSettings.settleSeconds.default as number,
+  dimDays: tempoSettings.dimDays.default as number, muteDays: tempoSettings.muteDays.default as number });
+/** The one read of someone's timings: their row, or the defaults when they have none. */
+export function readTimings(db: DataDatabase, who: Recipient): Timings {
+  const row = db.select().from(tempoSettings).where(and(eq(tempoSettings.whoKind, who.kind), eq(tempoSettings.who, who.id))).get();
+  return row ? { settleSeconds: row.settleSeconds, dimDays: row.dimDays, muteDays: row.muteDays } : { ...defaultTimings };
+}
 const day = 86_400_000;
 
 /** Trusted in-process API. External callers must pass through the household door.
@@ -14,10 +21,7 @@ const day = 86_400_000;
 export class InboxVolume {
   constructor(private db: DataDatabase, private clock: Clock) {}
 
-  timings(who: Recipient): Timings {
-    const row = this.db.select().from(tempoSettings).where(and(eq(tempoSettings.whoKind, who.kind), eq(tempoSettings.who, who.id))).get();
-    return row ? { settleSeconds: row.settleSeconds, dimDays: row.dimDays, muteDays: row.muteDays } : { ...defaultTimings };
-  }
+  timings(who: Recipient): Timings { return readTimings(this.db, who); }
 
   setTimings(who: Recipient, patch: Partial<Timings>): Timings {
     const value = { ...this.timings(who), ...patch };
