@@ -7,7 +7,8 @@ import type { Database } from 'better-sqlite3';
 import type { KnowledgeVerifyInput, KnowledgeVerifyResult } from './types.js';
 import { retryWrite } from './retry.js';
 
-const MAX_PAGE_BODY_LENGTH = 64 * 1024;
+/** Hard size cap on a page's words, in characters, enforced wherever they are written. */
+export const MAX_PAGE_BODY_LENGTH = 64 * 1024;
 
 export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, now: number): KnowledgeVerifyResult {
   const timestamp = new Date(now).toISOString();

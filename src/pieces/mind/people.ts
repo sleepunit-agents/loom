@@ -4,6 +4,7 @@ import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
 import {resolveCardReference} from './card-references.js';
 import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js';
+import {MAX_REVISIONS} from '../../backends/cards.js';
 export type { PersonRecord } from './people-model.js';
 interface Row { slug: string; card_json: string; updated: string; synthesized_at: string | null; archived_at: string | null }
 const has = (db: Database, table: string) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
@@ -126,7 +127,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     history(id:string,viewer:Viewer) {
       const person=read(id,viewer);if(!person)return [];
       const db=sources.get(person.agent??'commons');if(!db||!has(db,'person_revisions'))return [];
-      return (db.prepare('SELECT id,op,replaced_at AS replacedAt,actor,snapshot_json FROM person_revisions WHERE slug=? ORDER BY id DESC LIMIT 10').all(person.slug) as Array<{id:number;op:string;replacedAt:string;actor:string|null;snapshot_json:string}>).map(({snapshot_json,...row})=>({...row,card:(JSON.parse(snapshot_json) as {card:PersonCard}).card}));
+      return (db.prepare('SELECT id,op,replaced_at AS replacedAt,actor,snapshot_json FROM person_revisions WHERE slug=? ORDER BY id DESC LIMIT ?').all(person.slug,MAX_REVISIONS) as Array<{id:number;op:string;replacedAt:string;actor:string|null;snapshot_json:string}>).map(({snapshot_json,...row})=>({...row,card:(JSON.parse(snapshot_json) as {card:PersonCard}).card}));
     },
     close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}
   };

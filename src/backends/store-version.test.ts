@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import { MIGRATIONS, runMigrations } from './migrations.js';
+import { Notes, notesDbPath } from '../notes.js';
 import { PeopleStore } from './people.js';
 import { ProjectsStore } from './projects.js';
 import { SqliteKnowledgeBackend } from './sqlite-knowledge.js';
@@ -34,10 +35,30 @@ it('marks a memory store with the number of steps it has had, and refuses one fr
   expect(version(path)).toBe(MIGRATIONS.length + 1);
 });
 
-it('leaves a store only some steps have run on unmarked, so the rest still run', () => {
+it('marks the directory\'s people store too, so an older program refuses one a newer program has changed', () => {
   const path = join(directory, 'people.db');
   new PeopleStore({ dbPath: path }).close();
-  expect(version(path)).toBe(0);
+  // Only the people steps have run on it. The number is how many steps the program that prepared it knows,
+  // not which have run: each step still reads the file's shape, so the others are not skipped where they apply.
+  expect(version(path)).toBe(MIGRATIONS.length);
+  raw(path, db => { expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'memories'").get()).toBeUndefined(); });
+  raw(path, db => { db.exec('ALTER TABLE people ADD COLUMN from_the_future TEXT'); db.pragma(`user_version = ${MIGRATIONS.length + 1}`); });
+  const before = everything(path);
+  expect(() => new PeopleStore({ dbPath: path })).toThrow('newer program');
+  expect(everything(path)).toEqual(before);
+});
+
+it('marks a notes store, and refuses one from a newer program without altering it', () => {
+  new Notes(directory).close();
+  const path = notesDbPath(directory);
+  expect(version(path)).toBe(1);
+  raw(path, db => { db.exec('ALTER TABLE notes ADD COLUMN from_the_future TEXT'); db.pragma('user_version = 2'); });
+  const before = everything(path);
+  expect(() => new Notes(directory)).toThrow('newer program');
+  // The running program opens a store that startup prepared; it refuses the same file.
+  expect(() => new Notes(directory, Date.now, { prepared: true })).toThrow('newer program');
+  expect(everything(path)).toEqual(before);
+  expect(version(path)).toBe(2);
 });
 
 it('refuses a knowledge store from a newer program, and a file that is not a knowledge store, without altering either', () => {

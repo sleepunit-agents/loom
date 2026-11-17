@@ -1,38 +1,14 @@
 /**
- * Memory backend factory.
+ * The embedding provider the memory commands use unless startup gives them another.
  *
- * loom ships a single opinionated stack: SqliteVecBackend
- * (sqlite + sqlite-vec virtual table) backed by FastEmbedProvider
- * (BGE-small-en-v1.5 ONNX, CPU-only). Zero external services. One DB
- * file per agent under the context dir.
- *
- * If you ever need a different stack — different embedding model,
- * remote vector DB, etc — implement the MemoryBackend / EmbeddingProvider
- * interfaces in types.ts and swap the concrete classes here. There is
- * deliberately no env-driven backend selector anymore: opinionated.
+ * loom ships one stack: sqlite + sqlite-vec for storage and FastEmbedProvider (BGE-small-en-v1.5 ONNX,
+ * CPU only) for vectors. There is deliberately no setting that selects another.
  */
-import type { MemorySelection } from '../config.js';
-import {
-  resolveSqliteDbPath,
-  resolveFastEmbedModel,
-  resolveFastEmbedCacheDir,
-} from '../config.js';
-import { SqliteVecBackend } from './sqlite-vec.js';
-import { appendRecallObservation } from './recall-log.js';
+import { resolveFastEmbedModel, resolveFastEmbedCacheDir } from '../config.js';
 import { FastEmbedProvider } from './fastembed.js';
-import type { MemoryBackend, EmbeddingProvider } from './types.js';
+import type { EmbeddingProvider } from './types.js';
 
-/**
- * Process-lifetime caches (store-convergence §Lifecycle).
- *
- * Tools call createBackend on every invocation; before these caches that
- * meant a fresh better-sqlite3 handle (leaked — no tool closes) and a fresh
- * FastEmbedProvider (full ONNX model init) per call. Backends are now cached
- * per resolved db path and the embedding provider is a singleton per
- * model+cacheDir. close() on a cached backend evicts it, so explicit close
- * (e.g. eurorack-import) stays correct — the next createBackend reopens.
- */
-const backendCache = new Map<string, MemoryBackend>();
+/** One provider per model and cache directory for the life of the process: starting one loads the whole model. */
 const embedderCache = new Map<string, EmbeddingProvider>();
 
 export function createEmbeddingProvider(): EmbeddingProvider {
@@ -45,41 +21,4 @@ export function createEmbeddingProvider(): EmbeddingProvider {
     embedderCache.set(key, provider);
   }
   return provider;
-}
-
-export function createBackend(contextDir: string, selection?: MemorySelection): MemoryBackend {
-  const dbPath = resolveSqliteDbPath(contextDir, selection);
-  const cached = backendCache.get(dbPath);
-  if (cached) return cached;
-
-  const backend = new SqliteVecBackend(
-    {
-      dbPath,
-      // Recall observation log: local-only, <contextDir>/telemetry/recall.jsonl.
-      onRecall: (obs) => appendRecallObservation(contextDir, obs),
-    },
-    createEmbeddingProvider(),
-  );
-
-  // Evict on close so an explicitly closed backend is never handed out again.
-  const originalClose = backend.close.bind(backend);
-  backend.close = () => {
-    backendCache.delete(dbPath);
-    originalClose();
-  };
-
-  backendCache.set(dbPath, backend);
-  return backend;
-}
-
-/** Close and evict every cached memory backend. For tests and shutdown. */
-export function closeAllBackends(): void {
-  for (const backend of [...backendCache.values()]) {
-    try {
-      backend.close(); // evicts itself via the wrapped close
-    } catch {
-      // best-effort shutdown
-    }
-  }
-  backendCache.clear();
 }

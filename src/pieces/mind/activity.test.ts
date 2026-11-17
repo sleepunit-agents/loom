@@ -17,7 +17,7 @@ const conv=(id='cv-111111111111',input:Partial<ActivityConversation>={}):Activit
 const run=(key:string,input:Partial<ActivityRun>={}):ActivityRun=>({kind:'digest',key,at:'2026-11-13T17:10:00Z',conversation:conv(),summary:'Shipped Activity. The full story follows.',asked:['Show what happened'],decided:['Use the new role'],tasks:['t-2207'],links:[],more:[],...input});
 function role(rows:ActivityRun[]):ActivityConversations{return {list:(_v,q)=>({available:true,rows:rows.filter(r=>r.conversation.agent===q.agent&&Date.parse(r.at)>=q.from&&Date.parse(r.at)<q.until)}),read:(_v,a,k,key)=>rows.find(r=>r.conversation.agent===a&&r.kind===k&&r.key===key),conversation:(_v,a,id)=>rows.find(r=>r.conversation.agent===a&&r.conversation.id===id)?.conversation};}
 async function fixture(a:string,b?:string,conversations?:ActivityConversations){
- const clock=new FakeClock(now),reader=createActivityReader(clock,{agents:[{agent:'art',memories:a},...(b?[{agent:'other',memories:b}]:[])],sharing:()=>sharing,conversations,owner:'owner'});
+ const clock=new FakeClock(now),reader=createActivityReader(clock,{agents:[{agent:'art',memories:a},...(b?[{agent:'other',memories:b}]:[])],sharing:()=>sharing,conversations,owner:'owner',timezone:'America/Chicago'});
  closes.push(reader.close);return {clock,reader};
 }
 function list(app:Awaited<ReturnType<typeof fixture>>,v=owner,to='recent'){const row=app.reader.window(to,v);if(!row)throw Error('Activity window absent');return row;}
@@ -28,7 +28,7 @@ it('keeps calendar windows bounded across DST and classifies pure text without o
  expect(oneLine('Shipped the household activity screen. More words.')).toBe('Shipped the household activity screen.');expect(oneLine('x'.repeat(250))).toHaveLength(200);expect(venueKey('loom')).toBe('comms');expect(venueKey('schedule')).toBe('wakes');expect(whatOf({title:'Disk nearly full'})).toBe('system');expect(whatOf({title:'Release',line:'Merged loom#941'})).toBe('work');expect(refsIn('t-12 t-12 https://github.com/sleepunit-agents/loom/pull/941 loom#941','sleepunit-agents')).toMatchObject({tasks:['t-12'],prs:[{label:'loom#941'}]});
 });
 it('does not arm Activity or inspect Conversations when no agent source is configured',()=>{
- let scans=0;const reader=createActivityReader(new FakeClock(now),{agents:[],sharing:()=>sharing,conversations:{...conv,nextDeadline(){scans++;return now+1000;}}});
+ let scans=0;const reader=createActivityReader(new FakeClock(now),{agents:[],sharing:()=>sharing,timezone:'UTC',conversations:{...conv,nextDeadline(){scans++;return now+1000;}}});
  try{expect(reader.allowed(owner)).toBe(false);expect(reader.window('recent',owner)).toBeUndefined();expect(reader.nextDeadline()).toBeUndefined();expect(scans).toBe(0);}finally{reader.close();}
 });
 it('reads active episodes only and keeps absent files absent, with explicit missing conversation owner',async()=>{
@@ -178,4 +178,16 @@ it('derives the earliest episode deadline without visibility or list caps and cl
  app.clock.advance(1);expect(reader.nextDeadline()).toBe(now+2000);
  app.clock.advance(999);expect(reader.nextDeadline()).toBe(startOf('2026-11-14','America/Chicago'));
  reader.close();expect(reader.nextDeadline()).toBeUndefined();
+});
+it('opens the entries of an agent whose id starts with a digit or is long, as the household allows',()=>{
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{},services:{}};
+ for(const agent of ['2fast','a'.repeat(100)]){
+  const a=source();a.add('m-one',{title:`You are ${agent}, in a conversation on wake: Daily review.`,metadata:'{"where":"terminal"}'});
+  const reader=createActivityReader(new FakeClock(now),{agents:[{agent,memories:a.path}],sharing:()=>sharing,timezone:'America/Chicago'});closes.push(reader.close);
+  const entry=reader.window('recent',owner)!.entries[0];
+  expect(entry.id).toBe(`e~${agent}~m-one`);
+  // The runtime's opening line to the body is recognised for this agent too, so it is not shown as the title.
+  expect(entry.title).not.toContain('You are');
+  expect(reader.read(entry.id,owner)).toMatchObject({id:entry.id});
+ }
 });

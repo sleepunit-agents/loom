@@ -11,20 +11,16 @@ const link=z.object({label:z.string(),href:z.string().optional()}).strict();
 const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional(),project:z.string().optional()}).strict();
 const runSchema=z.object({kind:z.enum(['digest','conversation']),key:z.string().min(1).max(300),at:z.string().datetime({offset:true}),conversation:conversationSchema,summary:z.string().optional(),turns:z.number().int().nonnegative().optional(),replies:z.number().int().nonnegative().optional(),asked:z.array(z.string()),decided:z.array(z.string()),tasks:z.array(z.string()),references:z.array(z.string()).optional(),links:z.array(link),steps:z.array(z.object({label:z.string(),state:z.string(),tool:z.string()}).strict()).optional(),needs:z.string().optional(),needsHref:z.string().optional(),needsForMember:z.string().optional(),expires:z.number().finite().optional(),more:z.array(z.object({id:z.string(),at:z.string(),title:z.string()}).strict())}).strict();
 export interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
-export interface ActivityReader {
- access(viewer:Viewer):{id:string;allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[];expires:number};
- nextDeadline():number|undefined;
- window(scope:string,viewer:Viewer):ActivityWindow|undefined;
- read(id:string,viewer:Viewer):ActivityOpen|ActivityFailure|undefined;
-}
 interface Episode {ref:string;title:string;content:string;created:string;project:string|null;metadata:string|null;expires_at:string|null}
 const active="category='episode' AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))";
 const has=(db:Database)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").get();
 const parse=(s:string|null):Record<string,unknown>=>{try{const v=JSON.parse(s??'{}');return v&&typeof v==='object'&&!Array.isArray(v)?v:{};}catch{return {};}};
-export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;conversations?:ActivityConversations;timezone?:string|(()=>string);owner?:string;ownerLabel?:string;github?:string}
+export interface ActivityOptions {agents:Array<{agent:string;memories:string}>;sharing():Sharing;conversations?:ActivityConversations;
+ /** The household's zone: days and hours are shown in it. */
+ timezone:string|(()=>string);owner?:string;ownerLabel?:string;github?:string}
 /** Read-only sources and the shared Conversations port; no legacy registry or transport. */
 export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOptions){
- const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone??'America/Chicago';isoDay(clock.now(),tz());
+ const tz=()=>typeof options.timezone==='function'?options.timezone():options.timezone;isoDay(clock.now(),tz());
  const sources=new Map<string,Database>(),sourceErrors=new Set<string>();
  for(const a of options.agents)try{if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch{sourceErrors.add(a.agent);}
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
@@ -108,7 +104,8 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
   return {id:scope,to,days,...(days.at(-1)!>dayBefore(today,MAX_BACK)?{earlier:dayBefore(days.at(-1)!)}:{}),entries:sorted.slice(0,MAX_ENTRIES),conversations,episodes,truncated:truncated||sorted.length>MAX_ENTRIES,expires:Math.min(...deadlines)};
  }
  function read(id:string,v:Viewer):ActivityOpen|ActivityFailure|undefined{
-  const m=/^([dce])~([a-z][a-z0-9-]{0,39})~(.{1,300})$/.exec(id);if(!m)return;
+  // kind~agent~key. The agent is any household agent id; one this viewer cannot see ends here either way.
+  const m=/^([dce])~([^~]+)~(.{1,300})$/.exec(id);if(!m)return;
   const [,kind,agent,key]=m;if(!agents(v).some(a=>a.agent===agent))return;
   const now=clock.now(),oldest=startOf(dayBefore(isoDay(now,tz()),MAX_BACK),tz());
   if(kind!=='e'&&!conversationAllowed(v,agent))return;

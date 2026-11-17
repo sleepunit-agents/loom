@@ -3,7 +3,8 @@
  *
  * Each Migration is idempotent: the `pending` predicate checks current DB
  * state before `run` is called, so migrations are safe to re-run on every
- * backend connect. The store's version (see refuseNewerStore) only guards
+ * backend connect. runMigrations runs each step in one transaction, so a step
+ * with several statements is never left half done. The store's version (see refuseNewerStore) only guards
  * against a file a newer program has changed.
  *
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
@@ -527,7 +528,10 @@ export function runMigrations(
       continue;
     }
     try {
-      m.run(db);
+      // One transaction per step. A step is found pending from the store's shape (a column, an index,
+      // a table), so a step that stopped after its first statement would read as done for ever, its
+      // backfill or index never made. Whole or not at all keeps that question answerable.
+      db.transaction(() => m.run(db)).immediate();
       results.push({ id: m.id, description: m.description, status: 'applied' });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -538,22 +542,39 @@ export function runMigrations(
     }
   }
 
-  // Every step has now run or was already in place: record how many this store has had.
-  if (results.every((r) => r.status !== 'failed') && storeVersion(db) !== MIGRATIONS.length) {
-    db.pragma(`user_version = ${MIGRATIONS.length}`);
-  }
+  // Every step has now run or was already in place.
+  if (results.every((r) => r.status !== 'failed')) markStore(db);
   return results;
+}
+
+/**
+ * Run only the named steps, where pending, each whole. For a store that holds one feature's tables
+ * (the directory's people.db), or a feature opened before the memory tables exist: the other steps
+ * need the memories table and are left for runMigrations. The store is marked the same way.
+ */
+export function runMigrationSteps(db: Database, ids: readonly string[]): void {
+  for (const id of ids) {
+    const step = MIGRATIONS.find((m) => m.id === id);
+    if (!step) throw new Error(`Unknown migration '${id}'`);
+    if (step.pending(db)) db.transaction(() => step.run(db)).immediate();
+  }
+  markStore(db);
+}
+
+function markStore(db: Database): void {
+  if (storeVersion(db) !== MIGRATIONS.length) db.pragma(`user_version = ${MIGRATIONS.length}`);
 }
 
 const storeVersion = (db: Database) => db.pragma('user_version', { simple: true }) as number;
 
 /**
- * A memory store's version is the number of steps in MIGRATIONS it has had, kept in the file's
- * header (PRAGMA user_version) rather than a table. Each step still decides from the current shape
- * whether it is pending, so the number is not what drives an upgrade: it is what lets an older
- * program see that a newer one has been here, and stop before it creates or rewrites anything.
- * Call it before any write to a store. A store only some steps have run on (a people or projects
- * store opened on its own) stays at 0 and is never refused.
+ * A store's version is the number of steps in MIGRATIONS known to the newest program that has
+ * prepared it, kept in the file's header (PRAGMA user_version) rather than a table. It says nothing
+ * about which steps have run: each step still decides that from the current shape, and a store that
+ * holds one feature's tables has only that feature's. The number is what lets an older program see
+ * that a newer one has been here, and stop before it creates or rewrites anything.
+ * Call it before any write to a store. It does not check that the file is a memory store at all
+ * (docs/accepted-tradeoffs.md, "Only loom.db and knowledge.db are checked").
  */
 export function refuseNewerStore(db: Database): void {
   const at = storeVersion(db);

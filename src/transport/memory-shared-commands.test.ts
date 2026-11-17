@@ -16,7 +16,7 @@ import {Operations} from '../core/operations/index.js';
 import {nextData} from '../next-data.js';
 import {SqliteKnowledgeBackend} from '../backends/sqlite-knowledge.js';
 import {PeopleStore} from '../backends/people.js';
-import {verifyKnowledgePages,deriveSlaClass} from '../backends/knowledge-verification.js';
+import {verifyKnowledgePages} from '../backends/knowledge-verification.js';
 import {createPersonHalf} from '../backends/people-creation.js';
 import {installMindKnowledgeActions} from '../pieces/mind/actions.js';
 import {installMindPeopleActions} from '../pieces/mind/people-actions.js';
@@ -44,7 +44,7 @@ async function fixture(){
  let failReceipt=false,failRelationship=false;
  const receipts:ReceiptPersistence={get:stored.get.bind(stored),expire:stored.expire.bind(stored),nextExpiry:stored.nextExpiry.bind(stored),recover:stored.recover.bind(stored),insert(receipt){if(failReceipt)throw Error('Fictional shared receipt failure');stored.insert(receipt);}};
  const changes=vi.fn(),operations=new Operations(client,clock,changes,{receipts,writes,reportError:()=>{}});
- const knowledgeActions=installMindKnowledgeActions(operations,{path,sharing,verify:verifyKnowledgePages,classify:(domain,anchor)=>deriveSlaClass(anchor,domain)});
+ const knowledgeActions=installMindKnowledgeActions(operations,{path,sharing,verify:verifyKnowledgePages});
  const peopleActions=installMindPeopleActions(operations,{directory,relationship,agent:'fiction',sharing,create(db,input,now,half){if(half==='relationship'&&failRelationship)throw Error('Fictional relationship interruption');createPersonHalf(db,input,now,half);}});
  closes.push(()=>knowledgeActions.close(),()=>peopleActions.close(),()=>operations.close(),()=>data.close());
  const call=(name:string,input:unknown,id:string)=>operations.call('http',{kind:'member',id:'owner'},name,input,id);
@@ -100,4 +100,18 @@ it('adds a person through the card store, so its rules for a summary and for a m
  }finally{relationship.close();}
  expect(f.call('mind.personAdd',{name:'Old friend',summary:'',channel:'',handle:''},'merged')).toMatchObject({code:'conflict'});
  expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['commons:fictional-friend','fiction:fictional-friend']);
+});
+it('finishes a person whose relationship half alone survived a crash, on a later add under a new operation id',async()=>{
+ const f=await fixture(),input={name:'Fictional friend',summary:'Private relationship',channel:'email',handle:'fiction@example.invalid'};
+ expect(f.call('mind.personAdd',input,'person')).toMatchObject({ok:true});
+ // As a crash between the two commits leaves it, found after the first attempt's receipt is gone.
+ for(const [path,sql] of [[f.directory,'DELETE FROM people;DELETE FROM mind_operation_receipts'],[f.relationship,'DELETE FROM mind_operation_receipts']]){const db=new Database(path);try{db.exec(sql);}finally{db.close();}}
+ f.client.exec('DELETE FROM operation_results');
+ // Other words for the half that is kept would be lost without a word, so that is refused and saves nothing.
+ expect(f.call('mind.personAdd',{...input,summary:'Other words'},'other')).toMatchObject({code:'conflict'});
+ expect((await f.read('{ memoryPeople { id } }')).memoryPeople.map((person:{id:string})=>person.id)).toEqual(['fiction:fictional-friend']);
+ expect(f.call('mind.personAdd',input,'later')).toMatchObject({ok:true,value:{slug:'fictional-friend'}});
+ expect(await f.read('{ memoryPeople { id card { summary where { key } } } }')).toMatchObject({memoryPeople:[{id:'commons:fictional-friend',card:{where:[{key:'email'}]}},{id:'fiction:fictional-friend',card:{summary:'Private relationship'}}]});
+ const relationship=new Database(f.relationship);
+ try{expect(relationship.prepare("SELECT count(*) AS n FROM person_revisions").get()).toEqual({n:0});}finally{relationship.close();}
 });

@@ -9,6 +9,8 @@ import {resolveCardReference} from './card-references.js';
 import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
 import type {ProjectSectionRole,ProjectQuery} from './projects-roles.js';
+import {MAX_REVISIONS} from '../../backends/cards.js';
+import {hottestIds} from '../../backends/salience.js';
 export type {ProjectRecord} from './projects-model.js';
 const itemSchema=z.object({title:z.string(),ref:z.string().optional(),when:z.string().optional(),changed:z.string().optional(),status:z.string().optional(),body:z.string().optional(),href:z.string().optional(),who:z.array(z.string()).optional(),waiting:z.boolean().optional(),new:z.boolean().optional()}).strict();
 const sectionSchema=z.object({available:z.boolean(),error:z.string().optional(),items:z.array(itemSchema).optional(),groups:z.array(z.object({title:z.string(),waiting:z.boolean().optional(),items:z.array(itemSchema)}).strict()).optional(),total:z.number().int().nonnegative().optional(),counts:z.record(z.string(),z.number()).optional(),activity:z.string().optional(),expires:z.number().finite().optional(),conversationIds:z.array(z.string().min(1).max(200)).optional()}).strict();
@@ -29,13 +31,14 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  function memorySection(db:Database,q:ProjectQuery,v:Viewer):ProjectSection{
   if(!has(db,'memories'))return {key:'memories',label:'Memories',available:false};
   if(!maySee(v,{type:'memory',agent:q.agent},options.sharing()))return {key:'memories',label:'Memories',available:false};
-  const cols=(db.pragma('table_info(memories)') as {name:string}[]).map(c=>c.name);
   const where=`${activeMemory} AND project IN (${q.names.map(()=>'?').join(',')})`;
   const args=[new Date(q.now).toISOString(),...q.names];
   interface Row {ref:string;category:string;title:string;content:string;created:string;updated:string|null}
   const fields='ref,category,title,content,created,updated';
   const rows=db.prepare(`SELECT ${fields} FROM memories WHERE ${where} ORDER BY created DESC,id DESC LIMIT 20`).all(...args) as Row[];
-  if(cols.includes('salience'))rows.push(...db.prepare(`SELECT ${fields} FROM memories WHERE ${where} ORDER BY salience DESC,created DESC,id DESC LIMIT 10`).all(...args) as Row[]);
+  // And the ten hottest right now, which may be older than those twenty.
+  const hot=hottestIds(db,where,args,10,q.now);
+  if(hot.length)rows.push(...db.prepare(`SELECT ${fields} FROM memories WHERE id IN (${hot.map(()=>'?').join(',')})`).all(...hot) as Row[]);
   const counts=Object.fromEntries((db.prepare(`SELECT category,count(*) AS n FROM memories WHERE ${where} GROUP BY category`).all(...args) as {category:string;n:number}[]).map(r=>[r.category,r.n]));
   const activity=(db.prepare(`SELECT max(coalesce(updated,created)) AS at FROM memories WHERE ${where}`).get(...args) as {at:string|null}).at;
   const expiry=(db.prepare(`SELECT expires_at AS at FROM memories WHERE ${where} AND expires_at IS NOT NULL ORDER BY julianday(expires_at),expires_at LIMIT 1`).get(...args) as {at:string}|undefined)?.at;
@@ -144,7 +147,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const row=db.prepare(`SELECT id FROM memories WHERE ${selector}`).get(...params) as {id:number}|undefined;
   // History is an explicit retained-version read, including archived/expired
   // rows, under the same current private Memory visibility as the source.
-  return row?db.prepare('SELECT id,op,replaced_at AS replacedAt,content FROM memory_revisions WHERE memory_id=? ORDER BY id DESC LIMIT 10').all(row.id) as {id:number;op:string;replacedAt:string;content:string}[]:[];
+  return row?db.prepare('SELECT id,op,replaced_at AS replacedAt,content FROM memory_revisions WHERE memory_id=? ORDER BY id DESC LIMIT ?').all(row.id,MAX_REVISIONS) as {id:number;op:string;replacedAt:string;content:string}[]:[];
  };
  const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
  let closed=false;

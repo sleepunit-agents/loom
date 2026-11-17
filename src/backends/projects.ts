@@ -19,20 +19,19 @@ import { dirname } from 'node:path';
  * its project and the result carries `resolved_from`. An archived project is
  * reached by its slug only.
  *
- * Storage is the memory database (resolveSqliteDbPath), opened raw like the
+ * Storage is the memory database (memories.db), opened raw like the
  * people store — no embedder. The hub's memory reads live here because the
  * memories are in the same database; notes and person cards are read by
  * tools/project.ts, which knows the context dir.
  */
-import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { NOTE_PATH } from '../notes.js';
-import { MIGRATIONS, refuseNewerStore } from './migrations.js';
+import { refuseNewerStore, runMigrationSteps } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt, checkEnvelope,
   slugError, renderWhereLine, oneLine, mergeLevel, withoutNulls, stampWhere, whereCounts, hasTable, isReserved,
   RESERVED_KEYS, type CardRowBase, type RevisionMeta, type CardConnection,
+  CARD_NAME_MAX, CARD_SUMMARY_MAX, CARD_FIELDS_MAX, CARD_RENDER_MAX,
 } from './cards.js';
 
 export { CardError as ProjectCardError } from './cards.js';
@@ -41,15 +40,15 @@ import { PROJECT_CARD_SLUG_MAX } from '../slug.js';
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
 export const MAX_PROJECT_SLUG = PROJECT_CARD_SLUG_MAX;
-const MAX_NAME = 80;
-const MAX_SUMMARY = 1200;
+const MAX_NAME = CARD_NAME_MAX;
+const MAX_SUMMARY = CARD_SUMMARY_MAX;
 const MAX_GOAL = 400;
 const MAX_WHERE_VALUE = 400;
-const MAX_FIELDS = 12;
+const MAX_FIELDS = CARD_FIELDS_MAX;
 const MAX_LIST = 16;
 const MAX_LINK = 200;
 const MAX_EPIC = 64;
-export const MAX_PROJECT_RENDER = 2000;
+export const MAX_PROJECT_RENDER = CARD_RENDER_MAX;
 const MAX_REASON = 200;
 
 export const STATUSES = ['active', 'paused', 'done'] as const;
@@ -151,9 +150,6 @@ export function projectNameError(name: unknown): string | null {
   if (isReserved(name as string)) return `"${name as string}" is a reserved name (${RESERVED_KEYS.join(', ')})`;
   return null;
 }
-
-/** A project name's field name: the name with `-` replaced by `_` (what a person card's `where` uses). */
-export const fieldNameOf = (name: string) => name.replace(/-/g, '_');
 
 function checkWhereValue(v: unknown, path: string): void {
   if (typeof v !== 'string') fail(`${path}: must be a string (a project's state is prose)`);
@@ -314,9 +310,6 @@ export function renderProjectCard(card: ProjectCard, nowMs: number, opts: { wors
   return lines.join('\n');
 }
 
-/** A project's names: its slug, then its aliases in the card's order. */
-export const namesOf = (card: Pick<ProjectCard, 'slug' | 'links'>): string[] => [card.slug, ...(card.links?.aliases ?? [])];
-
 // ─── Store ───────────────────────────────────────────────────────────────────
 
 const PROJECT_MIGRATIONS = ['project_cards'];
@@ -357,20 +350,6 @@ export interface ProjectsStoreConfig {
   actor?: string;
 }
 
-/** One memory in a hub's `memories` section. */
-export interface HubMemory {
-  ref: string;
-  category: string;
-  snippet: string;
-  created: string;
-  updated: string;
-  new: boolean;
-}
-
-const HUB_NEWEST = 20;
-const HUB_SALIENT = 10;
-const SNIPPET = 200;
-
 export interface ProjectListRow {
   row: ProjectRow | null;
   raw: { slug: string; name: string; status: string; archived_at: string | null; updated: string; synthesized_at: string | null };
@@ -397,10 +376,7 @@ export class ProjectsStore {
         try { refuseNewerStore(this.db); } catch (error) { this.db.close(); throw error; }
         this.db.pragma('journal_mode = WAL');
         // Only this feature's migration, as the people store: a raw store must not half-run the memories ones.
-        for (const id of PROJECT_MIGRATIONS) {
-          const m = MIGRATIONS.find((x) => x.id === id)!;
-          if (m.pending(this.db)) m.run(this.db);
-        }
+        runMigrationSteps(this.db, PROJECT_MIGRATIONS);
       }
     }
     this.migrated = ['projects', 'project_revisions', 'project_names'].every((t) => hasTable(this.db, t));
@@ -731,50 +707,6 @@ export class ProjectsStore {
   }
 
   /**
-   * The hub's `memories` section, or null when there is no memories table:
-   * the 20 newest by `created` plus the 10 with the highest stored salience
-   * (ties: newer first), deduplicated by ref, newest first; and a count per
-   * category over every match. `new` is "changed after `since`".
-   */
-  memorySection(names: readonly string[], since: string): { items: HubMemory[]; total: number; counts: Record<string, number> } | null {
-    if (!this.memoriesReady()) return null;
-    if (names.length === 0) return { items: [], total: 0, counts: {} };
-    const hasSalience = (this.db.pragma('table_info(memories)') as { name: string }[]).some((c) => c.name === 'salience');
-    const where = `archived = 0 AND (expires_at IS NULL OR expires_at > ?) AND ${this.nameClause(names)}`;
-    const args = [this.nowIso(), ...names];
-    type Row = { ref: string; category: string; title: string; content: string; created: string; updated: string | null };
-    const cols = 'ref, category, title, content, created, updated';
-    const newest = this.db.prepare(`SELECT ${cols} FROM memories WHERE ${where} ORDER BY created DESC, id DESC LIMIT ?`).all(...args, HUB_NEWEST) as Row[];
-    const salient = hasSalience
-      ? (this.db.prepare(`SELECT ${cols} FROM memories WHERE ${where} ORDER BY salience DESC, created DESC, id DESC LIMIT ?`).all(...args, HUB_SALIENT) as Row[])
-      : [];
-    const byRef = new Map<string, Row>();
-    for (const r of [...newest, ...salient]) byRef.set(r.ref, r);
-    const sinceMs = Date.parse(since);
-    const items = [...byRef.values()]
-      .sort((a, b) => (a.created < b.created ? 1 : a.created > b.created ? -1 : 0))
-      .map((r) => {
-        const updated = r.updated ?? r.created;
-        const text = oneLine(`${r.title} — ${r.content}`);
-        return {
-          ref: r.ref,
-          category: r.category,
-          snippet: text.length > SNIPPET ? `${text.slice(0, SNIPPET - 1)}…` : text,
-          created: r.created,
-          updated,
-          new: Date.parse(updated) > sinceMs,
-        };
-      });
-    const counts: Record<string, number> = {};
-    let total = 0;
-    for (const r of this.db.prepare(`SELECT category, COUNT(*) AS n FROM memories WHERE ${where} GROUP BY category ORDER BY category`).all(...args) as { category: string; n: number }[]) {
-      counts[r.category] = r.n;
-      total += r.n;
-    }
-    return { items, total, counts };
-  }
-
-  /**
    * Tags on non-archived, non-expired memories (any scope) that are no live
    * project's name, with counts, most first (ties by tag). An archived
    * project's names come back here: tags with nothing behind them again.
@@ -808,56 +740,4 @@ export function projectNameSet(db: Database, name: string): Set<string> | null {
   if (!holder) return null;
   const rows = db.prepare('SELECT name FROM project_names WHERE slug = ?').all(holder.slug) as { name: string }[];
   return new Set(rows.map((r) => r.name));
-}
-
-/**
- * Open the projects store on a context's memory database. A read-only open
- * returns null when there is no database file yet; a writable one creates it.
- */
-export function openProjectsStore(
-  contextDir: string,
-  opts: { readonly?: boolean; now?: () => number; actor?: string; selection?: MemorySelection } = {},
-): ProjectsStore | null {
-  const dbPath = resolveSqliteDbPath(contextDir, opts.selection);
-  if (opts.readonly && !existsSync(dbPath)) return null;
-  return new ProjectsStore({ dbPath, readonly: opts.readonly, now: opts.now, actor: opts.actor });
-}
-
-// ─── Identity's `project` param ──────────────────────────────────────────────
-
-const PROJECT_HEADING = '# This project';
-/** The longest name a placeholder echoes. A name that can't be a project's is cut here. */
-const ECHO_MAX = MAX_PROJECT_SLUG;
-
-/**
- * The `# This project` block for identity: the heading and the rendered card
- * (≤ 2,015 chars: the card's cap is checked at write, so it never needs
- * truncating). Best-effort as person cards: a missing, archived or
- * unreadable card gives its placeholder line, never a failure.
- */
-export function projectBlock(contextDir: string, name: string | undefined, opts: { nowMs?: number; onFailure?: (err: unknown) => void; selection?: MemorySelection } = {}): string | null {
-  if (!name) return null;
-  const echo = name.length > ECHO_MAX ? `${name.slice(0, ECHO_MAX)}…` : name;
-  const line = (text: string) => `${PROJECT_HEADING}\n${text}`;
-  if (projectNameError(name)) return line(`_(no project ${echo})_`);
-  let store: ProjectsStore | null;
-  try {
-    store = openProjectsStore(contextDir, { readonly: true, selection: opts.selection });
-  } catch (e) {
-    opts.onFailure?.(e);
-    return line(`_(project ${echo} is unreadable)_`);
-  }
-  if (!store) return line(`_(no project ${echo})_`);
-  try {
-    const found = store.resolve(name);
-    if (!found) return line(`_(no project ${echo})_`);
-    if (found.row.archived_at !== null) return line(`_(project ${echo} is archived)_`);
-    return line(renderProjectCard(found.row.card, opts.nowMs ?? Date.now()));
-  } catch (e) {
-    console.error(`[loom:identity] project card ${echo} unreadable:`, e);
-    opts.onFailure?.(e);
-    return line(`_(project ${echo} is unreadable)_`);
-  } finally {
-    store.close();
-  }
 }

@@ -4,7 +4,7 @@ export interface ActivityLink {label:string;href?:string}
 export interface ActivityEntry {[key:string]:unknown;id:string;agent:string;at:string;day:string;hour:number;title:string;line?:string;venue:string;where:string;what:ActivityWhat;owner?:true;expires?:number}
 export interface ActivityOpen extends ActivityEntry {asked:string[];decided:string[];story?:string;tasks:ActivityLink[];prs:ActivityLink[];links:ActivityLink[];needs?:string;steps?:Array<{label:string;state:string;tool:string}>;more:Array<{id:string;at:string;title:string}>}
 export interface ActivityWindow {[key:string]:unknown;id:string;to:string;days:string[];earlier?:string;entries:ActivityEntry[];conversations:'available'|'unavailable'|'error';episodes:'available'|'unavailable'|'error';truncated:boolean;expires:number}
-export const WINDOW_DAYS=3,MAX_BACK=30,MAX_ENTRIES=600;
+export const MAX_BACK=30,MAX_ENTRIES=600;
 export const VENUES:Record<string,string>={comms:'Comms',discord:'Discord',slack:'Slack',terminal:'Terminal',wakes:'Wakes',relay:'Relay',web:'Web',mcp:'MCP',voice:'Voice'};
 /** A venue or an episode's surface as the Where filter's key. */
 export function venueKey(surface: string): string {

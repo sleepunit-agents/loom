@@ -3,6 +3,8 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {parseRedactedJSON} from '../pieces/changes/redact.js';
+import {DOOR_REQUEST_BYTES} from '../core/data/door-limit.js';
+import {doorConnection} from './connection.js';
 import {readStdin,type IOStreams} from './io.js';
 import type { ClientRuntime } from './io.js';
 
@@ -40,16 +42,12 @@ export async function runSharedTaskClient(argv:string[],io:IOStreams,runtime:Cli
  if(verb==='command'){
   try{
    const text=args[0]==='--file'?(args[1]==='-'?await readStdin(io.stdin):await readFile(args[1],'utf8')):args[0];
-   if(Buffer.byteLength(text)>1_048_576)throw Error();input=JSON.parse(text);
+   if(Buffer.byteLength(text)>DOOR_REQUEST_BYTES)throw Error();input=JSON.parse(text);
    if(!input||typeof input!=='object'||Array.isArray(input)||typeof (input as {action?:unknown}).action!=='string')return invalid();
   }catch{return fail('Invalid command input');}
  }
- let base:URL,token:string,bytes:Buffer|undefined;
- try{
-  if(!io.env.LOOM_URL||!io.env.LOOM_TOKEN_FILE)throw Error();base=new URL(io.env.LOOM_URL);
-  if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.pathname!=='/'||base.search||base.hash)throw Error();
-  bytes=await readFile(io.env.LOOM_TOKEN_FILE);if(bytes.length>8192)throw Error();token=bytes.toString('utf8').trim();if(!/^[\x21-\x7e]{1,4096}$/.test(token))throw Error();
- }catch{return fail('Cannot configure loom connection');}finally{bytes?.fill(0);}
+ let base:URL,token:string;
+ try{({base,token}=await doorConnection(io.env));}catch{return fail('Cannot configure loom connection');}
  const write=verb==='command';
  const selection=verb==='ready'?query.replace('tasks(orderBy:','tasks:readyTasks(orderBy:'):verb==='show'?query.replace('query Taskstore {','query Taskstore($id:String!){').replace('tasks(orderBy:','tasks(where:{id:{eq:$id}},orderBy:'):query;
  const body=JSON.stringify(write?{id:randomUUID(),input}:{query:selection,...(verb==='show'?{variables:{id:args[0]}}:{})});

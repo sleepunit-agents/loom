@@ -24,7 +24,8 @@ reread its paragraph.
 | `loom-body` | `src/body.ts`, then `src/runtime/body-program.ts` | One run of one agent, started only by a worker. Drives a harness (`src/runtime/body-harnesses.ts`). |
 | `loom-household`, `loom-taskstore`, `loom-token`, `loom-account`, `loom-sessions` | `src/household-client.ts`, `src/taskstore-client.ts`, `src/token-client.ts`, `src/account-client.ts`, `src/sessions-client.ts`, all over `src/cli` | Command-line clients of the running program's HTTP door. They open no store. |
 
-`loom` accepts `serve`, `signin`, `mcp`, `--version` and `--help`, and nothing else. The
+`loom` accepts `serve`, `signin`, `mcp` (also under its earlier spelling, `--next`),
+`--version` and `--help`, and nothing else. The
 older program (its own stdio server, a subcommand per verb, server-rendered pages) is
 gone, and so are the copies of the household, its tokens, browser sessions and secrets
 that it and an earlier composition kept beside the ones that run.
@@ -73,9 +74,16 @@ facts in `src/shared-sharing.ts`. Parts call each other directly in process and 
 policy of their own; the `src/shared-*.ts` files are where each part meets the door.
 
 A few rules that every part needs are stated once: the slug pattern and its three lengths
-in `src/slug.ts`, how long Comms keeps words in `src/core/data/comms-days.ts`, and the
-size of one request in `src/core/data/http.ts`. `src/single-home.contract.test.ts` fails
-when one is copied again.
+in `src/slug.ts`, how long Comms keeps words in `src/core/data/comms-days.ts`, what an
+unset household has (its time zone among them) in `src/core/data/household-settings.ts`,
+how a client outside the program reads its address and token in `src/cli/connection.ts`,
+and the size of one request in `src/core/data/door-limit.ts`, which the door's three ways
+in and `loom-taskstore` share. `src/single-home.contract.test.ts` and
+`src/stored-data.contract.test.ts` fail when one of these is copied again in the files
+they name.
+
+Choices that were made on purpose and look like oversights are listed, with why, in
+`docs/accepted-tradeoffs.md`.
 
 ## The parts
 
@@ -97,7 +105,10 @@ Memory's files are opened by `src/shared-memory.ts` from the paths `program.json
 `src/backends/sqlite-vec.ts` is the memory store (vector search; embeddings from
 `src/backends/fastembed.ts`), `src/backends/sqlite-knowledge.ts` the knowledge store,
 `src/backends/people.ts` and `src/backends/projects.ts` the cards over the shared rules in
-`src/backends/cards.ts`. `src/backends/salience.ts` and `src/backends/episodes.ts` make the
+`src/backends/cards.ts`. A knowledge page is written only through
+`src/backends/knowledge-writes.ts`, by the store and by the door's page actions alike, and
+a receipt for a write to one of these files only through `src/pieces/mind/receipt-schema.ts`.
+`src/backends/salience.ts` and `src/backends/episodes.ts` make the
 two slices a body wakes with: Top of Mind, and the tape. The tape's conversation digests
 come from the household database, handed in by `src/transport/memory-queries.ts`.
 
@@ -157,8 +168,11 @@ it, stored once by content.
 | `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access`, and its own `mind_operation_receipts` | `src/backends/sqlite-knowledge.ts` |
 | `people.db` | `people`, `person_revisions`, `person_merges` (the directory half of each person), and its own `mind_operation_receipts` | `src/backends/people.ts`, by the same steps in `src/backends/migrations.ts` |
 
-A new person is two cards, the directory's and the adding agent's, written both or
-neither by `src/pieces/mind/people-actions.ts`.
+A new person is two cards, the directory's and the adding agent's, written by
+`src/pieces/mind/people-actions.ts`. A refusal or a failure on either side saves neither.
+The two files cannot commit as one, so a crash between their commits can leave the agent's
+card alone; adding the same person again then finishes the pair
+(`src/backends/people-creation.ts`).
 
 ### `secret-holder/`: the holder process's own store
 
@@ -171,28 +185,25 @@ Secret values are here, encrypted, and nowhere else.
 `loom.db` holds its schema number in `migrations` and is recognised in full before it is
 touched. The others keep a number in the file header (`PRAGMA user_version`) and no table:
 
-- `memories.db`: the count of steps in `src/backends/migrations.ts` it has had. Each step
-  still decides from the file's shape whether it is pending; the number only lets an older
-  program refuse a file a newer one has changed.
+- `memories.db` and `people.db`: how many steps of `src/backends/migrations.ts` the newest
+  program to prepare the file knows. Each step still decides from the file's shape whether
+  it is pending, and runs whole or not at all; the number only lets an older program refuse
+  a file a newer one has changed.
 - `knowledge.db`: 1. A newer number, or a file with tables but no `pages`, is refused.
-- `people.db` and `notes.db`: no number. They are never refused.
+- `notes.db`: 1. A newer number is refused.
+
+Only `loom.db` and `knowledge.db` are checked for being the right kind of file at all; see
+`docs/accepted-tradeoffs.md`.
 
 ## Code no program starts
 
-Three things are compiled but reached by no executable. Each is here for a stated reason.
+Two things are compiled but reached by no executable. Each is here for a stated reason.
 
 - **The example household.** `src/example-home.ts`, `src/example-home-adapters.ts`,
   `src/example-runtime.ts` and `src/rebuild` build and check a fictitious home. They are
   run by `scripts/example-home.mjs` and the acceptance walkthrough
   (`docs/example-household.md`). The adapters file is loaded by path, from a file the
   example writes into its home, so no import names it.
-- **Openers the memory tests are built on.** `createBackend` in `src/backends/index.ts`,
-  `remember` in `src/tools/remember.ts`, the store openers that take an agent's folder in
-  `src/backends/people.ts`, `src/backends/projects.ts`, `src/backends/proposals.ts` and
-  `src/backends/salience.ts`, with `src/config.ts`, `src/backends/recall-log.ts` and
-  `src/backends/recorder-health.ts`, are what is left of the older memory program. The
-  running program opens the same stores through `src/shared-memory.ts` instead. They stay
-  because the tests of the live stores still set themselves up through them.
 - **The dispatcher's own receipt table.** `src/core/operations/index.ts` makes
   `core_operations` when it is given no receipt store, through `migrate` in
   `src/core/db/index.ts`. The program always gives it one (`operation_results`); only

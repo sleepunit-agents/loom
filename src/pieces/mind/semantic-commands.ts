@@ -57,7 +57,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
    if(done){check(done,receipt);return;}
    const old=db.prepare('SELECT name,input_hash,expires FROM memory_command_preparations WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as Identity|undefined;
    if(old){check(old,receipt);return;}
-   db.prepare('INSERT INTO memory_command_preparations VALUES(?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,receipt.expires);
+   db.prepare('INSERT INTO memory_command_preparations (viewer,id,name,input_hash,expires) VALUES(?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,receipt.expires);
   }).immediate();}finally{db.close();}
  };
  const execute=async(viewer:Viewer,receipt:Readonly<WriteReceipt>|undefined,run:(backend:SqliteVecBackend,db:Database.Database)=>Promise<{ids:string[];matches?:Array<{id:string;score:number}>}>)=>{

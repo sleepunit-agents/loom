@@ -73,7 +73,8 @@ it('takes an agent\'s face choices from the schema, and the app draws the same o
 });
 
 it('names the door\'s request limit once', () => {
-  const door = ['src/core/data/http.ts', 'src/core/data/socket.ts', 'src/shared-root.ts'];
-  expect(door.filter(file => /1024 \* 1024|1_048_576|1048576/.test(text(file)))).toEqual(['src/core/data/http.ts']);
+  // The door's three ways in and the clients that send to it. The number is written in the first file only.
+  const door = ['src/core/data/door-limit.ts', 'src/core/data/http.ts', 'src/core/data/socket.ts', 'src/shared-root.ts', 'src/cli/shared-task-client.ts'];
+  expect(door.filter(file => /1024 \* 1024|1_048_576|1048576/.test(text(file)))).toEqual(['src/core/data/door-limit.ts']);
   for (const file of door) expect(text(file), file).toContain('DOOR_REQUEST_BYTES');
 });

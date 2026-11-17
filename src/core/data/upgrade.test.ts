@@ -80,6 +80,24 @@ describe('upgrading a household database', () => {
     expect(() => old.prepare("DELETE FROM conversations WHERE id = 'room'").run()).toThrow('FOREIGN KEY');
   });
 
+  it('refuses to upgrade over a record whose member or agent is gone, and changes nothing', () => {
+    // Step 6 puts guards on who edited a trigger. Before it nothing stopped that member's row being deleted,
+    // and SQLite's own check does not see a kind-and-id reference.
+    const old = household(5);
+    old.exec(`INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO triggers (id, owner_kind, source_kind, lifespan, target_kind, target, note, enabled, state, created_at, changed_at) VALUES ('t', 'household', 'time', 'once', 'operation', 'op', '', 1, 'standing', '${at}', '${at}');
+      INSERT INTO trigger_edits (trigger, at, by_kind, by, before) VALUES ('t', '${at}', 'member', 'sam', '{}');
+      DELETE FROM members WHERE id = 'sam'`);
+    const before = everything(old);
+    expect(() => upgradeDataSchema(old)).toThrow('trigger_edits.by names a member that is not there');
+    expect(everything(old)).toEqual(before);
+    expect(old.prepare('SELECT max(number) AS n FROM migrations').get()).toEqual({ n: 5 });
+    // Put right, the same database upgrades.
+    old.prepare("INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', ?)").run(at);
+    upgradeDataSchema(old);
+    expect(old.prepare('SELECT max(number) AS n FROM migrations').get()).toEqual({ n: dataSchemaNumber });
+  });
+
   it('refuses a database from a newer program', () => {
     const made = fresh();
     made.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(dataSchemaNumber + 1, at);

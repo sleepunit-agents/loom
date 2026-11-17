@@ -1,15 +1,6 @@
-/**
- * Remember tool — stores an episodic memory that persists across sessions.
- *
- * Delegates to the configured MemoryBackend. v0.3.1 ships a single
- * backend (sqlite-vec + fastembed); the interface stays generic so
- * future stacks can swap in without changing the tool contract.
- */
-import type { MemorySelection } from '../config.js';
-import { createBackend } from '../backends/index.js';
-import type { MemoryInput, MemoryRef } from '../backends/types.js';
+/** What every memory write is checked against before it reaches the store, and the default life of an episode. */
+import type { MemoryInput } from '../backends/types.js';
 import { EPISODE_CATEGORY, EPISODE_DEFAULT_TTL } from '../categories.js';
-import { recordSuccess, recordFailure } from '../backends/recorder-health.js';
 
 /**
  * Lint-on-write (c-loom-strictness §lint): validate the record BEFORE it reaches
@@ -46,23 +37,4 @@ export function prepareMemoryInput(input:MemoryInput):MemoryInput {
   // tier default, so a body can never accidentally leave a permanent episode.
   const isEpisode = input.category === EPISODE_CATEGORY;
   return isEpisode&&!input.ttl?{...input,ttl:EPISODE_DEFAULT_TTL}:input;
-}
-
-export async function remember(
-  contextDir: string,
-  input: MemoryInput,
-  selection?: MemorySelection,
-): Promise<MemoryRef> {
-  input=prepareMemoryInput(input);
-  const backend = createBackend(contextDir, selection);
-  const isEpisode=input.category===EPISODE_CATEGORY;
-  try {
-    const ref = await backend.remember(input);
-    // Record health only for episode writes — that's the path identity.ts monitors.
-    if (isEpisode) recordSuccess(contextDir);
-    return ref;
-  } catch (err) {
-    if (isEpisode) recordFailure(contextDir, err);
-    throw err;
-  }
 }

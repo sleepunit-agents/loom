@@ -6,10 +6,12 @@ import {tmpdir} from 'node:os';
 import {GraphQLSchema,GraphQLObjectType,graphql} from 'graphql/index.js';
 import {FakeClock,type Sharing,type Viewer} from '../../core/index.js';
 import {SqliteVecBackend} from '../../backends/sqlite-vec.js';
-import {propose,rejectProposal} from '../../backends/proposals.js';
+import {proposeOnConnection,type ProposalInput} from '../../backends/proposals.js';
 import {createProjectsReader} from './projects.js';
 import {readDeadline,keepReadUntil} from '../../core/data/read-lease.js';
 import {retainedQueryFields} from './retained-query.js';
+/** A draft written as the memory.propose command writes it: on the source's connection, in its transaction. */
+const propose=(db:Database.Database,input:ProposalInput)=>db.transaction(()=>proposeOnConnection(db,input))();
 const close:Array<()=>void>=[];
 afterEach(()=>{for(const stop of close.splice(0).reverse())stop();vi.unstubAllEnvs();});
 const owner:Viewer={kind:'member',id:'owner'};
@@ -27,14 +29,14 @@ it('paginates archived memories and pending proposals from their declared file w
  const f=fixture(),backend=f.backend!,refs:string[]=[];
  for(let i=0;i<3;i++){const made=await backend.remember({category:'project',title:'PRIVATE_ARCHIVE_'+i,content:'Archive words '+i});refs.push(made.ref);await backend.archive({ref:made.ref,note:'Reason '+i});}
  const active=await backend.remember({category:'project',title:'Active only',content:'Active words'});
- const first=propose(f.home,{category:'rough category',title:'PRIVATE_PROPOSAL_ONE',content:'Proposal words one',source:'fiction'},null),second=propose(f.home,{category:'project',title:'PRIVATE_PROPOSAL_TWO',content:'Proposal words two'},null);
+ const first=propose(f.db,{category:'rough category',title:'PRIVATE_PROPOSAL_ONE',content:'Proposal words one',source:'fiction'}),second=propose(f.db,{category:'project',title:'PRIVATE_PROPOSAL_TWO',content:'Proposal words two'});
  const before=f.db.serialize();vi.stubEnv('LOOM_SQLITE_DB_PATH',f.missing);
  const a=await f.query('{memoryArchive(agent:"fiction",first:2){entries{id ref title content note archivedAt} nextBefore}}');expect(a.errors).toBeUndefined();const page=a.data!.memoryArchive as {entries:{id:string;ref:string;note:string}[];nextBefore:string};expect(page.entries.map(row=>row.ref)).toEqual([refs[2],refs[1]]);expect(page.entries[0].id).toMatch(/^fiction:[a-f0-9-]{36}$/);expect(page.entries[0].note).toBe('Reason 2');
  const rest=await f.query('query($before:String!){memoryArchive(agent:"fiction",first:2,before:$before){entries{ref} nextBefore}}',owner,{before:page.nextBefore});expect(rest.errors).toBeUndefined();expect(rest.data).toEqual({memoryArchive:{entries:[{ref:refs[0]}],nextBefore:null}});
  const d=await f.query('{memoryProposals(agent:"fiction",first:1){entries{id title content category source} nextBefore}}');expect(d.errors).toBeUndefined();const proposal=d.data!.memoryProposals as {entries:{id:string;title:string}[];nextBefore:string};expect(proposal.entries).toMatchObject([{id:'fiction:proposal:'+second.uuid,title:'PRIVATE_PROPOSAL_TWO'}]);
  expect((await f.query('query($cursor:String!){memoryProposals(agent:"fiction",before:$cursor){entries{id title} nextBefore}}',owner,{cursor:proposal.nextBefore})).data).toEqual({memoryProposals:{entries:[{id:'fiction:proposal:'+first.uuid,title:'PRIVATE_PROPOSAL_ONE'}],nextBefore:null}});
  expect(f.db.serialize()).toEqual(before);expect(existsSync(f.missing)).toBe(false);expect((await backend.recall({query:'words'})).map(row=>row.path)).toEqual([active.ref]);
- expect(rejectProposal(f.home,second.id,null)).toBe(true);expect((await f.query('{memoryProposals(agent:"fiction"){entries{title}}}')).data).toEqual({memoryProposals:{entries:[{title:'PRIVATE_PROPOSAL_ONE'}]}});
+ expect(f.db.prepare("DELETE FROM proposals WHERE id=? AND status='pending'").run(second.id).changes).toBe(1);expect((await f.query('{memoryProposals(agent:"fiction"){entries{title}}}')).data).toEqual({memoryProposals:{entries:[{title:'PRIVATE_PROPOSAL_ONE'}]}});
 });
 it('checks current Memory visibility rather than project membership and never creates a missing source',async()=>{
  const f=fixture();const made=await f.backend!.remember({category:'project',title:'PRIVATE_OWNER_WORDS',content:'Private words'});await f.backend!.archive({ref:made.ref});
@@ -55,7 +57,7 @@ it('rejects invalid bounds and sanitizes unsupported or closed source errors',as
 });
 
 it('keeps explicit retained words outside current-memory freshness leases without clearing other selected deadlines',async()=>{
- const f=fixture(),made=await f.backend!.remember({category:'project',title:'Retained only',content:'Retained words',ttl:'1h'});await f.backend!.archive({ref:made.ref});propose(f.home,{category:'project',title:'Proposal only',content:'Proposed words'},null);
+ const f=fixture(),made=await f.backend!.remember({category:'project',title:'Retained only',content:'Retained words',ttl:'1h'});await f.backend!.archive({ref:made.ref});propose(f.db,{category:'project',title:'Proposal only',content:'Proposed words'});
  const source='{memoryArchive(agent:"fiction"){entries{content}} memoryProposals(agent:"fiction"){entries{content}}}',context={viewer:owner};
  const selected=await graphql({schema:f.schema,source,contextValue:context});expect(selected.errors).toBeUndefined();expect(selected.data).toEqual({memoryArchive:{entries:[{content:'Retained words'}]},memoryProposals:{entries:[{content:'Proposed words'}]}});expect(readDeadline(context)).toBeUndefined();
  keepReadUntil(context,123);expect((await graphql({schema:f.schema,source,contextValue:context})).errors).toBeUndefined();expect(readDeadline(context)).toBe(123);

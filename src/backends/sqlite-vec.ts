@@ -38,7 +38,6 @@ import type {
   ArchiveResult,
   RestoreInput,
   RestoreResult,
-  RecallObservation,
   MemoryRevisionMeta,
   MemoryRevision,
   MemoryRevisionRestoreInput,
@@ -52,6 +51,7 @@ import { computeExpiresAt, isExpired } from './ttl.js';
 import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
 import { refuseNewerStore, runMigrations } from './migrations.js';
+import { MAX_REVISIONS } from './cards.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
 import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
@@ -80,16 +80,8 @@ export interface SqliteVecConfig {
   busyTimeout?: number;
   /** A source command includes lazy schema work in its effect transaction. */
   deferSchema?: boolean;
-  /**
-   * Observer for the recall observation log. Called once per recall with
-   * the search's telemetry; errors it throws are swallowed — a failed
-   * observation never fails a search.
-   */
-  onRecall?: (obs: RecallObservation) => void;
 }
 
-/** Body snapshots retained per memory; oldest pruned beyond this cap (mirrors knowledge wing). */
-const MAX_REVISIONS_PER_MEMORY = 10;
 
 interface MemoryRow {
   id: number;
@@ -214,6 +206,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const confidence = isFeedback ? FEEDBACK_CONFIDENCE_DEFAULT : null;
     const evidenceCount = isFeedback ? 1 : 0;
 
+    // `salience` is stored and not read: heat is worked out at each read (docs/accepted-tradeoffs.md).
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
@@ -268,7 +261,6 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   async recall(input: RecallInput): Promise<MemoryMatch[]> {
-    const startedAt = performance.now();
     const limit = input.limit ?? 10;
     const diversity = clamp01(input.diversity ?? DEFAULT_DIVERSITY);
 
@@ -297,7 +289,6 @@ export class SqliteVecBackend implements MemoryBackend {
     // blended score is just the raw similarity (see rowToMatch).
     let hits = candidates;
     let blended: number[] | null = null;
-    let diversityDrops = 0;
     if (diversity > 0 && candidates.length > limit) {
       const vectors = this.loadVectors(candidates.map((c) => c.mem.id));
       const pool = candidates.map((hit) => ({
@@ -308,7 +299,6 @@ export class SqliteVecBackend implements MemoryBackend {
       const picked = mmrSelect(pool, limit, diversity);
       hits = picked.selected.map((c) => c.hit);
       blended = picked.scores;
-      diversityDrops = picked.diversityDrops;
     }
 
     const results = hits.map((h, i) => rowToMatch(h.mem, h.distance, blended?.[i]));
@@ -334,22 +324,6 @@ export class SqliteVecBackend implements MemoryBackend {
       retryWrite(() => tx(hitIds));
     }
 
-    this.observeRecall({
-      ts: new Date().toISOString(),
-      tool: 'recall',
-      query: input.query,
-      category: categoryFilter ?? undefined,
-      project: projectFilter ?? undefined,
-      limit,
-      diversity,
-      candidates: candidates.length,
-      returned: results.length,
-      topScore: results.length > 0 ? results[0].relevance : null,
-      threshold: null,
-      diversityDrops,
-      latencyMs: Math.round(performance.now() - startedAt),
-      hit: results.length > 0,
-    });
 
     return results;
   }
@@ -1177,7 +1151,7 @@ export class SqliteVecBackend implements MemoryBackend {
              SELECT id FROM memory_revisions WHERE memory_id = ? ORDER BY id DESC LIMIT ?
            )`,
         )
-        .run(memoryId, memoryId, MAX_REVISIONS_PER_MEMORY),
+        .run(memoryId, memoryId, MAX_REVISIONS),
     );
     return Number(result.lastInsertRowid);
   }
@@ -1252,15 +1226,6 @@ export class SqliteVecBackend implements MemoryBackend {
     }
 
     return out;
-  }
-
-  private observeRecall(obs: RecallObservation): void {
-    if (!this.config.onRecall) return;
-    try {
-      this.config.onRecall(obs);
-    } catch {
-      // Telemetry never fails a search.
-    }
   }
 
   /** Stored embeddings for a set of memory ids (point lookups; pools are small). */

@@ -20,12 +20,7 @@ export const changeSchema = z.object({
 export type Change = z.infer<typeof changeSchema> & { project?: string; agent?: string; mine?: boolean; syncError?: string };
 export interface Project { slug: string; name: string; repos: string[] }
 export interface Attribution { agents: Record<string, { logins: string[]; branches: string[] }>; ownerLogins: string[]; taskOwner?: string }
-export function currentAttribution(settings:Attribution, knownAgents:string[]):Attribution {
- const known=new Set(knownAgents);return {...settings,agents:Object.fromEntries(Object.entries(settings.agents).filter(([id])=>known.has(id)))};
-}
 export interface Rule { tier: 'do'|'tell'|'ask'; approval?: { state: string }; for?: { slug: string; name: string; state: string } }
-export const targetOf = (c: Change) => `${c.id}@${c.head.id}`;
-export const short = (c: Change) => `${c.repo.split('/').at(-1)}#${c.number}`;
 export const groups = ['you','agent','ci','reviewer','author','done'] as const;
 export function attribute(c: Change, settings: Attribution) {
   const mine = settings.ownerLogins.some(login=>login.toLowerCase()===c.author.login.toLowerCase());
@@ -68,14 +63,5 @@ export function citations(text: string): string[] {
   for (const m of text.matchAll(/(?<![A-Za-z0-9._/-])(?:(github):)?([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#([1-9][0-9]{0,9})(?![0-9A-Za-z])/g)) refs.add(`${repoId(m[2])}#${m[3]}`);
   for (const m of text.matchAll(/https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)/g)) refs.add(`${repoId(m[1])}#${m[2]}`);
   return [...refs];
-}
-export interface CitingTask { id: string; title: string; description?: string; source?: string; comments?: { actor: string; text: string }[] }
-/** Caller passes only tasks visible through the Tasks role. Forge text never vouches for a conversation. */
-export function taskLinks(c: Change, tasks: CitingTask[], trusted: string[]) {
-  const named = new Set(tasksCited(c));
-  const citing = tasks.filter(t => named.has(t.id) || citations([t.description,...(t.comments ?? []).map(x=>x.text)].join('\n')).includes(c.id));
-  const made = tasks.filter(t => citations([t.description,...(t.comments ?? []).filter(x=>trusted.includes(x.actor)).map(x=>x.text)].join('\n')).includes(c.id));
-  const conversation = made.map(t => /^conversation:(cv-[0-9a-f]{12})$/.exec(t.source ?? '')?.[1]).find(Boolean);
-  return { tasks: citing.map(t => ({ id:t.id,title:t.title })), ...(conversation ? { conversation } : {}) };
 }
 export const active = (c: Change, now: number) => c.state === 'open' || (!!c.closed && Date.parse(c.closed) + week > now);

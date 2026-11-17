@@ -3,7 +3,9 @@ import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
 import { operation, mayAct, OperationError, RecoveredWrite, type Context, type Operations, type Sharing } from '../../core/index.js';
-import { mindReceiptsReady } from './receipt-schema.js';
+import { mindReceipts, mindReceiptsReady } from './receipt-schema.js';
+import { CARD_NAME_MAX, CARD_SUMMARY_MAX } from '../../backends/cards.js';
+import { MAX_STRING } from '../../backends/people.js';
 export interface NewPerson { slug:string; name:string; summary:string; channel:string; handle:string; actor:string }
 /** Composition injects the synchronous card validator/writer, with no schema opening. */
 export type PersonCreator = (db:BetterSqlite3.Database,input:NewPerson,now:number,half:'directory'|'relationship')=>void;
@@ -15,13 +17,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
       const db=new BetterSqlite3(path,{fileMustExist:true,timeout:0});sources.push(db);
     }
   } catch(e){sources.forEach(db=>db.close());throw e;}
-  const prior=(db:BetterSqlite3.Database,ctx:Context)=>{
-    if(!mindReceiptsReady(db))return;
-    const receipt=ctx.receipt!;
-    const old=db.prepare('SELECT name,input_hash,result,expires FROM mind_operation_receipts WHERE viewer=? AND id=? AND expires>?').get(receipt.viewer,receipt.id,ctx.now) as {name:string;input_hash:string;result:string;expires:number}|undefined;
-    if(old && (old.name!==receipt.name || old.input_hash!==receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
-    return old;
-  };
+  const prior=(db:BetterSqlite3.Database,ctx:Context)=>mindReceiptsReady(db)?mindReceipts.find(db,ctx.receipt!,ctx.now):undefined;
   const recover=(ctx:Context)=>{
     if(!ctx.receipt) return;
     const receipts=sources.map(db=>prior(db,ctx));
@@ -34,7 +30,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
     }
   };
   operations.register(operation({name:'mind.personAdd',write:true,recover,
-    input:z.object({name:z.string().trim().min(1).max(80),summary:z.string().trim().max(1200).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(200).default('')}).strict(),output:z.unknown(),
+    input:z.object({name:z.string().trim().min(1).max(CARD_NAME_MAX),summary:z.string().trim().max(CARD_SUMMARY_MAX).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(MAX_STRING).default('')}).strict(),output:z.unknown(),
     may:v=>mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd') && !!options.agent && mayAct(v,{type:'person',agent:options.agent},options.sharing(),'act','mind.personAdd'),
     run(ctx,input){
       if(sources.length!==2 || !options.agent) throw new OperationError('not-found','People sources are absent');
@@ -50,10 +46,10 @@ export function installMindPeopleActions(operations:Operations,options:{director
       const save=(index:number):void=>{
         const db=sources[index];
         db.transaction(()=>{
-          db.prepare('DELETE FROM mind_operation_receipts WHERE expires<=?').run(ctx.now);
+          mindReceipts.expire(db,ctx.now);
           if(!prior(db,ctx)) {
             options.create(db,person,ctx.now,index===0?'directory':'relationship');
-            db.prepare('INSERT INTO mind_operation_receipts VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),expires);
+            mindReceipts.save(db,receipt,result,expires);
           }
           if(index+1<sources.length) save(index+1);
         }).immediate();

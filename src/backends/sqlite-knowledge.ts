@@ -1,5 +1,6 @@
 import { snapshotKnowledgeRevision } from './knowledge-revisions.js';
 import { verifyKnowledgePages, deriveSlaClass, enforcePageBodyCap } from './knowledge-verification.js';
+import { enforceExcerptCap, insertKnowledgeCitation, insertKnowledgePage, setKnowledgePageBody } from './knowledge-writes.js';
 export { deriveSlaClass } from './knowledge-verification.js';
 import { notifyWrites } from '../core/touched/writes.js';
 /**
@@ -10,7 +11,6 @@ import { notifyWrites } from '../core/touched/writes.js';
  * the hardened design: pages + citations tables, PRAGMA user_version = 1,
  * WAL mode, close-in-finally pattern.
  */
-import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -49,9 +49,6 @@ import type {
 
 /** Identity attributed to a stamped access when the caller doesn't pass one. */
 const UNKNOWN_IDENTITY = 'unknown';
-
-/** Hard size caps — enforced at write boundary (design §A3). */
-const MAX_CITATION_EXCERPT_LENGTH = 4096; // 4 KB
 
 export interface SqliteKnowledgeConfig {
   /** Absolute path to the knowledge SQLite database file */
@@ -124,20 +121,8 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       let citationsAdded = 0;
       let citationsDeduped = 0;
 
-      // Pre-prepare citation statements — compiled once, safe to reuse on retry.
-      // Exact-duplicate guard: re-sending a page's citations on upsert must not
-      // multiply them. A citation is a duplicate when claim, kind, locator, and
-      // excerpt all match an existing row on the same page.
-      const dupCheck = db.prepare(
-        `SELECT 1 FROM citations
-         WHERE page_id = ? AND claim = ? AND source_kind = ?
-           AND COALESCE(source_locator, '') = COALESCE(?, '')
-           AND excerpt = ?`,
-      );
-      const insertCit = db.prepare(
-        `INSERT INTO citations (page_id, claim, source_kind, source_locator, excerpt, retrieved_at, created)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      );
+      // An exact duplicate of a citation the page already has is skipped (insertKnowledgeCitation):
+      // re-sending a page's citations on upsert must not multiply them.
 
       // ── Single transaction: read + snapshot + page write + citations ─────────
       // All sub-operations must commit atomically — a crash between any two
@@ -167,7 +152,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           'SELECT id, uuid, title, body, freshness_anchor FROM pages WHERE slug = ?',
         ).get(input.slug) as { id: number; uuid: string; title: string; body: string; freshness_anchor: string | null } | undefined;
 
-        uuid = existing?.uuid ?? randomUUID();
+        uuid = existing?.uuid ?? '';
         pageId = existing?.id ?? 0;
         appliedMode = existing ? (input.bodyMode ?? 'replace') : 'create';
         const newBody: string = (existing && appliedMode === 'append')
@@ -199,52 +184,17 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             `UPDATE pages SET title = ?, domain = ?, body = ?, sourcing = ?, verified_at = COALESCE(?, verified_at), freshness_anchor = COALESCE(?, freshness_anchor), created_by = COALESCE(?, created_by), version = COALESCE(?, version), sla_class = ?, updated = ? WHERE id = ?`,
           ).run(title, input.domain, newBody, sourcing, input.verified_at ?? null, input.freshness_anchor ?? null, input.created_by ?? null, input.version ?? null, slaClass, timestamp, pageId);
         } else {
-          const result = db.prepare(
-            `INSERT INTO pages (uuid, slug, title, domain, body, sourcing, provenance, verified_at, freshness_anchor, sla_class, created_by, version, author, created, updated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            uuid,
-            input.slug,
-            title,
-            input.domain,
-            newBody,
-            sourcing,
-            input.provenance ?? null,
-            input.verified_at ?? timestamp,
-            input.freshness_anchor ?? null,
-            slaClass,
-            input.created_by ?? null,
-            input.version ?? null,
-            input.actor ?? null,
-            timestamp,
-            timestamp,
-          );
-          pageId = Number(result.lastInsertRowid);
+          ({ id: pageId, uuid } = insertKnowledgePage(db, {
+            slug: input.slug, title, domain: input.domain, body: newBody, sourcing,
+            provenance: input.provenance, verified_at: input.verified_at, freshness_anchor: input.freshness_anchor,
+            sla_class: slaClass, created_by: input.created_by, version: input.version, actor: input.actor,
+          }, timestamp));
         }
 
         if (input.citations && input.citations.length > 0) {
           for (const cit of input.citations!) {
-            const dup = dupCheck.get(
-              pageId,
-              cit.claim,
-              cit.source_kind,
-              cit.source_locator ?? null,
-              cit.excerpt,
-            );
-            if (dup) {
-              citationsDeduped++;
-              continue;
-            }
-            insertCit.run(
-              pageId,
-              cit.claim,
-              cit.source_kind,
-              cit.source_locator ?? null,
-              cit.excerpt,
-              timestamp,
-              timestamp,
-            );
-            citationsAdded++;
+            if (insertKnowledgeCitation(db, pageId, cit, timestamp, { skipDuplicate: true })) citationsAdded++;
+            else citationsDeduped++;
           }
         }
       });
@@ -923,9 +873,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         // The body being displaced is itself preserved — a restore must
         // never be the second irreversible overwrite in the story.
         snapshotId = snapshotKnowledgeRevision(db, page.id, input.slug, page.body, 'history-restore', timestamp, input.actor ?? null);
-        db.prepare('UPDATE pages SET body = ?, updated = ? WHERE id = ?').run(
-          revision.body, timestamp, page.id,
-        );
+        setKnowledgePageBody(db, page.id, revision.body, timestamp);
       });
       retryWrite(() => tx.immediate());
 
@@ -955,24 +903,9 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       const timestamp = new Date().toISOString();
       let added = 0;
 
-      const insert = db.prepare(
-        `INSERT INTO citations (page_id, claim, source_kind, source_locator, excerpt, retrieved_at, created)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      );
-
       const tx = db.transaction(() => {
         for (const cit of citations) {
-          enforceExcerptCap(cit.excerpt);
-          insert.run(
-            page.id,
-            cit.claim,
-            cit.source_kind,
-            cit.source_locator ?? null,
-            cit.excerpt,
-            timestamp,
-            timestamp,
-          );
-          added++;
+          if (insertKnowledgeCitation(db, page.id, cit, timestamp)) added++;
         }
       });
       retryWrite(() => tx.immediate());
@@ -1046,7 +979,15 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     ).all(pageId) as KnowledgeCitation[];
   }
 
+  /** Creates a new store's tables and brings an older store up to date, all in one transaction: each
+   * change is found pending from the table's columns, so one that stopped between adding a column
+   * and filling it would never be finished. The transaction takes the write lock only at its first
+   * real change, so opening a store that is already up to date waits for no other writer. */
   private initSchema(): void {
+    this.db!.transaction(() => this.createAndUpgrade())();
+  }
+
+  private createAndUpgrade(): void {
     const statements = [
       `CREATE TABLE IF NOT EXISTS pages (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1173,16 +1114,5 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     if (!revisionCols.includes('actor')) {
       this.db!.prepare('ALTER TABLE page_revisions ADD COLUMN actor TEXT').run();
     }
-  }
-}
-
-// ── Helpers ──
-
-function enforceExcerptCap(excerpt: string): void {
-  if (excerpt.length > MAX_CITATION_EXCERPT_LENGTH) {
-    throw new Error(
-      `Citation excerpt exceeds hard cap of ${MAX_CITATION_EXCERPT_LENGTH} characters ` +
-      `(got ${excerpt.length}).`,
-    );
   }
 }

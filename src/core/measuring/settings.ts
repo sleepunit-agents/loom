@@ -4,7 +4,6 @@ import { DEFAULT_MEASURING, type MeasuringSettings } from './index.js';
 
 import { measuringValues as settings, measuringChange as change, measuringChangeSummary as summary } from './change.js';
 
-export const MEASURING_SETTINGS_OPERATION = 'measuring.settings';
 type Approval = typeof approvals.$inferSelect;
 
 /** Trusted shared-model service. The outside door authenticates the household

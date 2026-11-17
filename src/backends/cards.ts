@@ -45,7 +45,14 @@ export const FIELD_RE = /^[a-z0-9_]+$/;
 export const MAX_FIELD_NAME = 32;
 export const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 export const DEFAULT_STALE_DAYS = 14;
+/** How many displaced versions are kept of a card, a memory or a knowledge page; older ones are pruned. */
 export const MAX_REVISIONS = 10;
+/** Limits a person card and a project card share (the specs' Shape and Rendering sections). The door's
+ * forms take theirs from here too, so what a form accepts is what the store takes. */
+export const CARD_NAME_MAX = 80;
+export const CARD_SUMMARY_MAX = 1200;
+export const CARD_FIELDS_MAX = 12;
+export const CARD_RENDER_MAX = 2000;
 const SKEW_MS = 60_000;
 const DAY_MS = 86_400_000;
 

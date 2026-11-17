@@ -76,34 +76,6 @@ export interface RecallInput {
   diversity?: number;
 }
 
-/**
- * One line of the recall observation log (`<contextDir>/telemetry/recall.jsonl`).
- * Local-only: a file in the agent's own context dir, never sent anywhere.
- */
-export interface RecallObservation {
-  /** ISO timestamp of the search. */
-  ts: string;
-  tool: 'recall' | 'knowledge_recall';
-  /** The query, truncated to 120 chars on write. */
-  query: string;
-  category?: string;
-  project?: string;
-  limit: number;
-  /** MMR diversity that was applied (0 = plain relevance ranking). */
-  diversity: number;
-  /** Candidate pool size after filters, before MMR. */
-  candidates: number;
-  returned: number;
-  /** Relevance of the best returned match, null on a miss. */
-  topScore: number | null;
-  /** Relevance floor applied, if any (recall currently applies none). */
-  threshold: number | null;
-  /** Top-relevance candidates displaced by MMR. */
-  diversityDrops: number;
-  latencyMs: number;
-  hit: boolean;
-}
-
 export interface MemoryMatch {
   path: string;
   title: string;
@@ -609,14 +581,6 @@ export interface KnowledgeSupersededInput {
   new_slug: string;
   /** Optional note explaining the merge/supersession decision. */
   note?: string;
-}
-
-export interface KnowledgeSupersessionRecord {
-  id: number;
-  old_slug: string;
-  new_slug: string;
-  note: string | null;
-  created: string;
 }
 
 export interface KnowledgeSupersededResult {

@@ -58,6 +58,9 @@ export function expiresAt(lifespan: Lifespan, updated: string): string | null {
   return new Date(Date.parse(updated) + LIFESPAN_DAYS[lifespan] * 86_400_000).toISOString();
 }
 
+/** The notes store's version, kept in the file header (PRAGMA user_version). A change to its tables raises it. */
+const NOTES_VERSION = 1;
+
 export class Notes {
   private readonly db: Database;
 
@@ -65,6 +68,9 @@ export class Notes {
     if(!options.prepared)mkdirSync(dir, { recursive: true, mode: 0o700 });
     const path = notesDbPath(dir);
     this.db = new BetterSqlite3(path, {fileMustExist:!!options.prepared,timeout:options.prepared?0:5000});
+    // Before anything is created or written: a store a newer program has changed is left as it is.
+    const at = this.db.pragma('user_version', { simple: true }) as number;
+    if (at > NOTES_VERSION) { this.db.close(); throw new Error(`This notes store is from a newer program (version ${at}; this program knows ${NOTES_VERSION})`); }
     if(options.prepared)return;
     chmodSync(path, 0o600);
     this.db.pragma('journal_mode = WAL');
@@ -77,6 +83,7 @@ export class Notes {
       CREATE TABLE IF NOT EXISTS note_files (path TEXT NOT NULL, name TEXT NOT NULL, sha256 TEXT NOT NULL,
         bytes INTEGER NOT NULL, type TEXT, added TEXT NOT NULL, PRIMARY KEY (path, name));
     `);
+    if (at !== NOTES_VERSION) this.db.pragma(`user_version = ${NOTES_VERSION}`);
   }
 
   close(): void { this.db.close(); }
