@@ -16,9 +16,10 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, outsidePersonKey, parseIncomingId } from './keys.js';
 import { conversationPlace } from './place.js';
-import { inHousehold } from '../../policy.js';
+import { holds, inHousehold, rules } from '../../policy.js';
+import { unendedJobStates } from '../../core/data/job-states.js';
 import { sharedSharing } from '../../shared-sharing.js';
-import { agentPeople, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
+import { agentPeople, conversations, jobs, bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSendParts, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -55,14 +56,29 @@ function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thre
 
 /** Why a person's message was not delivered: nobody the household knows sent it. */
 export const UNKNOWN_SENDER = 'Unknown sender';
+/** Why a message was neither delivered nor answered: it was the stop word, and it stopped a job. */
+export const STOP_WORD = 'Stop word';
+/** A message that is only "stop" or "cancel", in any case, with trailing full stops or exclamation marks
+ * and its mentions set aside. The list is the earlier bridge's. */
+export function isStopWord(text: string): boolean {
+  return /^(stop|cancel)[.!]*$/i.test(text.replace(/<@[!&]?[^<>\s]+>/g, '').trim());
+}
+/** Ends a job on a member's word, inside the caller's transaction. The runtime's: bridges write no job. */
+export type StopJob = (job: string, member: string) => void;
 /** Why a bot's message was not delivered. */
 export const BOT_NOT_ADMITTED = 'Bot did not mention this agent, or bots may not talk here';
 
 export class BridgeIncoming {
   private readonly conversations: Conversations;
-  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {
+  private stopped: string[] = [];
+  /** `stop` ends a job the way an owner's Stop does. Without it the stop word is an ordinary message. */
+  constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString(), private readonly stop?: StopJob) {
     this.conversations = new Conversations(db, now);
   }
+
+  /** The jobs stop words have ended since this was last asked, for the caller to announce once its
+   * transaction has committed. */
+  takeStopped(): string[] { return this.stopped.splice(0); }
 
   /** Atomically records the event, turn, conversation and unified inbox item.
    * Duplicate events never append a second turn. A held event is tried again
@@ -134,7 +150,19 @@ export class BridgeIncoming {
         if (message.isDm || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = BOT_NOT_ADMITTED; }
       }
       else if (!link && !this.hasTier(connection, message.user)) { state = 'dropped'; reason = UNKNOWN_SENDER; }
-      else if (!message.isDm && !addressed.has(connection.botUser)) {
+      // The stop word, from a member who may end this agent's jobs, in a place where a job of the agent's is
+      // working, and not said to another agent: that job is ended and the message is nobody's mail. It names
+      // the one job found unended here now, so it can never reach a later one. Anywhere else, and from
+      // anybody else, the same words are an ordinary message.
+      else if (link && this.stop && isStopWord(message.text) && (addressed.has(connection.botUser) || !peers.some(p => addressed.has(p.botUser)))
+        && holds(rules.stopJob, { kind: 'member', id: link.member }, { agent: connection.agent }, sharing)) {
+        const place = conversationPlace(connection.workspace, message, message.isDm && !message.groupDm ? link.member : null);
+        const working = this.db.select({ id: jobs.id }).from(jobs).innerJoin(conversations, eq(conversations.id, jobs.conversation))
+          .where(and(eq(conversations.agent, connection.agent), eq(conversations.venue, connection.platform), eq(conversations.place, place), inArray(jobs.state, unendedJobStates))).get();
+        if (working) { this.stop(working.id, link.member); this.stopped.push(working.id); state = 'dropped'; reason = STOP_WORD; }
+      }
+      // In a room, a person's message that addresses nobody goes to the agent that answers the room.
+      if (state === 'delivered' && !message.isDm && !(message.bot || message.webhook || sender) && !addressed.has(connection.botUser)) {
         if (peers.some(p => addressed.has(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
       }
       const at = this.now();

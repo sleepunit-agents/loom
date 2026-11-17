@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Bridges: "stop" or "cancel" stops the job working in that conversation.** Said alone (any case, a trailing `.` or `!`, mentions aside) on Discord or Slack by a linked member who may end the agent's jobs, in a place where a job of the agent's has not ended, it ends that job with the reason `stop` and is not delivered or answered. Otherwise the same words are an ordinary message. `jobs.ended_reason` `stop` can now also mean this.
+
 - **Bridges: a ping of a bot's own role on Discord is a mention of the bot.** Discord's autocomplete offers a bot's managed role for its name; a written ping of that role now addresses the bot, for every bot in the guild. Any other role, `@everyone` and `@here` address nobody.
 - **Bridges: a Discord thread under a bot's message addresses that bot, whoever posted the message.** A thread started from a message loom did not post (the older program, a script using the same token) used to address nobody. A reply inside a thread still answers the message it points at.
 - **Bridges: Discord attachments are listed in the message's words**, with name, type, size and Discord's link, so a message that is only a picture is delivered and answered.

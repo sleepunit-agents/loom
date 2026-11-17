@@ -590,6 +590,23 @@ Entries are grouped by the part of the program they belong to.
   least that tells them, and both are stable.
 - Would change it: role pings that fail after a bot is re-invited. Then `GUILD_ROLE_UPDATE` is listened for.
 
+### The stop word ends the job, and only a member who may end it can say it
+- What: a bridge message that is only "stop" or "cancel" (any case, trailing `.` or `!`, mentions aside),
+  from a linked member who may end the agent's jobs (`rules.stopJob`: a household owner, or a member who has
+  the agent), in a place where a job of that agent's has not ended, ends that job (`ended_reason` `stop`,
+  `ended_by` the member). The message is recorded as dropped with the reason `Stop word`, keeps no words and
+  is never delivered or answered. With no such job, or from anybody else, the same words are an ordinary
+  message. Nothing is posted to say the job stopped.
+- Where: `receive` and `isStopWord` in `src/pieces/bridges/incoming.ts`; the job is ended by `Jobs.stop`
+  (`src/runtime/jobs.ts`), handed in by `src/shared-root.ts`.
+- Why: a person watching an agent go wrong in a channel needs to stop it from there. The stop is taken in
+  with the message and names the one job that is unended in that place then, so a "stop" that arrives late
+  finds no job and stops nothing afterwards. A job records the member who ended it, so an outside account
+  with only a tier cannot stop one. The job is ended, not asked to stop: a bridge conversation has no Comms
+  thread to carry a Stop a body would notice, and work that was stopped needs fresh mail to start again.
+- Would change it: wanting the agent to say it stopped, or guests to stop work they started. The first is
+  one post; the second needs a job to record an outside account as who ended it.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

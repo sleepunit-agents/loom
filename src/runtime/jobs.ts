@@ -282,7 +282,9 @@ export class Jobs {
     return retry;
   }
 
-  stop(id: string, member: string, reason: 'reset' | 'write-off'): Job {
+  /** `stop` is a person's Stop said where the work is: Comms' Stop, taken by the job (endIfStopAsked), or a
+   * bridge's stop word (pieces/bridges/incoming.ts). `reset` and `write-off` are an owner ending a job by hand. */
+  stop(id: string, member: string, reason: 'reset' | 'write-off' | 'stop'): Job {
     return this.db.transaction(() => {
       const job = this.get(id);
       if (!jobUnended(job.state)) throw new Error('Job has ended');

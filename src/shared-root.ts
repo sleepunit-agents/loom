@@ -58,6 +58,7 @@ import { OperationError, Operations, failure, type Change } from './core/operati
 import { householdService } from './apps/household.js';
 import { sharedHouseholdProposals } from './shared-household-proposals.js';
 import { registerSharedJobControl } from './shared-job-control.js';
+import { Jobs } from './runtime/jobs.js';
 import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
 import { sharedChangesReader } from './shared-changes-reader.js';
 import { pollChanges } from './apps/changes-polling.js';
@@ -258,6 +259,9 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
     inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
+    // The stop word ends a job through the runtime's own Stop, and is announced as any ended job is.
+    stopJob:(job,member)=>{new Jobs(db,now).stop(job,member,'stop');},
+    jobsEnded:ids=>{for(const id of ids)jobEnded(id);tempo?.capacityChanged();},
     reportError:()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}}});
   const lastSecretChange=()=>db.select({id:sql<number>`coalesce(max(rowid),0)`}).from(secretChanges).get()!.id;
   let secretChange=bridgeDaemon?lastSecretChange():0;

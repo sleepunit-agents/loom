@@ -7,7 +7,9 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agentPeople, agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { BridgeIncoming, BOT_NOT_ADMITTED, UNKNOWN_SENDER, type IncomingMessage } from './incoming.js';
+import { BridgeIncoming, BOT_NOT_ADMITTED, STOP_WORD, UNKNOWN_SENDER, isStopWord, type IncomingMessage } from './incoming.js';
+import { Jobs } from '../../runtime/jobs.js';
+import { jobs, memberAgents } from '../../core/data/schema.js';
 import { outsidePersonKey } from './keys.js';
 import { expirePrivateBridgeWords, oldestPrivateBridgeWords } from '../../core/conversations/private-bridge-words.js';
 import { bridgeFileMessages, bridgeFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
@@ -499,4 +501,92 @@ it('records a removed member\'s linked account as nobody, in a room and in a dir
   // Restored, the link stands for them again.
   f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'guest')).run();
   expect(f.ingress.receive({ ...f.message, id: 'restored', channel: 'dm', isDm: true, user: 'guest-account' })).toMatchObject({ member: 'guest', conversation: before.conversation });
+});
+
+describe('the stop word', () => {
+  /** Intake with the runtime's own Stop, and a job working in the room's conversation. */
+  function working() {
+    const f = fixture();
+    const ingress = new BridgeIncoming(f.db, f.now, (job, member) => { new Jobs(f.db, f.now).stop(job, member, 'stop'); });
+    const first = ingress.receive({ ...f.message, id: 'ask', text: 'Do the long thing' });
+    const start = (id: string, conversation = first.conversation!) => f.db.insert(jobs).values({ id, agent: 'art', conversation, title: 'Work', state: 'running', queuedAt: f.now(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+    start('job');
+    const state = (id = 'job') => f.db.select().from(jobs).where(eq(jobs.id, id)).get()!;
+    return { ...f, ingress, first, start, state };
+  }
+  it('is only "stop" or "cancel", whatever the case, with its mentions set aside', () => {
+    for (const text of ['stop', 'Stop', 'STOP!', 'cancel', 'Cancel.', 'stop!!!', '<@123> stop', 'stop <@!123>', '<@&456> cancel.', '  stop  ']) expect(isStopWord(text), text).toBe(true);
+    for (const text of ['', 'stop it', 'please stop', 'stopped', 'cancel that', "don't stop", 'stop?', 'halt', '<@123>']) expect(isStopWord(text), text).toBe(false);
+  });
+  it('ends the job working in that conversation, on that member\'s word, and is nobody\'s mail', () => {
+    const f = working();
+    const row = f.ingress.receive({ ...f.message, id: 'stop', text: 'Stop!' });
+    expect(row).toMatchObject({ state: 'dropped', reason: STOP_WORD, text: '', member: 'jonathan', conversation: null });
+    expect(f.state()).toMatchObject({ state: 'stopped', endedBy: 'jonathan', endedReason: 'stop' });
+    expect(f.ingress.takeStopped()).toEqual(['job']);
+    expect(f.ingress.takeStopped()).toEqual([]);
+    // Nothing was delivered for it: one piece of mail and one turn, the first message's.
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    expect(f.db.select().from(turns).all()).toHaveLength(1);
+    // The same event again is the same dropped message, and stops nothing more.
+    f.start('later');
+    expect(f.ingress.receive({ ...f.message, id: 'stop', text: 'Stop!' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state('later').state).toBe('running');
+  });
+  it('is an ordinary message when no job is working there, so a stop read late stops nothing later', () => {
+    const f = working();
+    new Jobs(f.db, f.now).stop('job', 'jonathan', 'write-off');
+    expect(f.ingress.receive({ ...f.message, id: 'late', text: 'stop' })).toMatchObject({ state: 'delivered', text: 'stop' });
+    expect(f.ingress.takeStopped()).toEqual([]);
+    // A job that starts afterwards is not the one anybody asked to stop.
+    f.start('next');
+    expect(f.state('next').state).toBe('running');
+  });
+  it('stops only the job of the place it is said in', () => {
+    const f = working();
+    const dm = f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Another thing' });
+    f.start('dm-job', dm.conversation!);
+    const thread = f.ingress.receive({ ...f.message, id: 'in-thread', channel: 't', parent: 'room', thread: 't', text: 'A third' });
+    f.start('thread-job', thread.conversation!);
+    expect(f.ingress.receive({ ...f.message, id: 'stop-dm', channel: 'direct', isDm: true, text: 'cancel' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect([f.state().state, f.state('dm-job').state, f.state('thread-job').state]).toEqual(['running', 'stopped', 'running']);
+    expect(f.ingress.receive({ ...f.message, id: 'stop-thread', channel: 't', parent: 'room', thread: 't', text: 'stop' })).toMatchObject({ reason: STOP_WORD });
+    expect([f.state().state, f.state('thread-job').state]).toEqual(['running', 'stopped']);
+  });
+  it('is not a stop when said to another agent, or by someone who may not end this agent\'s jobs', () => {
+    const f = working();
+    // Said to Mark: Art's job goes on, and the message is not Art's.
+    expect(f.ingress.receive({ ...f.message, id: 'to-mark', text: '<@bot-mark> stop', mentions: ['bot-mark'] })).toMatchObject({ state: 'dropped', reason: 'Another agent or no channel answer' });
+    expect(f.state().state).toBe('running');
+    // An outside account the owner placed has no member to end a job as: its "stop" is a message.
+    f.tier('guest');
+    expect(f.ingress.receive({ ...f.message, id: 'guest', user: 'guest', text: 'stop' })).toMatchObject({ state: 'delivered', text: 'stop' });
+    // A member who is not an owner and does not have this agent: likewise.
+    f.db.insert(members).values({ id: 'daniel', role: 'member', joinedAt: f.now() }).run();
+    f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'daniel-account', member: 'daniel' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'daniel', user: 'daniel-account', text: 'stop' })).toMatchObject({ state: 'delivered' });
+    expect(f.state().state).toBe('running');
+    // Given the agent, the same member may.
+    f.db.insert(memberAgents).values({ member: 'daniel', agent: 'art' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'daniel-2', user: 'daniel-account', text: 'stop' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state()).toMatchObject({ state: 'stopped', endedBy: 'daniel' });
+    // A stranger's stop is a stranger's message.
+    f.start('again');
+    expect(f.ingress.receive({ ...f.message, id: 'stranger', user: 'stranger', text: 'stop' })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
+    expect(f.state('again').state).toBe('running');
+  });
+  it('stops the job where the agent was called by a mention, in a room it does not answer', () => {
+    const f = working();
+    f.db.update(bridgeChannels).set({ answers: 'mark' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'plain-stop', text: 'stop' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state().state).toBe('stopped');
+  });
+  it('without the runtime\'s Stop to call, takes the words as a message', () => {
+    const f = working();
+    expect(f.ingress.receive({ ...f.message, id: 'no-runtime', connection: 'c', text: 'stop' }).reason).toBe(STOP_WORD);
+    const plain = new BridgeIncoming(f.db, f.now);
+    f.start('other');
+    expect(plain.receive({ ...f.message, id: 'plain', text: 'stop' })).toMatchObject({ state: 'delivered' });
+    expect(f.state('other').state).toBe('running');
+  });
 });

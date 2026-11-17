@@ -18,6 +18,7 @@ import { bridgeCredentials } from './credentials.js';
 import { sharedBridgeSecretUse } from './shared-secret-use.js';
 import { BridgeChannels } from './channels.js';
 import { BridgeReceiver } from './receiver.js';
+import type { StopJob } from './incoming.js';
 import { bridgeAuthentication } from './authentication.js';
 import { bridgeChannelApi } from './channel-api.js';
 import { discordGateway } from './discord-gateway.js';
@@ -30,6 +31,11 @@ export interface SharedBridgeOptions {
  effectsAllowed():boolean;
  changed():void;
  inboxCommitted?(ids:readonly string[]):void;
+ /** The runtime's Stop, for the stop word (incoming.ts): ends the job, on that member's word, in the
+  * caller's transaction. Without it the stop word is an ordinary message. */
+ stopJob?:StopJob;
+ /** Told of the jobs a stop word ended, after the pass that ended them has committed. */
+ jobsEnded?(ids:readonly string[]):void;
  reportError(error:Error):void;
  request?:typeof fetch;
  discord?:typeof discordGateway;
@@ -68,7 +74,7 @@ export class SharedBridges {
   this.receiver=new BridgeReceiver(options.db,options.clock,this.channels,lost=>{
    try{options.reportError(new Error(`${lost.events} received bridge event(s) were never read and have expired; ${lost.held} held message(s) could no longer be delivered and were dropped`));}catch{ /* reporting never retries effects */ }
    if(lost.held)this.notify();
-  });
+  },options.stopJob);
   this.files=new BridgeFiles(options.db,options.clock,()=>this.notify());
   this.credentials=bridgeCredentials(options.source,options.clock);
   this.unobserve=this.credentials.observe(()=>{void this.reconcile();});
@@ -247,6 +253,8 @@ export class SharedBridges {
     // An empty drain has no new publication. Publishing after every ordinary
     // body write would revoke its still-streaming guarded mail response.
     if(changes()!==beforeChanges)this.notify();
+    const stopped=this.receiver.takeStopped();
+    if(stopped.length){try{this.options.jobsEnded?.(stopped);}catch{this.report();}}
     if(!this.closed){
      const ids=this.options.db.selectDistinct({id:inbox.id}).from(inbox)
       .innerJoin(inboxRefs,eq(inboxRefs.item,inbox.id)).innerJoin(bridgeIncoming,eq(bridgeIncoming.id,inboxRefs.ref))

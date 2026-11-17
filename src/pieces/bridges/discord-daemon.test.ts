@@ -6,7 +6,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, inbox } from '../../core/data/schema.js';
+import { eq } from 'drizzle-orm';
+import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, inbox, jobs } from '../../core/data/schema.js';
+import { Jobs } from '../../runtime/jobs.js';
+import { STOP_WORD } from './incoming.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { DiscordGatewayOptions } from './discord-gateway.js';
 
@@ -98,4 +101,21 @@ it('takes a thread started from the bot\'s own message as addressed to it, whoev
   expect(await f.say({ channel_id: bare, content: 'nobody' })).toMatchObject({ state: 'dropped', repliesTo: null });
   expect(f.db.select().from(inbox).all()).toHaveLength(2);
   expect(f.errors).toEqual([]);
+});
+
+it('ends the working job on the stop word through the runtime\'s Stop, and says so once the pass has committed', async () => {
+  const announced: string[][] = [];
+  let f!: ReturnType<typeof discordFixture>;
+  f = discordFixture({
+    stopJob: (job, member) => { new Jobs(f.db, () => new Date(f.clock.now()).toISOString()).stop(job, member, 'stop'); },
+    jobsEnded: ids => { expect(f.client.inTransaction).toBe(false); expect(f.db.select().from(jobs).where(eq(jobs.id, ids[0])).get()?.state).toBe('stopped'); announced.push([...ids]); },
+  });
+  await f.start();
+  f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
+  const first = await f.say({ content: 'Do the long thing' });
+  f.db.insert(jobs).values({ id: 'job', agent: 'art', conversation: first.conversation, title: 'Work', state: 'running', queuedAt: new Date(f.clock.now()).toISOString(), brief: '', model: 'model', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next' }).run();
+  expect(await f.say({ content: `<@${bot}> stop`, mentions: [{ id: bot }] })).toMatchObject({ state: 'dropped', reason: STOP_WORD, text: '' });
+  expect(f.db.select().from(jobs).get()).toMatchObject({ state: 'stopped', endedBy: 'owner', endedReason: 'stop' });
+  expect(announced).toEqual([['job']]);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
 });
