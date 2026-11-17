@@ -507,15 +507,18 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: operations gaining a result that is never stored. Then this becomes one.
 
 ### Policy is asked about the person a request names
-- What: three doors build a viewer from a member's id and ask the read rules about it: asking someone
-  about a task (`tasks.command` `ask`), a body's question to a person, and a body setting how loudly its
-  member's own inbox item arrives. The first two take the id from the request; the third takes it from the
-  body's credential.
+- What: four places build a viewer from a member's id and ask the read rules about it: asking someone
+  about a task (`tasks.command` `ask`), a body's question to a person, a body setting how loudly its
+  member's own inbox item arrives, and the Tasks service deciding whether mail to a person about a task
+  goes into the task's conversation (it does only if that person reads the conversation). The first two
+  take the id from the request; the third takes it from the body's credential; the fourth takes it from
+  the task's stored question, the person asked or the member who asked.
 - Where: `src/shared-task-access.ts`, `src/shared-conversation-questions.ts`, `src/shared-tempo-access.ts`
-  (`volume`), through `addressee` in `src/policy.ts`.
+  (`volume`), `src/shared-root.ts` (the `reads` given to `taskService`), through `addressee` in
+  `src/policy.ts`.
 - Why: the question is "could the person this is addressed to read it", so that nothing is sent to
-  someone about a record they may not see, and a body changes the volume only of an item its member
-  reads. The answer only ever narrows what the caller may do: what allows the caller is its own rule
+  someone about a record they may not see, a body changes the volume only of an item its member
+  reads, and mail is never filed in a thread its addressee cannot open. The answer only ever narrows what the caller may do: what allows the caller is its own rule
   (`rules.inboxVolume` for the third, whose body half is `forItsMember`).
 - Would change it: any use of such a viewer to allow, read or write something. `addressee` says so.
 
