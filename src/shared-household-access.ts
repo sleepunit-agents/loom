@@ -8,7 +8,7 @@ import type {Viewer} from './policy.js';
 import type {DataDatabase} from './core/data/database.js';
 import {agents,agentAccounts,sessions} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
-import {sharedTokenOwner} from './core/signin/shared-tokens.js';
+import {householdOwner} from './shared-sharing.js';
 import {endBrowser,browserRef} from './core/signin/shared-browser.js';
 export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:MergeRuleReader){
  return{
@@ -24,7 +24,7 @@ export function sharedHouseholdAccess(db:DataDatabase,now:()=>string,rule?:Merge
  };
 }
 export function registerSharedHouseholdAccess(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
- const isOwner=(viewer:Viewer)=>sharedTokenOwner(db,viewer);
+ const isOwner=(viewer:Viewer)=>householdOwner(db,viewer);
  operations.register({name:'sessions.revoke',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),output:z.object({revoked:z.literal(true)}).strict(),may:isOwner,run(ctx,input){const result=service.revokeSession(input.ref);ctx.changed('core.access','household');return result;}});
 }
 export function householdAccessQueries(db:DataDatabase,service:ReturnType<typeof sharedHouseholdAccess>){
@@ -36,5 +36,5 @@ export function householdAccessQueries(db:DataDatabase,service:ReturnType<typeof
  const session=new GraphQLObjectType({name:'SetupBrowser',fields:{ref:{type:GraphQLString},device:{type:GraphQLString},issuedAt:{type:GraphQLString},seenAt:{type:GraphQLString},isAgent:{type:GraphQLBoolean},ended:{type:GraphQLBoolean},member:{type:GraphQLString},tokenLabel:{type:GraphQLString}}});
  const settings=new GraphQLObjectType({name:'SetupSettings',fields:{timezone:{type:GraphQLString},commsDays:{type:GraphQLInt},githubOwner:{type:GraphQLString},secretsDefault:{type:GraphQLString},backupTarget:{type:GraphQLString},backupAt:{type:GraphQLString},backupKeep:{type:GraphQLInt},backupRecipients:{type:strings}}});
  const setup=new GraphQLObjectType({name:'HouseholdSetup',fields:{defaultAgent:{type:GraphQLString},settings:{type:settings},members:{type:new GraphQLList(member)},agents:{type:new GraphQLList(agent)},tokens:{type:new GraphQLList(token)},sessions:{type:new GraphQLList(session)}}});
- const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSetup:{type:setup,resolve(_row,_args,{viewer}){if(!sharedTokenOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};return{fields,valid:(viewer:Viewer)=>!ownerReads.has(viewer)||sharedTokenOwner(db,viewer)};
+ const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSetup:{type:setup,resolve(_row,_args,{viewer}){if(!householdOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};return{fields,valid:(viewer:Viewer)=>!ownerReads.has(viewer)||householdOwner(db,viewer)};
 }

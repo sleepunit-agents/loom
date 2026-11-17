@@ -9,7 +9,7 @@ import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
 import { projects, projectMembers, projectAgents, projectRepositories, members, agents } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-import { sharedTokenOwner } from './core/signin/shared-tokens.js';
+import { householdOwner } from './shared-sharing.js';
 const id=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),list=z.array(id).max(1000).transform(values=>[...new Set(values)].sort());
 export const projectInput=z.object({id,name:z.string().trim().min(1).max(200),members:list,agents:list,repositories:z.array(z.string().regex(/^github:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)).max(1000).transform(values=>[...new Set(values.map(repoId))].sort())}).strict();
 export function sharedProjects(db:DataDatabase){
@@ -36,6 +36,6 @@ export function sharedProjectQueries(db:DataDatabase){
  const strings=new GraphQLList(GraphQLString),project=new GraphQLObjectType({name:'SharingProject',fields:{id:{type:GraphQLString},name:{type:GraphQLString},members:{type:strings},agents:{type:strings},repositories:{type:strings}}});
  const sharing=new GraphQLObjectType({name:'HouseholdSharing',fields:{members:{type:strings},agents:{type:strings},projects:{type:new GraphQLList(project)}}});
  const service=sharedProjects(db);
- const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSharing:{type:sharing,resolve(_row,_args,{viewer}){if(!sharedTokenOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};
- return{fields,valid:(viewer:Viewer)=>!ownerReads.has(viewer)||sharedTokenOwner(db,viewer)};
+ const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSharing:{type:sharing,resolve(_row,_args,{viewer}){if(!householdOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};
+ return{fields,valid:(viewer:Viewer)=>!ownerReads.has(viewer)||householdOwner(db,viewer)};
 }
