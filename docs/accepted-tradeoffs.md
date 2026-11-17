@@ -76,7 +76,8 @@ Entries are grouped by the part of the program they belong to.
   `knowledge` clause); the agent's own memory, which is labelled with the agent and with no project, so it
   follows the agent for as long as the member has the agent at all; the days of timing measurements (`tableRules.timingDays`); and which machines the
   agent itself may run on (`tableRules.boxAgents`, the agent case). A member who is not an owner reads none
-  of these directly.
+  of these directly. Secrets are not among them: see "A standing answer about a secret does not serve a
+  member's private work".
 - **Why accepted.** They are what the agent knows and where it runs, not records of another person's work.
   An agent that forgot its memory or its machines when working for one of its members could not do the work.
   Timing days hold request names and durations, no words. What an agent chose to remember from one
@@ -84,6 +85,30 @@ Entries are grouped by the part of the program they belong to.
   agent's memory is, and it is not labelled by conversation.
 - **What would change the answer.** A record of one member's private work becoming readable through any of
   the four. Then that table needs a member label and a rule that reads it.
+
+### A standing answer about a secret does not serve a member's private work
+- **What.** A secret rule, the household default and a grant made for the agent and no one job are
+  standing answers about the agent. They serve the agent's own work (a terminal session, a job for no
+  member) and a body working for a household owner. A body doing the private work of a member who is not
+  a household owner is served by none of them: a request for the agent and no one job is refused, a rule
+  or the default that would allow a request asks the household owners instead, and the body is handed a
+  secret only on a grant a household owner gave for that very job. This holds for the secrets a house is
+  given at start too, so each job such a member starts with an agent whose house lists a secret files one
+  card per secret, and "always" on that card writes the standing rule, which does not serve the next job.
+  The card names the member the work is for, which is all an owner learns of that thread from it.
+- **Where.** `standingSecretAnswerServes` in `src/policy.ts`; asked by `secrets.request`
+  (`src/shared-secret-agent-commands.ts`) and by the private routes (`src/shared-secret-inputs.ts`);
+  carried as `standing` into `src/pieces/secrets/requests.ts` and `private-inputs.ts`.
+- **One hand-off is not narrowed.** A worker fetches the house's repository with the agent's repository
+  secret while the job is starting, before any body runs, whoever the job is for. The grant that leaves
+  behind was settled by a rule, so the body of that job cannot use it to read the same secret.
+- **Why accepted.** Secrets are the household owners' records and no other member may use one. A body
+  reaches no further than the member it works for, and nothing stored says which members an owner lets
+  use which secret, so the only word that can cover such work is an owner's answer for the job itself.
+  Asking each time is the cost of having no such list.
+- **What would change the answer.** A stored list of the members a secret rule covers (a member column on
+  `secret_rule_agents`, or a table beside it). Then a rule that names the member serves that member's work
+  and the card is asked once.
 
 ### A household owner may end a job they cannot read
 - **What.** `runtime.jobStop` is allowed to any household owner, and to a member who has the job's agent on
@@ -103,19 +128,24 @@ Entries are grouped by the part of the program they belong to.
 - **Where.** `src/shared-secret-inputs.ts`, mounted in `src/shared-root.ts`.
 - **Why accepted.** `read` answers with the secret's bytes. An operation's result is JSON that is saved as
   a receipt and replayed on retry, and results pass through the action log; a secret must reach none of
-  those. `confirm` settles the use that `read` started and is held to the same proof. Who may call is not a
-  sharing rule about a member or an agent, so it is not in `policy.ts`: it is proof of assignment, like a
-  worker's doors. The writes still go through the one write queue (`secretCommit`).
+  those. `confirm` settles the use that `read` started and is held to the same proof. Who may call is proof
+  of assignment, like a worker's doors, and is checked at the route. The two questions that are sharing
+  rules (is this body still its agent for its member, and does a standing answer serve its work) are
+  `policy.ts`'s and the routes ask them there. The writes still go through the one write queue (`secretCommit`).
 - **The checks these routes make, in order.** The program is not closing. The request authenticates
   (`sharedCredentials.authenticate`) and its credential is a body's (an agent token bound to a job) or a
   worker's. The body is JSON. A body may name no job: its job is the one on its credential, it must be that
   agent's, and it must be running. A worker must name a job, that job must be starting on the
-  worker's own machine, and a worker may ask only for the repository secret. The job's binding (agent,
+  worker's own machine, and a worker may ask only for the repository secret. A body must still be its agent
+  in the household for the member its work is for (`rules.agentItself`): one whose member has left or lost
+  the agent is refused at every route. The job's binding (agent,
   machine, conversation, member, project, house repository, file and branch) is recorded and must be
   unchanged, with the credential still valid, when the bytes are handed over and when the use is confirmed.
-  A requested secret needs a current grant for that secret, agent and job (`SecretPrivateInputs.dispatch`);
-  a startup secret must be an alias in that job's startup plan with a current grant, and still map to the
-  same secret; the repository secret must still be the one the agent's run settings name.
+  A requested secret needs a current grant for that secret and agent, for that job or for the agent alone
+  (`SecretPrivateInputs.dispatch`); a startup secret must be an alias in that job's startup plan with a
+  current grant, and still map to the same secret; the repository secret must still be the one the agent's
+  run settings name. For a body in the private work of a member who is not a household owner, the grant
+  must be one an owner gave for that job (the entry above).
 - **What would change the answer.** An operation result path that is never stored or logged. Then `confirm`
   could become an operation at once, and `read` with it.
 
@@ -158,6 +188,22 @@ Entries are grouped by the part of the program they belong to.
   that proved who it is in the last ten minutes.
 - What would change it: a dispatcher that can run a write without keeping its answer. Then these become
   operations and the gates become `may`.
+
+### A household owner can issue a token in another member's name
+- Where: `POST /api/signin/token` with `kind: "owner"` and any existing `member`
+  (`src/core/signin/shared-links.ts`, `ownerTokenInput` in `src/core/signin/shared-tokens.ts`).
+- What: the door hands the calling owner a bearer that signs in as the member named. With it the owner is
+  that member to every rule, their private threads with agents included. The owner ruled that the owner
+  role does not read another member's private thread; no rule lets it, and this door is how an owner who
+  set out to could. It leaves a token row with its label and the member it names.
+- What the door does not do: bind a token to a job. A bearer for a running job would be a second body in
+  that job's conversation, so a job's token is made only where its worker enrols it (`enrolBody`), and a
+  new one ends the job's other token.
+- Why accepted: a new member's first token is how they are let in, and a member who has lost every device
+  is let back in the same way. The household owner also runs the machine loom is on and can read its files,
+  so this door gives them nothing they could not take; it does not make it a rule that they may.
+- What would change it: an invitation the member redeems themselves, so that no bearer in their name is
+  ever shown to someone else. Then this door refuses a member other than the caller.
 
 ### A device sign-in's user code stays in the inbox item
 - Where: `src/shared-account-signin.ts` (`runtime.signInPage`).
@@ -462,15 +508,18 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: operations gaining a result that is never stored. Then this becomes one.
 
 ### Policy is asked about the person a request names
-- What: three doors build a viewer from a member's id and ask the read rules about it: asking someone
-  about a task (`tasks.command` `ask`), a body's question to a person, and a body setting how loudly its
-  member's own inbox item arrives. The first two take the id from the request; the third takes it from the
-  body's credential.
+- What: four places build a viewer from a member's id and ask the read rules about it: asking someone
+  about a task (`tasks.command` `ask`), a body's question to a person, a body setting how loudly its
+  member's own inbox item arrives, and the Tasks service deciding whether mail to a person about a task
+  goes into the task's conversation (it does only if that person reads the conversation). The first two
+  take the id from the request; the third takes it from the body's credential; the fourth takes it from
+  the task's stored question, the person asked or the member who asked.
 - Where: `src/shared-task-access.ts`, `src/shared-conversation-questions.ts`, `src/shared-tempo-access.ts`
-  (`volume`), through `addressee` in `src/policy.ts`.
+  (`volume`), `src/shared-root.ts` (the `reads` given to `taskService`), through `addressee` in
+  `src/policy.ts`.
 - Why: the question is "could the person this is addressed to read it", so that nothing is sent to
-  someone about a record they may not see, and a body changes the volume only of an item its member
-  reads. The answer only ever narrows what the caller may do: what allows the caller is its own rule
+  someone about a record they may not see, a body changes the volume only of an item its member
+  reads, and mail is never filed in a thread its addressee cannot open. The answer only ever narrows what the caller may do: what allows the caller is its own rule
   (`rules.inboxVolume` for the third, whose body half is `forItsMember`).
 - Would change it: any use of such a viewer to allow, read or write something. `addressee` says so.
 

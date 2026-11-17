@@ -4,7 +4,8 @@ Start the shared program with `serve --next`. Its `/mcp` endpoint uses bearer
 credentials and the same command executor and GraphQL queries as its HTTP API.
 A terminal session does not need a browser or a worker job. An owner can issue
 its agent credential through `/api/signin/token` with `kind: "agent"`, an
-existing `agent`, and a unique `label`; omit `job` for a terminal session.
+existing `agent`, and a unique `label`. That door makes no token bound to a job: a job's
+body is enrolled by its worker.
 
 For a stdio MCP client, configure:
 

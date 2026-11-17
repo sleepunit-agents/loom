@@ -12,7 +12,7 @@ import type { DataDatabase } from '../data/database.js';
 import { signinLinks } from '../data/schema.js';
 import { credentialFingerprint as fingerprint, currentSession, newProof, presentedCookie, presentedCredential } from '../data/authentication.js';
 import type { Authentication } from '../live/index.js';
-import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
+import { sharedTokens, ownerTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 import { sameRequestOrigin } from '../data/origin.js';
@@ -119,7 +119,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     }
   };
   routes.post('/api/signin/token',c=>issueForOwner(c,input=>{
-    const parsed=sharedTokenInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid token request');
+    const parsed=ownerTokenInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid token request');
     return sharedTokens(options.db,options.clock).issue(parsed.data);
   }));
   routes.post('/api/signin/program',c=>issueForOwner(c,input=>{

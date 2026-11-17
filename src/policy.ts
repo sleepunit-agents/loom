@@ -189,6 +189,24 @@ const stopJob: Rule = all(viewerIs('member'), any(householdOwner, ownsAgent('age
  * name, reading the state of its own request or of a secret handed to its own job. Asking grants nothing:
  * who answers a request is the household owners' (rule for `secretRequests`) or a secret rule they set. */
 const agentItself: Rule = all(viewerIs('agent'), currentViewer, ownsAgent('agent'));
+/** Using a secret. Secrets are the household owners' (tableRules.secrets): no other member reads one, sets
+ * one or answers for one. An agent uses a secret on a household owner's word, and that word comes two ways:
+ *  - a standing answer: a secret rule, the household default, or a grant made for the agent and no one job;
+ *  - an owner's own answer to a request for one job.
+ * A standing answer is about the agent, so it serves the agent's own work (a terminal session, a job that
+ * is for no member) and work it does for a household owner. It does not serve a body doing the private
+ * work of a member who is not a household owner: that member may not use the secret themselves, and the
+ * body reaches no further than they do (Viewer.workingFor). There, a rule or the default never allows a
+ * request, a request for the agent and no one job is refused, and the only grant that counts is one a
+ * household owner gave for that very job, on a card that names the member. A rule that says never still
+ * refuses. A body whose member has left the household or lost the agent gets nothing (agentItself).
+ *
+ * One hand-off is not the body's and is not narrowed: a worker fetches the house's repository with the
+ * agent's repository secret before any body runs (shared-secret-inputs.ts, the `repository` read). */
+const usesSecretsOnStandingWord: Rule = all(agentItself, any(equal('workingFor', null), { is: 'forItsMember', rule: householdOwner }));
+export function standingSecretAnswerServes(v: Viewer, s: Sharing): boolean {
+  return v.kind === 'agent' && holds(usesSecretsOnStandingWord, v, { agent: v.id, workingFor: v.workingFor ?? null }, s);
+}
 /** Who may ask for a model account to be signed in on a machine. A member asks for an account and a machine
  * they may act on: their own, or any as a household owner. A body asks on the word of the member its work
  * is for, with that member's reach and nobody else's: not its agent's other owners', not the household
@@ -247,6 +265,12 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   // An item is read as its labels say. One exception: an item addressed to a household owner is theirs
   // whatever labels it carries, which is how an owner is handed the approval card raised in someone else's
   // thread (only household owners answer those). The card is all they get of that thread.
+  //
+  // Being addressed is otherwise not enough, on purpose: a member who leaves a project stops reading the
+  // questions put to them in it. So whoever files an item for a person must label it so that this rule
+  // lets that person read it: with the labels of a record they read (apps/tasks.ts, `labels`), with a
+  // conversation they read (shared-conversation-questions.ts, `ask`), or with the person themselves as
+  // its member (a notice). A member label on anything else hides the item from the person it is for.
   inbox: all(any(all(householdOwner, equal('toKind', 'person'), self('to')), inTalk), waitsOnReadable),
   bridgeConnections: bridgeConnection,
   // How a household's bridges are set up, and who its outside people are, is the household owners'.

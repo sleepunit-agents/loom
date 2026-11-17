@@ -5,16 +5,23 @@
  * (docs/accepted-tradeoffs.md).
  */
 import {randomUUID,createECDH} from 'node:crypto';
-import {existsSync,openSync,writeFileSync,fsyncSync,closeSync,linkSync,unlinkSync} from 'node:fs';
+import {existsSync,openSync,writeFileSync,fsyncSync,closeSync,linkSync,readdirSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import webpush from 'web-push';
 import {privateBytes} from '../../pieces/secrets/local-holder.js';
+const scratchName=/^\.push-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function notificationKey(home:string){
  const file=join(home,'push-vapid.json');
+ // A program killed while publishing left its scratch file: unpublished key material, or, if it had
+ // already linked it, a second name for the key, which privateBytes refuses on every later start. One
+ // program owns a home (ownHome, shared-startup.ts), so any scratch file found here is a dead one.
+ for(const name of readdirSync(home))if(scratchName.test(name))rmSync(join(home,name),{force:true});
  if(!existsSync(file)){
   const scratch=join(home,`.push-${randomUUID()}`),fd=openSync(scratch,'wx',0o600);
-  try{writeFileSync(fd,JSON.stringify(webpush.generateVAPIDKeys()));fsyncSync(fd);}finally{closeSync(fd);}
-  try{linkSync(scratch,file);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}finally{unlinkSync(scratch);}
+  try{
+   try{writeFileSync(fd,JSON.stringify(webpush.generateVAPIDKeys()));fsyncSync(fd);}finally{closeSync(fd);}
+   try{linkSync(scratch,file);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+  }finally{rmSync(scratch,{force:true});}
  }
  const bytes=privateBytes(file);
  try{

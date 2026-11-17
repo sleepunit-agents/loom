@@ -8,7 +8,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
-import {members,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal,secretRequests,inbox} from './core/data/schema.js';
+import {members,memberAgents,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal,secretRequests,inbox} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const raw={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64),runner:'d'.repeat(64),foreign:'e'.repeat(64),agent:'f'.repeat(64),cookie:'g'.repeat(64)};
@@ -105,13 +105,13 @@ it('does not confirm a captured handoff after its five minute eligibility expire
 
 it('refuses dispatch inside an outer transaction before reading or writing an audit',async()=>{
  const f=fixture();f.grant();let pending!:Promise<unknown>;
- f.db.transaction(()=>{pending=f.root.services.secrets.inputs.dispatch({job:'body',secret:'TOKEN',attempt:'synthetic'},()=>true,()=>undefined);});
+ f.db.transaction(()=>{pending=f.root.services.secrets.inputs.dispatch({job:'body',secret:'TOKEN',attempt:'synthetic',standing:()=>true},()=>true,()=>undefined);});
  await expect(pending).rejects.toThrow('Private secret input unavailable');expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);
 });
 it('a restarted engine cannot confirm or redispatch an earlier unconfirmed handoff',async()=>{
  const f=fixture();f.grant();const id=randomUUID(),response=await f.post('read',{kind:'request',id,secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use')!;expect(response.status).toBe(200);
  const restarted=new SecretPrivateInputs(f.db,f.clock,f.source,write=>f.root.writes.run(write).value);
- try{expect(()=>restarted.confirm('body',use,()=>true)).toThrow('Private secret input unavailable');await expect(restarted.dispatch({job:'body',secret:'TOKEN',attempt:'request:'+id},()=>true,()=>undefined)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledOnce();expect(f.db.select().from(secretUses).get()?.state).toBe('started');}finally{await restarted.close();}
+ try{expect(()=>restarted.confirm('body',use,()=>true)).toThrow('Private secret input unavailable');await expect(restarted.dispatch({job:'body',secret:'TOKEN',attempt:'request:'+id,standing:()=>true},()=>true,()=>undefined)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledOnce();expect(f.db.select().from(secretUses).get()?.state).toBe('started');}finally{await restarted.close();}
 });
 it('a configured repository and house alias alone never grant its credential',async()=>{
  const f=fixture();expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);
@@ -147,9 +147,9 @@ it('an empty repository never reads a configured secret or issues startup consen
 });
 it('bounds unconfirmed handoffs and frees capacity only after confirmation or expiry',async()=>{
  const f=fixture();f.grant();f.source.read.mockImplementation(async()=>Buffer.from('X'));const engine=f.root.services.secrets.inputs;let first='';
- for(let i=0;i<4096;i++){const id=await engine.dispatch({job:'body',secret:'TOKEN',attempt:'capacity-'+i},()=>true,id=>id);if(!i)first=id;}
- await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'over-cap'},()=>true,id=>id)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledTimes(4096);
- engine.confirm('body',first,()=>true);await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'freed'},()=>true,id=>id)).resolves.toMatch(/^use-input-/);
+ for(let i=0;i<4096;i++){const id=await engine.dispatch({job:'body',secret:'TOKEN',attempt:'capacity-'+i,standing:()=>true},()=>true,id=>id);if(!i)first=id;}
+ await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'over-cap',standing:()=>true},()=>true,id=>id)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledTimes(4096);
+ engine.confirm('body',first,()=>true);await expect(engine.dispatch({job:'body',secret:'TOKEN',attempt:'freed',standing:()=>true},()=>true,id=>id)).resolves.toMatch(/^use-input-/);
 },30000);
 
 it.each([true,false])('startup waits for its configured pending consent before any value read (allow=%s)',async allow=>{
@@ -188,4 +188,32 @@ it('publishes the private audit before source IO and never publishes an aborted 
  try{f.source.read.mockImplementationOnce(async()=>{expect(events).toContainEqual({transaction:false,states:['started']});return Buffer.from('PRIVATE_SOURCE_VALUE');});const response=await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use')!;expect(response.status).toBe(200);await f.post('confirm',{use});expect(events.some(event=>event.states.includes('released'))).toBe(true);expect(events.every(event=>!event.transaction)).toBe(true);
  events.length=0;f.client.exec("CREATE TRIGGER fail_private_audit BEFORE INSERT ON secret_uses BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(503);expect(f.source.read).toHaveBeenCalledOnce();expect(f.db.select().from(secretUses).all()).toHaveLength(1);expect(events.every(event=>event.states.every(state=>state==='released'))).toBe(true);
  }finally{spy.mockRestore();}
+});
+
+it('hands a body in a member\'s private work only a secret a household owner allowed for that very job',async()=>{
+ const f=fixture(),read=(secret='TOKEN')=>f.post('read',{kind:'request',id:randomUUID(),secret});
+ f.db.insert(members).values({id:'lee',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();f.db.insert(memberAgents).values({member:'lee',agent:'art'}).run();
+ f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();
+ // A grant for the agent and no one job, which an owner allowed in other work: a standing answer.
+ const agentWide=f.root.writes.run(()=>{const id=randomUUID();f.root.services.secrets.requests.request({id,secret:'TOKEN',agent:'art',why:'Other work',minutes:5});f.root.services.secrets.requests.answer(id,'owner',true);return id;}).value;
+ expect((await read()).status).toBe(403);
+ // A grant for this job that a rule settled, as the worker's fetch of the repository leaves behind.
+ f.rule('REPO');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(200);
+ f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'build')).run();
+ f.root.writes.run(()=>f.root.services.secrets.requests.grantAtStart('body',['REPO']));expect(f.db.select().from(secretGrants).where(eq(secretGrants.job,'body')).get()).toMatchObject({secret:'REPO',grantedBy:'rule'});
+ expect((await read('REPO')).status).toBe(403);
+ // A secret the house is given at start by a rule: the body is not handed it, and the owners are asked for this job.
+ f.rule();expect(await(await f.post('startup',{})).json()).toEqual({aliases:[],pending:true});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(403);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'secret-request')).all().filter(row=>row.state==='waiting').map(row=>[row.to,row.words])).toEqual([['owner','Allow art to use TOKEN for 5 minutes, in its private work for lee?']]);
+ expect(f.source.read).toHaveBeenCalledOnce();
+ // The owner's own answer for this job is what counts.
+ const start='q-start-'+createHash('sha256').update(JSON.stringify(['body','TOKEN'])).digest('hex');f.root.writes.run(()=>f.root.services.secrets.requests.answer(start,'owner',true));
+ expect(await(await f.post('startup',{})).json()).toEqual({aliases:[{alias:'API_TOKEN'}]});expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(200);
+ // Working for a household owner, or for no member, the standing answers serve as before.
+ f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(jobs).set({member:'owner'}).where(eq(jobs.id,'body')).run();expect((await read()).status).toBe(200);
+ f.root.writes.run(()=>f.root.services.secrets.requests.revoke(agentWide));
+ // A body whose member no longer has the agent is handed nothing and confirms nothing.
+ f.db.update(jobs).set({member:'lee'}).where(eq(jobs.id,'body')).run();const use=f.db.select().from(secretUses).all().find(row=>row.state==='started')!.id;
+ f.db.delete(memberAgents).where(eq(memberAgents.member,'lee')).run();
+ expect((await f.post('confirm',{use})).status).toBe(403);expect((await f.post('startup',{})).status).toBe(403);expect((await f.post('read',{kind:'startup',alias:'API_TOKEN'})).status).toBe(403);
 });

@@ -12,6 +12,9 @@ import {secretName} from './input.js';
 export class PrivateInputError extends Error {
  constructor(readonly code:'denied'|'conflict'|'unavailable'){super('Private secret input unavailable');}
 }
+/** One hand-off. `standing` is asked each time the grant is checked: may a standing answer serve this
+ * job's work now (policy.ts, standingSecretAnswerServes)? The door says. */
+export interface SecretHandOff {job:string;secret:string;attempt:string;standing():boolean}
 const failed=(code:'denied'|'conflict'|'unavailable'='unavailable')=>new PrivateInputError(code);
 export class SecretPrivateInputs {
  private closed=false;
@@ -23,31 +26,32 @@ export class SecretPrivateInputs {
  constructor(private db:DataDatabase,private clock:Clock,private source:SecretValueSource|undefined,
   private commit:<T>(write:()=>T)=>T){this.requests=new SecretRequests(db,()=>new Date(clock.now()).toISOString());}
  startGrants(job:string,selected?:readonly string[]){if(this.closed)throw failed();return this.commit(()=>this.requests.grantAtStart(job,selected));}
- startup(job:string):{aliases:{alias:string}[];pending?:true}{
+ /** `standing`: may a standing answer serve this job's work (policy.ts, standingSecretAnswerServes)? The door says. */
+ startup(job:string,standing:boolean):{aliases:{alias:string}[];pending?:true}{
   if(this.closed)throw failed();
   return this.commit(()=>{
    const target=this.db.select().from(jobs).where(eq(jobs.id,job)).get();if(!target)throw failed('denied');
    const configured=this.db.select().from(agentHouseSecrets).where(eq(agentHouseSecrets.agent,target.agent)).all();
    if(configured.length>128)throw failed();
-   const allowed=new Set(this.requests.grantAtStart(job,configured.map(row=>row.secret)).map(grant=>grant.secret));
+   const allowed=new Set(this.requests.grantAtStart(job,configured.map(row=>row.secret),standing).map(grant=>grant.secret));
    const pending=configured.some(row=>this.db.select({state:secretRequests.state}).from(secretRequests).where(eq(secretRequests.id,startupRequestId(job,row.secret))).get()?.state==='pending');
    return {aliases:configured.filter(row=>allowed.has(row.secret)).map(({alias})=>({alias})),...(pending?{pending:true as const}:{})};
   });
  }
- dispatch<T>(input:{job:string;secret:string;attempt:string},current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{
+ dispatch<T>(input:SecretHandOff,current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{
   if(this.closed||this.active.size>=1024||this.db.$client.inTransaction)return Promise.reject(failed());
   let resolve!:(value:T)=>void,reject!:(error:unknown)=>void;
   const work=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});this.active.add(work);void work.finally(()=>this.active.delete(work)).catch(()=>{});
   void this.perform(input,current,capture).then(resolve,reject);return work;
  }
- private async perform<T>(input:{job:string;secret:string;attempt:string},current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{
+ private async perform<T>(input:SecretHandOff,current:()=>boolean,capture:(id:string,bytes:Uint8Array)=>T):Promise<T>{
   secretName.parse(input.secret);z.string().min(1).max(300).parse(input.attempt);
   if(!this.source||!this.available(current))throw failed();
   for(const [key,until] of this.delivered)if(until<=this.clock.now())this.delivered.delete(key);
   if(this.delivered.size>=4096)throw failed();
   const target=this.db.select().from(jobs).where(eq(jobs.id,input.job)).get();if(!target)throw failed('denied');
   const id=secretUseId(target.agent,target.id,input.attempt);
-  const permitted=()=>this.available(current)&&this.db.select({agent:jobs.agent}).from(jobs).where(eq(jobs.id,target.id)).get()?.agent===target.agent&&!!this.requests.grantFor(input.secret,target.agent,target.id)
+  const permitted=()=>this.available(current)&&this.db.select({agent:jobs.agent}).from(jobs).where(eq(jobs.id,target.id)).get()?.agent===target.agent&&!!this.requests.grantFor(input.secret,target.agent,target.id,undefined,input.standing())
    &&!this.db.select({id:secretWriteJournal.id}).from(secretWriteJournal).where(and(eq(secretWriteJournal.secret,input.secret),eq(secretWriteJournal.state,'prepared'))).get();
   this.commit(()=>{
    if(!permitted())throw failed('denied');

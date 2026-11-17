@@ -217,3 +217,15 @@ it('lets an agent ask only with the authority of the member its current work is 
   db.delete(memberAgents).where(eq(memberAgents.member, 'member')).run();
   expect(status('for-owner')).toMatchObject({ ok: false, code: 'denied' }); expect(ask('for-owner')).toMatchObject({ ok: false, code: 'denied' });
 });
+it('keeps no code from a take whose write did not commit: the same take goes again and is the one that hands it over', async () => {
+  const f = await fixture(), { id } = await waitingWithCode(f);
+  f.db.$client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'no receipt'); END");
+  expect((await f.call(worker, 'runtime.signInTake', { id }, 'take-1')).ok).toBe(false);
+  f.db.$client.exec('DROP TRIGGER refuse_receipt');
+  // The answer is still the pasted code, so nothing was taken, and the taker is told to take it.
+  expect(f.stored(code)).toBe(true);
+  expect((await f.call(worker, 'runtime.signInCode', { id, take: 'take-1' })).value).toEqual({ code: null, stop: false, answered: true });
+  expect((await f.call(worker, 'runtime.signInTake', { id }, 'take-1')).value).toEqual({ taken: true });
+  expect(f.stored(code)).toBe(false);
+  expect((await f.call(worker, 'runtime.signInCode', { id, take: 'take-1' })).value).toEqual({ code, stop: false, answered: true });
+});

@@ -53,7 +53,24 @@ export interface TaskService {
  * Every write is atomic; all facts live in the approved shared tables. No importer,
  * alternate database, record JSON or background process is involved.
  */
-export function taskService(db: DataDatabase, now: () => string = () => new Date().toISOString()): TaskService {
+/** The member a task is private to. A task in a project is shared by its project whoever owns it; only a
+ * task with no project is its owner's alone (policy.ts, the tasks rule). */
+const privateTo = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>): string | null =>
+  !task.project && task.ownerKind === 'member' ? task.owner : null;
+/** The labels on mail to a person about a task: the task's own, so that whoever reads the task reads the
+ * mail (policy.ts, the inbox rule). Naming the owner of a project task as its member would mark the mail
+ * private to them and hide it from the project member it is addressed to. */
+const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>) =>
+  ({ project: task.project, agent: task.ownerKind === 'agent' ? task.owner : null, member: privateTo(task) });
+/** May this person read this conversation? Root supplies it from policy.ts; the service holds no rule. */
+export type ReadsConversation = (person: string, conversation: string) => boolean;
+/** `reads` decides where mail to a person about a task is filed: in the task's conversation, under that
+ * conversation's labels, when the person reads it; otherwise outside any thread, under the task's labels.
+ * Either way the person it is addressed to can read it. Without `reads`, only a person's own thread with
+ * the agent counts as one they read. */
+export function taskService(db: DataDatabase, now: () => string = () => new Date().toISOString(), reads?: ReadsConversation): TaskService {
+  const filedFor = (task: TaskRow, conversation: { id: string; member: string | null } | null, person: string) =>
+    conversation && (reads ? reads(person, conversation.id) : conversation.member === person) ? { conversation: conversation.id } : { conversation: null, ...labels(task) };
   const mail = new Conversations(db, now);
   const row = (id: string): TaskRow => {
     const found = db.select().from(tasks).where(eq(tasks.id, id)).get();
@@ -141,9 +158,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         const task = touch(id, { assigneeKind: value.to.kind, assignee: value.to.id, ask: value.ask, ifYes: value.ifYes, ifNo: value.ifNo, answers: value.answers, askedByKind: actor.kind, askedBy: actor.id });
         mail.send({ toKind: 'person', to: value.to.id, source: 'task', sourceId: `${id}:${randomUUID()}`,
           fromKind: actor.kind === 'member' ? 'person' : 'agent', fromId: actor.id,
-          conversation: task.sourceKind === 'conversation' ? task.sourceId : null,
-          project: task.project, agent: task.ownerKind === 'agent' ? task.owner : null,
-          member: task.ownerKind === 'member' ? task.owner : null,
+          ...filedFor(task, task.sourceKind === 'conversation' && task.sourceId ? mail.conversation(task.sourceId) : null, value.to.id),
           words: value.ask, answers: value.answers, ifYes: value.ifYes, ifNo: value.ifNo,
           waitsOnKind: 'task', waitsOnId: id, refs: [id] });
         return task;
@@ -161,13 +176,13 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         if (task.askedByKind && task.askedBy) {
           // A task can be asked outside a thread; its answer still reaches its asker.
           const conversation = task.sourceKind === 'conversation' && task.sourceId ? mail.conversation(task.sourceId) : null;
-          const destination=conversation && (task.askedByKind === 'member' || conversation.agent === task.askedBy) ? conversation.id : null;
-          const scope=task.askedByKind==='agent'?(mail.answerScope(destination,task.askedBy,{project:task.project,member:task.ownerKind==='member'?task.owner:null})??{project:task.project}):{project:task.project};
+          const destination=conversation && conversation.agent === task.askedBy ? conversation.id : null;
+          const filed=task.askedByKind==='member'?filedFor(task,conversation,task.askedBy)
+            :{conversation:destination,...(mail.answerScope(destination,task.askedBy,{project:task.project,member:privateTo(task)})??{project:task.project})};
           mail.send({ toKind: task.askedByKind === 'member' ? 'person' : 'agent', to: task.askedBy,
             source: 'answer', sourceId: resolved[0]?.id ?? `${id}:${randomUUID()}`,
-            conversation: destination,
             fromKind: actor.kind === 'member' ? 'person' : 'agent', fromId: actor.id,
-            ...scope, words: answer === 'words' ? text : `${answer === 'yes' ? 'Yes' : 'No'}, to: ${task.ask}\n${answer === 'yes' ? task.ifYes : task.ifNo}`, refs: [id] });
+            ...filed, words: answer === 'words' ? text : `${answer === 'yes' ? 'Yes' : 'No'}, to: ${task.ask}\n${answer === 'yes' ? task.ifYes : task.ifNo}`, refs: [id] });
         }
         return touch(id, { assigneeKind: task.askedByKind, assignee: task.askedBy, ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null });
       });

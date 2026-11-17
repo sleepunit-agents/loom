@@ -7,7 +7,12 @@ import {startupRequestId} from './pieces/secrets/requests.js';
  * These routes are not registered operations, on purpose: an operation's result is saved as a receipt and
  * replayed, and secret bytes must not be. Who may call is proof of assignment (a body's own job, a worker's
  * own machine), not a sharing rule, so it is checked here and not in policy.ts. The reasoning and the full
- * list of checks: docs/accepted-tradeoffs.md, "The private secret-input routes are not registered operations". */
+ * list of checks: docs/accepted-tradeoffs.md, "The private secret-input routes are not registered operations".
+ *
+ * Two things here are policy.ts's and are asked of it, each time a hand-off is checked: a body is still
+ * its agent in the household, for the member its work is for (rules.agentItself); and whether a standing
+ * answer serves that work (standingSecretAnswerServes). A worker's read of the repository secret is the
+ * worker's, before any body runs, and is not narrowed by the member the job is for. */
 import {Hono} from 'hono';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
@@ -16,6 +21,8 @@ import {jobs,agentHouseSecrets,agentRunSettings,secretRequests} from './core/dat
 import type {sharedCredentials} from './shared-credentials.js';
 import {SecretPrivateInputs,PrivateInputError} from './pieces/secrets/private-inputs.js';
 import {secretName} from './pieces/secrets/input.js';
+import {holds,rules,standingSecretAnswerServes} from './policy.js';
+import {sharedSharing} from './shared-sharing.js';
 type Credentials=ReturnType<typeof sharedCredentials>;
 const readInput=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('request'),id:z.uuid(),secret:secretName}).strict(),
@@ -34,14 +41,16 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   if(!body&&!runner)throw new PrivateInputError('denied');
   return {auth,body,runner,signal:request.signal};
  };
+ const itself=(caller:ReturnType<typeof actor>)=>!caller.body||holds(rules.agentItself,caller.auth.viewer,{agent:caller.body.agent},sharedSharing(db));
+ const standing=(caller:ReturnType<typeof actor>)=>!caller.body||standingSecretAnswerServes(caller.auth.viewer,sharedSharing(db));
  const target=(caller:ReturnType<typeof actor>,id?:string)=>{
   if(caller.body&&id!==undefined||!caller.body&&!id)throw new PrivateInputError('denied');
   const job=db.select().from(jobs).where(eq(jobs.id,caller.body?.job??id!)).get();
-  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
+  const valid=()=>!!job&&!caller.signal.aborted&&caller.auth.valid()&&options.available()&&itself(caller)&&(caller.body?job.agent===caller.body.agent&&job.state==='running':job.box===caller.runner?.box&&job.state==='starting');
   if(!valid())throw new PrivateInputError('denied');
   const stamp=binding(job!);
   return {job:job!,current:()=>{
-   if(caller.signal.aborted||!caller.auth.valid()||!options.available())return false;
+   if(caller.signal.aborted||!caller.auth.valid()||!options.available()||!itself(caller))return false;
    const now=db.select().from(jobs).where(eq(jobs.id,job!.id)).get();
    return !!now&&binding(now)===stamp&&(caller.body?now.state==='running':now.state==='starting'&&now.box===caller.runner?.box);
   }};
@@ -54,7 +63,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  app.post('/startup',async c=>{
   const caller=actor(c.req.raw);if(!caller.body)throw new PrivateInputError('denied');
   if(!z.object({}).strict().safeParse(await json(c.req.raw,c.get('shutdown'))).success)return c.json({ok:false,message:'Private secret input unavailable'},400);
-  const selected=target(caller),plan=inputs.startup(selected.job.id);if(!selected.current())throw new PrivateInputError('denied');return c.json(plan);
+  const selected=target(caller),plan=inputs.startup(selected.job.id,standing(caller));if(!selected.current())throw new PrivateInputError('denied');return c.json(plan);
  });
  app.post('/read',async c=>{
   const caller=actor(c.req.raw),parsed=readInput.safeParse(await json(c.req.raw,c.get('shutdown')));
@@ -65,10 +74,10 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   let secret:string,attempt:string,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
   else if(input.kind==='startup'){
-   if(!inputs.startup(job.id).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
+   if(!inputs.startup(job.id,standing(caller)).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
    secret=row.secret;attempt='startup:'+input.alias;
-   current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
+   current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret),standing(caller))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
   }else{
    const row=db.select().from(agentRunSettings).where(eq(agentRunSettings.agent,job.agent)).get();
    if(!row?.repositorySecret)return new Response(null,{status:204});
@@ -83,7 +92,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   }
   if(!current())throw new PrivateInputError('denied');
   // Blob snapshots bytes before erasure; Node's fast Response retains views.
-  return inputs.dispatch({job:job.id,secret,attempt},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
+  return inputs.dispatch({job:job.id,secret,attempt,standing:()=>standing(caller)},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
    headers:{'content-type':'application/octet-stream','cache-control':'no-store','content-length':String(copy.byteLength),'x-loom-secret-use':use},
   });}finally{copy.fill(0);}});
  });

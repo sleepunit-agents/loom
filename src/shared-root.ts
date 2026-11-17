@@ -75,8 +75,8 @@ import { sameRequestOrigin } from './core/data/origin.js';
 import { DOOR_REQUEST_BYTES } from './core/data/http.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
-import { holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
-import { currentMember, sharedSharing } from './shared-sharing.js';
+import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
+import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
@@ -173,7 +173,8 @@ export function sharedRoot(options: {
   const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)&&programQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const tasks=taskService(db,now);
+  // Mail about a task goes into its conversation only for a person who reads that conversation (policy.ts, addressee).
+  const tasks=taskService(db,now,(person,conversation)=>canReadSharedConversation(db,addressee(person),conversation));
   const memory=sharedMemory(db,clock,options.memory,tasks,options.memoryEmbedding,report);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{

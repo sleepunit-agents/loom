@@ -17,10 +17,17 @@ import { OperationError, type Operations } from '../operations/index.js';
 const id = z.string().min(1).max(200);
 const label = z.string().trim().min(1).max(120).regex(/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u);
 const common = { label, expiresAt: z.iso.datetime().optional() };
+const forMember = z.object({ ...common, kind: z.literal('owner'), member: id }).strict();
+const forRunner = z.object({ ...common, kind: z.literal('runner'), box: id }).strict();
 export const sharedTokenInput = z.discriminatedUnion('kind', [
-  z.object({ ...common, kind: z.literal('owner'), member: id }).strict(),
-  z.object({ ...common, kind: z.literal('agent'), agent: id, job: id.optional() }).strict(),
-  z.object({ ...common, kind: z.literal('runner'), box: id }).strict(),
+  forMember, z.object({ ...common, kind: z.literal('agent'), agent: id, job: id.optional() }).strict(), forRunner,
+]);
+/** What a household owner may ask for at the sign-in door: a member's, an agent's terminal or a machine's
+ * token. Not one bound to a job. A token bound to a job is that job's body, and a job has one body: its
+ * worker enrols it (enrolBody), where loom never holds the bearer. A bearer for a running job handed to an
+ * owner would be a second body, in a thread that may be another member's private one. */
+export const ownerTokenInput = z.discriminatedUnion('kind', [
+  forMember, z.object({ ...common, kind: z.literal('agent'), agent: id }).strict(), forRunner,
 ]);
 /** Tokens are made and revoked by a current household owner: the one owner check, under this door's name. */
 export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => householdOwner(db, viewer);
@@ -47,9 +54,14 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
       }
     }
     if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');
+    // A job has one live body token: a new one ends any other.
+    if (value.kind === 'agent' && value.job) db.update(tokens).set({ revokedAt: new Date(now).toISOString() })
+      .where(and(eq(tokens.kind, 'agent'), eq(tokens.job, value.job), ne(tokens.fingerprint, fingerprint), isNull(tokens.revokedAt))).run();
     db.insert(tokens).values({ ...value, fingerprint, ...(madeFrom === undefined ? {} : { madeFrom }), createdAt: new Date(now).toISOString() }).run();
   };
   return {
+    /** Makes the bearer here and hands it back. For trusted callers; the sign-in door narrows what an owner
+     * may ask for to ownerTokenInput. */
     issue(input: z.input<typeof sharedTokenInput>) {
       const value = sharedTokenInput.parse(input);
       return db.transaction(() => {
@@ -60,12 +72,11 @@ export function sharedTokens(db: DataDatabase, clock: Pick<Clock, 'now'>) {
     },
     /** A job body's token. Its worker made the secret and sends the fingerprint alone, so there is no
      * bearer to hand back and loom never holds one. A job has one live body token: enrolling ends any
-     * other. `madeFrom` is the machine token that enrolled it; the body's token is current only while
+     * other (add). `madeFrom` is the machine token that enrolled it; the body's token is current only while
      * that one is (currentToken). The caller has already proved who is enrolling. */
     enrolBody(input: { fingerprint: string; agent: string; job: string; madeFrom: string }) {
       if (!SHA256_HEX.test(input.fingerprint)) throw new OperationError('invalid', 'Invalid fingerprint');
       return db.transaction(() => {
-        db.update(tokens).set({ revokedAt: new Date(clock.now()).toISOString() }).where(and(eq(tokens.kind, 'agent'), eq(tokens.job, input.job), ne(tokens.fingerprint, input.fingerprint), isNull(tokens.revokedAt))).run();
         // Labels are unique while live; each job's token gets its own. The job column is what binds it.
         add(sharedTokenInput.parse({ kind: 'agent', agent: input.agent, job: input.job, label: `Job body [${randomUUID()}]` }), input.fingerprint, input.madeFrom);
         return { fingerprint: input.fingerprint };

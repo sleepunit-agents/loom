@@ -4,7 +4,7 @@ import { and, asc, desc, eq, getTableColumns, gte, inArray, lt, sql } from 'driz
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from './database.js';
 import { conversations, digests, turns } from './schema.js';
-import { conversationVisibility } from './conversation-visibility.js';
+import { conversationVisibility, talkVisibility } from './conversation-visibility.js';
 const protectedSQL = (value: ReturnType<typeof sql>) => sql`${{ getSQL: () => value }}`;
 function scope(viewer: Viewer) { return conversationVisibility(viewer).conversations!(getTableColumns(conversations)); }
 export function readActivityAgents(db: DataDatabase, viewer: Viewer) {
@@ -37,8 +37,11 @@ export function readActivitySet(db: DataDatabase, viewer: Viewer, ids: string[],
     where: f => and(inArray(f.id, ids), protectedSQL(conversationVisibility(viewer).conversations!(f))),
   }).sync();
   const items = db.query.digestItems.findMany({ where: f => inArray(f.digest, digestIds), orderBy: f => [asc(f.kind), asc(f.text)] }).sync();
+  // A digest's question is an Inbox item, so it is read by the Inbox's own rule (policy.ts, tableRules.inbox,
+  // which includes that what it waits on is still readable), narrowed here to the viewer's own waiting ones.
   const questions = db.query.inbox.findMany({ columns: { id: true, words: true, link: true, to: true },
-    where: f => and(inArray(f.id, questionIds), eq(f.toKind, 'person'), eq(f.to, viewer.id), eq(f.state, 'waiting'), viewer.kind === 'member' ? undefined : sql`false`),
+    where: f => and(inArray(f.id, questionIds), eq(f.toKind, 'person'), eq(f.to, viewer.id), eq(f.state, 'waiting'),
+      viewer.kind === 'member' ? protectedSQL(talkVisibility(viewer).inbox!(f)) : sql`false`),
   }).sync();
   const byConversation = new Map(rows.map(row => [row.id, row]));
   const byDigest = new Map<string, typeof items>();

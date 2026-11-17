@@ -5,7 +5,8 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { getRequestListener } from '@hono/node-server';
 import { WebSocket } from 'ws';
-import { eq } from 'drizzle-orm';
+import { eq, getTableColumns } from 'drizzle-orm';
+import { talkVisibility } from './core/data/conversation-visibility.js';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, memberAgents, projects, projectMembers, projectAgents, tokens, tasks, taskComments, taskLinks, inbox } from './core/data/schema.js';
@@ -180,4 +181,38 @@ it('reports a task rule that was broken in its own words, not as an outage', asy
   expect(await again.json()).toMatchObject({ ok: false, code: 'invalid', message: 'Only open work can be claimed' });
   const unclaimOpen = await f.call({ action: 'reopen', id: 't-999' }, 'sam', 'missing');
   expect(unclaimOpen.status).toBe(403);
+});
+
+it('files a question about a project task, and its answer, so that the person each is addressed to reads it, whoever owns the task', async () => {
+  const f = fixture(), s = f.root.services.tasks;
+  f.db.insert(projectMembers).values({ project: 'pond', member: 'lee' }).run();
+  // What each person's Inbox shows: the inbox rule, as every reader of the Inbox asks it.
+  const items = async (who: 'sam' | 'lee' | 'owner') => f.db.select({ id: inbox.id }).from(inbox).where(talkVisibility({ kind: 'member', id: who }).inbox(getTableColumns(inbox))).all().map(row => row.id);
+  // Sam owns the task and it came from sam's private thread; the project shares it with lee.
+  const cv = f.root.services.conversations.open({ agent: 'art', member: 'sam', project: 'pond', venue: 'loom', place: 'private', label: 'Private' });
+  const task = s.create({ ...f.input, project: 'pond', source: { kind: 'conversation', id: cv.id } }, { kind: 'member', id: 'sam' });
+  expect((await f.call({ action: 'ask', id: task.id, input: { to: { kind: 'member', id: 'lee' }, ask: 'Spend?', ifYes: 'Buy', ifNo: 'Wait' } }, 'sam', 'ask')).status).toBe(200);
+  const question = f.db.select().from(inbox).where(eq(inbox.waitsOnId, task.id)).get()!;
+  // A project task is not private to its owner, so its mail is not labelled as if it were.
+  expect(question).toMatchObject({ to: 'lee', member: null, project: 'pond' });
+  expect(await items('lee')).toEqual([question.id]);
+  expect((await f.call({ action: 'answer', id: task.id, question: question.id, answer: 'yes' }, 'lee', 'answer')).status).toBe(200);
+  // The other way round: lee asks sam, and sam's answer comes back to lee outside sam's private thread.
+  expect((await f.call({ action: 'ask', id: task.id, input: { to: { kind: 'member', id: 'sam' }, ask: 'Which?', ifYes: 'Big', ifNo: 'Small' } }, 'lee', 'ask-back')).status).toBe(200);
+  const back = f.db.select().from(inbox).all().find(row => row.to === 'sam' && row.state === 'waiting' && row.waitsOnId === task.id)!;
+  expect((await f.call({ action: 'answer', id: task.id, question: back.id, answer: 'no' }, 'sam', 'answer-back')).status).toBe(200);
+  const answer = f.db.select().from(inbox).all().find(row => row.source === 'answer' && row.to === 'lee')!;
+  expect(answer).toMatchObject({ toKind: 'person', conversation: null, member: null, project: 'pond' });
+  expect(await items('lee')).toContain(answer.id);
+  // Asked of sam, whose thread the task came from, the question is in that thread.
+  expect(back).toMatchObject({ conversation: cv.id, member: 'sam' });
+  // A task in no project that an agent owns is read by the agent's owners: sam asks the household owner, and reads the answer.
+  const own = s.create({ ...f.input, owner: { kind: 'agent', id: 'art' } }, { kind: 'member', id: 'sam' });
+  expect((await f.call({ action: 'ask', id: own.id, input: { to: { kind: 'member', id: 'owner' }, ask: 'Agree?', ifYes: 'Go', ifNo: 'Stop' } }, 'sam', 'ask-owner')).status).toBe(200);
+  const up = f.db.select().from(inbox).where(eq(inbox.waitsOnId, own.id)).get()!;
+  expect((await f.call({ action: 'answer', id: own.id, question: up.id, answer: 'yes' }, 'owner', 'answer-owner')).status).toBe(200);
+  expect(await items('sam')).toContain(f.db.select().from(inbox).all().find(row => row.source === 'answer' && row.sourceId === up.id)!.id);
+  // Being addressed is not enough once the project is left.
+  f.root.writes.run(() => f.db.delete(projectMembers).where(eq(projectMembers.member, 'lee')).run());
+  expect(await items('lee')).not.toContain(answer.id);
 });
