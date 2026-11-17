@@ -1214,7 +1214,7 @@ export const bridgeSends = sqliteTable('bridge_sends', {
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),
 ]);
 
-/** Attachments fetched from Slack, kept for 14 days. Which messages carried one is bridge_file_messages. */
+/** Attachments fetched from Slack and Discord, kept for 14 days. Which messages carried one is bridge_file_messages. */
 export const bridgeFiles = sqliteTable('bridge_files', {
   connection: text('connection').notNull().references((): AnySQLiteColumn => bridgeConnections.id),
   file: text('file').notNull(),
@@ -1873,7 +1873,7 @@ export const bridgeSendParts = sqliteTable('bridge_send_parts', {
   part: integer('part').notNull(),
   postedId: text('posted_id').notNull(),
 }, t => [primaryKey({ columns: [t.send, t.part] }), index('bridge_send_parts_posted_id_idx').on(t.postedId)]);
-/** Which messages carried a kept Slack file. The same file shared in a second message is listed under
+/** Which messages carried a kept Slack or Discord file. The same file shared in a second message is listed under
  * both and its bytes are kept once; a file with no message left is removed. */
 export const bridgeFileMessages = sqliteTable('bridge_file_messages', {
   connection: text('connection').notNull(),

@@ -2,7 +2,7 @@
   "page": "data",
   "title": "How a tile gets its data",
   "ownerTask": "t-2254",
-  "sourceSha256": "e3c9b2054619d4e4efe020d456a39e1b310c24a42a91a8fecffcfc855ed10a04",
+  "sourceSha256": "e6e29310077affdfc9c8d88fc7c17d7e68af89876af8f0c606a7175f058774d4",
   "promises": [
     {
       "id": "data-001",
@@ -143,7 +143,7 @@
     },
     {
       "id": "data-023",
-      "promise": "bridge_file_messages Which messages carried each kept Slack attachment. A file shared in two messages is listed under both and kept once.",
+      "promise": "bridge_file_messages Which messages carried each kept Slack or Discord attachment. A file shared in two messages is listed under both and kept once.",
       "source": "docs/how-it-works/site/data.html"
     },
     {
