@@ -1,6 +1,9 @@
 import {readPersonalNotificationDevices} from '../data/personal-account-read.js';
 /** Browser devices and post-settlement pushes on the shared program. No source
  * words enter a push. Attempts are claimed before IO and never blindly retried.
+ *
+ * A browser's push keys are stored as given: they must be presented to the push service, and no read door
+ * returns them (docs/accepted-tradeoffs.md, "A browser's push subscription keys are stored in clear").
  */
 import {createHash} from 'node:crypto';
 import {currentSession} from '../data/authentication.js';
