@@ -68,7 +68,8 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    expect(result).toEqual({ok:true,value:{id:expect.any(String),state:'pending'}});
    const id=(result as {value:{id:string}}).value.id,card=f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()!;
    expect(card).toMatchObject({kind:'setting',operation:'household.change',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
-   expect(JSON.parse(card.details!)).toEqual({change:'tempoTimings',before:{settleSeconds:before.settleSeconds,who},after:{settleSeconds:after.settleSeconds,who}});
+   // The card keeps what was asked for, and a digest of what it would replace in place of the value.
+   expect(JSON.parse(card.details!)).toEqual({change:'tempoTimings',after:{settleSeconds:after.settleSeconds,who},seal:{nonce:expect.any(String),digest:expect.stringMatching(/^[0-9a-f]{64}$/)}});
    expect(card.changeSummary).toContain('Tempo timings for person alice');
    expect(timing()).toEqual(before);
    expect(await readCard(id)).toEqual([{id,state:'pending',details:card.details,changeSummary:card.changeSummary}]);

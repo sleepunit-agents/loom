@@ -2,18 +2,33 @@
  * description, the household's own settings, a standing approval rule, or how
  * an agent treats outside people and which tools its body is not given. One
  * Three dangerous actions are proposed the same way: revoking a token, revoking
- * a machine, and signing out a browser. The agent files a card with
- * the exact before and after. A household owner allows it through Approvals,
+ * a machine, and signing out a browser. The agent files a card with the
+ * exact change it asks for. A household owner allows it through Approvals,
  * and only then does loom make the change. The agent never becomes an owner.
  *
  * Unlike the runtime proposals this needs no job: a terminal session with the
- * agent's own token may propose. The owner who allows is the authority. */
-import {and,asc,eq,isNull} from 'drizzle-orm';
+ * agent's own token may propose. The owner who allows is the authority.
+ *
+ * Proposing is a write, and it must not be a way to read. An agent may name
+ * anything here: a member, a secret rule, a token by its label, a machine.
+ * Most of those it may not read (policy.ts). So nothing the asker gets back,
+ * and nothing on the card it and others can read, depends on what is there
+ * now: the card holds the change asked for and not what it would replace, and
+ * filing does not refuse because the thing is missing, already so, or could
+ * never be allowed. What the change would replace is worked out for a household
+ * owner when they look at the card (household.proposal). Whether it can be
+ * made is found out when an owner allows it: the change is made as that owner,
+ * and refused to them in the words of the rule it breaks. The card keeps a
+ * keyed digest of what was there when it was filed, which says nothing to a
+ * reader and lets Allow refuse a card whose ground has moved. */
+import {randomBytes} from 'node:crypto';
+import {and,asc,eq,isNull,like} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import {householdId} from './slug.js';
 import {holds,rules as policyRules,type Viewer} from './policy.js';
-import {householdOwners,sharedSharing} from './shared-sharing.js';
+import {householdOwner,householdOwners,sharedSharing} from './shared-sharing.js';
+import {tokenLive} from './core/data/authentication.js';
 import type {DataDatabase} from './core/data/database.js';
 import {agents,agentAccounts,agentBoxes,agentHousePorts,agentModels,agentRunSettings,approvals,boxAgents,boxFacts,bridgeConnections,members,projects as projectRows,secrets,tokens,boxes,sessions} from './core/data/schema.js';
 import {boxSettingsInput,applyBoxSettings} from './shared-box-settings.js';
@@ -77,7 +92,11 @@ const one=<K extends keyof typeof kinds,S extends z.ZodRawShape>(change:K,more:S
 const all=<S extends z.ZodRawShape>(more:S)=>z.discriminatedUnion('change',[one('project',more),one('member',more),one('agent',more),one('settings',more),one('rule',more),one('bodyPolicy',more),one('secretRule',more),one('secretDefault',more),one('houseSecrets',more),one('bridge',more),one('tempoTimings',more),one('measuring',more),one('boxSettings',more),one('runSettings',more),one('models',more),one('agentAccounts',more),one('order',more),one('secretDescription',more),one('remove',more),one('restore',more),one('tokenRevoke',more),one('boxRevoke',more),one('browserSignOut',more)]);
 const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)});
 type Proposal=z.infer<typeof proposal>;
-const details=z.object({change:z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','remove','restore','tokenRevoke','boxRevoke','browserSignOut']),before:z.json(),after:z.json()}).strict();
+const changeName=z.enum(['project','member','agent','settings','rule','bodyPolicy','secretRule','secretDefault','houseSecrets','bridge','tempoTimings','measuring','boxSettings','runSettings','models','agentAccounts','order','secretDescription','remove','restore','tokenRevoke','boxRevoke','browserSignOut']);
+// What a card keeps: the change asked for, and a keyed digest of what it would replace (see the file header).
+const details=z.object({change:changeName,after:z.json(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
+// A card from before the digest kept the replaced value itself; those are rewritten once, at start.
+const olderDetails=z.object({change:changeName,before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
 // Rule scopes are matched lower-case for merges; name the card the same way the rule is stored.
 const ruleScope=(input:{kind:string;scope:string})=>input.kind==='merge'&&!input.scope.startsWith('project:')?input.scope.toLowerCase():input.scope;
@@ -92,6 +111,10 @@ const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
 const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:(value.change==='restore'?'remove':value.change)+':'+name(value));
+// The card's own words, for everyone who may read it: the change asked for, never what it would replace.
+const said=(value:Proposal)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
+ :label(value)+': '+JSON.stringify(sorted(value.input));
+// The same with what it would replace, for a household owner.
 const summary=(value:Proposal,before:unknown)=>value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
 const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
@@ -103,11 +126,13 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
  parts:{secrets:Pick<SecretRequests,'setRule'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
-  measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void}}){
+  measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void};
+  /** A keyed digest only this program can make or check. */
+  digest(words:string):string}){
  const listed=(of:'members'|'agents')=>(of==='members'?db.select({id:members.id}).from(members).orderBy(asc(members.position),asc(members.id)):db.select({id:agents.id}).from(agents).orderBy(asc(agents.position),asc(agents.id))).all().map(row=>row.id);
  const liveBox=(name:string)=>db.select().from(boxes).where(and(eq(boxes.name,name),isNull(boxes.revokedAt))).get();
  const browsers=(input:{member:string;device:string})=>db.select({id:sessions.id}).from(sessions).innerJoin(tokens,eq(sessions.token,tokens.fingerprint)).where(and(eq(tokens.member,input.member),eq(sessions.device,input.device))).all();
- const liveToken=(label:string)=>db.select().from(tokens).where(and(eq(tokens.label,label),isNull(tokens.revokedAt))).all().find(row=>!row.expiresAt||row.expiresAt>now());
+ const liveToken=(label:string)=>db.select().from(tokens).where(eq(tokens.label,label)).all().find(row=>tokenLive(row,Date.parse(now())));
  const appliedCards=new Set<string>();
  // What the change would replace, in the same shape as the input, or null when it would be new.
  const before=(value:Proposal):unknown=>{
@@ -180,6 +205,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
     value.input.ids.forEach((id,position)=>db.update(table).set({position}).where(eq(table.id,id)).run());
    }
    else if(value.change==='secretDescription'){if(!describeSecret(db,{...value.input,by,at:now()}))throw new OperationError('not-found','No secret has that name');}
+   // apply has already refused a dangerous card whose token or machine is not there (refusal).
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
    else if(value.change==='boxRevoke')parts.machines.revoke(liveBox(value.input.name)!.id);
    else for(const row of browsers(value.input))endBrowser(db,row.id);
@@ -190,35 +216,57 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    throw error;
   }
  };
- // Try the change and undo it, so a card that could never be allowed is refused when it is filed.
- const undone=Symbol('rehearsal');
- const rehearse=(value:Proposal)=>{
-  const owner=householdOwners(db)[0];
-  if(!owner)throw new OperationError('conflict','No household owner can allow this');
-  try{db.transaction(()=>{change(value,owner);throw undone;});}catch(error){if(error!==undone)throw error instanceof OperationError?error:new OperationError('invalid','That change cannot be made');}
- };
- const apply=(card:Approval)=>{
+ // Why the change cannot be made on what is there now, in the words of the rule it breaks; nothing when it can.
+ // These depend on what the asker may not read, so they are an owner's to hear: never the asker's.
+ const refusal=(value:Proposal,was:unknown)=>
+  value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
+  :value.change==='boxSettings'&&was===null?new OperationError('not-found','No live machine has that id')
+  :value.change in danger&&was===null?new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser')
+  :value.change==='rule'&&was===null&&value.input.tier===null?new OperationError('invalid','There is no such rule to remove')
+  :JSON.stringify(was)===JSON.stringify(sorted(value.input))?new OperationError('invalid','That is how it already is'):undefined;
+ const seal=(value:Proposal,nonce:string,was:unknown)=>parts.digest(JSON.stringify([nonce,target(value),was]));
+ const read=(card:Approval)=>{
   if(card.operation!==operation)throw new OperationError('conflict','Wrong household card');
   const kept=details.parse(JSON.parse(card.details)),value=proposal.parse({change:kept.change,input:kept.after});
-  if(card.kind!==kindOf(value)||!card.decidedBy)throw new OperationError('conflict','Wrong household card');
-  if(JSON.stringify(before(value))!==JSON.stringify(kept.before))throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
+  if(card.kind!==kindOf(value))throw new OperationError('conflict','Wrong household card');
+  return {kept,value};
+ };
+ // Everything an Allow must find true before the change is made, on what is there now.
+ const check=(value:Proposal,kept:z.infer<typeof details>)=>{
+  const was=before(value);
+  if(seal(value,kept.seal.nonce,was)!==kept.seal.digest)throw new OperationError('conflict','This has changed since the card was filed; ask for a fresh card');
+  const refused=refusal(value,was);if(refused)throw refused;
+ };
+ const apply=(card:Approval)=>{
+  const {kept,value}=read(card);
+  if(!card.decidedBy)throw new OperationError('conflict','Wrong household card');
+  check(value,kept);
   change(value,card.decidedBy);
   appliedCards.add(card.id);
  };
+ // Cards filed before the digest kept what they would replace, where the asking agent could read it. Take
+ // it off every one of them, once. A card still waiting gets the digest of what it recorded, so its Allow
+ // is still refused if that has changed.
+ db.transaction(()=>{
+  for(const card of db.select().from(approvals).where(and(eq(approvals.operation,operation),like(approvals.details,'%"before":%'))).all()){
+   let older:z.infer<typeof olderDetails>,value:Proposal;
+   try{older=olderDetails.parse(JSON.parse(card.details));value=proposal.parse({change:older.change,input:older.after});}catch{continue;}
+   const nonce=randomBytes(16).toString('hex');
+   db.update(approvals).set({details:JSON.stringify({change:older.change,after:older.after,seal:{nonce,digest:seal(value,nonce,older.before)}}),changeSummary:said(value),what:said(value)}).where(eq(approvals.id,card.id)).run();
+  }
+ });
 
- /** File the card. Installed code may call this directly; from outside it is household.propose. */
+ /** File the card. Installed code may call this directly; from outside it is household.propose.
+  * Nothing here answers differently for what is in the household now: see the file header. */
  const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null})=>{
-  const value=proposal.parse({change:raw.change,input:raw.input}),was=before(value);
-  if(value.change==='bodyPolicy'&&was===null)throw new OperationError('invalid','Unknown agent');
-  if(value.change==='boxSettings'&&was===null)throw new OperationError('not-found','No live machine has that id');
-  if(value.change in danger&&was===null)throw new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser');
-  if(value.change==='rule'&&was===null&&value.input.tier===null)throw new OperationError('invalid','There is no such rule to remove');
-  if(JSON.stringify(was)===JSON.stringify(sorted(value.input)))throw new OperationError('invalid','That is how it already is');
-  if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
-  rehearse(value);
-  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,before:was,after:sorted(value.input)}),changeSummary:summary(value,was),
+  const value=proposal.parse({change:raw.change,input:raw.input});
+  // The asker's own waiting card for the same thing; another agent's card is not the asker's to know of.
+  if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
+  if(!householdOwners(db).length)throw new OperationError('conflict','No household owner can allow this');
+  const nonce=randomBytes(16).toString('hex');
+  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),seal:{nonce,digest:seal(value,nonce,before(value))}}),changeSummary:said(value),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
-   askedFrom:where?.conversation??'terminal',actingFor:where?.member??'unknown',what:summary(value,was),why:raw.why,...cardWords(value)});
+   askedFrom:where?.conversation??'terminal',actingFor:where?.member??'unknown',what:said(value),why:raw.why,...cardWords(value)});
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
   // acting for, on a matching target, unless the last answer to this same thing was a deny. A card with no
   // known person behind it always asks. A card that changes a rule always asks: a rule cannot widen the rules.
@@ -227,7 +275,10 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='rule')return card;
   const rule=lastApprovalAnswer(db,card.agent,card.kind,card.target)?.event==='deny'?undefined:rules.resolve({kind:card.kind,target:card.target,project:card.project,actingFor:card.actingFor});
   if(!rule||rule.tier==='ask')return card;
-  return service.allow(card.id,rule.setBy,`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`);
+  // When the change cannot be made on the rule's word (its owner may not make it, or it cannot be made at
+  // all), the rule has answered nothing: the card waits for an owner, who is told why.
+  try{return service.allow(card.id,rule.setBy,`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`);}
+  catch(error){if(error instanceof OperationError)return card;throw error;}
  };
  return{
   operation:[operation,apply] as const,
@@ -244,6 +295,23 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      // Provenance is set here from the authenticated caller, never taken from input.
      const card=file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id,state:card.state};
+    },
+   });
+   // What a waiting card would replace, and what already stands against it: it has changed since it was
+   // filed, it is already so, or the thing it names is not there. A household owner may read all of that;
+   // the card itself carries none of it. Whether the change can be made is not tried here. It is made as
+   // the owner who allows it, who is refused in the rule's own words if they may not make it; one owner may
+   // be able to make a change another may not, so there is no one owner to try it as beforehand.
+   const waiting=(id:string)=>{const card=db.select().from(approvals).where(eq(approvals.id,id)).get();return card?.operation===operation&&card.state==='pending'?card:undefined;};
+   operations.register({name:'household.proposal',doors:['http'],input:z.object({id:z.string().min(1).max(200)}).strict(),
+    output:z.object({summary:z.string(),problem:z.string().nullable()}).strict(),
+    may:(viewer,input)=>householdOwner(db,viewer)&&!!waiting(input.id),
+    run(_ctx,input){
+     const card=waiting(input.id);if(!card)throw new OperationError('not-found','No such waiting card');
+     const {kept,value}=read(card);
+     let problem:string|null=null;
+     try{check(value,kept);}catch(error){if(!(error instanceof OperationError))throw error;problem=error.message;}
+     return{summary:summary(value,before(value)),problem};
     },
    });
   },

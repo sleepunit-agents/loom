@@ -106,3 +106,16 @@ it('asks for a second, explicit yes before allowing a dangerous action; cancel s
   await press('Deny');
   expect(deny).toHaveBeenCalledExactlyOnceWith(approval.id);
 });
+
+it('says the program\'s own refusal of an answer as it is, and shows what already stands against a card', async () => {
+  let reject!: (error: Error) => void;
+  const allow = vi.fn(() => new Promise<void>((_, no) => { reject = no; }));
+  await draw({ ...snapshot, approvals: [{ ...approval, problem: 'No live token has that label' }] }, { allow, deny: vi.fn() });
+  expect(JSON.stringify(tree.toJSON())).toContain('No live token has that label');
+  await act(async () => { buttons()[0].props.onClick(); });
+  await act(async () => { reject(Object.assign(new Error('At least one household owner must remain'), { name: 'WorkRefused' })); });
+  expect(tree.root.findAllByType('Error').map((node: { props: { text: string } }) => node.props.text)).toEqual(['At least one household owner must remain']);
+  // A card nothing stands against says nothing about it.
+  await draw(snapshot, { allow: vi.fn(), deny: vi.fn() });
+  expect(JSON.stringify(tree.toJSON())).not.toContain('cannot be allowed');
+});

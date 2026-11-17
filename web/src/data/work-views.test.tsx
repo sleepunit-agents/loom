@@ -371,3 +371,20 @@ it('shows private reported steps from the currently visible approval record and 
  feed.approvals.approvals=[];
  await act(async()=>{tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));});expect(words()).not.toContain('PRIVATE STEP RESULT');
 });
+
+it.each(['app','inline'])('shows a household owner what a waiting household card would replace, read for them and never taken from the card (%s)',async surface=>{
+ fixture();const card=feed.approvals.approvals[0];
+ Object.assign(card,{operation:'household.change',target:'household:member:lee',details:JSON.stringify({change:'member',after:{id:'lee',role:'owner'},seal:{nonce:'n',digest:'d'}}),changeSummary:'member lee: {"id":"lee","role":"owner"}'});
+ const request=vi.fn(async(_url:string,_options:RequestInit)=>({ok:true,json:async()=>({ok:true,value:{summary:'member lee: {"id":"lee","role":"member"} → {"id":"lee","role":"owner"}',problem:'That is how it already is'}})}));vi.stubGlobal('fetch',request);
+ const node=()=>surface==='app'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(LiveApprovalCard,{id:card.id});
+ // Someone who is not an owner sees the card as filed, and nothing is asked for them.
+ await draw(node());await act(async()=>{});
+ expect(request).not.toHaveBeenCalled();expect(words()).toContain('member lee: {\\"id\\":\\"lee\\",\\"role\\":\\"owner\\"}');expect(words()).not.toContain('→');
+ await act(async()=>tree.unmount());
+ feed.owner=true;await draw(node());await act(async()=>{});
+ expect(request).toHaveBeenCalledExactlyOnceWith('/api/household/proposal',expect.objectContaining({method:'POST',credentials:'same-origin',body:JSON.stringify({input:{id:card.id}})}));
+ expect(words()).toContain('\\"role\\":\\"member\\"} → {');expect(words()).toContain('That is how it already is');
+ // A card that is answered, or is not a household change, is shown as it is.
+ await act(async()=>tree.unmount());request.mockClear();card.state='used';await draw(node());await act(async()=>{});
+ expect(request).not.toHaveBeenCalled();
+});
