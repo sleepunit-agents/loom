@@ -88,7 +88,7 @@ it('accepts one requested follow-up job after the default jobs without consuming
  await nativeProtocolSmoke(context);
  const commit=await context.app.services.comms.prepareSend({thread:context.example.runtime.thread,sender:'alex',kind:'message',clientId:'native-target-followup',words:'Fictional target-only follow-up'});
  context.app.writes.run(commit);context.clock.advance(exampleSettleMs);
- const id=context.app.services.conversations.conversation(context.example.runtime.conversation).job;expect(id).toBeTruthy();
+ const id=(context.db.prepare("SELECT id FROM jobs WHERE conversation=? AND state IN ('queued','starting','running','waiting')").get(context.example.runtime.conversation) as {id:string}|undefined)?.id;expect(id).toBeTruthy();
  const result=await nativeProtocolSmoke({...context,targets:[{id,words:'Fictional target-only follow-up'}]});
  expect(result.runs).toHaveLength(1);expect(result.runs[0]).toMatchObject({job:id,state:'done',hadInput:true,running:true,bootstrapErased:true});
  const acquired=context.db.prepare("SELECT revoked_at FROM tokens WHERE label LIKE 'Native protocol fixture %'").all();

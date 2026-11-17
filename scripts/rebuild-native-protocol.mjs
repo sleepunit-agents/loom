@@ -55,7 +55,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
       execution=bodyProgram({args:[configuration],read:path=>readFile(path,'utf8'),stdin:async()=>bodyBytes,env:{},signal:AbortSignal.any([parentSignal,stopped.signal]),clock,
        native:async(job,words,bodySignal)=>{
         const expectedWords=expected.get(job.id);
-        observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare('SELECT job FROM conversations WHERE id=?').get(job.conversation)?.job};
+        observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare("SELECT id FROM jobs WHERE conversation=? AND state IN ('queued','starting','running','waiting')").get(job.conversation)?.id};
         let finished=false;
         const call=async(name,input)=>{
          if(finished||bodySignal.aborted||!['digest','turn','status'].includes(name))throw Error('Native fixture command is unavailable');

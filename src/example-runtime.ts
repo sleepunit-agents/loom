@@ -34,17 +34,19 @@ export async function exampleRuntime(root:ReturnType<typeof sharedRoot>,clock:Fa
   await reportWorkerHealth({...workerHttp,facts:['arch:example']});
   const {basis}=await readWorkerAccountBasis(workerHttp,identity);
   await reportWorkerAccountUsage(workerHttp,{...identity,basis,windows:[{name:'week',usage:0.25,readAt:new Date(clock.now()).toISOString(),resetsAt:new Date(clock.now()+7*86400000).toISOString(),durationMs:7*86400000}]});
-  const thread=root.writes.run(()=>root.services.comms!.threads.open({member:'alex',agent:'moss',title:'Inspect the example shed'})).value;
+  // A queued job carries its conversation's label as its title; the two example jobs are told apart by it.
+  const threadTitle='Inspect the example shed';
+  const thread=root.writes.run(()=>root.services.comms!.threads.open({member:'alex',agent:'moss',title:threadTitle})).value;
   const prepared=await root.services.comms!.prepareSend({thread:thread.id,sender:'alex',kind:'message',clientId:'example-runtime-mail',words:'Check the shed hinges before the example rain.'});
   root.writes.run(prepared);
   const publicTrigger=await ownerCommand('tempo.set',{ownerKind:'agent',owner:'moss',sourceKind:'time',times:new Date(clock.now()).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'moss',instructions:'Inspect the shared garden path.',note:'Inspect the shared garden path'},z.object({id:z.string()}).strict());
   // Advance normal settlement, never sleep or manufacture a job row/state.
   clock.advance(exampleSettleMs);
-  const response=await root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+ownerToken,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id title state box conversation}}'})});
-  const result=z.object({data:z.object({currentJobs:z.array(z.object({id:z.string(),title:z.string(),state:z.string(),box:z.string().nullable(),conversation:z.string().nullable()}))})}).safeParse(await response.json());
+  const response=await root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+ownerToken,'content-type':'application/json'},body:JSON.stringify({query:'{currentJobs(agent:"moss"){id title state box}}'})});
+  const result=z.object({data:z.object({currentJobs:z.array(z.object({id:z.string(),title:z.string(),state:z.string(),box:z.string().nullable()}))})}).safeParse(await response.json());
   const publicConversation=root.services.conversations.open({agent:'moss',venue:'wake',place:publicTrigger.id,label:'Inspect the shared garden path'});
-  const job=result.success?result.data.data.currentJobs.find(job=>job.conversation===thread.conversation&&job.state==='queued'&&job.box===null):undefined;
-  const publicJob=result.success?result.data.data.currentJobs.find(job=>job.conversation===publicConversation.id&&job.state==='queued'&&job.box===null):undefined;
+  const job=result.success?result.data.data.currentJobs.find(job=>job.title===threadTitle&&job.state==='queued'&&job.box===null):undefined;
+  const publicJob=result.success?result.data.data.currentJobs.find(job=>job.title===publicConversation.label&&job.state==='queued'&&job.box===null):undefined;
   if(!response.ok||!job||!publicJob)throw Error('Example Runtime did not schedule its inbox through Tempo: HTTP '+response.status+'; '+(result.success?JSON.stringify(result.data.data.currentJobs):'invalid query response'));
   return{box,account:identity.account,conversation:thread.conversation,thread:thread.id,job,publicJob,publicTrigger:publicTrigger.id};
  }finally{root.writes.run(()=>root.services.signin.revoke(worker.fingerprint));}
