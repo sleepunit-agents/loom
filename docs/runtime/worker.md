@@ -177,7 +177,8 @@ which could hold a credential. 0 means it was asked to stop.
 | 47 | the first health report to loom failed |
 | 48 | the account usage refresh stopped |
 | 49 | a body it started could not be ended, so it takes no more work |
-| 50 | the account command did not complete (`--account-signin`, `--account-usage`) |
+| 50 | the account command did not complete (`--account-usage`) |
+| 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker

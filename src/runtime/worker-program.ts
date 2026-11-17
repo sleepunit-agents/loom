@@ -4,8 +4,7 @@ import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS } from './worker-
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { signInAccount } from './account-signin.js';
-import { relaySignIn } from './account-signin-relay.js';
+import { RELAY_MS, relaySignIn } from './account-signin-relay.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
 import { httpWorkerControl, workerSignIn, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable, reportWorkerHealth } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
@@ -25,7 +24,6 @@ const accountCommand = z.object({
   timeoutMs: stepDeadline.optional(),
 }).strict();
 const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
-const signInCommand = accountCommand.extend({ box: z.string().trim().min(1) });
 const configSchema = z.object({
   facts: machineFacts.optional(),
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
@@ -37,9 +35,10 @@ const configSchema = z.object({
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
   accountUsage: z.object({ readers: z.array(accountCommand).min(1).max(32), intervalMs: z.number().int().min(1_000).max(3_600_000).optional() }).strict().optional(),
   /** Sign-ins asked for through loom: one program per provider, run on this machine with a private directory
-   * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests. */
+   * as its last argument (see account-signin-relay.ts). Without this the worker takes no sign-in requests.
+   * This is the one way a worker signs an account in. */
   accountSignIn: z.object({ programs: z.array(z.object({ provider: z.string().trim().min(1), command }).strict()).min(1).max(32),
-    intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(900_000).optional() }).strict().optional(),
+    intervalMs: z.number().int().min(1_000).max(600_000).optional(), timeoutMs: z.number().int().min(10_000).max(RELAY_MS).optional() }).strict().optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
     setupTimeoutMs: stepDeadline.optional(),
     cleanupTimeoutMs: stepDeadline.optional() }).strict().optional(),
@@ -58,7 +57,6 @@ export async function workerProgram(input: {
   error: (text: string) => void;
   /** Local structured observations only; never private command diagnostics. */
   output?: (text: string) => void;
-  signIn?: typeof signInAccount;
   relaySignIn?: typeof relaySignIn;
   signInRemote?: typeof workerSignIn;
   usage?: typeof commandUsageProvider;
@@ -97,28 +95,20 @@ export async function workerProgram(input: {
   }
   try {
     const mode = input.args[0];
-    if (mode === '--account-signin' || mode === '--account-usage') {
+    // The one-shot sign-in command is gone: it ran a program of another protocol than the one loom asks
+    // for, and told loom nothing. Refused before its file is read, with the line that says what to use.
+    if (mode === '--account-signin') throw new WorkerStop('signin');
+    if (mode === '--account-usage') {
       if (input.args.length !== 2 || !input.output) throw new Error('Expected account command configuration');
       stage = 'config';
-      const raw: unknown = JSON.parse(await input.read(input.args[1]));
-      // These one-shot worker commands receive only local owner configuration.
-      // Local-only commands read no Loom token. Optional usage reporting reads
-      // its configured machine credential; neither mode claims jobs or changes membership.
-      if (mode === '--account-signin') {
-        const config = signInCommand.parse(raw);
-        stage = 'account';
-        await (input.signIn ?? signInAccount)(config.command, { ...config.account, box: config.box },
-          { signal: abort.signal, timeoutMs: config.timeoutMs });
-        if (abort.signal.aborted) throw new Error('Cancelled');
-        input.output(JSON.stringify({ ...config.account, box: config.box, signedIn: true }) + '\n');
-      } else {
-        const config = usageCommand.parse(raw);
-        stage = 'token';
-        const remote = config.report ? { url: config.report.url, token: doorTokenIn(await input.read(config.report.tokenFile)), signal: abort.signal } : undefined;
-        stage = 'account';
-        const windows = await observe(config, remote);
-        input.output(JSON.stringify({ ...config.account, windows }) + '\n');
-      }
+      // This one-shot worker command receives only local owner configuration. It reads no Loom token
+      // unless reporting is configured, and neither claims jobs nor changes membership.
+      const config = usageCommand.parse(JSON.parse(await input.read(input.args[1])));
+      stage = 'token';
+      const remote = config.report ? { url: config.report.url, token: doorTokenIn(await input.read(config.report.tokenFile)), signal: abort.signal } : undefined;
+      stage = 'account';
+      const windows = await observe(config, remote);
+      input.output(JSON.stringify({ ...config.account, windows }) + '\n');
       return 0;
     }
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
