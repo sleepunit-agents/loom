@@ -30,11 +30,12 @@ export const liveConversationJob = (state: typeof jobs.$inferSelect.state) => st
 export class Conversations {
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) {}
 
-  open(input: ConversationInput): Conversation {
+  /** `at` is for a caller that stamps a second record of the same moment (a
+   * thread and its conversation): it passes the one time it read. */
+  open(input: ConversationInput, at = this.now()): Conversation {
     return this.db.transaction(() => {
       const existing = this.db.select().from(conversations).where(and(eq(conversations.agent, input.agent), eq(conversations.venue, input.venue), eq(conversations.place, input.place))).get();
       if (existing) return existing;
-      const at = this.now();
       return this.db.insert(conversations).values({ ...input, id: `cv-${randomUUID()}`, startedAt: at, lastAt: at, turnCount: 0 }).returning().get();
     });
   }
@@ -45,9 +46,10 @@ export class Conversations {
     return row;
   }
 
-  turn(input: Omit<Turn, 'seq' | 'at'>): typeof turns.$inferSelect {
+  /** `at` as for open(): a thread message and its turn are one moment. */
+  turn(input: Omit<Turn, 'seq' | 'at'>, at = this.now()): typeof turns.$inferSelect {
     return this.db.transaction(() => {
-      const conversation = this.conversation(input.conversation), at = this.now();
+      const conversation = this.conversation(input.conversation);
       const seq = conversation.turnCount + 1;
       const row = this.db.insert(turns).values({ ...input, seq, at }).returning().get();
       this.db.update(conversations).set({ turnCount: seq, lastAt: at }).where(eq(conversations.id, conversation.id)).run();

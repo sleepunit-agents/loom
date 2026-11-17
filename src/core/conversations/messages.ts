@@ -45,13 +45,15 @@ export class CommsMessages {
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const seq = (this.db.select({ seq: max(messages.seq) }).from(messages).where(eq(messages.thread, thread.id)).get()?.seq ?? 0) + 1;
     const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: new Date(Date.parse(at) + days * 86400000).toISOString() }).returning().get();
+    // threads.last_at and conversations.last_at are two columns for one fact. They are
+    // only ever written here, together, from the one time read above.
     this.db.update(threads).set({ lastAt: at }).where(eq(threads.id, thread.id)).run();
     const person = input.kind === 'message' || input.kind === 'answer';
     this.threads.conversations.turn({ conversation: cv.id,
       kind: person ? 'message' : input.kind === 'reply' ? 'reply' : input.kind === 'card' ? 'action' : 'note',
       fromKind: person ? 'person' : 'agent', fromId: input.sender,
       run: person ? null : input.run, ...detail,
-    });
+    }, at);
     for (const ref of new Set(refs)) this.db.insert(threadRefs).values({ thread: thread.id, ref, messageSeq: seq })
       .onConflictDoUpdate({ target: [threadRefs.thread, threadRefs.ref], set: { messageSeq: seq } }).run();
     return row;
