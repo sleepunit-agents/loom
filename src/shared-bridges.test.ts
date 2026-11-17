@@ -5,10 +5,11 @@ import {createHash,randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {agentPeople,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {agentPeople,conversationSessions,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
+import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const token={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64)};
@@ -198,4 +199,52 @@ it('takes a file on bridges.say as a name and bytes, and refuses it for Slack wi
  expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:[{name:'a',contents:'not base64!'}]})).status).toBe(400);
  expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:[]})).status).toBe(400);
  expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:Array(5).fill({name:'a',contents})})).status).toBe(400);
+});
+it('keeps a conversation\'s harness session sealed, for the body of its job alone, and hands on only one that is current',async()=>{
+ const f=fixture(()=>true,true);const incoming=await f.receive();
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation,harness:'claude',model:'claude-opus-5-5'}).where(eq(jobs.id,'body')).run();f.db.update(jobs).set({harness:'claude',model:'claude-opus-5-5'}).where(eq(jobs.id,'other')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
+ const files=Buffer.from('THE MODEL\'S OWN RECORD OF THE CONVERSATION').toString('base64'),session='0f0e0d0c-1111-4222-8333-444455556666';
+ const take=async(credential=token.body)=>f.call('conversation','session',{},credential),save=(input:unknown,credential=token.body)=>f.call('conversation','sessionSave',input,credential);
+ expect(await take()).toMatchObject({status:200,body:{value:{session:null}}});
+ expect(await save({session,files})).toMatchObject({status:200,body:{value:{saved:true}}});
+ // Nobody but the body of this conversation's job: not another job's body, not the owner.
+ for(const credential of [token.other,token.owner]){expect((await take(credential)).status).toBe(403);expect((await save({session,files},credential)).status).toBe(403);}
+ expect(await take()).toMatchObject({status:200,body:{value:{session:{session,files}}}});
+ // Stored sealed: neither the bytes nor their base64 are in the database file, and no query serves the table.
+ const stored=f.db.select().from(conversationSessions).all();
+ expect(stored).toMatchObject([{conversation:incoming.conversation,harness:'claude',session,bytes:Buffer.byteLength(files,'base64')}]);
+ for(const needle of ['THE MODEL\'S OWN RECORD',files])expect(f.client.serialize().includes(Buffer.from(needle))).toBe(false);
+ const owner=await f.root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+token.owner,'content-type':'application/json'},body:JSON.stringify({query:'{ __schema { queryType { fields { name } } } }'})});
+ expect(JSON.stringify(await owner.json())).not.toMatch(/conversationSessions|conversation_sessions/i);
+ // Another family of models is not handed it.
+ f.root.writes.run(()=>{f.db.update(jobs).set({model:'gpt-6-luna'}).where(eq(jobs.id,'body')).run();});
+ expect(await take()).toMatchObject({body:{value:{session:null}}});
+ f.root.writes.run(()=>{f.db.update(jobs).set({model:'claude-sonnet-5-5'}).where(eq(jobs.id,'body')).run();});
+ expect(await take()).toMatchObject({body:{value:{session:{session}}}});
+ // Nor another harness: each has its own.
+ f.root.writes.run(()=>{f.db.update(jobs).set({harness:'codex'}).where(eq(jobs.id,'body')).run();});
+ expect(await take()).toMatchObject({body:{value:{session:null}}});
+ f.root.writes.run(()=>{f.db.update(jobs).set({harness:'claude'}).where(eq(jobs.id,'body')).run();});
+ // The conversation was answered after the session was saved (its body died before saving, or another harness
+ // answered): the session is behind what was said and is not handed on.
+ f.clock.advance(1000);
+ expect((await f.call('bridges','reply',{id:randomUUID(),incoming:incoming.id,text:'Answered since',model:'observed',outcome:'progressed'})).status).toBe(200);
+ expect(await take()).toMatchObject({body:{value:{session:null}}});
+ // Saved again after the answer, it is current.
+ f.clock.advance(1000);expect((await save({session,files})).status).toBe(200);
+ expect(await take()).toMatchObject({body:{value:{session:{session}}}});
+ // One too large to keep is not kept, and takes the earlier one with it.
+ const large=Buffer.alloc(SESSION_BYTES+1,1).toString('base64');
+ expect(await save({session,files:large})).toMatchObject({status:200,body:{value:{saved:false}}});
+ expect(f.db.select().from(conversationSessions).all()).toEqual([]);
+ // A body that leaves none says so, and what was kept goes.
+ expect((await save({session,files})).status).toBe(200);
+ expect(await save({session:null})).toMatchObject({body:{value:{saved:false}}});
+ expect(f.db.select().from(conversationSessions).all()).toEqual([]);
+ // An id that could be a path, and a save that names a session without its files, are refused.
+ for(const bad of [{session:'../../etc',files},{session},{session:null,files},{session,files:'not base64!'}])expect((await save(bad)).status).toBe(400);
+ // Once the job has ended, its body has neither door.
+ expect((await save({session,files})).status).toBe(200);
+ f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
+ expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
 });

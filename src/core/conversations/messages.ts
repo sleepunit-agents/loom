@@ -12,6 +12,7 @@ import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
 import { expirePrivateBridgeWords } from './private-bridge-words.js';
+import { expireConversationSessions } from './sessions.js';
 import { acceptAnswer, type Answer } from './answer-rule.js';
 import type { DigestInput } from './index.js';
 import { commsKeepDays } from '../data/comms-days.js';
@@ -241,6 +242,8 @@ export class CommsMessages {
     let expired=0;
     for(const item of privateInboxExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     expired+=expirePrivateBridgeWords(this.db,cutoff);
+    // A kept harness session holds its conversation's words: it goes at the same keep time.
+    expired+=expireConversationSessions(this.db,cutoff);
     for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;
