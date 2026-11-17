@@ -201,14 +201,17 @@ for (const accountRunners of [null, [], { sub: null }, { sub: [] }, { sub: { cla
 });
 it.each([
   ['build', { build: plan }], ['runners', { runners: { claude: plan } }], ['runners', { runners: {} }], ['accountRunners', { accountRunners: { subscription: { claude: plan } } }],
-  ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [{ source: '/house/stamps', target: '/house/stamps' }] } }], ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [] } }],
+  ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [{ source: '/house/stamps', target: 'house/stamps' }] } }], ['container.mounts', { container: { socket: '/fake/docker.sock', mounts: [] } }],
   ['build', config],
+  // Where a sign-in appears in a house is no longer the machine's to say.
+  ['accountLogins.subscription.claude.target', { accountLogins: { subscription: { claude: { source: '/logins/subscription', target: '/home/agent/.claude' } } } }],
+  ['accountLogins."an account".codex.target', { accountLogins: { 'an account': { claude: { source: '/x' }, codex: { source: '/y', target: '/run/loom/login/codex' } } } }],
 ])('stops a worker with container bodies that still has %s, naming the key, before it reads its token', async (key, patch) => {
   const f = fixture(), containerExecutor = vi.fn();
   f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }));
   expect(await workerProgram({ ...f, containerExecutor })).toBe(53);
   expect(f.error).toHaveBeenCalledExactlyOnceWith(`Worker stopped: ${WORKER_STOP.retired[1]} (${key})\n`);
-  expect(WORKER_STOP.retired[1]).toBe('the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent');
+  expect(WORKER_STOP.retired[1]).toBe('the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house');
   expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 it('stops a worker with container bodies whose own directory cannot give a container the body program, with its own line and code', async () => {
@@ -216,6 +219,21 @@ it('stops a worker with container bodies whose own directory cannot give a conta
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(55);
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)\n');
+  expect(f.run).not.toHaveBeenCalled();
+});
+it('stops a worker with container bodies whose install has no definition of the core house, with its own line and code', async () => {
+  const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('core'); });
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(56);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on\n');
+  expect(f.run).not.toHaveBeenCalled();
+});
+it('stops a worker whose engine or sign-in directory another worker already uses, with its own line and code, the key and no path', async () => {
+  const f = fixture(), endLeft = vi.fn(async () => { throw new WorkerStop('shared', 'accountLogins.subscription.claude.source'); });
+  const containerExecutor = vi.fn(() => ({ endLeft, close: vi.fn() }));
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor: containerExecutor as never })).toBe(57);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: another worker on this machine already uses the engine or a sign-in directory this configuration names: one worker runs a machine\'s houses (accountLogins.subscription.claude.source)\n');
   expect(f.run).not.toHaveBeenCalled();
 });
 it('prints what its container executor has to say, in the executor\'s own fixed words', async () => {
@@ -276,8 +294,8 @@ it('takes a sign-in deadline up to the relay\'s own and no longer', async () => 
 // Houses: the runtime's name, sign-in directories and fixed mounts (worker-mounts.ts holds the rules).
 it('passes the engine runtime, the sign-in directories and the fixed mounts to container execution as they were written', async () => {
   const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
-  const configured = { ...houseConfig, buildTimeoutMs: 2_400_000, accountLogins: { subscription: { claude: { source: '/logins/subscription', target: '/home/agent/.claude' } } },
-    container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: { art: [{ source: '/house/stamps', target: '/house/stamps', readOnly: false }], mark: [{ source: '/house/mirror', target: '/mirror' }] } } };
+  const configured = { ...houseConfig, buildTimeoutMs: 2_400_000, accountLogins: { subscription: { claude: { source: '/logins/subscription' } } },
+    container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: { art: [{ source: '/house/stamps', target: 'house/stamps', readOnly: false }], mark: [{ source: '/house/mirror', target: 'mirror' }] } } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
   expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }, { say: expect.any(Function) }); expect(f.executor).not.toHaveBeenCalled();
@@ -287,7 +305,7 @@ for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { contain
   { container: { socket: '/s', mounts: { art: [{ source: '/a' }] } } }, { container: { socket: '/s', mounts: { source: '/a', target: '/b' } } }, { container: { socket: '/s', mounts: { '': [] } } },
   { container: { socket: '/s', buildTimeoutMs: 1 } }, { container: { socket: '/s' }, buildTimeoutMs: 3_600_001 },
   { container: { socket: '/s' }, accountLogins: { a: { claude: { source: '/a', target: '/b', readOnly: true } } } },
-  { container: { socket: '/s' }, accountLogins: { a: { claude: { source: '/a' } } } }, { container: { socket: '/s' }, accountLogins: { a: { source: '/a', target: '/b' } } },
+  { container: { socket: '/s' }, accountLogins: { a: { claude: { target: '/b' } } } }, { container: { socket: '/s' }, accountLogins: { a: { source: '/a', target: '/b' } } },
   // Sign-in directories are mounts: a worker whose bodies are processes cannot give one to one job only.
   { accountLogins: { a: { claude: { source: '/a', target: '/b' } } } }, { accountLogins: {} }].entries())
   it(`rejects a runtime it does not know, a misshapen mount and sign-in directories without container bodies, before the token is read (${JSON.stringify(patch[1])})`, async () => {
@@ -297,7 +315,7 @@ for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { contain
     expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 it('stops before any work is claimed when a path given to containers or an engine socket cannot be used, with its own line and code and no path in it', async () => {
-  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
+  expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a harness named under accountLogins in anything but lower-case letters, digits, - and _, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
   // The line, then the configuration key at fault in brackets: a key, never the path written under it.
   const line = (key: string) => `Worker stopped: ${WORKER_STOP.mounts[1]} (${key})\n`;
   const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path'), { createServer } = await import('node:http');
@@ -306,11 +324,12 @@ it('stops before any work is claimed when a path given to containers or an engin
   mkdirSync(real); mkdirSync(other); mkdirSync(engine); symlinkSync(real, link);
   const program = join(root, 'install'); mkdirSync(join(program, 'dist'), { recursive: true }); mkdirSync(join(program, 'node_modules', 'zod'), { recursive: true });
   writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program, 'package.json'), '{"dependencies":{"zod":"^4"}}');
+  mkdirSync(join(program, 'house', 'core'), { recursive: true }); writeFileSync(join(program, 'house', 'core', 'Housefile'), 'FROM scratch\n');
   const run = join(root, 'run'); symlinkSync(engine, run);
   // An engine with nothing left on it: the worker that starts lists its containers and finds none.
   const server = createServer((_request, response) => { response.end('[]'); });
   await new Promise<void>(done => server.listen(socket, done));
-  const login = (source: string, target = '/home/agent/.claude') => ({ accountLogins: { subscription: { claude: { source, target } } } });
+  const login = (source: string) => ({ accountLogins: { subscription: { claude: { source } } } });
   const started = async (patch: { accountLogins?: unknown; container?: Record<string, unknown>; tokenFile?: string; state?: string }) => {
     const f = fixture();
     f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, state: workerState, ...patch, container: { socket, ...patch.container } }) : 'private-token');
@@ -320,35 +339,35 @@ it('stops before any work is claimed when a path given to containers or an engin
   };
   try {
     // The same configuration with nothing wrong in it starts, so each stop below is for the one thing changed.
-    const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: { art: [{ source: other, target: '/house/x' }] } } });
+    const fine = await started({ ...login(real), container: { nestedSocket: socket, mounts: { art: [{ source: other, target: 'house/x' }] } } });
     expect(fine.code).toBe(0); expect(fine.f.error).not.toHaveBeenCalled(); expect(fine.f.run).toHaveBeenCalledTimes(4);
     // So does one whose engine socket is named through a linked directory, as `/var/run/docker.sock` is on
     // most machines, with nothing else in it: a configuration from before any of these keys.
-    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: { art: [{ source: other, target: '/house/x' }] } }]) {
+    for (const container of [{ socket: join(run, 'engine.sock') }, { socket: join(run, 'engine.sock'), nestedSocket: join(run, 'engine.sock'), mounts: { art: [{ source: other, target: 'house/x' }] } }]) {
       const linked = await started({ container });
       expect(linked.code).toBe(0); expect(linked.f.error).not.toHaveBeenCalled(); expect(linked.f.run).toHaveBeenCalledTimes(4);
     }
     const subscription = 'accountLogins.subscription.claude';
     for (const [what, key, patch] of [
       ['a sign-in directory that is missing', `${subscription}.source`, login('/loom-test/private-missing-login')],
-      ['a relative mount source', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: 'private-relative', target: '/house/x' }] } } }],
-      ['a relative mount target', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: 'house/x' }] } } }],
-      ['a mount that is a symbolic link to a directory that is itself fine', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: link, target: '/house/x' }] } } }],
+      ['a relative mount source', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: 'private-relative', target: 'house/x' }] } } }],
+      ['an absolute mount target', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: '/home/agent/house/x' }] } } }],
+      ['a mount at the repository', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: 'repo' }] } } }],
+      ['a mount that is a symbolic link to a directory that is itself fine', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: link, target: 'house/x' }] } } }],
       ['a sign-in directory that is a symbolic link', `${subscription}.source`, login(link)],
-      ['two mounts at nested places', 'container.mounts.art[1].target', { container: { mounts: { art: [{ source: real, target: '/house/x' }, { source: other, target: '/house/x/inner' }] } } }],
-      ['a mount at a sign-in directory\'s place', `${subscription}.target`, { ...login(real), container: { mounts: { art: [{ source: other, target: '/home/agent/.claude' }] } } }],
+      ['two mounts at nested places', 'container.mounts.art[1].target', { container: { mounts: { art: [{ source: real, target: 'house/x' }, { source: other, target: 'house/x/inner' }] } } }],
       ['a mount at the nested socket\'s place', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: '/var/run/docker.sock' }] } } }],
       ['a mount at /run', 'container.mounts.art[0].target', { container: { mounts: { art: [{ source: real, target: '/run' }] } } }],
-      ['one directory mounted twice', 'container.mounts.art[1].source', { container: { mounts: { art: [{ source: real, target: '/one' }, { source: real, target: '/two', readOnly: false }] } } }],
-      ['a mount that is a sign-in directory', `${subscription}.source`, { ...login(real), container: { mounts: { art: [{ source: real, target: '/house/x' }] } } }],
+      ['one directory mounted twice', 'container.mounts.art[1].source', { container: { mounts: { art: [{ source: real, target: 'one' }, { source: real, target: 'two', readOnly: false }] } } }],
+      ['a mount that is a sign-in directory', `${subscription}.source`, { ...login(real), container: { mounts: { art: [{ source: real, target: 'house/x' }] } } }],
       ['a nested socket that is a directory', 'container.nestedSocket', { container: { nestedSocket: real } }],
       ['a relative nested socket', 'container.nestedSocket', { container: { nestedSocket: 'engine/engine.sock' } }],
       ['a relative engine socket', 'container.socket', { container: { socket: 'engine/engine.sock' } }],
       ['an engine socket that is not there', 'container.socket', { container: { socket: join(engine, 'private-none.sock') } }],
-      ['a mount of the directory that holds the engine socket', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: engine, target: '/house/run' }] } } }],
-      ['a mount of the real directory of an engine socket named through a link', 'container.mounts.art[0].source', { container: { socket: join(run, 'engine.sock'), mounts: { art: [{ source: engine, target: '/house/run' }] } } }],
-      ['a mount that will hold the state directory', 'container.mounts.art[0].source', { state: join(other, 'private-state'), container: { mounts: { art: [{ source: other, target: '/house/x' }] } } }],
-      ['a mount that holds the token file', 'container.mounts.art[0].source', { tokenFile: join(real, 'private-token-file'), container: { mounts: { art: [{ source: real, target: '/house/x' }] } } }],
+      ['a mount of the directory that holds the engine socket', 'container.mounts.art[0].source', { container: { mounts: { art: [{ source: engine, target: 'house/run' }] } } }],
+      ['a mount of the real directory of an engine socket named through a link', 'container.mounts.art[0].source', { container: { socket: join(run, 'engine.sock'), mounts: { art: [{ source: engine, target: 'house/run' }] } } }],
+      ['a mount that will hold the state directory', 'container.mounts.art[0].source', { state: join(other, 'private-state'), container: { mounts: { art: [{ source: other, target: 'house/x' }] } } }],
+      ['a mount that holds the token file', 'container.mounts.art[0].source', { tokenFile: join(real, 'private-token-file'), container: { mounts: { art: [{ source: real, target: 'house/x' }] } } }],
     ] as const) {
       const { code, f } = await started(patch);
       expect(code, what).toBe(52);
@@ -401,22 +420,32 @@ it('ends every slot when the worker is asked to stop, and exits 0 once each has'
   expect(await running).toBe(0); expect(ended.sort()).toEqual([1, 2, 3, 4]); expect(f.error).not.toHaveBeenCalled();
 });
 
-it('lets as many bodies run on one account as accountSlots says: four when it does not, never more than the slots, one after the other at 1', async () => {
+it('lets as many bodies run on one account as accountSlots says: four when it does not (one for Codex), never more than the slots, one after the other at 1', async () => {
   const never = new AbortController().signal;
   /** How many jobs on one account the worker's turns let start together. */
-  const together = async (patch: Record<string, unknown>) => {
+  const together = async (patch: Record<string, unknown>, harness = 'claude') => {
     const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
     f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }) : 'private-token');
     expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
     const turns = f.run.mock.calls[0][0].turns as { take(keys: string[], signal: AbortSignal): Promise<() => void> };
-    let given = 0; for (let job = 0; job < 20; job++) void turns.take(['account:one'], never).then(() => { given++; });
+    let given = 0; for (let job = 0; job < 20; job++) void turns.take([`account:${harness}:one`], never).then(() => { given++; });
     for (let turn = 0; turn < 20; turn++) await Promise.resolve();
     return given;
   };
   expect(await together({})).toBe(4); expect(await together({ slots: 8 })).toBe(4); expect(await together({ slots: 2 })).toBe(2);
   expect(await together({ slots: 8, accountSlots: 6 })).toBe(6); expect(await together({ accountSlots: 1 })).toBe(1); expect(await together({ slots: 16, accountSlots: 16 })).toBe(16);
+  // Codex's bodies run one at a time on an account unless the configuration says otherwise: what its program does when two renew at once is not established.
+  expect(await together({}, 'codex')).toBe(1); expect(await together({ slots: 8 }, 'codex')).toBe(1); expect(await together({}, 'agy')).toBe(4);
+  // One number is every harness's, Codex's too. A number for a harness is that harness's, and the others keep their defaults.
+  expect(await together({ accountSlots: 3 }, 'codex')).toBe(3);
+  expect(await together({ accountSlots: { codex: 2 } }, 'codex')).toBe(2); expect(await together({ accountSlots: { codex: 2 } })).toBe(4);
+  expect(await together({ slots: 8, accountSlots: { claude: 6, codex: 1 } })).toBe(6); expect(await together({ slots: 8, accountSlots: { claude: 6 } }, 'codex')).toBe(1);
+  expect(await together({ accountSlots: { claude: 1 } })).toBe(1); expect(await together({ slots: 2, accountSlots: {} })).toBe(2);
+  // A harness's name that is also a name every object has is no entry.
+  expect(await together({}, 'constructor')).toBe(4); expect(await together({ accountSlots: { codex: 2 } }, 'toString')).toBe(4);
 });
-for (const patch of [{ accountSlots: 5 }, { slots: 2, accountSlots: 3 }, { accountSlots: 0 }, { accountSlots: 17, slots: 16 }, { accountSlots: 1.5 }, { accountSlots: '2' }])
+for (const patch of [{ accountSlots: 5 }, { slots: 2, accountSlots: 3 }, { accountSlots: 0 }, { accountSlots: 17, slots: 16 }, { accountSlots: 1.5 }, { accountSlots: '2' },
+  { accountSlots: { codex: 5 } }, { slots: 2, accountSlots: { claude: 2, codex: 3 } }, { accountSlots: { codex: 0 } }, { accountSlots: { codex: '1' } }, { accountSlots: { '': 1 } }, { accountSlots: [1] }])
   it(`refuses ${JSON.stringify(patch)}: more bodies on one account than the worker has slots, or no whole number of them`, async () => {
     const f = fixture(), containerExecutor = vi.fn();
     f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }));

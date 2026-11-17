@@ -109,11 +109,19 @@ it.each([
   await expect(all(source.context(house, 'a'.repeat(40), never()))).rejects.toThrow(HouseSourceError);
   expect(spawned).not.toHaveBeenCalled(); expect(existsSync(join(root, 'unused'))).toBe(false);
 });
+it('fetches a house that has no Housefile, and writes its files apart from the worker\'s own Housefile when it is given one', async () => {
+  const origin = repository('no-housefile', { 'notes.txt': 'only notes\n' });
+  const source = local('no-housefile-mirrors'), house = { repository: origin.address, file: '', branch: 'main' };
+  expect(await source.fetch(house, undefined, never())).toBe(origin.first);
+  const tar = (await all(source.context(house, origin.first, never(), { directory: 'repository', beside: { name: 'Housefile', data: Buffer.from('FROM ${LOOM_CORE}\n') } }))).toString('latin1');
+  expect(tar).toContain('only notes'); expect(tar).toContain('repository/notes.txt'); expect(tar).toContain('FROM ${LOOM_CORE}');
+  expect((await all(source.context(house, origin.first, never()))).toString('latin1')).not.toContain('repository/notes.txt');
+});
 it.each([
   ['an option as a branch', { branch: '--upload-pack=x' }], ['a refspec in a branch', { branch: 'main:refs/heads/x' }], ['a pattern', { branch: 'ma*n' }],
   ['a range', { branch: 'a..b' }], ['a space', { branch: 'a b' }], ['an empty branch', { branch: '' }], ['a trailing slash', { branch: 'a/' }],
   ['an absolute Housefile', { file: '/etc/passwd' }], ['a Housefile that climbs', { file: 'a/../../Housefile' }], ['a backslash', { file: 'a\\Housefile' }],
-  ['a line break in the Housefile', { file: 'House\nfile' }], ['an empty Housefile', { file: '' }], ['a Housefile through a dot', { file: './Housefile' }],
+  ['a line break in the Housefile', { file: 'House\nfile' }], ['a Housefile through a dot', { file: './Housefile' }],
 ])('refuses %s without running git', async (_what, patch) => {
   const spawned = vi.fn(), source = houseSource({ directory: join(root, 'unused'), spawn: spawned });
   await expect(source.fetch({ repository: 'https://example.com/house.git', file: 'Housefile', branch: 'main', ...patch }, undefined, never())).rejects.toThrow(HouseSourceError);
