@@ -862,9 +862,22 @@ Workers derive each job's senders from its actual stored bridge receipts rather
 than trusting message words. A claim receives only its current senders' tiers.
 
 Tool patterns have 1–512 characters, cannot begin an option dash or contain NUL or
-line breaks, and can apply to all work or only guests. One of loom's own tools is
-written `mcp__loom__<tool>`; a pattern stored as `mcp__loom_secrets__<tool>`, the
-server's former name, is read as that. A pattern that takes away `loom_command` or
+line breaks, and can apply to all work or only guests. A stored pattern is read
+as a list: its entries are parted by commas and white space outside brackets, so
+`Bash, Read` is two entries and `Bash(git commit:*)` is one. `denialEntries` in
+`src/runtime/harness-traits.ts` is the one place that reads it; loom's own rules
+ask it, and a harness is handed one entry to an argument, so the two cannot read
+a line differently. That is Claude Code's documented reading of
+`--disallowedTools`; it was not checked against a running Claude Code. The store
+also accepts lines no harness is known to honour (an unclosed bracket, which is
+read as one entry to the end of the line; a tab between entries, read as white
+space). An entry that would begin with an option dash once the line is parted
+(`Read,--flag`) fails the job before a harness is started.
+
+One of loom's own tools is written `mcp__loom__<tool>`. An entry written under
+the server's former name (`mcp__loom_secrets`, `mcp__loom_secrets__<tool>`, or a
+`*` form that reached it) still takes away what it took away: each tool it covers
+is also denied by its present name. An entry that takes away `loom_command` or
 `loom_query` takes away every named tool too (`remember`, `task_close` and the
 rest), since each is one of those two under another name. The same pattern may have
 both rules. The native receiving adapter applies the current denial rules; a
@@ -873,8 +886,8 @@ preserve both lists, and replay never reinstates an earlier configuration.
 Configuration neither runs a model/provider nor changes the household policy.
 
 Outside workspace and user identifiers are preserved exactly, without trimming.
-Workspace/user identifiers must be nonblank and control-free. Tool patterns keep
-literal spaces; leading/trailing control characters and whitespace padding do not
+Workspace/user identifiers must be nonblank and control-free. Tool patterns are stored
+as written; leading/trailing control characters and whitespace padding do not
 bypass their raw character or length checks. Option dashes after leading whitespace
 are rejected too.
 

@@ -1,7 +1,9 @@
 /** A body's named tools against a started loom: the body's own tools server, its real generic tools, the
  * body's own credential, and loom's real doors. No harness: an MCP client stands where the model would. */
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {ProjectsStore} from '../backends/projects.js';
+import {PeopleStore} from '../backends/people.js';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {eq} from 'drizzle-orm';
@@ -24,11 +26,12 @@ const ORIGIN='https://loom.invalid',GENERIC=['loom_commands','loom_command','loo
 type Sent={path:string;bearer:string|null;input:unknown;answer:{ok?:boolean;code?:string;message?:string;errors?:{message:string}[];data?:unknown}};
 type Called={error:boolean;text:string;sent:Sent[]};
 
-async function body(options:{agent?:string}={agent:'art'}){
+async function body(options:{agent?:string;seed?:(other:{directory:string;memories:string})=>void}={agent:'art'}){
  const home=mkdtempSync(join(tmpdir(),'loom-body-named-fiction-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));
  const commons=join(home,'commons'),directory=join(home,'agents','art');
- const memory={checkingAgent:'art',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'memories.db')}]}};
- await prepareSharedMemorySources(memory);
+ const other=join(home,'agents','mark');
+ const memory={checkingAgent:'art',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'memories.db')},{agent:'mark',directory:other,memories:join(other,'memories.db')}]}};
+ await prepareSharedMemorySources(memory);options.seed?.(memory.sources.agents[1]);
  const fixture=await bodyFixture(clean,{memory}),sent:Sent[]=[];
  // Every request the body's tools make, with what loom answered.
  const fetcher:typeof fetch=async(url,init)=>{
@@ -51,7 +54,7 @@ async function body(options:{agent?:string}={agent:'art'}){
   await client.connect(new StreamableHTTPClientTransport(new URL('/mcp',ORIGIN),{fetch:async(url,init)=>fixture.root.http.request(new Request(url,init)),requestInit:{headers:{authorization:'Bearer '+bodyCredentials.agent}}}));
   try{return (await client.listTools()).tools;}finally{await client.close();}
  };
- return {fixture,tools,model,call,terminal,sent};
+ return {fixture,tools,model,call,terminal,sent,home};
 }
 
 it('serves a body the named tools a terminal session of its agent is offered, under the same names',async()=>{
@@ -76,6 +79,8 @@ function asTheDoorAnswered(name:string,called:Called){
   expect(sent.bearer,name).toBe('Bearer '+bodyCredentials.body);
   expect(sent.path,name).toMatch(/^\/graphql$|^\/api\/(?:runtime\/commandCatalog|memory\/[A-Za-z]+|mind\/[A-Za-z]+|tasks\/command|household\/propose)$/);
  }
+ // A command goes out only after the catalogue was asked about it, as the generic tool does.
+ called.sent.forEach((sent,index)=>{if(sent.path.startsWith('/api/')&&sent.path!=='/api/runtime/commandCatalog')expect(called.sent[index-1]?.path,name).toBe('/api/runtime/commandCatalog');});
  const refusal=called.sent.find(sent=>sent.path!=='/graphql'&&sent.answer.ok!==true),unread=called.sent.find(sent=>sent.path==='/graphql'&&(sent.answer.errors?.length||!sent.answer.data));
  if(refusal)expect(called,name).toMatchObject({error:true,text:refusal.answer.message+' ('+refusal.answer.code+')'});
  else if(unread)expect(called.error,name).toBe(true);
@@ -163,3 +168,54 @@ it('adds to a body\'s start only the tools\' own definitions, within a stated si
  // tokens; at 3.5 to 4 bytes a token for this kind of JSON that is about 4,700 to 5,400 tokens more.
  expect(named).toBeLessThanOrEqual(NAMED_TOOLS_BYTES);expect(named).toBeGreaterThan(before);
 },60_000);
+
+it('gives a body told another agent\'s name nothing of that agent\'s: the door answers for the credential',async()=>{
+ // The body's program is told it is mark. Its credential is art's. The member it works for has both agents.
+ const b=await body({agent:'mark',seed:other=>{
+  writeFileSync(join(other.directory,'IDENTITY.md'),'MARK_SECRET_CREED');
+  const projects=new ProjectsStore({dbPath:other.memories});projects.write({slug:'fictional-mark-shed',name:'MARK_SECRET_PROJECT'});projects.close();
+  const people=new PeopleStore({dbPath:other.memories});people.write({slug:'fictional-mark-friend',name:'MARK_SECRET_PERSON'});people.close();
+ }});
+ b.fixture.root.writes.run(()=>b.fixture.db.insert(schema.memberAgents).values({member:'alice',agent:'mark'}).run());
+ const id='mark:00000000-0000-4000-8000-000000000000';
+ const every:Record<string,Record<string,unknown>[]>={
+  // The tools that use the agent's name: in a read's variables, in a card's id, to pick their own rows, or as a task's owner.
+  identity:[{},{piece:'creed'},{piece:'all'}],note_read:[{path:'work/pump'}],note_list:[{}],memory_drafts:[{}],
+  person:[{},{slug:'fictional-mark-friend'}],project:[{},{slug:'fictional-mark-shed'}],task_create:[{title:'Fictional',goal:'g',why:'w'}],
+  // The rest never send the name: loom takes the agent from the credential.
+  remember:[{category:'reference',title:'Fictional told-mark memory',content:'words'}],recall:[{query:'secret creed project person'}],update:[{id,content:'x'}],forget:[{id}],episodes:[{}],
+  knowledge_recall:[{query:'secret'}],knowledge_write:[{title:'Fictional page',domain:'fictional',body:'words'}],knowledge_read:[{slug:'fictional-page'}],knowledge_edit:[{slug:'fictional-page',body:'more'}],
+  knowledge_check:[{slug:'fictional-page',outcome:'still-true'}],knowledge_restore:[{slug:'fictional-page',revision:1}],note_write:[{path:'work/told',body:'words',lifespan:'keep'}],
+  person_write:[{slug:'fictional-told',name:'Fictional told'}],project_write:[{slug:'fictional-told',name:'Fictional told'}],
+  memory_propose:[{category:'reference',title:'Fictional draft',content:'words'}],memory_ratify:[{id:'mark:proposal:00000000-0000-4000-8000-000000000000'}],memory_archive:[{id}],memory_restore:[{id}],memory_history:[{id}],
+  task_ready:[{}],task:[{id:'t-1'}],task_edit:[{id:'t-1',priority:1}],task_move_to_project:[{ids:['t-1'],project:null}],task_claim:[{id:'t-1'}],task_close:[{id:'t-1',reason:'done'}],task_comment:[{id:'t-1',text:'words'}],
+  propose:[{change:'settings',input:{commsDays:7},why:'Fictional'}],approvals:[{}],inbox:[{}],
+ };
+ expect(Object.keys(every).sort()).toEqual([...bodyNamedToolNames()].sort());
+ const answers:Record<string,Called[]>={};
+ for(const [name,calls] of Object.entries(every)){
+  answers[name]=[];
+  for(const args of calls){
+   const called=await b.call(name,args);answers[name].push(called);
+   // Not in what the model is shown, and not in anything loom sent back for it.
+   expect(JSON.stringify([called.text,called.sent.map(sent=>sent.answer)]),name).not.toContain('MARK_SECRET');
+  }
+ }
+ const said=(name:string)=>answers[name].map(called=>[called.error,called.text]);
+ // Where the name matters: refused, or told there is nothing. Never mark's.
+ expect(said('identity')).toEqual([[true,'Identity unavailable'],[true,'Identity unavailable'],[true,'Identity unavailable']]);
+ expect(said('note_list')).toEqual([[true,'Notes are not readable with this credential']]);
+ expect(said('note_read')).toEqual([[false,'No note at work/pump']]);
+ expect(said('memory_drafts')).toEqual([[false,'No drafts.']]);
+ expect(said('person')).toEqual([[false,'No person cards.'],[false,'No person card for fictional-mark-friend']]);
+ expect(said('project')).toEqual([[false,'No project cards.'],[false,'No project card for fictional-mark-shed']]);
+ expect(said('task_create')).toEqual([[true,'Permission denied (denied)']]);
+ // The lists are empty because loom showed this credential no card of mark's, not because the tool hid one.
+ expect(JSON.parse((await b.call('loom_query',{query:'{memoryPeople{slug agent} memoryProjects{slug agent}}'})).text).data).toEqual({memoryPeople:[{slug:'fictional-told',agent:'art'}],memoryProjects:[{slug:'fictional-told',agent:'art'}]});
+ // Where it does not: the tool acted as art, whatever the body was told.
+ expect(said('remember')[0][1]).toMatch(/^Remembered "Fictional told-mark memory" \(art:[a-f0-9-]{36}\)$/);
+ expect(said('memory_propose')[0][1]).toMatch(/\(art:proposal:/);
+ for(const name of ['update','forget','memory_archive','memory_restore','memory_ratify'])expect(answers[name][0].error,name).toBe(true);
+ expect(readFileSync(join(b.home,'agents','mark','IDENTITY.md'),'utf8')).toBe('MARK_SECRET_CREED');
+ const marks=new ProjectsStore({dbPath:join(b.home,'agents','mark','memories.db')});try{expect(marks.rows(false)).toHaveLength(1);expect(JSON.stringify(marks.read('fictional-mark-shed'))).toContain('MARK_SECRET_PROJECT');}finally{marks.close();}
+},120_000);

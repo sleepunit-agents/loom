@@ -23,10 +23,35 @@ export interface HarnessTraits {
 export function hasGuest(policy: WorkerRunPolicy | undefined): boolean {
   return policy?.people.some(person => person.kind !== 'person' && person.tier !== 3) ?? false;
 }
-/** The tool patterns this job's body is not given: every always-denied one, and the guests-only ones when a guest is in the room. */
+/** A stored denial as the entries it holds. This is the one place that says what a stored denial means.
+ *
+ * The store takes any one line of 1 to 512 characters (shared-agent-body-policy.ts), and a harness that
+ * takes a list of tools reads such a line as several: Claude Code's --disallowedTools is "a comma or
+ * space-separated list", with what stands in brackets kept whole (`Bash(git commit:*)`). So entries are
+ * parted by commas and white space outside brackets, and nothing else. Everything that asks what a
+ * denial covers, and everything handed to a harness, goes through here: a harness is given one entry to
+ * an argument and has nothing left to split, so loom and the harness cannot read one line two ways.
+ *
+ * Forms the store accepts that no harness is known to honour are still read without loss, and count for
+ * loom's own rules as far as they can: an unclosed bracket runs to the end of the line as one entry, and a
+ * closing bracket with none open is an ordinary character. */
+export function denialEntries(stored: string): string[] {
+  const entries: string[] = [];
+  let entry = '', depth = 0;
+  for (const character of stored) {
+    if (character === '(') depth++;
+    else if (character === ')' && depth > 0) depth--;
+    if (depth === 0 && (character === ',' || /\s/.test(character))) { if (entry) entries.push(entry); entry = ''; }
+    else entry += character;
+  }
+  if (entry.trim()) entries.push(entry.trim());
+  return entries;
+}
+/** What this job's body is not given, as entries (denialEntries), each once: every always-denied one, and the
+ * guests-only ones when a guest is in the room. */
 export function deniedTools(policy: WorkerRunPolicy | undefined): string[] {
   const guest = hasGuest(policy);
-  return [...new Set((policy?.deniedTools ?? []).filter(rule => !rule.guestsOnly || guest).map(rule => rule.pattern))];
+  return [...new Set((policy?.deniedTools ?? []).filter(rule => !rule.guestsOnly || guest).flatMap(rule => denialEntries(rule.pattern)))];
 }
 /** The policy with one more sender nobody vouched for. The body uses it for outside mail that arrived
  * after loom read the room at claim: such a sender's tier was never looked up, so they count as a guest. */

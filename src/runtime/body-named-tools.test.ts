@@ -6,6 +6,8 @@ import {z} from 'zod';
 import {McpServer} from '@modelcontextprotocol/server';
 import {registerNamedTools} from '../shared-mcp-named.js';
 import {bodyDeniedTools,bodyNamedToolNames,bodyNamedTools} from './body-named-tools.js';
+import {deniedTools,denialEntries} from './harness-traits.js';
+import type {WorkerRunPolicy} from './worker.js';
 import {bodyModelTools,BODY_EXTENSION_TOOLS_MAX,type BodyModelTool} from './body-model-tools.js';
 import {harnessToolNames,harnessToolPrefix} from './body-harness.js';
 import {programToolDefinitions} from './body-program-tools.js';
@@ -96,34 +98,90 @@ it('does not repeat in a body what the body was handed when it started',async()=
  const all:Record<string,string>={agent:'art',creed:'FICTIONAL CREED',preferences:'FICTIONAL PREFERENCES',topOfMind:'FICTIONAL TOP',selfModel:'FICTIONAL SELF',p0:'FICTIONAL PROJECT PAGE'};
  // As loom does, answer with the fields the query names and no others.
  const g=generic({query:input=>{asked.push(input.query);return text({data:{memoryIdentity:Object.fromEntries(Object.entries(all).filter(([field])=>new RegExp('\\b'+field+'\\b').test(input.query.slice(input.query.indexOf('{memoryIdentity'))))) }});}});
- const tools=bodyNamedTools({agent:'art',generic:g.tools});
+ const tools=bodyNamedTools({agent:'art',generic:g.tools,identityHanded:true});
  const core=(await call(tools,'identity',{project:'pond'})).content[0].text;
  expect(core).toContain('Agent: art');expect(core).toContain('FICTIONAL PROJECT PAGE');expect(core).toContain('# Pieces');expect(core).toContain('handed to this body when it started');
+ // The index says how to read again what was not repeated.
+ expect(core).toContain('- creed, preferences, top-of-mind:');
  expect(core).not.toContain('FICTIONAL CREED');expect(core).not.toContain('FICTIONAL PREFERENCES');expect(core).not.toContain('FICTIONAL TOP');
  expect(asked[0]).not.toMatch(/\b(creed|preferences|topOfMind)\b/);
  // A piece asked for by name is returned as asked.
  const creed=(await call(tools,'identity',{piece:'creed'})).content[0].text;expect(creed).toContain('FICTIONAL CREED');
  expect((await call(tools,'identity',{piece:'self-model'})).content[0].text).toContain('FICTIONAL SELF');
  expect((await call(tools,'identity',{agent:'mark'})).isError).toBe(true);
+ // A body that was handed nothing (its agent has no identity, or the read came back empty) is not told it was.
+ const bare=bodyNamedTools({agent:'art',generic:g.tools,identityHanded:false}),whole=(await call(bare,'identity',{})).content[0].text;
+ expect(whole).toContain('FICTIONAL CREED');expect(whole).toContain('FICTIONAL TOP');expect(whole).not.toContain('handed to this body');expect(whole).not.toContain('- creed, preferences, top-of-mind:');
+ // The description is one for a terminal and a body, and is true of both.
+ expect(tools.find(tool=>tool.name==='identity')!.description).toContain('not repeated');
 });
 
-it('denies every named tool in a room that is denied a generic tool, and reads a rule written under the old server name',()=>{
+it('reads a stored denial as the entries a harness would take it for, in one place',()=>{
+ // One stored string may hold several entries, apart by commas or spaces; brackets keep their own.
+ expect(denialEntries('Read')).toEqual(['Read']);
+ expect(denialEntries(' Read ')).toEqual(['Read']);
+ expect(denialEntries('Bash,mcp__loom__loom_command')).toEqual(['Bash','mcp__loom__loom_command']);
+ expect(denialEntries('Bash mcp__loom__loom_command')).toEqual(['Bash','mcp__loom__loom_command']);
+ expect(denialEntries('Bash, Read\tWrite ,, Edit')).toEqual(['Bash','Read','Write','Edit']);
+ expect(denialEntries('Bash(git commit:*), Read(a, b) Write')).toEqual(['Bash(git commit:*)','Read(a, b)','Write']);
+ // Forms no harness would honour are still read without loss: an unclosed bracket runs to the end.
+ expect(denialEntries('Bash(git commit Read')).toEqual(['Bash(git commit Read']);
+ expect(denialEntries('a)b c')).toEqual(['a)b','c']);
+ expect(denialEntries(' , ')).toEqual([]);
+ // What a job's body is not given is those entries, each once: what a harness is handed needs no further splitting.
+ const policy=(people:WorkerRunPolicy['people'])=>({people,deniedTools:[{pattern:'Bash, Read',guestsOnly:false},{pattern:'Read mcp__loom__forget',guestsOnly:true}]});
+ expect(deniedTools(policy([]))).toEqual(['Bash','Read']);
+ expect(deniedTools(policy([{kind:'unknown',person:null,tier:null}]))).toEqual(['Bash','Read','mcp__loom__forget']);
+ expect(deniedTools(undefined)).toEqual([]);
+});
+
+it('denies every named tool in a room that is denied a generic tool, however the denial was written',()=>{
  const named=bodyNamedToolNames().map(name=>harnessToolPrefix+name);
+ const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
  expect(harnessToolPrefix).toBe('mcp__loom__');
- expect(bodyDeniedTools(['Bash','Write'])).toEqual(['Bash','Write']);
- expect(bodyDeniedTools(['mcp__loom__remember'])).toEqual(['mcp__loom__remember']);
- for(const pattern of ['mcp__loom__loom_command','mcp__loom__loom_query','mcp__loom__loom_*','mcp__loom__*','mcp__loom','mcp__*'])
-  expect(bodyDeniedTools(['Bash',pattern]),pattern).toEqual(['Bash',pattern,...named]);
- // Written loosely, it still counts.
- expect(bodyDeniedTools([' mcp__loom__loom_command(*)'])).toEqual([' mcp__loom__loom_command(*)',...named]);
- // loom_commands only lists; denying it denies nothing else.
- expect(bodyDeniedTools(['mcp__loom__loom_commands'])).toEqual(['mcp__loom__loom_commands']);
- // Rules stored before the server was renamed.
- expect(bodyDeniedTools(['mcp__loom_secrets__use_secret'])).toEqual(['mcp__loom__use_secret']);
- expect(bodyDeniedTools(['mcp__loom_secrets'])).toEqual(['mcp__loom',...named]);
- expect(bodyDeniedTools(['mcp__loom_secrets__*','mcp__loom__*'])).toEqual(['mcp__loom__*',...named]);
- expect(bodyDeniedTools(['mcp__loom_secrets__loom_command'])).toEqual(['mcp__loom__loom_command',...named]);
- expect(bodyDeniedTools(['mcp__loom_secretsx__tool'])).toEqual(['mcp__loom_secretsx__tool']);
- expect(bodyDeniedTools([' mcp__loom_secrets__loom_query '])).toEqual([' mcp__loom__loom_query ',...named]);
- expect(bodyDeniedTools(['mcp__loom__loom_command','mcp__loom__remember'])).toEqual(['mcp__loom__loom_command','mcp__loom__remember',...named.filter(name=>name!=='mcp__loom__remember')]);
+ expect(denied('Bash','Write')).toEqual(['Bash','Write']);
+ expect(denied('mcp__loom__remember')).toEqual(['mcp__loom__remember']);
+ for(const pattern of ['mcp__loom__loom_command','mcp__loom__loom_query','mcp__loom__loom_*','mcp__loom__*','mcp__loom','mcp__*','mcp__loom__loom_command(*)',' mcp__loom__loom_query '])
+  expect(denied('Bash',pattern),pattern).toEqual(expect.arrayContaining(['Bash',pattern.trim(),...named]));
+ // Several entries in one stored string: with commas, with spaces, mixed, and beside a bracketed one.
+ for(const stored of ['Bash,mcp__loom__loom_command','Bash mcp__loom__loom_command','Read, Bash(git commit:*) mcp__loom__loom_query,Write','Read,mcp__loom__loom_query(a, b)'])
+  expect(denied(stored),stored).toEqual(expect.arrayContaining(named));
+ expect(denied('Bash,mcp__loom__loom_command')).toEqual(['Bash','mcp__loom__loom_command',...named]);
+ // A denial of loom_query alone takes the named tools; so does one of loom_command alone. Neither takes the other generic tool.
+ expect(denied('mcp__loom__loom_query')).toEqual(['mcp__loom__loom_query',...named]);
+ expect(denied('mcp__loom__loom_query')).not.toContain('mcp__loom__loom_command');
+ expect(denied('mcp__loom__loom_command')).not.toContain('mcp__loom__loom_query');
+ // loom_commands only lists; denying it, or one named tool, denies nothing else.
+ expect(denied('mcp__loom__loom_commands')).toEqual(['mcp__loom__loom_commands']);
+ expect(denied('Read,mcp__loom__forget')).toEqual(['Read','mcp__loom__forget']);
+ expect(denied('mcp__loom__loom_command','mcp__loom__remember')).toEqual(['mcp__loom__loom_command','mcp__loom__remember',...named.filter(name=>name!=='mcp__loom__remember')]);
+});
+
+it('keeps a denial stored under the tools server\'s old name in force, in every form the store accepts',()=>{
+ const named=bodyNamedToolNames().map(name=>harnessToolPrefix+name);
+ const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
+ const every=['request_secret','use_secret','loom_commands','loom_command','loom_query',...bodyNamedToolNames()].map(name=>harnessToolPrefix+name);
+ // The old entry stays as written (it names nothing now) and the tool it took away is named as it is called today.
+ expect(denied('mcp__loom_secrets__use_secret')).toEqual(['mcp__loom_secrets__use_secret','mcp__loom__use_secret']);
+ expect(denied('mcp__loom_secrets__request_secret(*)')).toEqual(['mcp__loom_secrets__request_secret(*)','mcp__loom__request_secret']);
+ expect(denied('mcp__loom_secrets__loom_commands')).toEqual(['mcp__loom_secrets__loom_commands','mcp__loom__loom_commands']);
+ // Past the first entry of a stored string, with commas and with spaces, beside the new name.
+ expect(denied('Read,mcp__loom_secrets__use_secret')).toEqual(['Read','mcp__loom_secrets__use_secret','mcp__loom__use_secret']);
+ expect(denied('Bash mcp__loom_secrets__loom_command')).toEqual(['Bash','mcp__loom_secrets__loom_command','mcp__loom__loom_command',...named]);
+ expect(denied('Bash, mcp__loom__remember mcp__loom_secrets__loom_query')).toEqual(expect.arrayContaining(['mcp__loom__loom_query',...named]));
+ expect(denied(' mcp__loom_secrets__loom_query ')).toEqual(['mcp__loom_secrets__loom_query','mcp__loom__loom_query',...named]);
+ // The whole server, and every glob that reached it, whether or not it spells the old name out.
+ for(const pattern of ['mcp__loom_secrets','mcp__loom_secrets__*','mcp__loom_secrets*','mcp__loom_sec*','mcp__loom_*','Read,mcp__loom_secrets'])
+  expect(denied(pattern),pattern).toEqual(expect.arrayContaining(every));
+ expect(denied('mcp__loom_secrets__use_*')).toEqual(['mcp__loom_secrets__use_*','mcp__loom__use_secret']);
+ expect(denied('mcp__loom_secrets__loom_c*')).toEqual(expect.arrayContaining(['mcp__loom__loom_commands','mcp__loom__loom_command',...named]));
+ // Another server whose name only begins the same way is not loom's.
+ expect(denied('mcp__loom_secretsx__tool')).toEqual(['mcp__loom_secretsx__tool']);
+ expect(denied('mcp__loom_secretsx')).toEqual(['mcp__loom_secretsx']);
+});
+
+it('takes the two generic tools\' names from where they are defined',()=>{
+ // A named tool is made of these two. Were one renamed there and not found here, a body would get no named tools.
+ expect(programToolDefinitions.map(([name])=>name)).toEqual(['loom_commands','loom_command','loom_query']);
+ const g=generic();expect(bodyNamedTools({agent:'art',generic:g.tools}).length).toBe(bodyNamedToolNames().length);
 });

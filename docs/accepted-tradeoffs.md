@@ -541,7 +541,8 @@ Entries are grouped by the part of the program they belong to.
   and `loom_query` under plain names. When a job's denied tools take either of those two away, the harness
   is told to deny every named tool. A room denied only `loom_command` therefore loses `recall` and
   `note_read` as well, though they only read; it keeps `loom_query`.
-- **Where.** `bodyDeniedTools` in `src/runtime/body-named-tools.ts`, called by `src/runtime/claude-body.ts`.
+- **Where.** `bodyDeniedTools` in `src/runtime/body-named-tools.ts`, called by `src/runtime/claude-body.ts`, over
+  the entries `denialEntries` reads from each stored pattern (`src/runtime/harness-traits.ts`).
 - **Why accepted.** The rule that matters is that a named tool never does what the room was denied. The
   one definition does not say which port each tool uses, and a second list saying so could fall out of
   step with it in the direction that lets a write through. Denying too much cannot.

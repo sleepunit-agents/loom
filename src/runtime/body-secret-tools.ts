@@ -25,9 +25,11 @@ const failed=()=>({isError:true,content:[{type:'text' as const,text:unavailable(
 export async function bodySecretTools(input:{url:string;token:string;job:string;conversation:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;waiting?(value:boolean):void;extraTools?:readonly BodyModelTool[];
  /** The agent this body is, from the worker's assignment. With it, and with loom_command and loom_query among
   * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
- agent?:string}){
+ agent?:string;
+ /** Whether the body was given its identity in its first words; `identity` then does not repeat it. */
+ identityHanded?:boolean}){
  const generic=bodyModelTools(input.extraTools);
- const extensions=bodyModelTools([...generic,...(input.agent?bodyNamedTools({agent:input.agent,generic}):[])]),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
+ const extensions=bodyModelTools([...generic,...(input.agent?bodyNamedTools({agent:input.agent,generic,identityHanded:input.identityHanded}):[])]),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
  const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
  const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();

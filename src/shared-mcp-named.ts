@@ -76,7 +76,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
   });
 
  const section=z.enum(['creed','preferences','top-of-mind','self-model','last-24h','harness','model','all']);
- server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; pass piece or pieces for self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
+ server.registerTool('identity',{description:'Load your own Identity. Returns the creed, preferences, Top of Mind and an index of further pieces; what you were handed when you started is not repeated unless you ask for it by name. Pass piece or pieces for creed, preferences, top-of-mind, self-model, last-24h, harness (with client), model (with model) or all. Hints never select another caller or grant authority.',
   inputSchema:z.object({agent:z.string().optional(),client:z.string().max(100).optional(),model:z.string().max(100).optional(),piece:section.optional(),pieces:z.array(section).max(8).optional(),role:z.string().max(100).optional(),project:z.string().max(100).optional()}).strict()},
   async(given):Promise<Result>=>{
    // The server checked `given` against the schema above before calling.
@@ -101,7 +101,7 @@ export function registerNamedTools(server:NamedToolRegistry,ports:NamedToolPorts
     add('Identity',identity.creed);add('Preferences',identity.preferences);add('Top of Mind',identity.topOfMind);add('Self-Model',identity.selfModel);add('Last 24 hours',identity.recent);
     const shown=new Set<string>();for(const entry of pages)if(identity[entry.alias]&&!shown.has(entry.heading)){shown.add(entry.heading);add(entry.heading,identity[entry.alias]);}
     if(handed)parts.unshift('Your creed, preferences and Top of Mind were handed to this body when it started; they are not repeated here.');
-    if(core)parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client or model for their pages. Use piece: "all" for everything.\n\n- last-24h: what other bodies did recently\n- self-model: before reflection, retro or identity work\n- harness: before scheduling, delegation or harness-specific work (pass client)\n- model: when choosing or describing models (pass model)');
+    if(core)parts.push('# Pieces\n\nLoad with identity({piece: "name"}); pass client or model for their pages. Use piece: "all" for everything.\n\n- last-24h: what other bodies did recently\n- self-model: before reflection, retro or identity work\n- harness: before scheduling, delegation or harness-specific work (pass client)\n- model: when choosing or describing models (pass model)'+(handed?'\n- creed, preferences, top-of-mind: already in your first words; ask for one by name to read it again':''));
     return say('Agent: '+agent+'\n\n'+(parts.join('\n\n---\n\n')||'No Identity has been written.'));
    }catch{return refuse('Identity unavailable');}
   });

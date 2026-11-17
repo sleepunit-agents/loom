@@ -100,14 +100,21 @@ operations (`docs/runtime/worker.md`, "Composing native tools").
   where they are refused. A body working for a member sees through `approvals`,
   `inbox` and `task` what that member's reach allows, as its `loom_query` does.
 - **Denials.** A room that is denied `loom_command` or `loom_query` (an agent's
-  denied tools, `docs/runtime/worker.md`) is denied every named tool as well. A
-  pattern stored under the server's former name, `mcp__loom_secrets`, is read
-  as the same pattern under `mcp__loom`.
+  denied tools, `docs/runtime/worker.md`) is denied every named tool as well,
+  however the stored pattern lists its entries. An entry stored under the
+  server's former name, `mcp__loom_secrets`, still denies the tools it denied.
+- **Whose.** The body's program is told its agent's name by the worker, and a
+  few tools use it: `identity`, `note_read`, `note_list`, `memory_drafts`,
+  `person`, `project` and `task_create`. The name selects nothing. Loom takes
+  the agent from the credential, so a body told another agent's name is
+  refused by those tools or told there is nothing, and every other tool acts
+  as the credential's agent.
 - **`identity`.** A body is handed its creed, preferences, self-model, Top of
-  Mind and last 24 hours when it starts. In a body `identity` with no piece
-  asked does not repeat the creed, preferences and Top of Mind: it returns the
-  role or project page asked for and the index of pieces. A piece asked for by
-  name is returned.
+  Mind and last 24 hours when it starts, if its agent has any. In a body that
+  was handed them, `identity` with no piece asked does not repeat the creed,
+  preferences and Top of Mind: it returns the role or project page asked for
+  and the index of pieces, which says so. A piece asked for by name is
+  returned.
 - **Which.** All of them: none of the named tools is about the terminal's own
   session. A body built without `loom_command` and `loom_query` gets none.
 - **Cost.** Nothing is added to the words a body starts with. The tools' own

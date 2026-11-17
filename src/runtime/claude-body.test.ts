@@ -24,14 +24,21 @@ it.each([1, 2, null] as const)('applies guest-only native denials for tier %s', 
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }];
   const result = f.run(configured, 'mail', f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-3)).toEqual(['--disallowedTools', 'Read', 'Bash(*)']); f.finish(f.rows()); await result;
 });
-it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query'])('denies every named tool in a room that is denied the generic tool under it: %s', async pattern => {
+it('starts no harness for a denial whose later entry would be read as an option', async () => {
+  // The store refuses a pattern that begins with a dash. One that hides the dash behind a comma is refused here.
+  const f = fixture(), configured = structuredClone(job); configured.run!.policy!.deniedTools = [{ pattern: 'Read,--dangerously-skip-permissions', guestsOnly: false }];
+  await expect(f.run(configured, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
+});
+it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a room that is denied the generic tool under it: %s', async pattern => {
   // An owner's rule may be for guests only, and may have been stored when the tools server had its old name.
   const f = fixture(), configured = structuredClone(job);
   configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }];
   configured.run!.policy!.deniedTools = [{ pattern, guestsOnly: true }];
   const result = f.run(configured, 'mail', f.abort.signal), args = f.launch.mock.calls[0][1], denied = args.slice(args.indexOf('--disallowedTools') + 1);
-  expect(denied[0]).toBe(pattern.replace('mcp__loom_secrets__', 'mcp__loom__'));
-  expect(denied.slice(1)).toEqual(bodyNamedToolNames().map(name => 'mcp__loom__' + name));
+  // Each entry is its own argument, so the harness has nothing left to split; the generic tool is named as it is called now.
+  const generic = 'mcp__loom__' + /loom_(?:command|query)$/.exec(pattern)![0];
+  expect(denied).toEqual([...new Set([...pattern.split(/[ ,]/), generic, ...bodyNamedToolNames().map(name => 'mcp__loom__' + name)])]);
+  expect(denied.every(entry => !/[ ,]/.test(entry))).toBe(true);
   expect(denied).toEqual(expect.arrayContaining(['mcp__loom__remember', 'mcp__loom__forget', 'mcp__loom__task_close', 'mcp__loom__recall']));
   f.finish(f.rows()); await result;
   // The same rule with no guest in the room denies nothing.
