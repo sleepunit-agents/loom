@@ -8,6 +8,7 @@ import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
 import { keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, household } from './core/data/schema.js';
+import { DEFAULT_STALE_DAYS, fieldState, freshUntil } from './backends/cards.js';
 import { MAX_SLUG } from './backends/people.js';
 import { MAX_PROJECT_SLUG } from './backends/projects.js';
 import { secretAgent } from './pieces/secrets/input.js';
@@ -117,4 +118,18 @@ it('states the shape of a body\'s token once, where it is made', () => {
 
 it('states how much earlier talk a body is handed once', () => {
   for (const file of ['src/core/conversations/history-context.ts', 'src/runtime/conversation-client.ts']) expect(text(file), file).toContain('HISTORY_BYTES');
+});
+
+it('decides whether a card field is stale in one place', () => {
+  const field = { verified_at: '2026-11-01T00:00:00.000Z' }, checked = Date.parse(field.verified_at), day = 86400000;
+  expect(freshUntil(field)).toBe(checked + DEFAULT_STALE_DAYS * day);
+  expect(freshUntil({ ...field, stale_after_days: 2 })).toBe(checked + 2 * day);
+  expect(freshUntil({})).toBeUndefined();
+  // Strictly after: the last fresh moment is still fresh.
+  expect(fieldState(field, freshUntil(field)!).kind).toBe('ok');
+  expect(fieldState(field, freshUntil(field)! + 1)).toEqual({ kind: 'stale', days: DEFAULT_STALE_DAYS });
+  expect(fieldState({}, checked).kind).toBe('unverified');
+  // The door's People and Projects reads use it; none carries the default or the comparison itself.
+  const copies = sources('src').filter(file => file !== 'src/backends/cards.ts' && /stale_after_days\s*\?\?/.test(text(file)));
+  expect(copies).toEqual([]);
 });

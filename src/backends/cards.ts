@@ -145,12 +145,18 @@ export interface EnvelopeBase {
 
 export type FieldState = { kind: 'ok' } | { kind: 'unverified' } | { kind: 'stale'; days: number };
 
-/** Stale when now − verified_at > stale_after_days × 86,400 s (strictly greater). */
+/** The last moment a checked field still counts as fresh: its own number of days after it was checked, or
+ * the default. It is stale strictly after this. Undefined for a field that was never checked. */
+export function freshUntil(env: EnvelopeBase): number | undefined {
+  return env.verified_at ? Date.parse(env.verified_at) + (env.stale_after_days ?? DEFAULT_STALE_DAYS) * DAY_MS : undefined;
+}
+
+/** Stale when now − verified_at > stale_after_days × 86,400 s (strictly greater). The rendered card and
+ * the door's People and Projects reads all ask here. */
 export function fieldState(env: EnvelopeBase, nowMs: number): FieldState {
-  if (!env.verified_at) return { kind: 'unverified' };
-  const age = nowMs - Date.parse(env.verified_at);
-  const limit = (env.stale_after_days ?? DEFAULT_STALE_DAYS) * DAY_MS;
-  if (age > limit) return { kind: 'stale', days: Math.floor(age / DAY_MS) };
+  const until = freshUntil(env);
+  if (until === undefined) return { kind: 'unverified' };
+  if (nowMs > until) return { kind: 'stale', days: Math.floor((nowMs - Date.parse(env.verified_at!)) / DAY_MS) };
   return { kind: 'ok' };
 }
 

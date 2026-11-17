@@ -9,7 +9,7 @@ import {resolveCardReference} from './card-references.js';
 import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
 import type {ProjectSectionRole,ProjectQuery} from './projects-roles.js';
-import {MAX_REVISIONS} from '../../backends/cards.js';
+import {MAX_REVISIONS,fieldState} from '../../backends/cards.js';
 import {hottestIds} from '../../backends/salience.js';
 export type {ProjectRecord} from './projects-model.js';
 const itemSchema=z.object({title:z.string(),ref:z.string().optional(),when:z.string().optional(),changed:z.string().optional(),status:z.string().optional(),body:z.string().optional(),href:z.string().optional(),who:z.array(z.string()).optional(),waiting:z.boolean().optional(),new:z.boolean().optional()}).strict();
@@ -93,7 +93,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   dated.sort((a,b)=>Date.parse(b.when!)-Date.parse(a.when!));
   const spark=Array.from({length:7},()=>0);for(const i of dated){const back=Math.floor((now-Date.parse(i.when!))/day);if(back>=0&&back<7)spark[6-back]++;}
   const activity=latest([row.updated,...sections.filter(s=>['memories','notes'].includes(s.key)&&s.available&&!s.error&&s.activity).map(s=>s.activity!)]);
-  return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':now>Date.parse(f.verified_at)+(f.stale_after_days??14)*day?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
+  return {id:`${agent}:${row.slug}`,agent,agents:options.agents.filter(a=>allowed(viewer,a.agent)).map(a=>a.agent),now,slug:row.slug,name:card.name,card,updated:row.updated,activity,archived:!!row.archived_at,sections,waiting,unknown:sections.some(s=>!!s.error||(!s.available&&['tasks','conversations','changes'].includes(s.key))),lately:dated.filter(i=>!i.waiting).slice(0,3),people:[...people.values()],spark,...(changes?{changes}:{}),fields:Object.entries(card.where).map(([key,f])=>({key,value:f.value,state:!f.verified_at?'not checked':fieldState(f,now).kind==='stale'?`stale for ${days(now-Date.parse(f.verified_at))}`:`checked ${days(now-Date.parse(f.verified_at))} ago`}))};
  }
  // Keep separate index/hub projections so paused cards never invoke roles just to list them.
  const hub=(id:string,v:Viewer)=>read(id,v,true);

@@ -1,9 +1,10 @@
 /** Timer metadata from a computed hub; no content or persistent store of its own. */
 import type {ProjectRecord} from './projects-model.js';
+import {freshUntil} from '../../backends/cards.js';
 const day=86400000;
 export function projectDeadline(record:ProjectRecord,now:number):number|undefined {
  const deadlines=Object.values(record.card.where).flatMap(field=>field.verified_at?[
-  Date.parse(field.verified_at)+(field.stale_after_days??14)*day+1,
+  freshUntil(field)!+1,
   Date.parse(field.verified_at)+(Math.floor((now-Date.parse(field.verified_at))/day)+1)*day,
  ]:[]);
  for(const section of record.sections){
