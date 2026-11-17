@@ -7,6 +7,7 @@ import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { Threads } from '../core/conversations/threads.js';
+import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT } from './job-exit.js';
 
@@ -22,7 +23,8 @@ export const JOB_RETRIES = 3;
  * minutes: a schedule of seconds would spend every attempt before loom is back. */
 const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120_000];
 export class Jobs {
-  constructor(readonly db: DataDatabase, readonly now: () => string) {}
+  private readonly mail: Conversations;
+  constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now); }
 
   get(id: string): Job {
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
@@ -227,8 +229,7 @@ export class Jobs {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
     this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
-    this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() })
-      .where(and(eq(inbox.job, job.id), eq(inbox.state, 'taken'))).run();
+    this.mail.returnTaken(job.id);
     // What a finished body left unconfirmed is fresh mail for the next admission. After a stop, a failure
     // or a loss it stays with this job: retry() hands it to a successor, or it waits for fresh mail.
     if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
