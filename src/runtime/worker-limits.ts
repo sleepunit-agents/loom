@@ -24,6 +24,12 @@ export const SLOTS_MAX = 16;
 /** How many bodies a worker runs on one account at once when the configuration does not say
  * (`accountSlots`); never more than its slots. */
 export const ACCOUNT_SLOTS_DEFAULT = 4;
+/** The harnesses whose default is another number. Bodies on one account share its sign-in, and each
+ * harness's program renews it for itself. Claude Code takes a lock in the sign-in directory and reads the
+ * sign-in again before it renews. For Codex no such thing is established, so its bodies run one at a time
+ * on an account until a machine's configuration says otherwise (docs/accepted-tradeoffs.md, "Two bodies
+ * on one account share one sign-in directory"). */
+export const ACCOUNT_SLOTS_BY_HARNESS: Readonly<Record<string, number>> = { codex: 1 };
 /** The oldest git a worker with container bodies fetches houses with: the newest of the first releases
  * of what the fetch uses. `--no-write-fetch-head` came in 2.29, settings given in the environment
  * (`GIT_CONFIG_COUNT`) in 2.31, and running with no per-user configuration file (`GIT_CONFIG_GLOBAL`) in

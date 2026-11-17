@@ -197,6 +197,13 @@ it('proposes a machine\'s settings, how an agent runs, and its outside accounts'
   expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseBranch: 'main', gpu: true });
   expect(f.db.select().from(agentBoxes).all()).toEqual([{ agent: 'art', box: 'box-1', position: 0 }]);
   await hopeless(f, await propose('runSettings', { ...run, boxes: ['no-such-box'] }));
+  // No Housefile: the agent runs in the core house loom provides. The card says so in words, to everyone who reads it.
+  const core = await propose('runSettings', { ...run, houseFile: '' });
+  expect(f.db.select().from(approvals).all().find(row => row.id === core.body.value!.id)).toMatchObject({ kind: 'setting', ask: 'Change how art runs, in the core house with no Housefile of its own?', target: 'household:runSettings:art' });
+  expect((await allow(core.body.value!.id)).body.ok).toBe(true);
+  expect(f.db.select().from(agentRunSettings).get()).toMatchObject({ agent: 'art', houseFile: '', houseRepository: 'https://example.invalid/house.git' });
+  // A path is still a path: one that climbs or is absolute is no Housefile, empty or not.
+  for (const houseFile of ['../Housefile', '/Housefile', 'a\\b']) expect((await propose('runSettings', { ...run, houseFile })).body.ok).toBe(false);
   const accounts = await propose('agentAccounts', { agent: 'art', github: ['Art-E-Fish', 'art-e-fish'] });
   expect((await allow(accounts.body.value!.id)).body.ok).toBe(true);
   expect(f.db.select().from(agentAccounts).all()).toEqual([{ agent: 'art', service: 'github', login: 'art-e-fish' }]);

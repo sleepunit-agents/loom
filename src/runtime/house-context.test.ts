@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, expect, it, vi } from 'vitest';
-import { CONTEXT_LIMITS, houseContext, HouseContextError, type ContextLimits, type ObjectStore } from './house-context.js';
+import { CONTEXT_LIMITS, houseContext, HouseContextError, plainContext, type ContextLimits, type ObjectStore } from './house-context.js';
 import { CONTEXT_ENTRIES_MAX, CONTEXT_FILE_MAX, CONTEXT_MAX, CONTEXT_NAME_MAX } from './worker-limits.js';
 
 // A real git, real repositories and the machine's own tar to read back what was written.
@@ -260,3 +260,30 @@ it('waits for a git that a signal ended, and fails', async () => {
   };
   await expect(all(houseContext(store, 'c'.repeat(40), never()))).rejects.toThrow('git failed');
 });
+
+// Files of the worker's own in a context.
+it('adds one file of the worker\'s own after the commit\'s, and refuses a commit that has that name already', async () => {
+  const house = repository('added', { 'README.md': 'a house with no Housefile\n', 'bin/run': { executable: '#!/bin/sh\n' } });
+  const added = { name: 'Housefile.loom-core', data: Buffer.from('ARG LOOM_CORE\nFROM ${LOOM_CORE}\n') };
+  const into = unpacked(await all(houseContext(storeOf(house.path), house.commit, never(), { added })), 'added');
+  expect(under(into)).toEqual(['Housefile.loom-core', 'README.md', 'bin/run']);
+  expect(readFileSync(join(into, 'Housefile.loom-core'), 'utf8')).toBe('ARG LOOM_CORE\nFROM ${LOOM_CORE}\n');
+  expect(readFileSync(join(into, 'README.md'), 'utf8')).toBe('a house with no Housefile\n');
+  // A commit with a file of that name, or with files below it: the worker's file would replace or hide the repository's own.
+  for (const [name, files] of [['same', { 'Housefile.loom-core': 'FROM scratch\n' }], ['below', { 'Housefile.loom-core/x': 'x\n' }]] as const) {
+    const taken = repository(`added-${name}`, files);
+    await expect(all(houseContext(storeOf(taken.path), taken.commit, never(), { added }))).rejects.toThrow('House has a file name the worker does not take');
+  }
+  // A name that is no single plain name is not one the worker adds.
+  for (const name of ['a/b', '../x', '/x', '']) await expect(all(houseContext(storeOf(house.path), house.commit, never(), { added: { ...added, name } }))).rejects.toThrow(HouseContextError);
+});
+it('writes files it holds in memory as a whole context', async () => {
+  const files = [{ name: 'Housefile', data: Buffer.from('FROM scratch\n') }, { name: 'body/claude.json', data: Buffer.from('{}\n') }, { name: 'bin/tool', data: Buffer.from('#!/bin/sh\n'), executable: true }, { name: 'empty', data: Buffer.alloc(0) }];
+  const into = unpacked(await all(plainContext(files)), 'plain');
+  expect(under(into)).toEqual(['Housefile', 'bin/tool', 'body/claude.json', 'empty']);
+  expect(readFileSync(join(into, 'body/claude.json'), 'utf8')).toBe('{}\n');
+  expect([lstatSync(join(into, 'bin/tool')).mode & 0o111, lstatSync(join(into, 'Housefile')).mode & 0o111]).toEqual([0o111, 0]);
+  for (const name of ['/etc/passwd', '../x', 'a//b', '']) expect(() => plainContext([{ name, data: Buffer.alloc(0) }])).toThrow(HouseContextError);
+  expect(() => plainContext([files[0], files[0]])).toThrow(HouseContextError);
+});
+

@@ -1,6 +1,6 @@
 /** Injectable executable entry: no process is spawned or home opened on import. */
 import { doorTokenIn } from '../cli/connection.js';
-import { ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
+import { ACCOUNT_SLOTS_BY_HARNESS, ACCOUNT_SLOTS_DEFAULT, BUILD_DEADLINE_MAX_MS, HOUSE_SLOTS_DEFAULT, SLOTS_MAX, STEP_DEADLINE_MAX_MS } from './worker-limits.js';
 import { workerTurns } from './worker-turns.js';
 import { keyPart } from './worker-mounts.js';
 import { z } from 'zod';
@@ -19,6 +19,8 @@ import { WORKER_STOP, WorkerStop, workerStopLine, type WorkerStopStage } from '.
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
+/** How many bodies on one account at once. */
+const accountSlot = z.number().int().min(1).max(SLOTS_MAX);
 /** A directory of this machine an agent's bodies are given, and where under the tenant's home it lands. Only the shape is read here: every rule
  * about these paths, and about the two engine sockets below, is in worker-mounts.ts, which stops the worker
  * with a line of its own (exit 52). A path written wrongly is that exit too, never this file's 41. */
@@ -42,9 +44,11 @@ const configSchema = z.object({
   build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),
   /** How many jobs the worker runs side by side. Left out: HOUSE_SLOTS_DEFAULT with container bodies, one with process bodies. */
   slots: z.number().int().min(1).max(SLOTS_MAX).optional(),
-  /** How many of those may be bodies on one account at once. Left out: ACCOUNT_SLOTS_DEFAULT, or `slots`
-   * when that is fewer. One runs an account's bodies one after the other. Never more than `slots`. */
-  accountSlots: z.number().int().min(1).max(SLOTS_MAX).optional(),
+  /** How many of those may be bodies on one account at once, for one harness: one number for every
+   * harness, or a number for each harness named. A harness not said has its default: ACCOUNT_SLOTS_BY_HARNESS,
+   * or ACCOUNT_SLOTS_DEFAULT, or `slots` when that is fewer. One runs an account's bodies one after the
+   * other. Never more than `slots`. */
+  accountSlots: z.union([accountSlot, z.record(z.string().min(1), accountSlot)]).optional(),
   /** The longest a build may take. Left out: each kind of build's own default (worker-limits.ts). */
   buildTimeoutMs: z.number().int().min(1).max(BUILD_DEADLINE_MAX_MS).optional(),
   accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), runnerCommand)).optional(),
@@ -72,7 +76,8 @@ const configSchema = z.object({
   // A body run as a process is given nothing by a mount: sign-in directories that would be shared by every
   // body all the same are refused, never quietly ignored.
   if (config.accountLogins && !config.container) context.addIssue({ code: 'custom', message: 'Account sign-in directories need container bodies' });
-  if (config.accountSlots !== undefined && config.accountSlots > (config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1))) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
+  const most = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
+  if ((typeof config.accountSlots === 'number' ? [config.accountSlots] : Object.values(config.accountSlots ?? {})).some(count => count > most)) context.addIssue({ code: 'custom', message: 'accountSlots is more than slots' });
   // Bodies as processes need the command that builds and a runner for each harness, as before.
   if (!config.container && (!config.build || !config.runners)) context.addIssue({ code: 'custom', message: 'A worker without container bodies needs build and runners' });
 });
@@ -223,7 +228,10 @@ export async function workerProgram(input: {
     // A slot that fails (a body it could not end) stops the others; each ends its own body before the
     // worker goes on to exit, and the first failure is the one reported.
     const slots = config.slots ?? (config.container ? HOUSE_SLOTS_DEFAULT : 1);
-    const turns = workerTurns({ accounts: config.accountSlots ?? Math.min(ACCOUNT_SLOTS_DEFAULT, slots) });
+    // One number is every harness's. Otherwise each harness has what the configuration says for it, or its default.
+    const said = config.accountSlots, own = (map: Readonly<Record<string, number>>, harness: string) => Object.hasOwn(map, harness) ? map[harness] : undefined;
+    const turns = workerTurns({ accounts: typeof said === 'number' ? said
+      : harness => own(said ?? {}, harness) ?? Math.min(own(ACCOUNT_SLOTS_BY_HARNESS, harness) ?? ACCOUNT_SLOTS_DEFAULT, slots) });
     try {
       if (!abort.signal.aborted) {
         const running = Array.from({ length: slots }, () => (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor: executor!, turns })

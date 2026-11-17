@@ -84,6 +84,15 @@ function headers(name: Buffer, type: '0' | '2', size: number, mode: number, link
   return Buffer.concat([header(Buffer.from('PaxHeader'), 'x', extended.length, 0o644), padded(extended), plain]);
 }
 
+/** A file the worker itself puts in a context: its name there, and its bytes. */
+export interface ContextFile { name: string; data: Buffer; executable?: boolean }
+const fileBlocks = (file: ContextFile): Buffer => Buffer.concat([headers(Buffer.from(file.name), '0', file.data.length, file.executable ? 0o755 : 0o644), padded(file.data)]);
+/** A whole context of files the worker holds in memory, as a tar stream: the core house's definition. */
+export function plainContext(files: readonly ContextFile[]): Readable {
+  if (files.some(file => !relativeName(file.name)) || new Set(files.map(file => file.name)).size !== files.length) throw new HouseContextError('Context has a file name the worker does not take');
+  return Readable.from([...files.map(fileBlocks), Buffer.alloc(2 * BLOCK)], { objectMode: false });
+}
+
 /** Read exactly what is asked from a stream, in order: a line, or so many bytes a piece at a time. */
 function reader(stream: NodeJS.ReadableStream) {
   const pieces = stream[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
@@ -140,7 +149,10 @@ function entries(listing: Buffer, limits: ContextLimits): Entry[] {
  * except a git that fails part of the way, which fails the stream where it is. Ending the stream early,
  * or the signal, ends git. */
 export function houseContext(store: ObjectStore, commit: string, signal: AbortSignal,
-  options: { limits?: ContextLimits; started?: (pid: number) => () => void } = {}): Readable {
+  options: { limits?: ContextLimits; started?: (pid: number) => () => void;
+    /** One file of the worker's own, written after the commit's: the Housefile of a house that has none.
+     * A commit that has a file of that name, or files below it, is not one the worker takes. */
+    added?: ContextFile } = {}): Readable {
   const limits = options.limits ?? CONTEXT_LIMITS, running = new Set<{ child: ChildProcess; forget?: () => void }>();
   const start = (args: readonly string[], input: 'pipe' | 'ignore') => {
     let child: ChildProcess;
@@ -167,8 +179,10 @@ export function houseContext(store: ObjectStore, commit: string, signal: AbortSi
         parts.push(piece);
       }
       if (await ended(lister) !== 0 || signal.aborted) throw new HouseContextError('git failed');
-      const found = entries(Buffer.concat(parts), limits);
+      const found = entries(Buffer.concat(parts), limits), added = options.added;
       parts.length = 0;
+      if (added && (!relativeName(added.name) || added.name.includes('/') || found.some(entry => { const name = text(entry.name); return name === added.name || name?.startsWith(`${added.name}/`); })))
+        throw new HouseContextError('House has a file name the worker does not take');
       // One git answers for every file's bytes, asked for one at a time by the object's id.
       const batch = start(['cat-file', '--batch'], 'pipe'), answers = reader(batch.stdout!);
       batch.stdin!.on('error', () => {});
@@ -195,6 +209,7 @@ export function houseContext(store: ObjectStore, commit: string, signal: AbortSi
       }
       batch.stdin!.end();
       if (await ended(batch) !== 0) throw new HouseContextError('git failed');
+      if (added) yield fileBlocks(added);
       // The end of a tar: two empty blocks.
       yield Buffer.alloc(2 * BLOCK);
     } finally { signal.removeEventListener('abort', stop); stop(); }

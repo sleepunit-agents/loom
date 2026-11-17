@@ -221,6 +221,13 @@ it('stops a worker with container bodies whose own directory cannot give a conta
   expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)\n');
   expect(f.run).not.toHaveBeenCalled();
 });
+it('stops a worker with container bodies whose install has no definition of the core house, with its own line and code', async () => {
+  const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('core'); });
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(56);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on\n');
+  expect(f.run).not.toHaveBeenCalled();
+});
 it('prints what its container executor has to say, in the executor\'s own fixed words', async () => {
   const f = fixture(); let say: ((line: string) => void) | undefined;
   const containerExecutor = vi.fn((_config: unknown, given?: { say?: (line: string) => void }) => { say = given?.say; return {}; });
@@ -309,6 +316,7 @@ it('stops before any work is claimed when a path given to containers or an engin
   mkdirSync(real); mkdirSync(other); mkdirSync(engine); symlinkSync(real, link);
   const program = join(root, 'install'); mkdirSync(join(program, 'dist'), { recursive: true }); mkdirSync(join(program, 'node_modules', 'zod'), { recursive: true });
   writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program, 'package.json'), '{"dependencies":{"zod":"^4"}}');
+  mkdirSync(join(program, 'house', 'core'), { recursive: true }); writeFileSync(join(program, 'house', 'core', 'Housefile'), 'FROM scratch\n');
   const run = join(root, 'run'); symlinkSync(engine, run);
   // An engine with nothing left on it: the worker that starts lists its containers and finds none.
   const server = createServer((_request, response) => { response.end('[]'); });
@@ -404,22 +412,32 @@ it('ends every slot when the worker is asked to stop, and exits 0 once each has'
   expect(await running).toBe(0); expect(ended.sort()).toEqual([1, 2, 3, 4]); expect(f.error).not.toHaveBeenCalled();
 });
 
-it('lets as many bodies run on one account as accountSlots says: four when it does not, never more than the slots, one after the other at 1', async () => {
+it('lets as many bodies run on one account as accountSlots says: four when it does not (one for Codex), never more than the slots, one after the other at 1', async () => {
   const never = new AbortController().signal;
   /** How many jobs on one account the worker's turns let start together. */
-  const together = async (patch: Record<string, unknown>) => {
+  const together = async (patch: Record<string, unknown>, harness = 'claude') => {
     const f = fixture(), containerExecutor = vi.fn().mockReturnValue({});
     f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }) : 'private-token');
     expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
     const turns = f.run.mock.calls[0][0].turns as { take(keys: string[], signal: AbortSignal): Promise<() => void> };
-    let given = 0; for (let job = 0; job < 20; job++) void turns.take(['account:one'], never).then(() => { given++; });
+    let given = 0; for (let job = 0; job < 20; job++) void turns.take([`account:${harness}:one`], never).then(() => { given++; });
     for (let turn = 0; turn < 20; turn++) await Promise.resolve();
     return given;
   };
   expect(await together({})).toBe(4); expect(await together({ slots: 8 })).toBe(4); expect(await together({ slots: 2 })).toBe(2);
   expect(await together({ slots: 8, accountSlots: 6 })).toBe(6); expect(await together({ accountSlots: 1 })).toBe(1); expect(await together({ slots: 16, accountSlots: 16 })).toBe(16);
+  // Codex's bodies run one at a time on an account unless the configuration says otherwise: what its program does when two renew at once is not established.
+  expect(await together({}, 'codex')).toBe(1); expect(await together({ slots: 8 }, 'codex')).toBe(1); expect(await together({}, 'agy')).toBe(4);
+  // One number is every harness's, Codex's too. A number for a harness is that harness's, and the others keep their defaults.
+  expect(await together({ accountSlots: 3 }, 'codex')).toBe(3);
+  expect(await together({ accountSlots: { codex: 2 } }, 'codex')).toBe(2); expect(await together({ accountSlots: { codex: 2 } })).toBe(4);
+  expect(await together({ slots: 8, accountSlots: { claude: 6, codex: 1 } })).toBe(6); expect(await together({ slots: 8, accountSlots: { claude: 6 } }, 'codex')).toBe(1);
+  expect(await together({ accountSlots: { claude: 1 } })).toBe(1); expect(await together({ slots: 2, accountSlots: {} })).toBe(2);
+  // A harness's name that is also a name every object has is no entry.
+  expect(await together({}, 'constructor')).toBe(4); expect(await together({ accountSlots: { codex: 2 } }, 'toString')).toBe(4);
 });
-for (const patch of [{ accountSlots: 5 }, { slots: 2, accountSlots: 3 }, { accountSlots: 0 }, { accountSlots: 17, slots: 16 }, { accountSlots: 1.5 }, { accountSlots: '2' }])
+for (const patch of [{ accountSlots: 5 }, { slots: 2, accountSlots: 3 }, { accountSlots: 0 }, { accountSlots: 17, slots: 16 }, { accountSlots: 1.5 }, { accountSlots: '2' },
+  { accountSlots: { codex: 5 } }, { slots: 2, accountSlots: { claude: 2, codex: 3 } }, { accountSlots: { codex: 0 } }, { accountSlots: { codex: '1' } }, { accountSlots: { '': 1 } }, { accountSlots: [1] }])
   it(`refuses ${JSON.stringify(patch)}: more bodies on one account than the worker has slots, or no whole number of them`, async () => {
     const f = fixture(), containerExecutor = vi.fn();
     f.read.mockResolvedValue(JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' }, ...patch }));

@@ -3,7 +3,8 @@ import { logTail } from './log-tail.js';
 import { bodyInput } from './body-bootstrap.js';
 /** Container bodies run only in the separate worker. One worker runs any agent's house: it fetches the
  * job's house repository and builds its image itself (house-source.ts, house-image.ts), mounts its own
- * body program into the container, and reads from the image how a body starts. Nothing about any one
+ * body program into the container, and starts every body the same way (house-layout.ts). Every house is
+ * built on the core house, which the worker builds from its own install (house-core.ts). Nothing about any one
  * agent is set up on the machine but, where wanted, that agent's mounts. */
 import { randomUUID } from 'node:crypto';
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
@@ -17,7 +18,8 @@ import { BODY_SCRATCH } from './body-harness.js';
 import { BuildTimeError, UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 import { defaultWorkerState, workerLeft } from './worker-left.js';
 import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
-import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, type HouseGuard, type HouseStart } from './house-image.js';
+import { buildCore, buildHouse, coreImage, coreImageName, houseBuilt, houseCore, houseImage, houseImageName, houseStart, pruneHouses, type HouseGuard, type HouseStart } from './house-image.js';
+import { CORE_DIRECTORY, coreDefinition, coreWeek, noHousefile, NO_HOUSEFILE, type CoreDefinition } from './house-core.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
 import { HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile } from './house-layout.js';
@@ -176,6 +178,10 @@ export function containerWorkerExecutor(config: {
   /** The directory the worker is installed in. By default, where this program was loaded from. */
   program?: string;
   git?: () => boolean; left?: typeof workerLeft;
+  /** The core house's definition. By default, the one in the directory the worker is installed in. */
+  core?: CoreDefinition;
+  /** The time, which says which week's core house a job's house is built on. A test sets its own. */
+  now?: () => number;
   /** Where the worker's own lines go (the worker program's error output). Fixed lines only. */
   say?: (line: string) => void;
 } = {}): WorkerExecutor {
@@ -191,6 +197,11 @@ export function containerWorkerExecutor(config: {
     nestedSocket: fixed.container.nestedSocket, state: fixed.state ?? defaultWorkerState(fixed.box), tokenFile: fixed.tokenFile });
   if (!programInside(program)) throw new WorkerStop('program');
   if (!dependencies.source && !(dependencies.git ?? gitAvailable)()) throw new WorkerStop('git');
+  // The core house every house is built on: read once, here, from the worker's own install. A worker
+  // without it could build no house, so it is not started (WorkerStop 'core').
+  let definition: CoreDefinition;
+  try { definition = dependencies.core ?? coreDefinition(join(program, CORE_DIRECTORY)); } catch { throw new WorkerStop('core'); }
+  const now = dependencies.now ?? Date.now;
   /** Whether this worker can run the job at all, asked before a build is worth starting. A house image is
    * signed in to nothing: the job's account reaches the body only as its sign-in directory. So with
    * several accounts of the job's provider on this machine and no sign-in directories configured, the
@@ -204,8 +215,8 @@ export function containerWorkerExecutor(config: {
   const left = fixed.state === undefined ? undefined : (dependencies.left ?? workerLeft)(fixed.state);
   const source = dependencies.source ?? houseSource({ directory: join(fixed.state ?? defaultWorkerState(fixed.box), 'houses'),
     started: pid => left ? left.note(pid, { job: 'house-fetch' }) : () => {} });
-  /** The builds under way, by image: one at a time for one image, and every job that wants it waits on the
-   * one. A build is the worker's and not a job's: it has the build limit of its own, and a job that is
+  /** The builds under way, by image, a core house's among them: one at a time for one image, and every job
+   * that wants it waits on the one. A build is the worker's and not a job's: it has the build limit of its own, and a job that is
    * cancelled only stops waiting. */
   const builds = new Map<string, { done: Promise<void>; abort: AbortController; ranOut: boolean }>();
   /** Images a job wants or has, from the moment it knows which image that is until its body has ended or it
@@ -221,10 +232,12 @@ export function containerWorkerExecutor(config: {
   /** Removals of house images under way, by image: whoever wants one of these waits for its removal to be
    * over before asking the engine whether the image is there. */
   const removing = new Map<string, { over: Promise<void>; end: () => void }>();
-  /** An image may be removed when no job holds it and none is building it, asked at the moment of removal. */
+  /** An image may be removed when no job holds it and none is building it, asked at the moment of removal.
+   * A core house also stays while a job holds, or a build is making, a house image built on it. */
+  const wanted = (core: string) => [...inHand.keys(), ...builds.keys()].some(image => houseImageName(image) && houseCore(image) === core);
   const guard: HouseGuard = {
     take(image) {
-      if (inHand.has(image) || builds.has(image) || removing.has(image)) return false;
+      if (inHand.has(image) || builds.has(image) || removing.has(image) || (coreImageName(image) && wanted(image))) return false;
       let end!: () => void; const over = new Promise<void>(resolve => { end = resolve; });
       removing.set(image, { over, end }); return true;
     },
@@ -245,21 +258,42 @@ export function containerWorkerExecutor(config: {
       .then(looked => { clearTimeout(timer); if (upkeeping === abort) upkeeping = undefined; if (!looked && !closed) dependencies.say?.(UPKEEP_FAILED); });
   };
   let closed = false;
-  const built = (house: WorkerAssignment['house'], commit: string, image: string) => {
+  /** One build of one image, shared by whoever wants it, with the build limit of its own. */
+  type Build = { done: Promise<void>; abort: AbortController; ranOut: boolean };
+  const shared = (image: string, make: (build: Build) => Promise<void>): Build => {
     let build = builds.get(image);
     if (!build) {
-      const abort = new AbortController(), made = { abort, ranOut: false, done: Promise.resolve() };
+      const abort = new AbortController(), made: Build = { abort, ranOut: false, done: Promise.resolve() };
       const timer = setTimeout(() => { made.ranOut = true; abort.abort(); }, buildMs);
-      made.done = (async () => {
-        if (await houseBuilt(engine, image, abort.signal)) return;
-        await buildHouse(engine, image, house.file, source.context(house, commit, abort.signal), abort.signal);
-        upkeep();
-      })().finally(() => { clearTimeout(timer); if (builds.get(image) === made) builds.delete(image); });
+      made.done = make(made).finally(() => { clearTimeout(timer); if (builds.get(image) === made) builds.delete(image); });
       void made.done.catch(() => {});
       build = made; builds.set(image, build);
     }
     return build;
   };
+  /** Wait for another build as part of this one: it ends when this one is ended, and its running out of
+   * time is this one's too. */
+  const within = async (build: Build, other: Build) => {
+    const ended = new Promise<never>((_, reject) => { const stop = () => reject(new Error('Worker build cancelled')); if (build.abort.signal.aborted) stop(); else build.abort.signal.addEventListener('abort', stop, { once: true }); });
+    void ended.catch(() => {});
+    try { await Promise.race([other.done, ended]); } catch (error) { if (other.ranOut) build.ranOut = true; throw error; }
+  };
+  /** The core house, built unless it is there: from the worker's own definition, like a house in every
+   * way that matters to a job (the same limit, the same one build for all who wait, the same failure). */
+  const coreBuilt = (core: string) => shared(core, async build => {
+    // One that is being removed this moment is waited for, and then found gone and built again.
+    await removing.get(core)?.over;
+    if (await houseBuilt(engine, core, build.abort.signal)) return;
+    await buildCore(engine, core, definition.context(), build.abort.signal);
+  });
+  const built = (house: WorkerAssignment['house'], commit: string, image: string) => shared(image, async build => {
+    if (await houseBuilt(engine, image, build.abort.signal)) return;
+    await within(build, coreBuilt(houseCore(image)));
+    // A house with no Housefile is the core with its repository copied in: the worker writes those lines.
+    const added = house.file === '' ? noHousefile() : undefined;
+    await buildHouse(engine, image, added ? NO_HOUSEFILE : house.file, source.context(house, commit, build.abort.signal, added), build.abort.signal);
+    upkeep();
+  });
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
   const cleanupMs = deadline(fixed.container.cleanupTimeoutMs, 30_000);
   return {
@@ -303,7 +337,9 @@ export function containerWorkerExecutor(config: {
         try {
           if (limit.signal.aborted) throw new Error('Worker build cancelled');
           const commit = await Promise.race([source.fetch(house, repositoryInput, limit.signal), ended]);
-          const image = houseImage(house, commit);
+          // Built on the core house of the week this job came in: a job under way when a week turns keeps the
+          // image it has, and the next job's house is built on the new core.
+          const image = houseImage(house, commit, coreImage(definition.digest, coreWeek(now())));
           // Held from here, before anything is asked about it: an upkeep under way will not remove it now.
           hold(image, 1); held = image;
           // One that is being removed this moment is waited for, so that it is found gone and built again

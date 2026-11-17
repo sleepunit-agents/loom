@@ -32,7 +32,7 @@ export const WORKER_STOP = {
   /** A path under `accountLogins` or `container.mounts`, or `container.socket` or `container.nestedSocket`
    * (worker-mounts.ts has the rules). The line is followed by the configuration key at fault, never by a path. */
   mounts: [52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a source or a socket not written as a plain absolute path, a mount target that is not a plain path under the home of the house or that is or holds its repository, or a mounted directory that overlaps another, an engine socket, the state directory or the token file'],
-  /** A worker with container bodies builds each house itself and reads from the image how a body starts.
+  /** A worker with container bodies builds each house itself and starts every body the same way.
    * The line is followed by the key that must go: `build`, `runners`, `accountRunners`, or `container.mounts`
    * when it is one list and not a list for each agent, or the `target` of an `accountLogins` entry. */
   retired: [53, 'the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, mounts are listed by agent, and where a sign-in appears in a house is the same in every house'],
@@ -40,6 +40,8 @@ export const WORKER_STOP = {
   git: [54, `git ${GIT_MINIMUM.join('.')} or later, which fetches each house's repository, could not be run on this machine`],
   /** The directory the worker is installed in is mounted into every container for the body program. */
   program: [55, 'the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)'],
+  /** The core house every house is built on is defined by files in the directory the worker is installed in. */
+  core: [56, 'the directory the worker is installed in has no definition of the core house (house/core/Housefile), which every house is built on'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */

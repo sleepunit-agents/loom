@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, utimesSync } from 'node:f
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { endGit, houseContext, relativeName, type ContextLimits } from './house-context.js';
+import { endGit, houseContext, relativeName, type ContextFile, type ContextLimits } from './house-context.js';
 import { COMMIT } from '../apps/merge-target.js';
 import { GIT_MINIMUM } from './worker-limits.js';
 
@@ -36,7 +36,8 @@ import { GIT_MINIMUM } from './worker-limits.js';
 export const HOUSE_MIRRORS_KEPT = 8;
 /** A mirror's name: so many hex digits of its repository's digest. */
 const MIRROR_DIGITS = 32, MIRROR = new RegExp(`^[0-9a-f]{${MIRROR_DIGITS}}\\.git$`);
-/** What an agent's run settings say its house is. */
+/** What an agent's run settings say its house is. An empty `file` is a house with no Housefile of its
+ * own: the core house with the repository copied in (house-core.ts). */
 export interface House { repository: string; file: string; branch: string }
 /** A house that cannot be fetched: its address, branch or file is not one the worker takes, or git failed.
  * The message is the worker's own words and never names the repository. */
@@ -109,8 +110,8 @@ export interface HouseSource {
   fetch(house: House, credential: Uint8Array | undefined, signal: AbortSignal): Promise<string>;
   /** That commit's files as a tar stream, written by the worker from git's objects (house-context.ts). The
    * stream fails when git does or the context is not one the worker writes, so a cut-off context is
-   * never taken for a whole one. */
-  context(house: House, commit: string, signal: AbortSignal): Readable;
+   * never taken for a whole one. `added` is one file of the worker's own, written after the commit's. */
+  context(house: House, commit: string, signal: AbortSignal, added?: ContextFile): Readable;
 }
 export function houseSource(options: {
   /** The worker's own directory for mirrors: under its state directory, which is private to its user. */
@@ -173,7 +174,7 @@ export function houseSource(options: {
   return {
     fetch(house, credential, signal) {
       const url = houseAddress(house.repository, protocols);
-      if (!url || !houseBranch(house.branch) || !houseFile(house.file)) return Promise.reject(new HouseSourceError('House is not one this worker fetches'));
+      if (!url || !houseBranch(house.branch) || (house.file !== '' && !houseFile(house.file))) return Promise.reject(new HouseSourceError('House is not one this worker fetches'));
       const mirror = mirrorOf(house.repository);
       let header: [string, string][] = [];
       try { if (credential !== undefined && url.protocol === 'https:') header = [[`http.${url.origin}/.extraHeader`, authorization(credential)]]; }
@@ -196,7 +197,7 @@ export function houseSource(options: {
       void next.catch(() => {}).finally(() => { if (busy.get(mirror) === next) busy.delete(mirror); });
       return next;
     },
-    context(house, commit, signal) {
+    context(house, commit, signal, added) {
       if (!houseAddress(house.repository, protocols) || !COMMIT.test(commit)) return Readable.from((async function* (): AsyncGenerator<Buffer> { throw new HouseSourceError('House is not one this worker fetches'); })());
       const mirror = mirrorOf(house.repository), env = environment(options.directory, protocols);
       // The mirror is not removed while it is being read from.
@@ -207,7 +208,7 @@ export function houseSource(options: {
       const written = Readable.from((async function* (): AsyncGenerator<Buffer> {
         // A removal that began before this read was counted is waited for; the read then finds what is there.
         await gone(mirror);
-        yield* houseContext(store, commit, signal, { started: options.started, limits: options.limits });
+        yield* houseContext(store, commit, signal, { started: options.started, limits: options.limits, added });
       })(), { objectMode: false });
       written.once('close', done);
       return written;

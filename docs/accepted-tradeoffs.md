@@ -364,6 +364,37 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** A harness that reports the account it ran on. The worker could then
   compare it with the placed one and fail the job.
 
+### Every house is built on the core house, and built again each week
+
+- **What.** A worker builds the core house itself from the definition in its own install
+  (`house/core`), names it for that definition and the week, and names every house image for the core it
+  was built on (`docs/runtime/worker.md`, "The core house"). So each house is built again on its first job
+  of a new week, and on its first job after a loom whose core changed.
+- **What that costs.** Once a week on each machine: the core's own build (it downloads the system's
+  packages, Node, Claude Code and Codex; a house of the same contents took about ten minutes on a small
+  machine), then each house's own steps after `FROM`, which run again because the layers under them
+  changed. The first job of the week for each house waits for that, reported as starting, within
+  `buildTimeoutMs`. A machine without the network, or a week in which a download address is down, builds
+  no core: jobs whose house image is not already there fail as a failed build until it can. A house whose
+  image for this week exists is not affected.
+- **A house that does not start from the core pays too.** The core is built before every house build
+  and every image is named for it, whether or not the Housefile uses `LOOM_CORE`. The worker does not read
+  a Housefile, so it cannot tell.
+- **The system is as current as the week, and the harnesses as current as loom.** The base system's
+  updates come with each week's build. Claude Code, Codex and Node are pinned in the definition and move
+  only with a loom that changes the pins. Claude Code's own updater is switched off in the core, so the
+  version whose renewal was read is the one that runs.
+- **What the build trusts.** Debian's package mirrors and `docker.io` for the base image (not pinned to
+  a digest: that is what "current" means), `nodejs.org` and Claude Code's release address (each checked
+  against a SHA-256 written in the definition), and the npm registry for Codex at one version.
+- **Where.** `house/core/Housefile`; `src/runtime/house-core.ts`; `coreBuilt` in
+  `src/runtime/worker-container.ts`; `pruneHouses` in `src/runtime/house-image.ts`.
+- **What would change it.** Reading whether a Housefile names `LOOM_CORE`, so that one which does not is
+  neither rebuilt weekly nor made to wait for the core; a household that publishes images, which would
+  let a machine pull the core rather than build it.
+- **Not in the core.** `agy`: no pinned install of it exists to copy. It needs one stated version with a
+  published checksum, a way to point it at `/run/loom/login/agy`, a body file and its name in the label.
+
 ### One layout inside every house, and nothing of it is checked in the image
 
 - **What.** The worker starts every body the same way: `/usr/local/bin/node`, the body file at
@@ -375,9 +406,11 @@ Entries are grouped by the part of the program they belong to.
 - **A house built for the earlier contract is refused, not run.** An image labelled `loom.house="1"`
   fails its job with exit 30 until its Housefile is changed. One layout is read at a time; the worker
   carries no second way to start a body.
-- **The user is not fixed.** The home is the same in every house and the user is the image's. A house
-  on a rootless engine runs as the container's root, which is the worker's own user outside it, because
-  that is the user that can write a mounted sign-in directory. Inside the container that body can change
+- **The user is not fixed, and the core house runs as root.** The home is the same in every house and
+  the user is the image's; the core house names none, so a body in it is the container's root. On a
+  rootless engine that is the worker's own user outside the container, the one user that can write a
+  mounted sign-in directory. On an engine that runs as root it is the machine's root inside a
+  container, and a house for such a machine should set a `USER`. Inside the container that body can change
   any file of its house; outside it holds what the worker's user holds through its mounts and no more.
 - **Where.** `src/runtime/house-layout.ts`; `createSpec` in `src/runtime/worker-container.ts`;
   `houseStart` in `src/runtime/house-image.ts`.
@@ -395,18 +428,46 @@ Entries are grouped by the part of the program they belong to.
   harness", chosen by the body), and the job is recorded failed. It is tried again by the ordinary chain
   when it left mail it had not confirmed: after 5 seconds, 30 seconds and 2 minutes, three times at most.
   The retry reads the sign-in the other program just wrote. A machine that sees this more than rarely
-  sets `accountSlots` to 1 in its worker's configuration, which runs an account's bodies one after the
-  other.
+  sets `accountSlots` to 1 for that harness in its worker's configuration, which runs an account's bodies
+  one after the other.
+- **Why one shared directory and not a copy for each body.** A provider's renewal token changes at each
+  renewal. Bodies with a copy each would cancel one another's sign-in at their first renewal; that was the
+  fault of the arrangement before this one (each house was handed its own copy as a secret), and sharing
+  the one directory in place is what replaced it.
+- **What keeps two renewals apart is the harness's own program, not loom. What is known of each:**
+  - *Claude Code, read in version 2.1.326* (the program installed on the household's machine, and the
+    version the core house pins): before it renews it takes a lock file inside the sign-in directory
+    (`.oauth_refresh.lock`, and an older-style `<directory>.lock` beside the directory), reads the
+    sign-in again once it holds the lock, and does not renew when another process already has (it counts
+    that as a race resolved). The same pattern, a lock and a check of whether the file changed on disk,
+    is in that program's source at 2.1.88. **Read, not tested here:** no run on this household's machines
+    has made two bodies renew at once and watched the outcome.
+  - *Codex, looked at in version 0.162.1*: **not established.** Its program knows the error "refresh token
+    was already used", which is what a lost race would be, and holds the word `flock`; whether it locks or
+    re-reads its `auth.json` before it renews was not found. The core house pins 0.164.0, which was not
+    looked at. So Codex's bodies run one at a time on an account by default (`accountSlots`).
+  - **The question a supervised check has to answer** before Codex is set above 1: with two Codex bodies
+    on one account and its sign-in near the end of its life, do both go on working after both have renewed,
+    or does one end with "refresh token was already used"? It needs a real sign-in, so it is a check a
+    person runs, not a test in this repository.
 - **Where.** `bodyMounts` in `src/runtime/worker-mounts.ts`; the mount is made in
-  `src/runtime/worker-container.ts`.
+  `src/runtime/worker-container.ts`; the defaults in `src/runtime/worker-limits.ts`
+  (`ACCOUNT_SLOTS_BY_HARNESS`); the core house's wiring in `house/core/Housefile`.
 - **What is enforced.** The worker mounts into a job's container the directory of that job's account and
   harness and no other. A fixed mount or another entry that names the same directory, one above it or one
   inside it stops the worker at start (another agent's mounts and the worker's own program directory
   included); so does any mounted directory that is, holds or is inside either
   engine socket (`container.socket`, `container.nestedSocket`), the worker's state directory or its token
   file. With `accountLogins` present, a job
-  with no exact entry does not run. On one worker, at most `accountSlots` bodies run on an account at once
-  (4 by default; `src/runtime/worker-turns.ts`): a job beyond that waits until one has ended.
+  with no exact entry does not run. On one worker, at most `accountSlots` bodies of one harness run on an
+  account at once (4 by default, 1 for Codex; `src/runtime/worker-turns.ts`): a job beyond that waits
+  until one has ended. The worker never reads, lists, cleans, writes or removes anything inside a sign-in
+  directory, so a lock a harness's program holds there is never taken away under it (the arrangement
+  before this one cleared the directory of everything but the sign-in before each start, lock included).
+- **What is not enforced.** That a house reaches its sign-in in place. The core house does; a Housefile
+  that copies a sign-in file into its image or its home brings back the fault of copies, and nothing in
+  the worker can see that. The limit also holds for one worker: two workers on one machine with the same
+  directory configured would each count their own bodies.
 - **What is not.** A job allowed nested containers (`run.nestedContainers`, with `container.nestedSocket`
   configured on the machine) is handed the engine's socket. It has that engine, and with it everything the
   engine's user can reach on the machine, every account's sign-in directory included: it can start a
@@ -419,6 +480,10 @@ Entries are grouped by the part of the program they belong to.
   for no gain most of the time. The engine's socket was already broad authority
   over the machine that both an agent's run settings and the machine's operator must opt in to; the
   sign-in directories are one more thing within its reach, not a new kind of reach.
+- **Considered and not done.** A renewer or lock of loom's own (it could not see inside a harness
+  program's renewal, and the program would still renew for itself), a program on the machine that hands
+  bodies short-lived tokens (a broker of a subscription sign-in, which the providers' terms rule out and
+  which this arrangement replaced), and a read-only mount (a program that cannot write cannot renew).
 - **What would change the answer.** A provider program that takes its sign-in from a file it does not
   rewrite, or renews through the worker; or a lock around renewal that every body of an account takes.
   Each body could then have a copy of its own, or renew in turn. For nested
@@ -440,7 +505,7 @@ Entries are grouped by the part of the program they belong to.
   agent allowed on the machine. The worker fetches `https` addresses only, with `git` run under none of
   the machine user's configuration or credentials. Neither the worker nor git interprets or runs
   anything from a repository: git reads commit and tree objects, the worker reads each link's target to
-  write it, and the commit's files go to the engine unread, as a tar stream the worker writes. It adds no build argument, secret,
+  write it, and the commit's files go to the engine unread, as a tar stream the worker writes. It adds one build argument, the core house's image, and no secret,
   host path, socket or privilege to a build. The repository's secret goes to the fetch alone.
 - **Why the rest is accepted.** Running an agent's house is the point: whoever may set an agent's house
   already decides what that agent's bodies run. A build is the engine's to confine, as a container is.

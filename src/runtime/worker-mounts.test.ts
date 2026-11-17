@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:net';
@@ -295,5 +295,14 @@ it('lands an agent\'s directories under the tenant\'s home, at the path the conf
     expect(key({ mounts: { art: [{ source: stamps, target }] } }), target).toBe('container.mounts.art[0].target');
   // Two of one agent's that would lie one inside the other, said under the home.
   expect(key({ mounts: { art: [{ source: stamps, target: 'state' }, { source: mirror, target: 'state/more' }] } })).toBe('container.mounts.art[1].target');
+});
+it('leaves everything inside a sign-in directory as it found it: a lock a harness holds, and files it knows nothing of', () => {
+  const login = directory('logins/untouched');
+  // What a harness's program keeps there: its sign-in, the lock it takes to renew, and anything else of its own.
+  for (const [name, content] of [['.credentials.json', 'not read'], ['.oauth_refresh.lock', ''], ['auth.json', 'not read'], ['something-else', 'kept']] as const) writeFileSync(join(login, name), content, { mode: 0o600 });
+  const before = readdirSync(login).sort().map(name => [name, statSync(join(login, name)).mtimeMs, statSync(join(login, name)).atimeMs, statSync(join(login, name)).mode]);
+  const mounts = bodyMounts({ accountLogins: { account: { claude: { source: login } } } });
+  for (let body = 0; body < 3; body++) expect(mounts(job('account', 'claude'))).toEqual([{ source: login, target: '/run/loom/login/claude', readOnly: false }]);
+  expect(readdirSync(login).sort().map(name => [name, statSync(join(login, name)).mtimeMs, statSync(join(login, name)).atimeMs, statSync(join(login, name)).mode])).toEqual(before);
 });
 
