@@ -23,7 +23,8 @@ export function prepareOperatorHome(home: string) {
   chmodSync(home, 0o700); checkOperatorHome(home);
 }
 function checkSocket(home: string) { checkOperatorHome(home); owned(join(home, 'operator.sock'), 0o600, false); }
-/** The OS-owned transport; the issuer owns data. */
+/** The OS-owned transport; the issuer owns data. The home lifetime lock has already excluded any other
+ * program on this home, so a socket left at the path is stale and is removed. */
 export async function listenOperatorLinks(home: string, url: string, issue: (input: z.infer<typeof operatorRequest>) => string) {
   const dir = resolve(home), path = join(dir, 'operator.sock');
   checkOperatorHome(dir);
