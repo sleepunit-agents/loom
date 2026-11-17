@@ -4,10 +4,10 @@ import { GraphQLBoolean, GraphQLNonNull, GraphQLObjectType, GraphQLString, type 
 import type { Viewer } from '../../core/index.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { householdSettings } from '../../core/data/household-settings.js';
-import { householdOwner, sharedSharing } from '../../shared-sharing.js';
+import { currentMember, householdOwner } from '../../shared-sharing.js';
 export function bridgeSecretsReaderFields(db: DataDatabase): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
   // A current member of the household; a removed member reads nothing here.
-  const reader = (viewer: Viewer) => viewer.kind === 'member' && Object.hasOwn(sharedSharing(db).members, viewer.id) ? viewer : undefined;
+  const reader = (viewer: Viewer) => currentMember(db, viewer) ? viewer : undefined;
   return {
     bridgeReader: { type: new GraphQLObjectType({ name: 'BridgeReader', fields: {
       id: { type: new GraphQLNonNull(GraphQLString) }, manage: { type: new GraphQLNonNull(GraphQLBoolean) },
