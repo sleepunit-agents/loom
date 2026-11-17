@@ -39,19 +39,24 @@ export interface TriggerEffects {
   changed?(): void;
 }
 
-/** How late a time trigger may still fire. See "Missed times" on TriggerEngine. */
+/** How late a standing time trigger may still fire. See "Missed times" on TriggerEngine. */
 export const MISSED_GRACE_MS = 5 * 60_000;
 
 /** Source adapters report PR changes, answered approvals/questions/secrets and
  * stopped jobs here. Time deadlines are driven by the injected clock.
  *
- * Missed times. A time trigger fires at its time, or up to MISSED_GRACE_MS after it. A time that could
- * not fire within that (its agent was paused, the program was not running, the clock jumped) is skipped,
- * not fired late: the log says `missed`, and the next time is worked out from now. So a 09:00 lane never
- * runs at 14:00 because the server came back then, and nothing fires twice to catch up. A once-only
- * trigger whose time is skipped ends as stopped. The same rule covers the other two ways a time passes
- * unfired: a trigger that is off has no times, so turning it on (or changing its times) starts from now;
- * and a firing that fails has used its time, is logged `failed` with the stage, and is not tried again.
+ * Missed times. A time can pass unfired because the trigger's agent was paused, the program was not
+ * running or the clock jumped. What happens then depends on what the trigger is for:
+ * - A standing trigger (one that repeats: `until-stopped` or `today`) fires at its time, or up to
+ *   MISSED_GRACE_MS after it. A time further behind than that is skipped, not fired late: the log says
+ *   `missed`, and the next time is worked out from now. So a 09:00 lane never runs at 14:00 because the
+ *   server came back then, and nothing fires twice to catch up.
+ * - A once-only trigger is a thing that is meant to happen once. It fires late, however late, as soon as
+ *   it can, and is never dropped.
+ * Two other ways a time passes are not misses. A trigger that is off has no times, so turning it on (or
+ * changing its times) starts from now, and a once-only trigger whose time passed while it was off cannot
+ * be turned on again. A firing that fails has used its time, is logged `failed` with the stage, and is
+ * not tried again.
  * Events (an answer, a job, a pull request) are not times: one seen while held fires on resume. */
 export class TriggerEngine {
   private cancel?: () => void;
@@ -217,7 +222,8 @@ export class TriggerEngine {
       if (this.paused(t)) continue;
       if (t.sourceKind === 'time') {
         const late = t.nextDueAt ? this.clock.now() - Date.parse(t.nextDueAt) : -1;
-        if (late >= 0 && late <= MISSED_GRACE_MS) this.fire(t, `time:${t.nextDueAt}`);
+        // The missed-time rule on the class: only a standing trigger's time can be too late to fire.
+        if (late >= 0 && (late <= MISSED_GRACE_MS || t.lifespan === 'once')) this.fire(t, `time:${t.nextDueAt}`);
         else if (late > MISSED_GRACE_MS) this.miss(t);
       } else {
         const logs = this.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all();
@@ -245,7 +251,7 @@ export class TriggerEngine {
     const standing = Number.isFinite(next) && (t.lifespan !== 'today' || localDate(next, this.zone()) === localDate(this.clock.now(), this.zone()));
     return { standing, nextDueAt: standing ? new Date(next).toISOString() : null };
   }
-  /** Skip a time that is more than the grace behind: nothing is delivered, and the trigger moves to its next time. */
+  /** Skip a standing trigger's time that is more than the grace behind: nothing is delivered, and the trigger moves to its next time. */
   private miss(t: Trigger) {
     this.db.transaction(() => {
       const { standing, nextDueAt } = this.rest(t);
