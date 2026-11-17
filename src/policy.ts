@@ -265,6 +265,12 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   // An item is read as its labels say. One exception: an item addressed to a household owner is theirs
   // whatever labels it carries, which is how an owner is handed the approval card raised in someone else's
   // thread (only household owners answer those). The card is all they get of that thread.
+  //
+  // Being addressed is otherwise not enough, on purpose: a member who leaves a project stops reading the
+  // questions put to them in it. So whoever files an item for a person must label it so that this rule
+  // lets that person read it: with the labels of a record they read (apps/tasks.ts, `labels`), with a
+  // conversation they read (shared-conversation-questions.ts, `ask`), or with the person themselves as
+  // its member (a notice). A member label on anything else hides the item from the person it is for.
   inbox: all(any(all(householdOwner, equal('toKind', 'person'), self('to')), inTalk), waitsOnReadable),
   bridgeConnections: bridgeConnection,
   // How a household's bridges are set up, and who its outside people are, is the household owners'.

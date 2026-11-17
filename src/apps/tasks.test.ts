@@ -79,6 +79,7 @@ it('puts a task question in Inbox, resolves it at the source and delivers the an
   const mail = new Conversations(db, () => at);
   const conversation = mail.open({ agent: 'art', venue: 'loom', place: 'pond', label: 'Pond' });
   const asker = { kind: 'agent', id: 'art' } as const;
+  tasks = taskService(db, () => at, () => true);
   const task = tasks.create({ title: 'Order pump', goal: 'Pump ordered', why: 'Old pump failed', owner: asker, source: { kind: 'conversation', id: conversation.id } }, asker);
   tasks.ask(task.id, { to: actor, ask: 'Spend $180?', ifYes: 'I order it', ifNo: 'I look again' }, asker);
   const question = db.select().from(inbox).get()!;
