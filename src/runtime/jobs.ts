@@ -7,6 +7,7 @@ import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { Threads } from '../core/conversations/threads.js';
+import type { AdmitInbox } from '../core/tempo/settle.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
@@ -231,4 +232,19 @@ export class Jobs {
     }
     return ended;
   }
+}
+
+/** How settled mail for an agent becomes work: one job per conversation the mail is in, even when one
+ * settled batch holds mail from several. Tempo calls this; it is the only caller of Jobs.admit outside
+ * tests. True only when every conversation in the batch has a job; `changed` runs when any was admitted. */
+export function agentMailAdmission(jobs: Jobs, changed: () => void): AdmitInbox {
+  return (who, items) => {
+    if (who.kind !== 'agent') return false;
+    const conversations = new Set(items.filter(item => item.toKind === 'agent' && item.to === who.id)
+      .flatMap(item => item.conversation ? [item.conversation] : []));
+    let admitted = 0;
+    for (const id of conversations) if (jobs.admit(id)) admitted++;
+    if (admitted) changed();
+    return admitted > 0 && admitted === conversations.size;
+  };
 }

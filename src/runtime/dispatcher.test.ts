@@ -284,3 +284,11 @@ it.each(['starting', 'running'] as const)('ends a %s job as stopped when a Comms
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: f.job.id });
   expect(f.runtime.jobs.admit(f.conversation.id)).toBeUndefined();
 });
+it('takes the facts a worker reports with its poll, keeps them when a poll names none, and clears them on an empty list', () => {
+  const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'reset'); f.tick(1000);
+  expect(f.runtime.next('first', ['gpu:5090'])).toBeUndefined();
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'first', fact: 'gpu:5090', fromOwner: false }]);
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
+  f.runtime.next('first'); expect(f.db.select().from(boxFacts).all()).toHaveLength(1);
+  f.runtime.next('first', []); expect(f.db.select().from(boxFacts).all()).toEqual([]);
+});
