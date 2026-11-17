@@ -143,7 +143,9 @@ export async function workerProgram(input: {
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
     const state = config.state ?? defaultWorkerState(config.box);
     executor = config.container
-      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: { ...config.container, mounts: Array.isArray(config.container.mounts) ? undefined : config.container.mounts }, state })
+      // (A list of mounts stopped the worker above: what is left is by agent, or nothing.)
+      ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: { ...config.container, mounts: config.container.mounts as Exclude<typeof config.container.mounts, unknown[]> }, state },
+        { say: text => input.error(text) })
       : (input.executor ?? commandWorkerExecutor)({ ...config, build: config.build!, runners: config.runners!, state });
     // Before any report or claim: end what a worker killed before this one left running, or the work loom
     // has queued again would run beside it. If that cannot be done, this worker does not start.

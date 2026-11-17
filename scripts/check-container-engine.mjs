@@ -73,13 +73,17 @@ const git = (...args) => execFileSync('git', args, { cwd: repository, stdio: 'ig
   env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'check', GIT_AUTHOR_EMAIL: 'check@example.invalid', GIT_COMMITTER_NAME: 'check', GIT_COMMITTER_EMAIL: 'check@example.invalid' } });
 git('init', '--quiet', '--initial-branch=main'); git('add', '--all'); git('commit', '--quiet', '--message', 'a house for the engine check');
 
+// What the worker mounts as its own directory: laid out as an install is. The stand-in node only looks
+// whether the body program is there, so this check does not depend on how this checkout was installed.
+const program = join(work, 'install');
+mkdirSync(join(program, 'dist'), { recursive: true }); writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program, 'package.json'), '{"dependencies":{}}');
 const house = { repository: `file://${repository}`, file: 'Housefile', branch: 'main' };
 const job = (id, harness, agent = 'check-written') => ({ id, box: 'houses-check', agent, conversation: 'cv', model: 'm', account: 'acct', harness, brief: 'b', house });
 const bootstrap = id => ({ origin: 'https://loom.invalid', job: id, token: Buffer.from(`body_${'a'.repeat(64)}`) });
 const container = { socket, runtime: 'crun', setupTimeoutMs: 60_000, cleanupTimeoutMs: 30_000,
   mounts: { 'check-written': [{ source: written, target: '/mnt/written', readOnly: false }], 'check-read-only': [{ source: readOnly, target: '/mnt/read-only' }] } };
 const worker = (patch = {}, using = engine, name = 'check') => containerWorkerExecutor({ box: 'houses-check', buildTimeoutMs: 600_000, state: join(work, 'state'), container: { ...container, ...patch } },
-  { engine: using, source: houseSource({ directory: join(work, 'mirrors'), protocols: ['file'] }), name: () => name });
+  { engine: using, source: houseSource({ directory: join(work, 'mirrors'), protocols: ['file'] }), name: () => name, program });
 let built;
 {
   calls.length = 0;

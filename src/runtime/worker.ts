@@ -91,13 +91,17 @@ export type WorkerResult = 'idle' | 'finished' | 'abandoned';
 export class UnservedJobError extends Error {}
 /** Thrown by an executor for a job whose house does not say how a body starts in it. Reported as
  * WORKER_EXIT.house: the job fails and the worker goes on. */
-export class UnmetHouseError extends Error {}
+export class UnmetHouseError extends Error {
+  /** @param rule Which part of the image contract the image breaks: the name of one of its labels
+   * (house-image.ts), `WORKDIR` or `VOLUME`. A name from the contract, never a path and never text from the image. */
+  constructor(readonly rule: string) { super('House image does not meet the image contract'); }
+}
 /** Thrown by an executor for a job whose house was not fetched and built within the build limit. Reported
  * as WORKER_EXIT.buildTime: the job fails, with the reason that the build ran out of time. */
 export class BuildTimeError extends Error {}
 /** What a failed start says for a stage whose name alone would not say it. */
 const STAGE_SAID: Partial<Record<keyof typeof WORKER_EXIT, string>> = {
-  house: 'the house image does not say how a body starts in it', buildTime: 'the build ran out of time' };
+  buildTime: 'the build ran out of time' };
 
 /** One assignment per invocation, never a local launch retry. The server owns
  * start retries, terminal states and placement. Transport uncertainty aborts the
@@ -121,13 +125,14 @@ export async function workOnce(input: {
   if (!Number.isFinite(interval) || interval <= 0 || interval >= SILENCE_MS) throw new Error('Invalid worker heartbeat interval');
   if (input.signal.aborted) return 'abandoned';
   let job: WorkerAssignment | undefined;
+  // When this worker sent the last report loom answered. The claim is the first: loom stamps the job when
+  // it arrives, which is no earlier than when it was sent.
+  const now = input.now ?? (() => performance.now());
+  let answered = now();
   // An unanswered poll may have claimed a job nobody will run; the sweep finds it. Nothing is running here.
   try { job = await control.next(); } catch { return 'abandoned'; }
   if (!job) return 'idle';
   if (job.box !== input.box) throw new Error('Assignment belongs to another worker');
-  // When this worker sent the last report loom answered. The claim is the first: loom stamps the job then.
-  const now = input.now ?? (() => performance.now());
-  let answered = now();
   // Snapshot input before giving asynchronous adapters control of it.
   const assignment = structuredClone(job);
   const abort = new AbortController();
@@ -193,7 +198,8 @@ export async function workOnce(input: {
       await heartbeat;
       if (abandoned || abort.signal.aborted) return 'abandoned';
       // The stage is named twice: the code survives where a private conversation's log tail is dropped.
-      return await report(WORKER_EXIT[stage], `Worker could not start the body: ${STAGE_SAID[stage] ?? `${stage} failed`}`, 'worker');
+      const said = error instanceof UnmetHouseError ? `the house image does not meet the image contract (${error.rule})` : STAGE_SAID[stage] ?? `${stage} failed`;
+      return await report(WORKER_EXIT[stage], `Worker could not start the body: ${said}`, 'worker');
     }
     if (abort.signal.aborted) return 'abandoned';
     reporting = true;

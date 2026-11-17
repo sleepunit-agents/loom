@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, expect, it, vi } from 'vitest';
-import { gitAvailable, houseFile, houseSource, HouseSourceError, type GitSpawn } from './house-source.js';
+import { gitAvailable, gitNewEnough, GIT_MINIMUM, houseFile, houseSource, HouseSourceError, type GitSpawn } from './house-source.js';
 
 // A real git and a real repository: what is tested is what git does with what the worker gives it.
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-source-'));
@@ -43,6 +43,23 @@ it('fetches the job\'s branch into its own mirror, names the commit and hands th
   expect(await source.fetch(house, undefined, never())).toBe(second);
   expect(readdirSync(join(root, 'mirrors'))).toHaveLength(1);
 });
+/** Every file under a directory, as text. */
+function everything(directory: string): string {
+  return readdirSync(directory, { withFileTypes: true, recursive: true }).filter(entry => entry.isFile())
+    .map(entry => readFileSync(join(entry.parentPath, entry.name), 'latin1')).join('\n');
+}
+it('writes nothing of where a repository is, or of its secret, anywhere in the mirror', async () => {
+  const origin = repository('unnamed-origin', { Housefile: 'FROM scratch\n' }), source = local('unnamed');
+  const house = { repository: origin.address, file: 'Housefile', branch: 'main' };
+  await source.fetch(house, new TextEncoder().encode('a-secret-token'), never());
+  origin.commit({ 'more.txt': 'more\n' }); await source.fetch(house, new TextEncoder().encode('deploy:a-secret-token'), never());
+  const [mirror] = readdirSync(join(root, 'unnamed')), kept = everything(join(root, 'unnamed', mirror));
+  // Not in the configuration, not in FETCH_HEAD (which git writes with the address unless told not to),
+  // not in a log of the reference, not anywhere.
+  expect(kept).not.toContain(origin.path); expect(kept).not.toContain('unnamed-origin');
+  expect(kept).not.toMatch(/a-secret-token|YS1zZWNyZXQtdG9rZW4|extraheader/i);
+  expect(existsSync(join(root, 'unnamed', mirror, 'FETCH_HEAD'))).toBe(false);
+});
 it('keeps one mirror per repository and writes neither the address nor a remote into it', async () => {
   const one = repository('one', { Housefile: 'FROM scratch\n' }), two = repository('two', { Housefile: 'FROM scratch\n' });
   const source = local('apart');
@@ -61,8 +78,13 @@ it('runs git with none of the machine user\'s configuration: no rewrite, no help
   const wanted = repository('wanted', { Housefile: 'FROM scratch\n', 'data.txt': 'public\n', '.gitattributes': '* filter=marker\n' });
   const private_ = repository('private', { Housefile: 'FROM scratch\n', 'data.txt': 'the machine user\'s private repository\n' });
   // The machine user's own git configuration would send this fetch to another repository and run a program.
-  const marker = join(root, 'ran'), userConfig = join(root, 'user.gitconfig');
-  writeFileSync(userConfig, `[url "${private_.address}"]\n\tinsteadOf = ${wanted.address}\n[filter "marker"]\n\tsmudge = sh -c 'touch ${marker}; cat'\n[credential]\n\thelper = "!touch ${marker};"\n`);
+  const marker = join(root, 'ran'), userConfig = join(root, 'user.gitconfig'), hooks = join(root, 'user-hooks');
+  // A hook git runs whenever a fetch moves a reference, as the user's own hooks directory would have it.
+  mkdirSync(hooks); writeFileSync(join(hooks, 'reference-transaction'), `#!/bin/sh\ntouch ${marker}\n`, { mode: 0o755 });
+  writeFileSync(userConfig, `[url "${private_.address}"]\n\tinsteadOf = ${wanted.address}\n[filter "marker"]\n\tsmudge = sh -c 'touch ${marker}; cat'\n[credential]\n\thelper = "!touch ${marker};"\n[core]\n\thooksPath = ${hooks}\n`);
+  // The same configuration does all of that when git is left to read it: the check below is not vacuous.
+  execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '--quiet', wanted.address, join(root, 'as-the-user')], { env: { PATH: process.env.PATH!, GIT_CONFIG_GLOBAL: userConfig, GIT_CONFIG_NOSYSTEM: '1' }, stdio: 'ignore' });
+  expect(existsSync(marker)).toBe(true); expect(readFileSync(join(root, 'as-the-user', 'data.txt'), 'utf8')).toContain('private repository'); rmSync(marker);
   vi.stubEnv('GIT_CONFIG_GLOBAL', userConfig); vi.stubEnv('HOME', root); writeFileSync(join(root, '.gitconfig'), readFileSync(userConfig));
   vi.stubEnv('GIT_DIR', private_.path + '/.git'); vi.stubEnv('GIT_SSH_COMMAND', `touch ${marker}`);
   const source = local('stranger'), house = { repository: wanted.address, file: 'Housefile', branch: 'main' };
@@ -131,7 +153,7 @@ it('gives the repository\'s secret to the one fetch, as a header for the reposit
   for (const call of [init, parse, archive]) expect(JSON.stringify(call.env)).not.toMatch(new RegExp(`tok-en-123|${basic}|extraHeader`));
   // The address is an argument of the fetch alone, after `--`, and the refspec is the worker's own.
   expect(fetch.args.slice(fetch.args.indexOf('--'))).toEqual(['--', house.repository, '+refs/heads/main:refs/loom/fetched']);
-  expect(fetch.args).toEqual(expect.arrayContaining(['--no-tags', '--depth=1', '--no-recurse-submodules']));
+  expect(fetch.args).toEqual(expect.arrayContaining(['--no-tags', '--depth=1', '--no-recurse-submodules', '--no-write-fetch-head']));
   for (const call of git.calls) {
     // An environment made here: nothing of the worker's own but PATH.
     expect(Object.keys(call.env).filter(key => !/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)).sort())
@@ -180,9 +202,15 @@ it('ends git when the job is cancelled, and tells the worker which processes it 
   expect(child!.signalCode).toBe('SIGKILL'); expect(started).toContain(child!.pid); expect(forgotten).toEqual(started);
   await expect(source.fetch({ repository: origin.address, file: 'Housefile', branch: 'main' }, undefined, abort.signal)).rejects.toThrow(HouseSourceError);
 });
-it('says whether this machine has a git it can run', () => {
+it('says whether this machine has a git it can run, new enough to fetch without writing the address down', () => {
   expect(gitAvailable()).toBe(true);
+  expect(GIT_MINIMUM).toEqual([2, 29]);
+  expect(['git version 2.29.0', 'git version 2.47.3', 'git version 3.0.1', 'git version 2.39.5 (Apple Git-154)', 'git version 2.45.1.windows.1'].every(gitNewEnough)).toBe(true);
+  expect(['git version 2.28.9', 'git version 1.9.5', 'git version 2', 'not git', ''].some(gitNewEnough)).toBe(false);
   vi.stubEnv('PATH', join(root, 'empty')); expect(gitAvailable()).toBe(false);
+  // An old git on the path is no git for this.
+  const old = join(root, 'old-git'); mkdirSync(old); writeFileSync(join(old, 'git'), '#!/bin/sh\necho git version 2.20.1\n', { mode: 0o755 });
+  vi.stubEnv('PATH', old); expect(gitAvailable()).toBe(false);
 });
 
 it('keeps the mirrors of the repositories fetched most recently and removes the rest', async () => {

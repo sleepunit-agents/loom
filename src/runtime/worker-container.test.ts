@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:net';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex, PassThrough } from 'node:stream';
@@ -86,7 +86,7 @@ it('applies only approved GPU, TCP listeners and explicitly configured nested so
   const original = f.engine.json.getMockImplementation()!;
   f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: [{ Type: 'bind', Source: nestedSock, Destination: '/var/run/docker.sock', RW: true }, programReport()] }) : original(method, path, body, signal));
   const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, nestedSocket: nestedSock } }, { ...f.deps, name: () => 'capabilities' });
-  const body = executor.start({ ...job, run: { gpu: true, nestedContainers: true, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }] } }, 'image', f.abort.signal);
+  const body = executor.start({ ...job, run: { gpu: true, nestedContainers: true, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }] } }, built, f.abort.signal);
   await body.spawned;
   expect(f.engine.json.mock.calls[0][2]).toMatchObject({ ExposedPorts: { '8080/tcp': {} }, HostConfig: {
     DeviceRequests: [{ Driver: '', Count: -1, Capabilities: [['gpu']] }],
@@ -209,10 +209,10 @@ it('keeps running without a body timeout after both setup and cleanup intervals'
 it('generates distinct names for real attempts and uses the confirmed identity for cleanup', async () => {
   const f = fixture();
   const executor = containerWorkerExecutor(f.config, { ...f.deps });
-  const first = executor.start(job, 'image', f.abort.signal); await first.spawned; await first.stop();
+  const first = executor.start(job, built, f.abort.signal); await first.spawned; await first.stop();
   // A fresh stream for the second attempt; no OS processes or daemon involved.
   const other = fixture(), secondExecutor = containerWorkerExecutor(other.config, { ...other.deps });
-  const second = secondExecutor.start(job, 'image', other.abort.signal); await second.spawned; await second.stop();
+  const second = secondExecutor.start(job, built, other.abort.signal); await second.spawned; await second.stop();
   const names = [f.engine.json.mock.calls[0][1], other.engine.json.mock.calls[0][1]];
   expect(names[0]).toMatch(/^\/containers\/create\?name=loom-[a-f0-9-]+$/); expect(names[1]).not.toBe(names[0]);
   for (const engine of [f.engine, other.engine]) expect(engine.json).toHaveBeenLastCalledWith('DELETE', `/containers/${id}?force=1&v=1`, undefined, expect.any(AbortSignal));
@@ -236,7 +236,7 @@ it('uses the default setup deadline of thirty seconds', async () => {
   f.engine.json.mockImplementation(async (method, _path, _body, signal) => method === 'DELETE' ? undefined
     : new Promise((_yes, no) => signal.addEventListener('abort', () => no(new Error('aborted')), { once: true })));
   const executor = containerWorkerExecutor({ ...f.config, container: { socket: engineSock } }, { ...f.deps });
-  const body = executor.start(job, 'image', f.abort.signal); let rejected = false; void body.spawned.catch(() => { rejected = true; });
+  const body = executor.start(job, built, f.abort.signal); let rejected = false; void body.spawned.catch(() => { rejected = true; });
   await vi.advanceTimersByTimeAsync(29_999); expect(rejected).toBe(false);
   await vi.advanceTimersByTimeAsync(1); await expect(body.spawned).rejects.toThrow(); await body.stop(); expect(vi.getTimerCount()).toBe(0);
 });
@@ -317,7 +317,15 @@ it('reports a container whose process a signal ended as killed, the same stage a
 const houseRoot = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-'));
 afterAll(() => rmSync(houseRoot, { recursive: true, force: true }));
 const houseDirectory = (name: string) => { const path = join(houseRoot, name); mkdirSync(path, { recursive: true }); return path; };
-const programDirectory = houseDirectory('install/loom');
+/** A directory laid out as an install of the worker is: the body program, and every package it depends on in its own node_modules. */
+function install(name: string, change: (path: string) => void = () => {}) {
+  const path = houseDirectory(name);
+  writeFileSync(join(path, 'package.json'), JSON.stringify({ name: '@example/loom', dependencies: { zod: '^4', '@scope/package': '^1' } }));
+  mkdirSync(join(path, 'dist'), { recursive: true }); writeFileSync(join(path, 'dist', 'body.js'), '');
+  mkdirSync(join(path, 'node_modules', 'zod'), { recursive: true }); mkdirSync(join(path, 'node_modules', '@scope', 'package'), { recursive: true });
+  change(path); return path;
+}
+const programDirectory = install('install/loom');
 /** The worker's own directory, as every body's container must be reported to have it. */
 function programReport() { return reported(programDirectory, '/opt/loom', false); }
 const programAsked = () => ({ Type: 'bind', Source: programDirectory, Target: '/opt/loom', ReadOnly: true });
@@ -344,7 +352,7 @@ type Spec = { HostConfig: { Runtime: string; Mounts: unknown[] } };
 it('asks the engine for runc unless the configuration names crun, and for nothing else', async () => {
   for (const [runtime, sent] of [[undefined, 'runc'], ['runc', 'runc'], ['crun', 'crun']] as const) {
     const f = fixture(), executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, ...(runtime ? { runtime } : {}) } }, { ...f.deps, name: () => 'runtime' });
-    const body = executor.start(job, 'image', f.abort.signal); await body.spawned;
+    const body = executor.start(job, built, f.abort.signal); await body.spawned;
     expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Runtime).toBe(sent); await body.stop();
   }
   const f = fixture();
@@ -352,7 +360,7 @@ it('asks the engine for runc unless the configuration names crun, and for nothin
     expect(() => containerWorkerExecutor({ ...f.config, container: { ...f.config.container, runtime: runtime as 'crun' } }, { ...f.deps })).toThrow('Invalid container runtime');
 });
 it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and no other account\'s directory', async () => {
-  const f = house(), body = f.executor.start(job, 'image', f.abort.signal); await body.spawned;
+  const f = house(), body = f.executor.start(job, built, f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([programAsked(),
     { Type: 'bind', Source: loginA, Target: '/home/agent/.claude', ReadOnly: false },
     { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
@@ -361,13 +369,13 @@ it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and
   expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(loginB);
   expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
   const other = house([reported(loginB, '/home/agent/.claude', true), ...expectedReport.slice(1)]);
-  const second = other.executor.start({ ...job, account: 'other' }, 'image', other.abort.signal); await second.spawned;
+  const second = other.executor.start({ ...job, account: 'other' }, built, other.abort.signal); await second.spawned;
   expect((other.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts[1]).toEqual({ Type: 'bind', Source: loginB, Target: '/home/agent/.claude', ReadOnly: false });
   expect(JSON.stringify(other.engine.json.mock.calls)).not.toContain(loginA); await second.stop();
 });
 it('gives every body the fixed mounts when no sign-in map is configured, beside the nested socket', async () => {
   const f = house([reported(nestedSock, '/var/run/docker.sock', true), ...expectedReport.slice(1)], { mounts: { art: houseMounts }, nestedSocket: nestedSock }, null);
-  const body = f.executor.start({ ...job, account: 'anyone', run: { gpu: false, nestedContainers: true, ports: [] } }, 'image', f.abort.signal); await body.spawned;
+  const body = f.executor.start({ ...job, account: 'anyone', run: { gpu: false, nestedContainers: true, ports: [] } }, built, f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
     { Type: 'bind', Source: nestedSock, Target: '/var/run/docker.sock', ReadOnly: false }, programAsked(),
     { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
@@ -379,7 +387,7 @@ it('with a sign-in map, fails a job that has no exact entry before the builder, 
   const f = house(), original = f.executor;
   for (const assignment of [{ ...job, account: 'missing' }, { ...job, harness: 'unlisted' }]) {
     expect(() => f.executor.build(assignment, f.abort.signal)).toThrow('configured sign-in directory');
-    expect(() => f.executor.start(assignment, 'image', f.abort.signal)).toThrow('configured sign-in directory');
+    expect(() => f.executor.start(assignment, built, f.abort.signal)).toThrow('configured sign-in directory');
   }
   expect(f.source.fetch).not.toHaveBeenCalled(); expect(f.engine.images).not.toHaveBeenCalled(); expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.attach).not.toHaveBeenCalled();
   // As loom sees it: the runner stage's code and the worker's own words, with no path in them.
@@ -410,7 +418,7 @@ it.each([
   ['something that is not a mount', [...expectedReport.slice(0, 2), null]],
   ['no list of mounts', null],
 ])('removes the container without starting it when the engine reports %s', async (_what, inspected) => {
-  const f = house(inspected), body = f.executor.start(job, 'image', f.abort.signal);
+  const f = house(inspected), body = f.executor.start(job, built, f.abort.signal);
   await expect(body.spawned).rejects.toThrow('Unexpected container storage'); await body.stop();
   expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
   expect(f.engine.json).toHaveBeenLastCalledWith('DELETE', `/containers/${id}?force=1&v=1`, undefined, expect.any(AbortSignal));
@@ -426,9 +434,9 @@ it.each([
   ['one mount more than the socket and its own', () => [...nestedReport(), reported('/host', '/work', true)]],
 ])('removes a nested job\'s container without starting it when the engine reports %s', async (_what, inspected) => {
   const nestedJob = { ...job, run: { gpu: false, nestedContainers: true, ports: [] } };
-  const good = house(nestedReport(), { mounts: { art: houseMounts }, nestedSocket: nestedSock }), fine = good.executor.start(nestedJob, 'image', good.abort.signal);
+  const good = house(nestedReport(), { mounts: { art: houseMounts }, nestedSocket: nestedSock }), fine = good.executor.start(nestedJob, built, good.abort.signal);
   await fine.spawned; await fine.stop();
-  const f = house(inspected(), { mounts: { art: houseMounts }, nestedSocket: nestedSock }), body = f.executor.start(nestedJob, 'image', f.abort.signal);
+  const f = house(inspected(), { mounts: { art: houseMounts }, nestedSocket: nestedSock }), body = f.executor.start(nestedJob, built, f.abort.signal);
   await expect(body.spawned).rejects.toThrow('Unexpected container storage'); await body.stop();
   expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
 });
@@ -455,7 +463,7 @@ it('does not make a worker whose nested socket is not a socket, or is a way into
   expect(f.engine.json).not.toHaveBeenCalled();
 });
 it('accepts the mounts it asked for in whatever order the engine lists them', async () => {
-  const f = house([...expectedReport].reverse()), body = f.executor.start(job, 'image', f.abort.signal);
+  const f = house([...expectedReport].reverse()), body = f.executor.start(job, built, f.abort.signal);
   await body.spawned; expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
 });
 it('puts no mount path in what the worker itself says: a failed start\'s report, a finished job\'s report, the envelope, the labels, the environment', async () => {
@@ -478,18 +486,18 @@ it('puts no mount path in what the worker itself says: a failed start\'s report,
   const spec = ran.engine.json.mock.calls[0][2] as { Labels: unknown; Env: unknown };
   for (const path of paths.slice(0, 4)) expect(JSON.stringify([spec.Labels, spec.Env])).not.toContain(path);
 });
-it('does not make a worker whose mounts cannot be used, and touches neither the engine nor the builder', () => {
-  const f = fixture(), builder = vi.fn();
+it('does not make a worker whose mounts cannot be used, and neither asks the engine anything nor fetches', () => {
+  const f = fixture();
   for (const patch of [{ accountLogins: { account: { harness: { source: join(houseRoot, 'missing'), target: '/home/agent/.claude' } } } },
     { container: { ...f.config.container, mounts: { art: [{ source: 'relative', target: '/house/x' }] } } },
     { accountLogins, container: { ...f.config.container, mounts: { art: [{ source: mirror, target: '/home/agent/.claude' }] } } }])
-    expect(() => containerWorkerExecutor({ ...f.config, ...patch }, { engine: f.engine, get builder() { builder(); return f.builder; } })).toThrow(expect.objectContaining({ stage: 'mounts' }));
-  expect(f.engine.json).not.toHaveBeenCalled(); expect(builder).not.toHaveBeenCalled();
+    expect(() => containerWorkerExecutor({ ...f.config, ...patch }, { ...f.deps })).toThrow(expect.objectContaining({ stage: 'mounts' }));
+  expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.images).not.toHaveBeenCalled(); expect(f.source.fetch).not.toHaveBeenCalled();
 });
 it('fixes the mounts when the worker is made', async () => {
   const logins = structuredClone(accountLogins), mounts = structuredClone(houseMounts), f = house(expectedReport, { mounts: { art: mounts } }, logins);
   logins.account.harness.source = loginB; mounts[1].readOnly = false; mounts.push({ source: loginB, target: '/stolen' });
-  const body = f.executor.start(job, 'image', f.abort.signal); await body.spawned;
+  const body = f.executor.start(job, built, f.abort.signal); await body.spawned;
   expect(JSON.stringify(f.engine.json.mock.calls[0][2])).not.toContain(loginB); await body.stop();
 });
 
@@ -508,7 +516,7 @@ const once = (f: ReturnType<typeof fixture>, control: ReturnType<typeof controlF
 
 it('builds a house that is not on the engine from the commit\'s own files and its Housefile, then removes what is no longer needed', async () => {
   const f = fixture(); await unbuilt(f);
-  expect(await f.executor.build(job, f.abort.signal)).toBe(built);
+  expect(await f.executor.build(job, f.abort.signal)).toBe(built); await flush();
   expect(f.source.archive).toHaveBeenCalledExactlyOnceWith(job.house, commit, expect.any(AbortSignal));
   expect(f.engine.build).toHaveBeenCalledOnce();
   const [path, context] = f.engine.build.mock.calls[0];
@@ -530,7 +538,7 @@ it('builds one image once for two jobs that want it at the same moment', async (
   release.resolve(); expect(await Promise.all([first, second])).toEqual([built, built]); expect(f.engine.build).toHaveBeenCalledOnce();
 });
 it('names the image by the house and its commit alone, so a new loom on the machine rebuilds nothing', async () => {
-  const f = fixture(), newer = join(houseRoot, 'install', 'loom-next'); mkdirSync(newer, { recursive: true });
+  const f = fixture(), newer = install('install/loom-next');
   const deployed = containerWorkerExecutor(f.config, { ...f.deps, program: newer, name: () => 'next' }), original = f.engine.json.getMockImplementation()!;
   f.engine.json.mockImplementation((method, path, body, signal) => inspecting(path) ? Promise.resolve({ Mounts: [reported(newer, '/opt/loom', false)] }) : original(method, path, body, signal));
   expect(await f.executor.build(job, f.abort.signal)).toBe(built); expect(await deployed.build(job, f.abort.signal)).toBe(built);
@@ -607,14 +615,15 @@ it.each([
   expect(await f.executor.build({ ...job, id: 'again' }, f.abort.signal)).toBe(built);
 });
 it.each([
-  ['says nothing about how a body starts', { 'io.buildah.version': '1.39' }], ['names no body file for the job\'s harness', { ...houseLabels, 'loom.house.body.harness': undefined }],
-  ['is of a later contract', { ...houseLabels, 'loom.house': '2' }], ['names a node that is not a plain path', { ...houseLabels, 'loom.house.node': 'node' }],
-])('fails only that job, with the house\'s own exit code, when its image %s', async (_what, labels) => {
+  ['says nothing about how a body starts', 'loom.house', { 'io.buildah.version': '1.39' }, {}], ['names no body file for the job\'s harness', 'loom.house.body.harness', { ...houseLabels, 'loom.house.body.harness': undefined }, {}],
+  ['is of a later contract', 'loom.house', { ...houseLabels, 'loom.house': '2' }, {}], ['names a node that is not a plain path', 'loom.house.node', { ...houseLabels, 'loom.house.node': 'node' }, {}],
+  ['has no working directory', 'WORKDIR', houseLabels, { WorkingDir: '' }], ['declares a volume', 'VOLUME', houseLabels, { Volumes: { '/data': {} } }],
+])('fails only that job, with the house\'s own exit code and the rule it breaks, when its image %s', async (_what, rule, labels, config) => {
   const f = fixture();
-  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/home/agent/house', Labels: labels } }));
+  f.engine.images.mockImplementation(async () => ({ Id: imageId, Config: { WorkingDir: '/home/agent/house', Labels: labels, ...config } }));
   const control = controlFor(job);
   expect(await once(f, control)).toBe('finished');
-  expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 30, 'Worker could not start the body: the house image does not say how a body starts in it', 'worker');
+  expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 30, `Worker could not start the body: the house image does not meet the image contract (${rule})`, 'worker');
   // Nothing was created, so nothing ran and nothing is left.
   expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.attach).not.toHaveBeenCalled(); expect(control.enrollBody).not.toHaveBeenCalled();
 });
@@ -643,26 +652,77 @@ it('mounts an agent\'s own directories into its bodies and never another agent\'
     await body.stop();
   }
 });
+it.each([
+  ['has no body program', (path: string) => rmSync(join(path, 'dist', 'body.js'))],
+  ['has no package.json', (path: string) => rmSync(join(path, 'package.json'))],
+  ['has a package of its own hoisted out of it', (path: string) => rmSync(join(path, 'node_modules', 'zod'), { recursive: true })],
+  ['has a scoped package hoisted out of it', (path: string) => rmSync(join(path, 'node_modules', '@scope'), { recursive: true })],
+  ['has its packages linked in from a store', (path: string) => { rmSync(join(path, 'node_modules', 'zod'), { recursive: true }); symlinkSync(houseDirectory('store/zod'), join(path, 'node_modules', 'zod')); }],
+  ['has its whole node_modules linked in', (path: string) => { rmSync(join(path, 'node_modules'), { recursive: true }); symlinkSync(houseDirectory('store/modules/zod/..'), join(path, 'node_modules')); }],
+  ['has a package.json that is not one', (path: string) => writeFileSync(join(path, 'package.json'), '{"dependencies":["zod"]}')],
+])('is not made when the directory it is installed in %s: the body program would not load in a container', (what, change) => {
+  const f = fixture(), program = install(`broken/${what.replaceAll(' ', '-')}`, change);
+  expect(() => containerWorkerExecutor(f.config, { ...f.deps, program })).toThrow(expect.objectContaining({ stage: 'program' }));
+  expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.images).not.toHaveBeenCalled(); expect(f.source.fetch).not.toHaveBeenCalled();
+});
 it('is not made on a machine that has no git, or whose own directory cannot be mounted', () => {
   const f = fixture();
   expect(() => containerWorkerExecutor(f.config, { engine: f.deps.engine, program: programDirectory, git: () => false })).toThrow(expect.objectContaining({ stage: 'git' }));
   expect(() => containerWorkerExecutor(f.config, { ...f.deps, program: join(houseRoot, 'not-installed') })).toThrow(expect.objectContaining({ stage: 'mounts', key: 'the directory the worker is installed in' }));
   expect(f.engine.json).not.toHaveBeenCalled(); expect(f.engine.images).not.toHaveBeenCalled();
 });
-it('never removes an image a job has been given until that job\'s body has ended', async () => {
+const pruneLine = 'Worker could not look at its house images: old ones stay until it can\n';
+it('looks after the disk once the job has its image, outside the build\'s limit, and says so when it cannot', async () => {
+  vi.useFakeTimers();
+  const f = fixture(), gone = await missingImage(), there = f.engine.images.getMockImplementation()!, said = vi.fn(); let made = false, listings = 0;
+  // An engine whose listing never answers: the build is done, the upkeep hangs.
+  f.engine.images.mockImplementation((method, path, body, signal) => {
+    if (method === 'GET' && path.startsWith('/images/json')) { listings++; return new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })); }
+    if (method === 'GET' && !made) return Promise.reject(gone);
+    return there(method, path, body, signal);
+  });
+  f.engine.build.mockImplementation(async (_path, context) => { context.resume(); made = true; });
+  const executor = containerWorkerExecutor({ ...f.config, buildTimeoutMs: 1_000 }, { ...f.deps, say: said, name: () => 'upkeep' });
+  // The job has its image at once, and runs to its end, while the upkeep is still waiting.
+  const control = controlFor(job), run = workOnce({ box: 'box', control, executor, signal: f.abort.signal, schedule: { every: () => () => {} } });
+  for (let turn = 0; turn < 20 && !f.writes.length; turn++) { await vi.advanceTimersByTimeAsync(0); await flush(); }
+  expect(listings).toBe(1); expect(f.writes).toHaveLength(1);
+  // Long past the build's limit: no job failed for it.
+  await vi.advanceTimersByTimeAsync(60_000);
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); await vi.advanceTimersByTimeAsync(0);
+  expect(await run).toBe('finished'); expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 0, '', 'body'); expect(said).not.toHaveBeenCalled();
+  // Another house is built meanwhile: one upkeep at a time, so none is started beside the one waiting.
+  made = false; f.source.fetch.mockResolvedValue('d'.repeat(40));
+  expect(await executor.build({ ...job, id: 'other' }, f.abort.signal)).toBe(houseImage(job.house, 'd'.repeat(40))); expect(listings).toBe(1);
+  // The upkeep has a limit of its own, after which it is given up and said, once, in the worker's own words.
+  await vi.advanceTimersByTimeAsync(300_000);
+  expect(said).toHaveBeenCalledExactlyOnceWith(pruneLine);
+  executor.close!(); expect(vi.getTimerCount()).toBe(0);
+});
+it('says nothing when the disk was looked after', async () => {
+  const f = fixture(), said = vi.fn(); await unbuilt(f);
+  const executor = containerWorkerExecutor(f.config, { ...f.deps, say: said });
+  await executor.build(job, f.abort.signal); await flush();
+  expect(f.engine.images.mock.calls.some(call => call[1].startsWith('/images/json'))).toBe(true); expect(said).not.toHaveBeenCalled();
+});
+it('never removes an image a job has been given until that job\'s body has ended, and then does', async () => {
   const f = fixture(); await unbuilt(f);
-  const held = houseImage({ ...job.house, repository: 'https://example.com/other/house.git' }, commit);
-  // One job has its image and is about to start; another house is then built.
-  await f.executor.build({ ...job, house: { ...job.house, repository: 'https://example.com/other/house.git' } }, f.abort.signal);
-  const removed: string[] = [], there = f.engine.images.getMockImplementation()!;
+  const other = { ...job, house: { ...job.house, repository: 'https://example.com/other/house.git' } }, held = houseImage(other.house, commit);
+  // One job has its image and is about to start; newer commits of its house are then built.
+  expect(await f.executor.build(other, f.abort.signal)).toBe(held); await flush();
+  const removed: string[] = [], there = f.engine.images.getMockImplementation()!, gone = await missingImage(); let absent = '';
   f.engine.images.mockImplementation(async (method, path, body, signal) => {
     if (method === 'GET' && path.startsWith('/images/json')) return [{ RepoTags: [held], Created: 1 }, ...[2, 3, 4].map(n => ({ RepoTags: [`${held.slice(0, -40)}${String(n).repeat(40)}`], Created: n + 1 }))];
     if (method === 'DELETE') { removed.push(path.slice('/images/'.length)); return undefined; }
+    if (method === 'GET' && absent && path.includes(absent)) { absent = ''; throw gone; }
     return there(method, path, body, signal);
   });
-  f.source.fetch.mockResolvedValue('d'.repeat(40));
-  f.engine.images.mockImplementationOnce(async () => { throw await missingImage(); });
-  await f.executor.build({ ...job, id: 'other', house: { ...job.house, branch: 'main' } }, f.abort.signal);
+  const next = async (letter: string) => { absent = letter.repeat(40); f.source.fetch.mockResolvedValue(absent); await f.executor.build({ ...other, id: `job-${letter}` }, f.abort.signal); await flush(); };
+  await next('d');
   // Of that house the two newest stay, and the oldest too, because a job holds it.
   expect(removed).toEqual([`${held.slice(0, -40)}${'2'.repeat(40)}`]);
+  // Its body runs and ends: the image is no longer anybody's, and the next upkeep takes it.
+  const body = f.executor.start(other, held, f.abort.signal); await body.spawned; await body.stop();
+  removed.length = 0; await next('e');
+  expect(removed).toEqual([`${held.slice(0, -40)}${'2'.repeat(40)}`, held]);
 });

@@ -154,9 +154,9 @@ describe('worker work plane', () => {
     expect(await timed.run()).toBe('finished');
     expect(timed.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.buildTime, 'Worker could not start the body: the build ran out of time', 'worker');
     expect([WORKER_EXIT.buildTime, exitStage(WORKER_EXIT.buildTime, 'worker')]).toEqual([32, 'worker build time']);
-    const unmet = fixture(), run = unmet.run(); await flush(); unmet.built.resolve('image'); unmet.spawned.reject(new UnmetHouseError('private')); 
+    const unmet = fixture(), run = unmet.run(); await flush(); unmet.built.resolve('image'); unmet.spawned.reject(new UnmetHouseError('loom.house.node')); 
     expect(await run).toBe('finished'); expect(unmet.body.stop).toHaveBeenCalled();
-    expect(unmet.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.house, 'Worker could not start the body: the house image does not say how a body starts in it', 'worker');
+    expect(unmet.control.finish).toHaveBeenCalledExactlyOnceWith('j', WORKER_EXIT.house, 'Worker could not start the body: the house image does not meet the image contract (loom.house.node)', 'worker');
     expect([WORKER_EXIT.house, exitStage(WORKER_EXIT.house, 'worker')]).toEqual([30, 'worker house']);
   });
   it('waits for an in-flight running heartbeat and suppresses finish if authority is rejected', async () => {

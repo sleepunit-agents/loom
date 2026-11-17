@@ -61,7 +61,8 @@ import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
 import { BODY_PROGRAM, BODY_PROGRAM_TARGET, NESTED_SOCKET_TARGET, plainPath } from './runtime/worker-mounts.js';
 import { CONTAINER_RUNTIMES } from './runtime/worker-container.js';
 import { HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE, HOUSE_LABEL, HOUSE_LABEL_BODY, HOUSE_LABEL_NODE, HOUSE_VERSION } from './runtime/house-image.js';
-import { HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
+import { GIT_MINIMUM, HOUSE_MIRRORS_KEPT } from './runtime/house-source.js';
+import { LISTING_MAX } from './runtime/docker-engine.js';
 import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
 
 const root = new URL('../', import.meta.url).pathname;
@@ -612,6 +613,12 @@ it('says once where a body finds its program, what a house image must say, and h
   expect(text('src/runtime/worker-container.ts')).toContain('fixed.buildTimeoutMs ?? HOUSE_BUILD_DEFAULT_MS');
   // How a repository's address, branch and Housefile must be written is the fetch's rule; a house image's name is made in one place.
   expect(sources('src').filter(file => text(file).includes('loom-house-'))).toEqual(['src/runtime/house-image.ts']);
+  // Written once in that file too: how the name begins, and how many digits of the house follow.
+  expect(text('src/runtime/house-image.ts').split('loom-house-')).toHaveLength(2);
+  expect(text('src/runtime/house-image.ts').match(/\b16\b/g)).toHaveLength(1);
+  // One listing's size, and one answer's, in the engine client; the oldest git, where git is run.
+  expect([LISTING_MAX, [...GIT_MINIMUM]]).toEqual([4_194_304, [2, 29]]);
+  expect(sources('src').filter(file => /\b4_?194_?304\b/.test(text(file)))).toEqual(['src/runtime/docker-engine.ts']);
   expect(text('src/runtime/house-image.ts')).toContain("import { houseFile, type House } from './house-source.js';");
   // A worker with container bodies takes no build command and no runners: the file's schema lets them be absent, and only then.
   expect(text('src/runtime/worker-program.ts')).toContain('build: command.optional(), runners: z.record(z.string(), runnerCommand).optional(),');

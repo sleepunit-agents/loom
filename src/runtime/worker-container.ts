@@ -6,7 +6,7 @@ import { bodyInput } from './body-bootstrap.js';
  * body program into the container, and reads from the image how a body starts. Nothing about any one
  * agent is set up on the machine but, where wanted, that agent's mounts. */
 import { randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import { BODY_SCRATCH } from './body-harness.js';
 import { BuildTimeError, UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 import { defaultWorkerState, workerLeft } from './worker-left.js';
 import { gitAvailable, houseSource, type HouseSource } from './house-source.js';
-import { buildHouse, houseBuilt, houseImage, houseStart, pruneHouses, type HouseStart } from './house-image.js';
+import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, type HouseStart } from './house-image.js';
 import { WorkerStop } from './worker-stop.js';
 import { containerExit } from './job-exit.js';
 import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
@@ -129,6 +129,27 @@ function output(socket: Duplex, signal: AbortSignal) {
   return { done, tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
 }
 
+/** What the worker says when it could not look after its house images. Its own words, to its own log. */
+export const UPKEEP_FAILED = 'Worker could not look at its house images: old ones stay until it can\n';
+/** Whether the body program can load from this directory alone, which is all a container is given of it:
+ * `dist/body.js` is there, and every package the worker's own `package.json` depends on is a real directory
+ * in this directory's `node_modules`. That is how `npm install -g` lays a package out, and a release
+ * directory or checkout with its own `node_modules`. An install whose packages were hoisted above it (a
+ * project's `node_modules`, the npx cache) or linked in from a store (pnpm) is not: the body would fail to
+ * load in every container, so the worker is not started on one. */
+function programInside(program: string): boolean {
+  try {
+    if (!lstatSync(join(program, 'dist', 'body.js')).isFile()) return false;
+    const manifest: unknown = JSON.parse(readFileSync(join(program, 'package.json'), 'utf8'));
+    const needed: unknown = manifest && typeof manifest === 'object' && 'dependencies' in manifest ? manifest.dependencies : {};
+    if (!needed || typeof needed !== 'object' || Array.isArray(needed)) return false;
+    return Object.keys(needed).every(name => {
+      const path = join(program, 'node_modules', name);
+      return /^(@[a-z0-9~._-]+\/)?[a-z0-9~._-]+$/.test(name) && lstatSync(path).isDirectory() && realpathSync(path) === path;
+    });
+  } catch { return false; }
+}
+
 export function containerWorkerExecutor(config: {
   /** The longest a house's fetch and build together may take: HOUSE_BUILD_DEFAULT_MS when left out. A job
    * still waiting then fails with WORKER_EXIT.buildTime; the worker reports on the job all the while. */
@@ -149,6 +170,8 @@ export function containerWorkerExecutor(config: {
   /** The directory the worker is installed in. By default, where this program was loaded from. */
   program?: string;
   git?: () => boolean; left?: typeof workerLeft;
+  /** Where the worker's own lines go (the worker program's error output). Fixed lines only. */
+  say?: (line: string) => void;
 } = {}): WorkerExecutor {
   const fixed = structuredClone(config);
   if (fixed.container.runtime !== undefined && !CONTAINER_RUNTIMES.includes(fixed.container.runtime)) throw new Error('Invalid container runtime');
@@ -159,7 +182,8 @@ export function containerWorkerExecutor(config: {
   // Checked and fixed here, before the state directory is taken or anything asks the engine: a worker
   // whose mounts cannot be used is not made (WorkerStop 'mounts').
   const mountsFor = bodyMounts({ program, accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, socket: fixed.container.socket,
-    nestedSocket: fixed.container.nestedSocket, state: fixed.state, tokenFile: fixed.tokenFile });
+    nestedSocket: fixed.container.nestedSocket, state: fixed.state ?? defaultWorkerState(fixed.box), tokenFile: fixed.tokenFile });
+  if (!programInside(program)) throw new WorkerStop('program');
   if (!dependencies.source && !(dependencies.git ?? gitAvailable)()) throw new WorkerStop('git');
   /** Whether this worker can run the job at all, asked before a build is worth starting. A house image is
    * signed in to nothing: the job's account reaches the body only as its sign-in directory. So with
@@ -182,6 +206,19 @@ export function containerWorkerExecutor(config: {
    * and its body leaves its image here until the worker stops: one image kept too long.) */
   const inHand = new Map<string, number>();
   const hold = (image: string, by: 1 | -1) => { const count = (inHand.get(image) ?? 0) + by; if (count > 0) inHand.set(image, count); else inHand.delete(image); };
+  /** Looking after the disk, after a build: old house images and what builds left behind. It is nobody's
+   * job: it runs beside whatever comes next, under a limit of its own, one at a time, and a failure is
+   * said and nothing more. The image just built and every image a job holds are kept. */
+  let upkeeping: AbortController | undefined;
+  const upkeep = (image: string) => {
+    if (upkeeping) return;
+    const abort = upkeeping = new AbortController(), timer = setTimeout(() => abort.abort(), STEP_DEADLINE_MAX_MS);
+    // What builds leave behind is asked gone only when this was the only build: another's unfinished
+    // layers have no name either.
+    void pruneHouses(engine, [image, ...inHand.keys()], builds.size <= 1, abort.signal).then(looked => looked, () => false)
+      .then(looked => { clearTimeout(timer); if (upkeeping === abort) upkeeping = undefined; if (!looked && !closed) dependencies.say?.(UPKEEP_FAILED); });
+  };
+  let closed = false;
   const built = (house: WorkerAssignment['house'], commit: string, image: string) => {
     let build = builds.get(image);
     if (!build) {
@@ -190,9 +227,7 @@ export function containerWorkerExecutor(config: {
       made.done = (async () => {
         if (await houseBuilt(engine, image, abort.signal)) return;
         await buildHouse(engine, image, house.file, source.archive(house, commit, abort.signal), abort.signal);
-        // What builds leave behind is asked gone only when this was the only build: another's unfinished
-        // layers have no name either.
-        await pruneHouses(engine, [image, ...inHand.keys()], builds.size === 1, abort.signal);
+        upkeep(image);
       })().finally(() => { clearTimeout(timer); if (builds.get(image) === made) builds.delete(image); });
       void made.done.catch(() => {});
       build = made; builds.set(image, build);
@@ -202,7 +237,7 @@ export function containerWorkerExecutor(config: {
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
   const cleanupMs = deadline(fixed.container.cleanupTimeoutMs, 30_000);
   return {
-    close() { for (const build of builds.values()) build.abort.abort(); left?.close(); },
+    close() { closed = true; for (const build of builds.values()) build.abort.abort(); upkeeping?.abort(); left?.close(); },
     /** What a previous worker left: a git it had started is a process, recorded in the state directory.
      * Its bodies are containers: every one labelled as a job of this machine is removed, running or not.
      * The list is read a few at a time until it is empty, so one reply never outgrows what the engine
@@ -261,7 +296,7 @@ export function containerWorkerExecutor(config: {
       try {
         if (signal.aborted) throw new Error('Container cancelled');
         serves(assignment);
-        if (!image.trim() || /[\s\0]/.test(image)) throw new Error('Invalid container image');
+        if (!houseImageName(image)) throw new Error('Invalid container image');
         mounts = engineMounts(mountsFor(assignment)); bindings = portBindings(assignment);
         name = `loom-${(dependencies.name ?? randomUUID)()}`;
         if (!/^loom-[A-Za-z0-9_-]+$/.test(name)) throw new Error('Invalid container name');

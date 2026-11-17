@@ -77,11 +77,23 @@ function environment(home: string, protocols: readonly string[], extra: readonly
     GIT_CONFIG_COUNT: String(settings.length),
     ...Object.fromEntries(settings.flatMap(([key, value], index) => [[`GIT_CONFIG_KEY_${index}`, key], [`GIT_CONFIG_VALUE_${index}`, value]])) };
 }
-/** Whether this machine has a git the worker can run. */
-export const gitAvailable = (): boolean => {
-  try { return spawnSync('git', ['--version'], { env: { PATH: process.env.PATH ?? '' }, stdio: 'ignore', timeout: 10_000 }).status === 0; }
-  catch { return false; }
+/** The oldest git the worker fetches with: the first that can fetch without writing FETCH_HEAD, where git
+ * would otherwise write the repository's address down in the mirror (`--no-write-fetch-head`). */
+export const GIT_MINIMUM = [2, 29] as const;
+/** Whether what `git --version` printed names a git of at least that version. */
+export const gitNewEnough = (printed: string): boolean => {
+  const found = /^git version (\d+)\.(\d+)/.exec(printed);
+  return !!found && (Number(found[1]) > GIT_MINIMUM[0] || (Number(found[1]) === GIT_MINIMUM[0] && Number(found[2]) >= GIT_MINIMUM[1]));
 };
+/** Whether this machine has a git the worker can run, and one new enough. */
+export const gitAvailable = (): boolean => {
+  try {
+    const asked = spawnSync('git', ['--version'], { env: { PATH: process.env.PATH ?? '' }, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, encoding: 'utf8' });
+    return asked.status === 0 && gitNewEnough(asked.stdout);
+  } catch { return false; }
+};
+/** End a git the worker started, and whatever it started in turn: it leads a process group of its own. */
+const end = (child: ChildProcess) => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } } };
 
 export interface HouseSource {
   /** Bring the mirror of the house's repository up to its branch and say which commit that is. The secret
@@ -111,7 +123,7 @@ export function houseSource(options: {
     let child: ChildProcess;
     try { child = start(args, env, output); } catch { reject(new HouseSourceError('git could not be run')); return; }
     const forget = child.pid ? options.started?.(child.pid) : undefined;
-    const kill = () => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } } };
+    const kill = () => end(child);
     signal.addEventListener('abort', kill, { once: true });
     let text = '';
     child.stdout?.on('data', (chunk: Buffer) => { if (text.length < 256) text += chunk.toString('utf8'); });
@@ -137,8 +149,9 @@ export function houseSource(options: {
         mkdirSync(options.directory, { recursive: true, mode: 0o700 });
         const plain = environment(options.directory, protocols);
         if (!existsSync(join(mirror, 'HEAD'))) await run(['init', '--quiet', '--bare', mirror], plain, signal);
-        // The address is given here each time and stored nowhere. Depth 1: the worker needs one commit.
-        await run(['--git-dir', mirror, 'fetch', '--quiet', '--no-tags', '--depth=1', '--no-recurse-submodules', '--force', '--',
+        // The address is given here each time and stored nowhere: not as a remote, and not in FETCH_HEAD,
+        // which git is told not to write. Depth 1: the worker needs one commit.
+        await run(['--git-dir', mirror, 'fetch', '--quiet', '--no-tags', '--depth=1', '--no-recurse-submodules', '--no-write-fetch-head', '--force', '--',
           house.repository, `+refs/heads/${house.branch}:refs/loom/fetched`], environment(options.directory, protocols, header), signal);
         const commit = (await run(['--git-dir', mirror, 'rev-parse', '--verify', '--quiet', 'refs/loom/fetched^{commit}'], plain, signal, 'pipe')).trim();
         if (!COMMIT.test(commit)) throw new HouseSourceError('git failed');
@@ -165,7 +178,7 @@ export function houseSource(options: {
       reading.set(mirror, (reading.get(mirror) ?? 0) + 1);
       let counted = true;
       const done = () => { if (!counted) return; counted = false; const left = (reading.get(mirror) ?? 1) - 1; if (left > 0) reading.set(mirror, left); else reading.delete(mirror); };
-      const kill = () => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } } };
+      const kill = () => end(child);
       signal.addEventListener('abort', kill, { once: true });
       // Whoever stops reading (a failed build) ends git too.
       out.once('close', () => { if (child.exitCode === null) kill(); });

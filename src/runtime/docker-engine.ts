@@ -4,7 +4,9 @@ import type { Duplex, Readable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { plainPath } from './worker-mounts.js';
 export interface DockerEngine {
-  json(method: string, path: string, body: unknown, signal: AbortSignal): Promise<unknown>;
+  /** One request and its JSON answer. An answer longer than `limit` bytes is refused: one ordinary answer's
+   * size unless the call says otherwise (a listing, LISTING_MAX). */
+  json(method: string, path: string, body: unknown, signal: AbortSignal, limit?: number): Promise<unknown>;
   attach(id: string, signal: AbortSignal): Promise<Duplex>;
   /** Build an image from a tar context, streamed up as it comes. Resolves when the engine has finished
    * without reporting an error. The engine's own account of the build is read and dropped: it holds
@@ -16,11 +18,13 @@ export class DockerResponseError extends Error {
 }
 /** The size of one answer from the container engine, and of one line of a build's account. */
 const ANSWER_MAX = 65_536;
+/** The size of a listing of images: each carries its labels, and there may be many. */
+export const LISTING_MAX = 4_194_304;
 export function dockerEngine(socketPath: string): DockerEngine {
   // How the path must be written is worker-mounts.ts's rule; the worker has checked there that it is a socket.
   if (!plainPath(socketPath)) throw new Error('Expected absolute Docker socket');
   return {
-    json(method, path, body, signal) {
+    json(method, path, body, signal, limit = ANSWER_MAX) {
       return new Promise((resolve, reject) => {
         const data = body === undefined ? undefined : JSON.stringify(body);
         const req = request({ socketPath, method, path, signal,
@@ -28,7 +32,7 @@ export function dockerEngine(socketPath: string): DockerEngine {
           let size = 0; const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => {
             size += chunk.length;
-            if (size > ANSWER_MAX) res.destroy(new Error('Docker response exceeded limit'));
+            if (size > limit) res.destroy(new Error('Docker response exceeded limit'));
             else chunks.push(chunk);
           });
           res.once('error', reject);
@@ -67,8 +71,9 @@ export function dockerEngine(socketPath: string): DockerEngine {
           res.once('aborted', failed);
           res.once('end', () => {
             read(decoder.end()); if (!skipping && line.trim()) message(line);
-            if (res.statusCode !== 200) { reject(new DockerResponseError(res.statusCode ?? 0)); return; }
-            if (error) reject(new Error('Docker build failed')); else resolve();
+            // A build that did not work has no more use for its context: what feeds it is let go.
+            if (res.statusCode !== 200) { context.destroy(); reject(new DockerResponseError(res.statusCode ?? 0)); return; }
+            if (error) { context.destroy(); reject(new Error('Docker build failed')); } else resolve();
           });
         });
         req.once('error', failed);

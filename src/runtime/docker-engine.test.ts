@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream';
 import { beforeEach, expect, it, vi } from 'vitest';
 const mocked = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock('node:http', () => ({ request: mocked.request }));
-import { dockerEngine } from './docker-engine.js';
+import { dockerEngine, LISTING_MAX } from './docker-engine.js';
 function fixture() {
   const req = Object.assign(new EventEmitter(), { end: vi.fn() });
   const response = Object.assign(new PassThrough(), { statusCode: 200 });
@@ -111,4 +111,25 @@ for (const failure of ['an error line', 'an error detail split across chunks', '
   if (failure === 'a broken answer') { f.context.end(); f.response.destroy(new Error('offline')); }
   if (failure === 'a broken request') f.req.emit('error', new Error('offline'));
   await failed;
+});
+
+it('reads a longer answer only for a call that says how long it may be', async () => {
+  const long = JSON.stringify(Array.from({ length: 40 }, (_, index) => ({ Id: String(index), Labels: { text: 'x'.repeat(4_000) } })));
+  expect(long.length).toBeGreaterThan(65_536); expect(long.length).toBeLessThan(LISTING_MAX);
+  const refused = fixture(), failed = expect(refused.engine.json('GET', '/images/json', undefined, refused.abort.signal)).rejects.toThrow();
+  await Promise.resolve(); refused.response.end(long); await failed;
+  const taken = fixture(), pending = taken.engine.json('GET', '/images/json', undefined, taken.abort.signal, LISTING_MAX);
+  await Promise.resolve(); taken.response.end(long); expect(await pending).toHaveLength(40);
+  const over = fixture(), tooLong = expect(over.engine.json('GET', '/images/json', undefined, over.abort.signal, LISTING_MAX)).rejects.toThrow();
+  await Promise.resolve(); over.response.end('x'.repeat(LISTING_MAX + 1)); await tooLong;
+  expect(LISTING_MAX).toBe(4_194_304);
+});
+it('ends the context it was reading when a build fails, so what feeds it is not left waiting', async () => {
+  for (const failure of ['status', 'line']) {
+    const f = buildFixture(); if (failure === 'status') f.response.statusCode = 500;
+    const failed = expect(f.engine.build('/build?t=name', f.context, f.abort.signal)).rejects.toThrow();
+    await Promise.resolve(); f.context.write('some of it');
+    f.response.end(failure === 'line' ? '{"error":"private"}\n' : '{"message":"private"}'); await failed;
+    expect(f.context.destroyed).toBe(true);
+  }
 });

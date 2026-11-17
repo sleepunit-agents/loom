@@ -1,5 +1,6 @@
 import { it, expect, vi } from 'vitest';
 import { workerProgram } from './worker-program.js';
+import { containerWorkerExecutor, UPKEEP_FAILED } from './worker-container.js';
 import { defaultWorkerState } from './worker-left.js';
 import { WORKER_STOP, WorkerStop } from './worker-stop.js';
 import { RELAY_MS } from './account-signin-relay.js';
@@ -170,7 +171,7 @@ it('selects the actual container executor when configured, without invoking a ho
   const selected = { ...houseConfig, container: { socket: '/configured/docker.sock', nestedSocket: '/configured/nested.sock', setupTimeoutMs: 200, cleanupTimeoutMs: 300 } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(selected) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state });
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...selected, state }, { say: expect.any(Function) });
   expect(f.executor).not.toHaveBeenCalled();
   expect(f.run).toHaveBeenCalledWith(expect.objectContaining({ executor: { container: true } }));
 });
@@ -209,11 +210,26 @@ it.each([
   expect(WORKER_STOP.retired[1]).toBe('the configuration has a key that a worker with container bodies no longer takes: it builds each house itself from the agent\'s repository, the image says how a body starts, and mounts are listed by agent');
   expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
+it('stops a worker with container bodies whose own directory cannot give a container the body program, with its own line and code', async () => {
+  const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('program'); });
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(55);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the directory the worker is installed in cannot give containers the body program: dist/body.js or a package it depends on is not inside it (its packages must be in its own node_modules, as a global npm install puts them)\n');
+  expect(f.run).not.toHaveBeenCalled();
+});
+it('prints what its container executor has to say, in the executor\'s own fixed words', async () => {
+  const f = fixture(); let say: ((line: string) => void) | undefined;
+  const containerExecutor = vi.fn((_config: unknown, given?: { say?: (line: string) => void }) => { say = given?.say; return {}; });
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
+  f.run.mockImplementation(async () => { say!(UPKEEP_FAILED); });
+  expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker could not look at its house images: old ones stay until it can\n');
+});
 it('stops a worker with container bodies on a machine that has no git, with its own line and code', async () => {
   const f = fixture(), containerExecutor = vi.fn(() => { throw new WorkerStop('git'); });
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, container: { socket: '/fake/docker.sock' } }) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(54);
-  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: git, which fetches each house\'s repository, could not be run on this machine\n'); expect(f.run).not.toHaveBeenCalled();
+  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: git 2.29 or later, which fetches each house\'s repository, could not be run on this machine\n'); expect(f.run).not.toHaveBeenCalled();
 });
 for (const gone of ['build', 'runners'] as const) it(`still needs ${gone} for a worker whose bodies are processes`, async () => {
   const f = fixture(), { [gone]: _left, ...rest } = config;
@@ -263,7 +279,7 @@ it('passes the engine runtime, the sign-in directories and the fixed mounts to c
     container: { socket: '/fake/podman.sock', runtime: 'crun', mounts: { art: [{ source: '/house/stamps', target: '/house/stamps', readOnly: false }], mark: [{ source: '/house/mirror', target: '/mirror' }] } } };
   f.read.mockImplementation(async path => path === '/config' ? JSON.stringify(configured) : 'private-token');
   expect(await workerProgram({ ...f, containerExecutor })).toBe(0);
-  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }); expect(f.executor).not.toHaveBeenCalled();
+  expect(containerExecutor).toHaveBeenCalledExactlyOnceWith({ ...configured, state }, { say: expect.any(Function) }); expect(f.executor).not.toHaveBeenCalled();
 });
 for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { container: { socket: '/s', runtime: '' } },
   { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', readOnly: 'yes' }] } } }, { container: { socket: '/s', mounts: { art: [{ source: '/a', target: '/b', propagation: 'shared' }] } } },
@@ -283,10 +299,12 @@ it('stops before any work is claimed when a path given to containers or an engin
   expect(WORKER_STOP.mounts).toEqual([52, 'a path the configuration gives to containers, or an engine socket, cannot be used: a mounted directory that is not an existing directory of this user written as its real path, an engine socket that is not an existing socket, a path not written as a plain absolute path, or a mounted directory that overlaps another, an engine socket, the state directory or the token file']);
   // The line, then the configuration key at fault in brackets: a key, never the path written under it.
   const line = (key: string) => `Worker stopped: ${WORKER_STOP.mounts[1]} (${key})\n`;
-  const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path'), { createServer } = await import('node:http');
+  const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path'), { createServer } = await import('node:http');
   const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-private-')), real = join(root, 'real'), other = join(root, 'other'), link = join(root, 'link');
   const engine = join(root, 'engine'), socket = join(engine, 'engine.sock'), workerState = join(root, 'state');
   mkdirSync(real); mkdirSync(other); mkdirSync(engine); symlinkSync(real, link);
+  const program = join(root, 'install'); mkdirSync(join(program, 'dist'), { recursive: true }); mkdirSync(join(program, 'node_modules', 'zod'), { recursive: true });
+  writeFileSync(join(program, 'dist', 'body.js'), ''); writeFileSync(join(program, 'package.json'), '{"dependencies":{"zod":"^4"}}');
   const run = join(root, 'run'); symlinkSync(engine, run);
   // An engine with nothing left on it: the worker that starts lists its containers and finds none.
   const server = createServer((_request, response) => { response.end('[]'); });
@@ -295,8 +313,9 @@ it('stops before any work is claimed when a path given to containers or an engin
   const started = async (patch: { accountLogins?: unknown; container?: Record<string, unknown>; tokenFile?: string; state?: string }) => {
     const f = fixture();
     f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...houseConfig, state: workerState, ...patch, container: { socket, ...patch.container } }) : 'private-token');
-    // The real container executor, so the real checks, which come before the state directory is taken.
-    return { code: await workerProgram(f), f };
+    // The real container executor, so the real checks, which come before the state directory is taken. It
+    // is told one thing only: a directory laid out as an install is, since a checkout's own may not be.
+    return { code: await workerProgram({ ...f, containerExecutor: (given, with_) => containerWorkerExecutor(given, { ...with_, program }) }), f };
   };
   try {
     // The same configuration with nothing wrong in it starts, so each stop below is for the one thing changed.

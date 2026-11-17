@@ -2,7 +2,8 @@ import { PassThrough } from 'node:stream';
 import { expect, it, vi } from 'vitest';
 import { DockerResponseError, type DockerEngine } from './docker-engine.js';
 import { UnmetHouseError as HouseImageError } from './worker.js';
-import { buildHouse, houseBuilt, houseImage, houseStart, pruneHouses, HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE } from './house-image.js';
+import { buildHouse, houseBuilt, houseImage, houseImageName, houseStart, pruneHouses, HOUSE_IMAGES_KEPT, HOUSE_IMAGES_PER_HOUSE } from './house-image.js';
+import { LISTING_MAX } from './docker-engine.js';
 
 const house = { repository: 'https://example.com/org/house.git', file: 'house/Housefile', branch: 'main' }, commit = 'c'.repeat(40);
 const image = houseImage(house, commit), id = `sha256:${'a'.repeat(64)}`;
@@ -61,6 +62,29 @@ it.each([
 ])('refuses an image with %s, as the house\'s fault', async (_what, inspected) => {
   await expect(houseStart(engine(() => inspected), image, 'claude', never())).rejects.toThrow(HouseImageError);
 });
+it('names the label or the rule an image breaks, and never anything else', async () => {
+  const rule = async (inspected: unknown, harness = 'claude') => (await houseStart(engine(() => inspected), image, harness, never()).catch(error => error as HouseImageError)).rule;
+  expect(await rule(labelled({ ...good, 'loom.house': '2' }))).toBe('loom.house');
+  expect(await rule(labelled({ ...good, 'loom.house.node': '/usr/bin/../bin/node' }))).toBe('loom.house.node');
+  expect(await rule(labelled(good), 'agy')).toBe('loom.house.body.agy');
+  expect(await rule(labelled(good, { WorkingDir: '/' }))).toBe('WORKDIR');
+  expect(await rule(labelled(good, { Labels: null }))).toBe('loom.house');
+  // A harness that is no label's name is said as the rule, not echoed.
+  expect(await rule(labelled(good), 'a b\nc')).toBe('loom.house.body.<harness>');
+});
+it.each([
+  ['a volume of its own', { Volumes: { '/data': {} } }], ['a volume its base image declared', { Volumes: { '/var/lib/x': {}, '/data': {} } }],
+])('refuses an image that declares %s before any container is made of it', async (_what, config) => {
+  const failure = await houseStart(engine(() => labelled(good, config)), image, 'claude', never()).catch(error => error as HouseImageError);
+  expect(failure).toBeInstanceOf(HouseImageError); expect(failure.rule).toBe('VOLUME');
+  // No volumes, said either way an engine says it.
+  for (const Volumes of [null, {}, undefined]) expect(await houseStart(engine(() => labelled(good, { Volumes })), image, 'claude', never())).toMatchObject({ id });
+});
+it('takes one shape for a house image\'s name, wherever one is asked about', async () => {
+  expect(houseImageName(image)).toBe(true);
+  for (const other of ['docker.io/library/busybox', 'image', `${image}?x`, `${image} `, image.replace('localhost/', ''), image.slice(0, -1), 7, undefined]) expect(houseImageName(other)).toBe(false);
+  await expect(houseStart(engine(() => labelled(good)), 'docker.io/library/busybox', 'claude', never())).rejects.toThrow('Invalid house image');
+});
 it('refuses a harness the image has no body file for, and one that is no label\'s name', async () => {
   for (const harness of ['agy', 'constructor', 'toString', '__proto__', 'Claude', 'a b', '', 'claude.x'])
     await expect(houseStart(engine(() => labelled(good)), image, harness, never())).rejects.toThrow(HouseImageError);
@@ -97,12 +121,24 @@ it('keeps ten house images in all, the most recently built', async () => {
   const all = listing(rows); await pruneHouses(all.made, [], false, never());
   expect(all.removed.sort()).toEqual(rows.slice(0, 3).map(row => row.name).sort());
 });
+it('reads a listing longer than one ordinary answer, and says so when it cannot list at all', async () => {
+  // Images carry their labels in a listing: many of them, or one with a long label, are a long answer.
+  const rows = [1, 2, 3, 4].map(n => ({ name: tag('a', String(n)), built: n })), long = listing(rows);
+  expect(await pruneHouses(long.made, [], false, never())).toBe(true);
+  expect(long.made.json.mock.calls[0][4]).toBe(LISTING_MAX);
+  expect(long.removed).toEqual([tag('a', '2'), tag('a', '1')]);
+  // An answer the client will not read, an engine that is down, an answer that is no list: nothing is
+  // removed, nothing is thrown, and whoever asked is told that the disk was not looked at.
+  for (const answer of [() => { throw new Error('Docker response exceeded limit'); }, () => ({ message: 'not a list' })]) {
+    const unread = engine(answer); expect(await pruneHouses(unread, [], true, never())).toBe(false);
+    expect(unread.json).toHaveBeenCalledOnce();
+  }
+});
 it('leaves an image the engine will not remove, goes on, and never fails', async () => {
   const rows = [1, 2, 3, 4].map(n => ({ name: tag('a', String(n)), built: n }));
   const some = listing(rows, [tag('a', '2')]); await pruneHouses(some.made, [], false, never());
   expect(some.removed).toEqual([tag('a', '1')]);
-  for (const answer of [() => { throw new Error('engine is down'); }, () => ({ message: 'not a list' }), () => [null, { RepoTags: 'x' }, { RepoTags: [7] }]])
-    await expect(pruneHouses(engine(answer), [], true, never())).resolves.toBeUndefined();
+  await expect(pruneHouses(engine(() => [null, { RepoTags: 'x' }, { RepoTags: [7] }]), [], true, never())).resolves.toBe(true);
 });
 it('asks the engine to forget what builds left behind only when told no build is running', async () => {
   const all = listing([]); await pruneHouses(all.made, [], true, never());
