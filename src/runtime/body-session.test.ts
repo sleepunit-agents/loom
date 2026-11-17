@@ -5,7 +5,12 @@ import { gzipSync } from 'node:zlib';
 import { randomBytes } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { bodySessions, packSession, sessionPath, unpackSession } from './body-session.js';
+/** A keeper for a harness whose sessions place is the directory these tests made: in a house the worker
+ * vouches for the layout's place, and here that place is wherever the test put the harness's directory. */
+const keep = (client: Parameters<typeof bodySessions>[0], harness: string, env: Record<string, string | undefined>) =>
+  bodySessions(client, harness, env, env.CLAUDE_CONFIG_DIR ?? (env.HOME ? join(env.HOME, '.claude') : undefined));
 import { harnessSessionFiles } from './body-harnesses.js';
+import { houseSessions } from './house-layout.js';
 import { SESSION_BYTES } from '../core/conversations/session-limit.js';
 
 const made: string[] = [];
@@ -73,7 +78,7 @@ it('takes the kept session from loom, hands back the one the run left, and leave
   const calls: [string, unknown][] = [];
   const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]);
     return operation === 'conversation.session' ? { ok: true as const, value: { session: { session, files: kept } } } : { ok: true as const, value: { saved: true } }; } };
-  const keeper = bodySessions(client as never, 'claude', { CLAUDE_CONFIG_DIR: after, LOOM_BODY_OWN_HARNESS: '1' })!;
+  const keeper = keep(client as never, 'claude', { CLAUDE_CONFIG_DIR: after, LOOM_BODY_OWN_HARNESS: '1' })!;
   expect(await keeper.take()).toBe(session);
   expect(existsSync(join(after, 'projects', '-house', `${session}.jsonl`))).toBe(true);
   // The run went on in the same session and added to it.
@@ -96,40 +101,40 @@ it('starts fresh, and never fails, when loom has none, loom is away, or what it 
   for (const answer of answers) {
     const calls: unknown[] = [];
     const client = { command: async (operation: string, input: unknown) => { calls.push([operation, input]); return operation === 'conversation.session' ? answer : { ok: true, value: { saved: false } }; } };
-    expect(await bodySessions(client as never, 'claude', env)!.take()).toBeUndefined();
+    expect(await keep(client as never, 'claude', env)!.take()).toBeUndefined();
     // Handed nothing it can continue, it says so at once: what loom keeps is of no use to this body and is removed.
     expect(calls).toEqual([['conversation.session', {}], ['conversation.sessionSave', { session: null }]]);
   }
   // Refused, or loom away: nothing more is asked, and nothing fails.
   const refused: string[] = [];
-  expect(await bodySessions({ command: async (operation: string) => { refused.push(operation); return { ok: false, code: 'denied', message: 'no' }; } } as never, 'claude', env)!.take()).toBeUndefined();
+  expect(await keep({ command: async (operation: string) => { refused.push(operation); return { ok: false, code: 'denied', message: 'no' }; } } as never, 'claude', env)!.take()).toBeUndefined();
   expect(refused).toEqual(['conversation.session']);
-  expect(await bodySessions({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', env)!.take()).toBeUndefined();
+  expect(await keep({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', env)!.take()).toBeUndefined();
   // A run that left no session, or one too large to pack, says so; loom then removes what it kept.
   const said: unknown[] = [];
-  const keeper = bodySessions({ command: async (_operation: string, input: unknown) => { said.push(input); return { ok: true, value: { saved: false } }; } } as never, 'claude', env)!;
+  const keeper = keep({ command: async (_operation: string, input: unknown) => { said.push(input); return { ok: true, value: { saved: false } }; } } as never, 'claude', env)!;
   await keeper.save(undefined); await keeper.save('no-such-session-1');
   expect(said).toEqual([{ session: null }, { session: null }]);
-  await bodySessions({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', env)!.save(session);
+  await keep({ command: async () => { throw Error('PRIVATE'); } } as never, 'claude', env)!.save(session);
 });
 
 it('keeps no session unless the harness directory is this body\'s alone, is there already, and can be written', () => {
   const root = mkdtempSync(join(tmpdir(), 'loom-body-session-')); made.push(root);
   const client = { command: async () => ({ ok: true, value: { session: null } }) } as never;
-  expect(bodySessions(client, 'claude', { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' })).toBeDefined();
+  expect(keep(client, 'claude', { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' })).toBeDefined();
   // Not said to be the body's own: a plain process, or a container with the sign-in directory mounted in.
-  for (const env of [{ CLAUDE_CONFIG_DIR: root }, { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '0' }, { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: 'true' }]) expect(bodySessions(client, 'claude', env)).toBeUndefined();
+  for (const env of [{ CLAUDE_CONFIG_DIR: root }, { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '0' }, { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: 'true' }]) expect(keep(client, 'claude', env)).toBeUndefined();
   // A harness directory that is not there is not made: no directory, no session.
   const missing = join(root, 'no-claude-here');
-  expect(bodySessions(client, 'claude', { CLAUDE_CONFIG_DIR: missing, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(keep(client, 'claude', { CLAUDE_CONFIG_DIR: missing, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
   expect(existsSync(missing)).toBe(false);
   const home = join(root, 'home');mkdirSync(home);
-  expect(bodySessions(client, 'claude', { HOME: home, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(keep(client, 'claude', { HOME: home, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
   expect(existsSync(join(home, '.claude'))).toBe(false);
   // A file where the directory should be, and a harness that keeps no sessions.
   writeFileSync(join(root, 'a-file'), 'x');
-  expect(bodySessions(client, 'claude', { CLAUDE_CONFIG_DIR: join(root, 'a-file'), LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
-  expect(bodySessions(client, 'codex', { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(keep(client, 'claude', { CLAUDE_CONFIG_DIR: join(root, 'a-file'), LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
+  expect(keep(client, 'codex', { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' })).toBeUndefined();
 });
 
 it('unpacks through no link: one planted at any step of a session\'s path refuses the whole pack and nothing lands outside', () => {
@@ -163,4 +168,18 @@ it('unpacks through no link: one planted at any step of a session\'s path refuse
   at = place();
   expect(unpackSession(at.root, pack(files), session)).toHaveLength(2);
   expect(readFileSync(join(at.root, 'projects', '-house', session, 'tool-results', 'one.txt'), 'utf8')).toBe('TRANSCRIPT');
+});
+
+it('keeps a session only in the place the worker vouched for: the layout\'s, for the body\'s harness', () => {
+  const root = mkdtempSync(join(tmpdir(), 'loom-body-session-')); made.push(root);
+  const client = { command: async () => ({ ok: true, value: { session: null } }) } as never, env = { CLAUDE_CONFIG_DIR: root, LOOM_BODY_OWN_HARNESS: '1' };
+  // The harness keeps its sessions where the worker said is the body's own.
+  expect(bodySessions(client, 'claude', env, root)).toBeDefined();
+  // It keeps them somewhere else (an image that points Claude Code's whole directory at the mounted sign-in,
+  // say): the worker's word was about another place, so no session is kept.
+  expect(bodySessions(client, 'claude', env, join(root, 'elsewhere'))).toBeUndefined();
+  // With nothing said, the place is the layout's: a house's own home.
+  expect(houseSessions('claude')).toBe('/home/agent/.claude');
+  expect(bodySessions(client, 'claude', env)).toBeUndefined();
+  expect(houseSessions('codex')).toBeUndefined(); expect(houseSessions('constructor')).toBeUndefined();
 });

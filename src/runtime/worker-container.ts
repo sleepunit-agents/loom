@@ -24,7 +24,7 @@ import { WorkerStop } from './worker-stop.js';
 import { holdAlone, type Alone, type HoldAlone } from './worker-alone.js';
 import { keyPart } from './worker-mounts.js';
 import { containerExit } from './job-exit.js';
-import { HOUSE_ENV, HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile } from './house-layout.js';
+import { HOUSE_ENV, HOUSE_HOME, HOUSE_NODE, HOUSE_REPOSITORY, houseBodyFile, houseOverlap, houseSessions } from './house-layout.js';
 import { bodyMounts, BODY_PROGRAM, type AccountLogins, type AgentMounts, type BodyMount } from './worker-mounts.js';
 
 /** The names the worker may send as the engine's runtime. The operator states which one their engine has;
@@ -75,6 +75,11 @@ function portBindings(job: WorkerAssignment) {
   }
   return bindings;
 }
+/** Whether the place this harness keeps its sessions is the container's own, with no mount at, above or under it. */
+function ownSessions(harness: string, mounts: readonly EngineMount[]): boolean {
+  const place = houseSessions(harness);
+  return place !== undefined && !mounts.some(mount => houseOverlap(mount.Target, place));
+}
 /** One body's container. Where things are in it is the layout, the same in every house (house-layout.ts):
  * node, the harness's body file, the tenant's home and its repository, where the body starts. The program
  * is the worker's own, mounted. The rest of the environment is the image's: the worker adds the home,
@@ -86,8 +91,10 @@ function portBindings(job: WorkerAssignment) {
 function createSpec(job: WorkerAssignment, house: HouseStart, built: { repository: string; branch: string; commit: string }, config: ContainerConfig, mounts: readonly EngineMount[], bindings: ReturnType<typeof portBindings>) {
   return { Image: house.id, Entrypoint: [HOUSE_NODE], Cmd: [BODY_PROGRAM, houseBodyFile(job.harness)], WorkingDir: HOUSE_REPOSITORY,
     Env: [`${BODY_SCRATCH}=/tmp`, `HOME=${HOUSE_HOME}`, `${HOUSE_ENV.repository}=${built.repository}`, `${HOUSE_ENV.branch}=${built.branch}`, `${HOUSE_ENV.commit}=${built.commit}`,
-      // And whether the harness's own directory is this body's alone (body-harness.ts, BODY_OWN_HARNESS).
-      ...(mounts.every(mount => mount.ReadOnly) ? [`${BODY_OWN_HARNESS}=1`] : [])],
+      // And whether the place its harness keeps sessions is this body's alone: it is the container's own
+      // home unless a mount (an agent's own directory; a sign-in is mounted elsewhere) is, holds, or is inside
+      // it (house-layout.ts, houseSessions). A harness with no such place is told nothing.
+      ...(ownSessions(job.harness, mounts) ? [`${BODY_OWN_HARNESS}=1`] : [])],
     AttachStdin: true, AttachStdout: true, AttachStderr: true, OpenStdin: true, StdinOnce: true, Tty: false,
     // The labels are how a later worker of the same machine finds a body this one was killed over (endLeft).
     Labels: { 'loom.job': job.id, 'loom.agent': job.agent, 'loom.box': job.box },

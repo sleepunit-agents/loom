@@ -360,6 +360,15 @@ for (const buildTimeoutMs of [0, -1, 1.5, Infinity, 3_600_001]) it(`rejects inva
   expect(f.runtime.spawn).not.toHaveBeenCalled();
 });
 
+it('never tells a body run as a process that its harness directory is its own, whatever the configuration says', async () => {
+  const f = fixture();
+  const executor = commandWorkerExecutor({ build: plan, runners: { 'custom-runner': { ...plan, env: { PROFILE: 'p', LOOM_BODY_OWN_HARNESS: '1' } } } }, f.runtime);
+  const body = executor.start(job, 'image', new AbortController().signal);
+  // The harness's directory is the machine's, shared with every other body: such a body keeps no session.
+  expect(f.runtime.spawn).toHaveBeenCalledWith(expect.objectContaining({ env: { PROFILE: 'p', LOOM_BODY_SCRATCH: expect.any(String) } }));
+  f.children[0].child.emit('spawn'); await body.spawned; await body.stop();
+});
+
 it('selects an exact account and harness command without borrowing another account environment', async () => {
   const f = fixture(), selected = { ...plan, command: '/private/run-a', args: ['--json'], env: { PROFILE: 'only-a' } };
   const config = { build: plan, runners: { 'custom-runner': { ...plan, env: { PROFILE: 'shared' } } },

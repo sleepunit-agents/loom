@@ -6,20 +6,22 @@
  * left on the machine the body ran on. The container a body runs in is thrown away, and the next body may
  * run anywhere: loom is the one place a session waits.
  *
- * Where: only where the harness's directory is this body's alone for this one job (BODY_OWN_HARNESS, set by
- * a worker whose container has nothing of the machine mounted writable). A restored session is the
- * conversation's words in plain files beside the harness's sign-in. In a directory other bodies share, or
- * one that outlives this body (a body run as a plain process; a sign-in directory mounted into the
- * container), another conversation's body could read it. There no session is kept or restored at all, and
- * the body starts fresh with the conversation's kept history. Nor is the directory ever made here: a
- * harness that has none keeps no session.
+ * Where: only where the place the harness keeps its sessions is this body's alone for this one job. A
+ * restored session is the conversation's words in plain files. In a house that place is the container's
+ * own home (house-layout.ts, houseSessions), thrown away with the body; the account's sign-in is mounted
+ * elsewhere. The worker says so (BODY_OWN_HARNESS) unless a mount is, holds, or is inside that place, and
+ * the body checks that its harness really keeps its sessions there. A body run as a plain process is never
+ * told so: its harness's directory is the machine's, where another conversation's body could read what is
+ * left. There no session is kept or restored at all, and the body starts fresh with the conversation's
+ * kept history. Nor is the directory ever made here: a harness that has none keeps no session.
  *
  * Everything here is best effort. No session handed over, files that cannot be put back, a session too
  * large to pack: each ends in the body starting fresh with the conversation's kept history, never in a
  * failed job. A packed session is its files as JSON, gzipped; the limits are session-limit.ts.
  */
 import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, writeSync } from 'node:fs';
-import { join, normalize, sep } from 'node:path';
+import { join, normalize, resolve, sep } from 'node:path';
+import { houseSessions } from './house-layout.js';
 import { randomUUID } from 'node:crypto';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { z } from 'zod';
@@ -89,12 +91,13 @@ export interface BodySessions {
   /** Removes from this machine the session `take` put back, telling loom nothing: for a run that did not answer. */
   discard(): void;
 }
-/** The keeper for one body, or nothing: its harness keeps no sessions, the harness's directory is not this
- * body's alone (see the head of this file), or that directory is not there or cannot be written. */
-export function bodySessions(client: Client, harness: string, env: Env): BodySessions | undefined {
+/** The keeper for one body, or nothing: its harness keeps no sessions, the worker has not said the place
+ * is this body's alone, the harness keeps them somewhere other than the place the worker vouched for
+ * (`place`: the layout's, for this harness), or that directory is not there or cannot be written. */
+export function bodySessions(client: Client, harness: string, env: Env, place: string | undefined = houseSessions(harness)): BodySessions | undefined {
   const where = (session: string) => harnessSessionFiles(harness, env, session);
   const root = where('probe-session')?.root;
-  if (!root || env[BODY_OWN_HARNESS] !== '1') return undefined;
+  if (!root || env[BODY_OWN_HARNESS] !== '1' || place === undefined || resolve(root) !== place) return undefined;
   // The harness's own directory as it stands. It is never made here.
   try { if (!lstatSync(realpathSync(root)).isDirectory()) return undefined; accessSync(root, constants.W_OK); } catch { return undefined; }
   const remove = (session: string) => { for (const rel of where(session)?.files ?? []) { try { rmSync(join(root, rel), { force: true }); } catch { /* the container goes with it */ } } };

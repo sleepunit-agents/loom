@@ -863,15 +863,17 @@ Entries are grouped by the part of the program they belong to.
   words key. The next body of the same harness is handed it, puts the files back and tells the harness to
   continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
   agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
-- Where a session is kept at all: only where the harness's directory is that body's alone for that one
-  job. A restored session is the conversation's words in plain files beside the harness's sign-in
-  (`~/.claude`, or `CLAUDE_CONFIG_DIR`). A worker says the directory is the body's own
-  (`LOOM_BODY_OWN_HARNESS=1`) only for a container that is removed after the body and has nothing of the
-  machine mounted writable into it. A body run as a plain process, and a house whose account sign-in
-  directory is mounted in (`accountLogins`), share that directory with other bodies and leave it behind:
-  there no session is kept or restored, and every body starts fresh with the kept history. So **resume
-  needs a house that carries its own sign-in**. The body never makes the harness's directory; a harness
-  that has none keeps no session.
+- Where a session is kept at all: only where the place the harness keeps its sessions is that body's
+  alone for that one job. A restored session is the conversation's words in plain files. In a house that
+  place is the container's own home (`/home/agent/.claude` for Claude Code; `houseSessions` in
+  `src/runtime/house-layout.ts` states the places once), thrown away with the body, and the account's
+  sign-in is mounted elsewhere (`/run/loom/login/<harness>`), so the two do not meet. The worker tells the
+  body the place is its own (`LOOM_BODY_OWN_HARNESS=1`) unless a mount is, holds, or is inside it: an
+  agent's own mount at `.claude` or under it turns resume off for that agent. The body also checks that
+  its harness really keeps its sessions at that place, and never makes the directory: the house's image
+  does. A body run as a plain process is never told so, whatever its configuration says: its harness's
+  directory is the machine's, shared with every other body and left behind. Wherever the place is not the
+  body's own, no session is kept or restored and the body starts fresh with the kept history.
 - Limits, each stated once in `src/core/conversations/session-limit.ts`: a packed session holds at most
   700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is handed on
   only within one family of models. It is erased when the household's keep time for words has passed
@@ -900,15 +902,12 @@ Entries are grouped by the part of the program they belong to.
 - What this costs: a continued session re-reads all of itself on every message, and grows until it passes
   the size limit and the conversation starts fresh. A conversation that never pauses still starts fresh
   once in every keep time. A continued session does not see changes to the agent's identity pages until
-  it next starts fresh. On a worker that mounts the sign-in directory, or runs bodies as processes, there
-  is no resume at all.
-- Would change it: wanting resume where the sign-in directory is shared. Claude Code would have to keep
-  its sessions apart from its sign-in. Its program names `CLAUDE_CONFIG_DIR` (which moves both together)
-  and `CLAUDE_SECURESTORAGE_CONFIG_DIR` (undocumented; what it moves was not established), and nothing
-  that moves only `projects/`. A per-job directory with the sign-in elsewhere would then be the body's
-  own. Or: sessions passing 700 KB so often that conversations keep starting over. Then a session
-  is sent in pieces, or the harness's own compaction is asked for before the limit. Or Codex bodies
-  answering on bridges: its sessions directory is packed the same way, in its adapter.
+  it next starts fresh. A worker that runs bodies as processes has no resume at all.
+- Would change it: wanting resume for bodies run as processes. Each would need a directory of its own for
+  the harness's sessions, removed when the body ends, with the sign-in elsewhere, as a house has. Or:
+  sessions passing 700 KB so often that conversations keep starting over; then a session is sent in
+  pieces, or the harness's own compaction is asked for before the limit. Or Codex bodies answering on
+  bridges: its sessions directory is packed the same way, in its adapter, and given a place in the layout.
 
 ### A bridge body that starts fresh is handed what was said, not what was done
 - What: a body that does not continue a session (above) is handed the earlier words of its conversation:

@@ -21,6 +21,17 @@ export const houseBodyFile = (harness: string): string => `/etc/loom/body/${harn
 export const houseLogin = (harness: string): string => `/run/loom/login/${harness}`;
 /** Where an agent's mounted directory lands: under the home, at the path the machine's configuration gives. */
 export const houseMount = (relative: string): string => `${HOUSE_HOME}/${relative}`;
+/** Where a harness keeps what it writes of a run, its sessions included: its own configuration directory
+ * under the home, which is the container's own filesystem and goes with the body. The sign-in is not there:
+ * it is the mounted directory at houseLogin, which a harness is pointed at separately (the core house sets
+ * CLAUDE_SECURESTORAGE_CONFIG_DIR for Claude Code). So in a house this place is one body's alone for one
+ * job, unless a mount is, holds, or is inside it; the worker checks that and says so to the body
+ * (body-harness.ts, BODY_OWN_HARNESS), and a body keeps a session of a conversation only there
+ * (body-session.ts). A harness not listed keeps no sessions loom knows of. */
+const HOUSE_SESSIONS: Readonly<Record<string, string>> = Object.freeze({ claude: `${HOUSE_HOME}/.claude` });
+export const houseSessions = (harness: string): string | undefined => Object.hasOwn(HOUSE_SESSIONS, harness) ? HOUSE_SESSIONS[harness] : undefined;
+/** Whether one path is the other or inside it, either way round: a mount at, above or under a place. */
+export const houseOverlap = (one: string, other: string): boolean => one === other || one.startsWith(other + '/') || other.startsWith(one + '/');
 /** What a body is told of the house it is in, as variables the worker sets on its container: the
  * repository's address as it was fetched, the branch the job's settings name, and the commit the image was
  * built from. The worker sets them, so an image's own `ENV` of these names does not hold. With them a

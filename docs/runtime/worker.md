@@ -606,6 +606,7 @@ the repository it was built from.
 | The job's account's sign-in, for its harness | `/run/loom/login/<harness>` | the worker mounts it |
 | loom's own program | `/opt/loom` | the worker mounts it, read-only |
 | An agent's mounted directories | under `/home/agent`, at the path the configuration gives | the worker mounts them |
+| Where a harness keeps its sessions | `/home/agent/.claude` for Claude Code; no place for another harness yet | the image makes it (the core house); the container's own, gone with the body |
 
 The home is fixed and the user is not: a body runs as the image's `USER`. **The
 core house has no `USER` line, so a body in it runs as the container's root.**
@@ -616,6 +617,22 @@ container it can change any file of its house, which lasts as long as that
 container. With an engine that runs as root, a house that keeps the core's
 root runs as the machine's root inside its container; a house for such a
 machine sets a `USER` that can write the sign-in directory.
+
+**Sessions.** A body of a Discord or Slack conversation continues the session
+the last body of that conversation left: loom hands it the session, it puts the
+files back in the harness's own directory, and hands them back to loom when it
+has answered ([accepted-tradeoffs.md](../accepted-tradeoffs.md), "A harness
+session is kept between bodies"). It does so only where that directory is the
+body's alone. In a house it is: the directory is in the container's own home,
+and the account's sign-in is mounted somewhere else (`/run/loom/login/<harness>`).
+The worker says so to the body (`LOOM_BODY_OWN_HARNESS=1`) unless one of the
+agent's mounted directories is, holds, or is inside that place. **An agent
+mount at `.claude`, or anywhere under it, turns this off for that agent's
+bodies:** each then starts fresh with what was said before. A house that sets
+`CLAUDE_CONFIG_DIR` to anywhere but `/home/agent/.claude` turns it off too, and
+so does a house whose image has no such directory: a body never makes it. A
+body run as a plain process (no `container` in the configuration) is never told
+its harness's directory is its own and keeps no session.
 
 A repository must not assume its own name in a path, a home other than `$HOME`,
 that its checkout is anywhere but `$HOME/repo` (the directory a body starts in),
