@@ -422,6 +422,60 @@ it('clears retained stdout and both tails, then disables private output capture'
   expect(retained.value()).toBe(''); expect(retained.tail()).toBe('');
 });
 
+describe('what the executor records for the worker after it', () => {
+  function recorded() {
+    const notes: { pid: number; entry: object; scratch?: string; forgotten: boolean }[] = [], tidied: unknown[] = [];
+    const left = { scratch: vi.fn(() => '/state/body-one'), close: vi.fn(),
+      note: vi.fn((pid: number, entry: object, scratch?: string) => { const note = { pid, entry, scratch, forgotten: false }; notes.push(note); return () => { note.forgotten = true; }; }),
+      reap: vi.fn(async (tidy?: (left: { pid: number; born: string | null; job: string; harness?: string; account?: string }, scratch: string | undefined) => void) => {
+        // As the real record does: tidying is best effort for each thing left.
+        for (const [found, scratch] of [[{ pid: 9, born: 'then', job: 'old', harness: 'agy', account: 'sub' }, '/state/body-old'], [{ pid: 8, born: 'then', job: 'old-build' }, undefined],
+          [{ pid: 7, born: 'then', job: 'gone', harness: 'agy', account: 'removed-account' }, '/state/body-gone']] as const) try { tidy?.(found, scratch); } catch { /* next */ }
+        return { ended: 2, unverified: 1 };
+      }) };
+    const f = fixture();
+    const open = vi.fn((_dir: string) => left);
+    const executor = commandWorkerExecutor({ build: plan, runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, command: '/worker/run' }, agy: { ...plan, env: { HOME: '/home/sub' } } } }, state: '/state' }, f.runtime, open);
+    return { ...f, executor, left, open, notes, tidied };
+  }
+  it('holds the worker\'s state directory from when it is made until it is closed, and none when none is named', () => {
+    const f = recorded();
+    expect(f.open).toHaveBeenCalledExactlyOnceWith('/state'); expect(f.left.close).not.toHaveBeenCalled();
+    f.executor.close!(); expect(f.left.close).toHaveBeenCalledOnce();
+    const open = vi.fn(); commandWorkerExecutor({ build: plan, runners: {} }, f.runtime, open).close!(); expect(open).not.toHaveBeenCalled();
+  });
+it('notes a build and a body as soon as each has a process, and forgets each once it is reaped', async () => {
+    const f = recorded();
+    const built = f.executor.build(job, new AbortController().signal);
+    expect(f.notes).toMatchObject([{ pid: 123, entry: { job: 'j' }, scratch: undefined, forgotten: false }]);
+    f.children[0].child.emit('spawn'); await flush();
+    f.children[0].child.stdout.emit('data', Buffer.from('{"build":"image"}')); f.children[0].child.emit('close', 0, null);
+    expect(await built).toBe('image'); expect(f.notes[0].forgotten).toBe(true);
+    const body = f.executor.start(job, 'image', new AbortController().signal);
+    expect(vi.mocked(f.runtime.spawn).mock.calls[1][0].env.LOOM_BODY_SCRATCH).toBe('/state/body-one');
+    expect(f.notes[1]).toMatchObject({ pid: 123, entry: { job: 'j', harness: 'custom-runner', account: 'sub' }, scratch: '/state/body-one', forgotten: false });
+    f.children[1].child.emit('spawn'); await body.spawned; expect(f.notes[1].forgotten).toBe(false);
+    f.children[1].child.emit('close', 0, null); await body.exited;
+    expect(f.notes[1].forgotten).toBe(true);
+  });
+  it('does not run a body it could not record', async () => {
+    const f = recorded(); f.left.note.mockImplementation(() => { throw new Error('disk full'); });
+    expect(() => f.executor.start(job, 'image', new AbortController().signal)).toThrow('disk full');
+    expect(f.runtime.kill).toHaveBeenCalledOnce();
+  });
+  it('ends what was left through the record, and tidies each left body as its harness would have', async () => {
+    const leftovers = vi.spyOn(await import('./body-harnesses.js'), 'harnessLeftovers').mockImplementation(() => {});
+    try {
+      const f = recorded();
+      expect(await f.executor.endLeft!(new AbortController().signal)).toEqual({ unverified: 1 });
+      // The build had no scratch directory, and the account of the third has no runner here any more.
+      expect(leftovers).toHaveBeenCalledExactlyOnceWith('agy', '/state/body-old', { HOME: '/home/sub' });
+      expect(f.runtime.spawn).not.toHaveBeenCalled();
+      expect(await fixture().executor.endLeft!(new AbortController().signal)).toEqual({ unverified: 0 });
+    } finally { leftovers.mockRestore(); }
+  });
+});
+
 describe('a body\'s scratch directory', () => {
   const scratchOf = (f: ReturnType<typeof fixture>) => vi.mocked(f.runtime.spawn).mock.calls.at(-1)![0].env.LOOM_BODY_SCRATCH;
   it('is private to the body, named in its environment, and removed once the body has exited', async () => {

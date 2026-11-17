@@ -55,6 +55,14 @@ export interface WorkerBody {
 export interface WorkerExecutor {
   build(job: WorkerAssignment, signal: AbortSignal, repositoryInput?: Uint8Array): Promise<string>;
   start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody;
+  /** Called once, before the worker takes any work: end every build and body a worker before this one
+   * left running on this machine, and remove what they kept. A killed worker cannot stop its bodies, and
+   * loom queues a lost job's work again; without this the same work would run twice side by side.
+   * Rejects when something left could not be ended; the worker then does not start. `unverified` counts
+   * what is still running and could not be shown to be a previous worker's, and so was left. */
+  endLeft?(signal: AbortSignal): Promise<{ unverified: number }>;
+  /** Give up what the executor holds for the life of the worker, when the worker stops in good order. */
+  close?(): void;
 }
 export interface WorkerControl {
   /** Claims once on the server. An uncertain response is never retried locally. */

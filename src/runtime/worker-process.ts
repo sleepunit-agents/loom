@@ -6,6 +6,7 @@
 import { bodyInput } from './body-bootstrap.js';
 import { BODY_SCRATCH } from './body-harness.js';
 import { harnessLeftovers } from './body-harnesses.js';
+import { workerLeft } from './worker-left.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -147,6 +148,8 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   let released = false;
   let stopping: Promise<void> | undefined;
   return {
+    /** The process group's id once the system has given one: at once for a real spawn. */
+    pid: () => child.pid,
     spawned: ready, exited,
     discardOutput: retained.discard,
     output: retained.value,
@@ -166,13 +169,31 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   build: WorkerCommand;
   /** Maximum build time; running bodies have their own lifecycle. */
   buildTimeoutMs?: number;
-}, runtime: ProcessRuntime = native): WorkerExecutor {
+  /** The worker's own directory, where the process groups this executor starts are recorded so that a
+   * later worker can end them if this one is killed (worker-left.ts). The worker program always names
+   * one; it is held from here until close(). */
+  state?: string;
+}, runtime: ProcessRuntime = native, open: typeof workerLeft = workerLeft): WorkerExecutor {
   const buildPlan = command(config.build);
   const buildTimeoutMs = config.buildTimeoutMs ?? 300_000;
   if (!Number.isSafeInteger(buildTimeoutMs) || buildTimeoutMs < 1 || buildTimeoutMs > 3_600_000)
     throw new Error('Invalid worker build deadline');
-  const runner = workerRunner(config);
+  const runner = workerRunner(config), left = config.state === undefined ? undefined : open(config.state);
+  const noted = (attempt: ReturnType<typeof launch>, job: WorkerAssignment, scratch?: string) => {
+    const pid = attempt.pid();
+    return left && pid ? left.note(pid, { job: job.id, harness: job.harness, account: job.account }, scratch) : () => {};
+  };
   return {
+    close() { left?.close(); },
+    async endLeft() {
+      if (!left) return { unverified: 0 };
+      const { unverified } = await left.reap((record, scratch) => {
+        if (!scratch || !record.harness || !record.account) return;
+        // The same tidying as after a body this worker reaped, with the environment its runner has now.
+        harnessLeftovers(record.harness, scratch, runner({ harness: record.harness, account: record.account }).env);
+      });
+      return { unverified };
+    },
     async build(job, signal, repositoryInput) {
       runner(job);
       const abort = new AbortController();
@@ -180,9 +201,10 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       signal.addEventListener('abort', cancel, { once: true });
       if (signal.aborted) cancel();
       const timer = setTimeout(cancel, buildTimeoutMs);
-      let attempt: ReturnType<typeof launch> | undefined;
+      let attempt: ReturnType<typeof launch> | undefined, forget = () => {};
       try {
         attempt = launch(buildPlan, abort.signal, runtime);
+        forget = noted(attempt, job);
         await attempt.spawned;
         await attempt.release({ job: job.id, house: job.house, ...(repositoryInput?{repositoryInput:{encoding:'base64',value:Buffer.from(repositoryInput.buffer,repositoryInput.byteOffset,repositoryInput.byteLength).toString('base64')}}:{}) });
         const result = await attempt.exited;
@@ -194,6 +216,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
         clearTimeout(timer);
         signal.removeEventListener('abort', cancel);
         if (attempt) await attempt.stop();
+        forget();
       }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
@@ -201,16 +224,22 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
       // Each body gets a directory of its own (mode 0700, named to it in BODY_SCRATCH) for files a harness
       // can only be configured through. The worker removes it once the body's whole process group is gone,
       // so what was written there does not outlive the job when the body is killed and cannot tidy up.
-      const scratch = mkdtempSync(join(tmpdir(), 'loom-body-'));
-      let removed = false;
+      // If the worker itself is killed, the directory and the record beside it are what the next worker
+      // finds the body by (endLeft), and it removes them then.
+      const scratch = left ? left.scratch() : mkdtempSync(join(tmpdir(), 'loom-body-'));
+      let removed = false, forget = () => {};
       const remove = () => {
         if (removed) return; removed = true;
         try { harnessLeftovers(job.harness, scratch, plan.env); } catch { /* best effort, as in the harness itself */ }
         try { rmSync(scratch, { recursive: true, force: true }); } catch { /* nothing in it is live once the body is dead */ }
+        forget();
       };
       let attempt: ReturnType<typeof launch>;
       try { attempt = launch({ ...plan, env: { ...plan.env, [BODY_SCRATCH]: scratch } }, signal, runtime); }
       catch (error) { remove(); throw error; }
+      // A body that could not be recorded could not be found again: it is not run.
+      try { forget = noted(attempt, job, scratch); }
+      catch (error) { void attempt.stop().then(remove, remove); throw error; }
       const exited = attempt.exited.finally(remove);
       void exited.catch(() => {});
       return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: attempt.spawned, exited,
