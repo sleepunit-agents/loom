@@ -61,6 +61,41 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   expect(working(f)).toEqual([]);
   expect(() => f.runtime.heartbeat(job.id, 'worker', 'running')).toThrow();
 });
+it('runs a job that finished without settling its own mail again only under the bounded retry chain', () => {
+  // A body that leaves with exit 0 and never took or confirmed the mail it was admitted for (a machine's own
+  // runner has no credential to do either), and one that took it and left it unconfirmed.
+  for (const take of [false, true]) {
+    const f = fixture(), mail = f.send();
+    let job = f.runtime.admit(f.conversation.id)!;
+    for (let n = 0; n < 4; n++) {
+      f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+      if (take) f.comms.take(f.conversation.id, job.id);
+      const result = f.runtime.finish(job.id, 'worker', 0);
+      expect(result.job).toMatchObject({ state: 'done', exitCode: 0, endedNote: 'Finished without settling its mail' });
+      if (n === 3) { expect(result.retry).toBeUndefined(); break; }
+      expect(result.retry).toMatchObject({ retryOf: job.id, state: 'queued' });
+      expect(f.db.select().from(inbox).where(eq(inbox.id, mail.id)).get()).toMatchObject({ state: 'waiting', job: result.retry!.id });
+      // Asking admission again starts nothing new: the retry is the conversation's job.
+      expect(f.runtime.admit(f.conversation.id)?.id).toBe(result.retry!.id);
+      job = result.retry!; f.tick(120_000);
+    }
+    // The chain is spent. The mail stays with the last attempt and is not admitted again until fresh mail arrives.
+    expect(f.db.select().from(inbox).where(eq(inbox.id, mail.id)).get()).toMatchObject({ state: 'waiting', job: job.id });
+    expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+    expect(f.db.select().from(jobs).all()).toHaveLength(4);
+    f.send();
+    expect(f.runtime.admit(f.conversation.id)).toMatchObject({ state: 'queued', retryOf: null });
+  }
+});
+it('hands what a finished body left as fresh mail only when that body confirmed part of its mail', () => {
+  const f = fixture(), first = f.send(), second = f.send(), job = f.runtime.admit(f.conversation.id)!;
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  f.comms.take(f.conversation.id, job.id); f.comms.confirm(first.id, job.id);
+  const result = f.runtime.finish(job.id, 'worker', 0);
+  expect(result.job).toMatchObject({ state: 'done', endedNote: null }); expect(result.retry).toBeUndefined();
+  expect(f.db.select().from(inbox).where(eq(inbox.id, second.id)).get()).toMatchObject({ state: 'waiting', job: null });
+  expect(f.runtime.admit(f.conversation.id)).toMatchObject({ state: 'queued', retryOf: null });
+});
 it('retries a failed start three times as new linked jobs, without retrying the exhausted chain on old mail', () => {
   const f = fixture(); f.send();
   let job = f.runtime.admit(f.conversation.id)!;
@@ -255,8 +290,8 @@ for (const exitCode of [0, 2]) it(`does not retain private body output after exi
   const result = f.runtime.finish(job.id, 'worker', exitCode, 'PRIVATE_REPLY_MARKER');
   expect(result.job).toMatchObject({ state: exitCode === 0 ? 'done' : 'failed', exitCode, logTail: null, build: 'image' });
   expect(f.runtime.get(job.id).logTail).toBeNull();
-  // The failed body left its mail unconfirmed, so it is tried again; the successor carries no words either.
-  if (exitCode === 0) expect(result.retry).toBeUndefined(); else expect(result.retry).toMatchObject({ brief: '', logTail: null });
+  // Either body left its mail unconfirmed, so it is tried again; the successor carries no words either.
+  expect(result.retry).toMatchObject({ brief: '', logTail: null });
   expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
 });
 

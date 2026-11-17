@@ -1352,6 +1352,16 @@ CREATE TABLE `bridge_send_parts` (
 );
 
 CREATE INDEX `bridge_send_parts_posted_id_idx` ON `bridge_send_parts` (`posted_id`);
+CREATE TABLE `bridge_file_messages` (
+	`connection` text NOT NULL,
+	`file` text NOT NULL,
+	`incoming` text NOT NULL,
+	PRIMARY KEY(`connection`, `file`, `incoming`),
+	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`connection`,`file`) REFERENCES `bridge_files`(`connection`,`file`) ON UPDATE no action ON DELETE no action
+);
+
+CREATE INDEX `bridge_file_messages_incoming_idx` ON `bridge_file_messages` (`incoming`);
 CREATE TABLE `secret_write_journal` (
 	`id` text PRIMARY KEY NOT NULL,
 	`secret` text NOT NULL,

@@ -31,7 +31,8 @@ import { QUIET_DAYS_MAX, SETTLE_SECONDS_MAX, validTimings } from './core/tempo/v
 import { LIFESPAN_DAYS, LIFESPAN_NAMES, NOTE_PATH_MAX } from './notes.js';
 import { GRANT_MINUTES_MAX, agentSecretRequest, grantMinutes } from './pieces/secrets/input.js';
 import { PRIVATE_SECRET_TIMEOUT_MS, privateSecretClient } from './pieces/secrets/private-client.js';
-import { SecretRequests, secretAnswer, secretRuleInput } from './pieces/secrets/requests.js';
+import { secretAnswer, secretRuleInput } from './pieces/secrets/requests.js';
+import { householdService } from './apps/household.js';
 import { AgentFiles } from './pieces/mind/sources.js';
 import { dangerousHouseholdChanges, householdChanges } from './shared-household-proposals.js';
 import { householdMemorySources } from './shared-memory.js';
@@ -329,16 +330,16 @@ it('takes a secret\'s standing answers from the columns, and writes the househol
   expect(secretAnswer.options).toEqual([...household.secretsDefault.enumValues]);
   expect(secretAnswer.options).toEqual([...secretRules.answer.enumValues]);
   expect(sources('src').filter(file => file !== 'src/core/data/schema.ts' && /'ask',\s*'auto',\s*'never'/.test(text(file)))).toEqual([]);
-  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set:\s*\{\s*secretsDefault/.test(text(file)))).toEqual(['src/pieces/secrets/requests.ts']);
+  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set:\s*\{\s*secretsDefault/.test(text(file)))).toEqual(['src/apps/household.ts']);
   const client = new Database(':memory:');
   try {
-    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z'), requests = new SecretRequests(db);
+    const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z'), requests = householdService(db, () => '2026-11-16T00:00:00.000Z');
     expect(householdSettings(db).secretsDefault).toBe(household.secretsDefault.default);
-    requests.setDefault('never');
+    requests.setSecretsDefault('never');
     expect(householdSettings(db).secretsDefault).toBe('never');
-    requests.setDefault('auto');
+    requests.setSecretsDefault('auto');
     expect(db.select().from(household).all().map(row => row.secretsDefault)).toEqual(['auto']);
-    expect(() => requests.setDefault('always' as 'auto')).toThrow();
+    expect(() => requests.setSecretsDefault('always' as 'auto')).toThrow();
   } finally { client.close(); }
 });
 

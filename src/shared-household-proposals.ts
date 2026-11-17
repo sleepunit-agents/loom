@@ -131,11 +131,13 @@ const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
- parts:{secrets:Pick<SecretRequests,'setRule'|'setDefault'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
+ parts:{secrets:Pick<SecretRequests,'setRule'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
   measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void};
   /** A keyed digest only this program can make or check. */
-  digest(words:string):string}){
+  digest(words:string):string;
+  /** Told, in one line, when existing cards were rewritten at start (below). */
+  note?(line:string):void}){
  const listed=(of:'members'|'agents')=>(of==='members'?db.select({id:members.id}).from(members).orderBy(asc(members.position),asc(members.id)):db.select({id:agents.id}).from(agents).orderBy(asc(agents.position),asc(agents.id))).all().map(row=>row.id);
  const liveBox=(name:string)=>db.select().from(boxes).where(and(eq(boxes.name,name),isNull(boxes.revokedAt))).get();
  const browsers=(input:{member:string;device:string})=>db.select({id:sessions.id}).from(sessions).innerJoin(tokens,eq(sessions.token,tokens.fingerprint)).where(and(eq(tokens.member,input.member),eq(sessions.device,input.device))).all();
@@ -195,7 +197,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='rule')rules.set(value.input,by);
    else if(value.change==='bodyPolicy')saveAgentBodyPolicy(db,value.input);
    else if(value.change==='secretRule')parts.secrets.setRule(value.input);
-   else if(value.change==='secretDefault')parts.secrets.setDefault(value.input.answer);
+   else if(value.change==='secretDefault')household.setSecretsDefault(value.input.answer);
    else if(value.change==='houseSecrets')setHouseSecrets(db,value.input);
    else if(value.change==='bridge')parts.bridges.change(value.input);
    else if(value.change==='tempoTimings'){const {who,...patch}=value.input;parts.tempo().setTimings(who,patch);}
@@ -206,11 +208,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    else if(value.change==='models')applyAgentModels(db,value.input,runtime.roles());
    else if(value.change==='agentAccounts')runtime.setAccounts(value.input);
    else if(value.change==='remove'||value.change==='restore')household.setRemoved(value.input.of,value.input.id,value.change==='remove');
-   else if(value.change==='order'){
-    const table=value.input.of==='members'?members:agents,have=listed(value.input.of);
-    if(new Set(value.input.ids).size!==value.input.ids.length||have.length!==value.input.ids.length||have.some(id=>!value.input.ids.includes(id)))throw new OperationError('invalid','Name every one of the '+value.input.of+' exactly once');
-    value.input.ids.forEach((id,position)=>db.update(table).set({position}).where(eq(table.id,id)).run());
-   }
+   else if(value.change==='order')household.setOrder(value.input.of,value.input.ids);
    else if(value.change==='secretDescription'){if(!describeSecret(db,{...value.input,by,at:now()}))throw new OperationError('not-found','No secret has that name');}
    // apply has already refused a dangerous card whose token or machine is not there (refusal).
    else if(value.change==='tokenRevoke')revokeToken(liveToken(value.input.label)!.fingerprint);
@@ -254,14 +252,22 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Cards filed before the digest kept what they would replace, where the asking agent could read it. Take
  // it off every one of them, once. A card still waiting gets the digest of what it recorded, so its Allow
  // is still refused if that has changed.
- db.transaction(()=>{
+ // This rewrites stored rows at start and is not a numbered upgrade step, because a step is SQL and the
+ // digest is keyed with a key only the running program holds. So it keeps the three rules such a rewrite
+ // has (docs/data-schema.md): it changes nothing the second time (a rewritten card has no `before` and is
+ // not selected again), it says how many cards it rewrote, and it is listed in docs/accepted-tradeoffs.md.
+ const rewritten=db.transaction(()=>{
+  let count=0;
   for(const card of db.select().from(approvals).where(and(eq(approvals.operation,operation),like(approvals.details,'%"before":%'))).all()){
    let older:z.infer<typeof olderDetails>,value:Proposal;
    try{older=olderDetails.parse(JSON.parse(card.details));value=proposal.parse({change:older.change,input:older.after});}catch{continue;}
    const nonce=randomBytes(16).toString('hex');
    db.update(approvals).set({details:JSON.stringify({change:older.change,after:older.after,seal:{nonce,digest:seal(value,nonce,older.before)}}),changeSummary:said(value),what:said(value)}).where(eq(approvals.id,card.id)).run();
+   count++;
   }
+  return count;
  });
+ if(rewritten)parts.note?.(`Household cards: removed the stored earlier value from ${rewritten} card${rewritten===1?'':'s'} filed by an older version`);
 
  /** File the card. Installed code may call this directly; from outside it is household.propose.
   * Nothing here answers differently for what is in the household now: see the file header. */

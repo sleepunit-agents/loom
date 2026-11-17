@@ -23,10 +23,10 @@ import { holds, rules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { liveWorker } from './shared-worker.js';
 import type { DataDatabase } from './core/data/database.js';
-import { accountSignins, boxes, inbox, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
+import { accountSignins, boxes, inbox, modelAccounts } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-import { accountObservationCommitted } from './runtime/account-completion.js';
+import { accountBoxes } from './runtime/account-boxes.js';
 import { signInReason } from './runtime/account-signin-reasons.js';
 
 /** A request nobody finished is over after this long: the provider's own page and code have lapsed by then. */
@@ -79,9 +79,9 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
    * given one, and by the program's periodic sweep (the returned `expire`), so an answered code is
    * blanked within one sweep of its request running out even when no worker polls and nobody asks. */
   const sweep = (at: string) => { for (const row of db.select().from(accountSignins).where(inArray(accountSignins.state, [...open])).all()) if (lapsed(row, at)) end(row, 'failed', 'It ran out of time', at); };
-  // runtime.signInCode was once a write, so its results, code included, were kept as retry receipts.
-  db.transaction(() => { db.delete(operationResults).where(eq(operationResults.operation, 'runtime.signInCode')).run(); sweep(now()); });
-  const signedIn = new WeakSet<object>();
+  db.transaction(() => sweep(now()));
+  // The one writer of which machines an account is signed in on, with the rule that follows each change.
+  const signIns = accountBoxes(db);
   const people = { write: true, recheckPolicy: true, refuses: true, doors: ['http'] as const };
   const workers = { write: true, recheckPolicy: true, doors: ['http'] as const };
 
@@ -169,13 +169,13 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
     run(ctx, input) {
       const row = request(input.id)!, at = now();
       if (!open.includes(row.state as never)) return { saved: true as const };
-      if (input.signedIn) { db.insert(modelAccountBoxes).values({ account: row.account, box: row.box }).onConflictDoNothing().run(); signedIn.add(input); ctx.changed('modelAccount', row.account); }
+      if (input.signedIn) { signIns.signedIn(input, row.account, row.box); ctx.changed('modelAccount', row.account); }
       const answer = pasted(row);
       end(row, input.signedIn ? 'done' : 'failed', input.signedIn ? null
         : answer !== undefined && !signInCode.test(answer) ? 'That did not look like a sign-in code' : signInReason(input.why), at);
       ctx.changed('accountSignin', row.id); return { saved: true as const };
     },
-    after(input) { if (signedIn.delete(input)) { const row = request(input.id); if (row) accountObservationCommitted(db, row.account); } } });
+    after(input) { signIns.committed(input); } });
   return { /** For the program's periodic sweep. */ expire() { db.transaction(() => sweep(now())); } };
 }
 const USED = '(used)';

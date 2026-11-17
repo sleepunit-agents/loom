@@ -760,6 +760,7 @@ PLUMBING = [
  ("bridge_raw_events", "Events exactly as Discord and Slack sent them, kept until they are turned into incoming messages: up to a day for one that cannot be read yet, and an hour from arrival once it has been. The one place loom stores something it does not look inside."),
  ("bridge_resume", "Where each Discord connection left off, so it can pick up after a restart, and the credential it was made under."),
  ("bridge_send_parts", "The id the app gave each posted part of a reply, in order. A long reply goes out in parts; these say how far it got and which outside messages are the bot's own."),
+ ("bridge_file_messages", "Which messages carried each kept Slack attachment. A file shared in two messages is listed under both and kept once."),
  ("secret_write_journal", "A two-step record between loom and the key holder so a value change interrupted by a crash is finished or undone, never half done."),
 ]
 

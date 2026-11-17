@@ -6,9 +6,10 @@ import type {WorkerAssignment} from './worker.js';
 import {harnessReservesEnv} from './body-harnesses.js';
 const unavailable=()=>new Error('Startup secret environment unavailable');
 // Names no startup secret may take, whatever the harness: how the body finds and runs programs, where it
-// connects, and what loom itself hands a body. The names that sign a harness in to its account are that harness's
-// to list (in its adapter), and only the harness this job runs on is asked.
-const controls=new Set(['PATH','HOME','SHELL','ENV','BASH_ENV','XDG_CONFIG_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR','MAX_MCP_OUTPUT_TOKENS']);
+// connects, what loom itself hands a body, and the tools protocol's own prefix. The names that sign a harness
+// in to its account, and the ones its adapter sets for its child, are that harness's to list (in its adapter),
+// and only the harness this job runs on is asked.
+const controls=new Set(['PATH','HOME','SHELL','ENV','BASH_ENV','XDG_CONFIG_HOME','HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR']);
 function reserved(name:string,env:NodeJS.ProcessEnv,harness:string){
  const key=name.toUpperCase();
  return controls.has(key)||/^(?:NODE_|MCP_|LD_|DYLD_|LOOM_BODY_)/.test(key)

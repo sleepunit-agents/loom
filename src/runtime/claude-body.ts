@@ -16,6 +16,12 @@ import { deniedTools } from './harness-traits.js';
 
 /** The spawn seam a test supplies; the same one every harness takes. */
 export type ClaudeSpawn = HarnessSpawn;
+/** What the adapter sets in the child's environment when the body has tools, unless the machine's body file
+ * already set it. The one list: `claude.reservesEnv` reserves every name here, so a startup secret can
+ * take none of them, whatever its prefix. */
+export const claudeToolSettings: Readonly<Record<string, string>> = Object.freeze({
+  CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: '0', MAX_MCP_OUTPUT_TOKENS: '100000', MCP_TOOL_TIMEOUT: '86400000', CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: '86400000',
+});
 export const claudeBody: BodyHarness = input => {
   const env = { ...input.env };
   if (!input.command || !input.cwd || [input.command, input.cwd, ...Object.keys(env), ...Object.values(env).filter((v): v is string => v !== undefined)].some(v => v.includes('\0'))) throw harnessUnavailable();
@@ -23,7 +29,7 @@ export const claudeBody: BodyHarness = input => {
   if(control&&(control.byteLength<1||control.byteLength>65536)){control.fill(0);throw harnessUnavailable();}
   const allowed=[...(input.mcpTools??['request_secret','use_secret'].map(name=>harnessToolPrefix+name))];
   try{if(input.mcpTools&&!control)throw harnessUnavailable();harnessToolNames(allowed);}catch(error){control?.fill(0);throw error;}
-  if(control){env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS??='0';env.MAX_MCP_OUTPUT_TOKENS??='100000';env.MCP_TOOL_TIMEOUT??='86400000';env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT??='86400000';}
+  if(control)for(const [name,value] of Object.entries(claudeToolSettings))env[name]??=value;
   return async (job, words, signal) => {
     if(control&&used)throw harnessUnavailable();used=true;
     if (signal.aborted || !harnessModel.test(job.model)
@@ -68,7 +74,7 @@ export const claudeBody: BodyHarness = input => {
 };
 export const claude: Harness = { needsFullReach: false, honoursDeniedTools: true, run: claudeBody,
   // Claude Code on a cloud provider signs in with that provider's own variables.
-  reservesEnv: (name, env) => /^(?:CLAUDE_|ANTHROPIC_)/.test(name)
+  reservesEnv: (name, env) => /^(?:CLAUDE_|ANTHROPIC_)/.test(name) || Object.hasOwn(claudeToolSettings, name)
     || !!env.CLAUDE_CODE_USE_BEDROCK && /^AWS_/.test(name)
     || !!env.CLAUDE_CODE_USE_VERTEX && /^(?:GOOGLE_|GCLOUD_)/.test(name)
     || !!env.CLAUDE_CODE_USE_FOUNDRY && /^AZURE_/.test(name) };

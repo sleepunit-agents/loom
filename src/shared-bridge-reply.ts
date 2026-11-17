@@ -7,7 +7,7 @@ import { and,asc,eq,getTableColumns } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeIncoming,bridgeConnections,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
+import { bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
@@ -59,7 +59,10 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   output:z.object({files:z.array(z.object({file:z.string(),name:z.string(),bytes:z.number(),fetchedAt:z.string(),contents:z.string().optional()}).strict())}).strict(),
   may:(viewer,input)=>readable(viewer,input.incoming),
   run(_ctx,input){
-   const rows=db.select().from(bridgeFiles).where(input.file?and(eq(bridgeFiles.incoming,input.incoming),eq(bridgeFiles.file,input.file)):eq(bridgeFiles.incoming,input.incoming)).orderBy(asc(bridgeFiles.file)).all();
+   // By the message's links: a file shared in two messages is kept once and listed under both.
+   const rows=db.select(getTableColumns(bridgeFiles)).from(bridgeFiles)
+    .innerJoin(bridgeFileMessages,and(eq(bridgeFileMessages.connection,bridgeFiles.connection),eq(bridgeFileMessages.file,bridgeFiles.file)))
+    .where(and(eq(bridgeFileMessages.incoming,input.incoming),input.file?eq(bridgeFiles.file,input.file):undefined)).orderBy(asc(bridgeFiles.file)).all();
    if(input.file&&!rows.length)throw new OperationError('not-found','That attachment is not kept');
    if(input.file&&rows[0].contents.byteLength>MAX)throw new OperationError('invalid','That attachment is too large to return');
    return{files:rows.map(row=>({file:row.file,name:row.name,bytes:row.contents.byteLength,fetchedAt:row.fetchedAt,...(input.file?{contents:row.contents.toString('base64')}:{})}))};

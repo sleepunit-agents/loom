@@ -17,6 +17,7 @@
   "files": [
     "dist",
     "assets",
+    "src/core/data/shipped-shapes",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"

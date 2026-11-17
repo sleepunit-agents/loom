@@ -31,6 +31,8 @@ const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120
  * again: a next attempt would only wait as long. One number for every reason: docs/accepted-tradeoffs.md,
  * "A queued job has one deadline, whatever keeps it queued". */
 export const QUEUE_DEADLINE_MS = 24 * 3_600_000;
+/** What loom records on a job that reported success with mail of its own still unconfirmed. */
+const UNSETTLED_NOTE = 'Finished without settling its mail';
 /** What admission answers: the conversation's unended job, or why its waiting mail did not become one. */
 export interface Admission {
   job?: Job;
@@ -219,9 +221,15 @@ export class Jobs {
     });
   }
 
-  /** A failed attempt is tried again when it never started, or when it started and left mail it had not
-   * confirmed. Every successor points to its immediate predecessor and keeps its snapshot; the chain ends
-   * after JOB_RETRIES, and the mail then stays with the last attempt until fresh mail arrives. */
+  /** An attempt is tried again when it never started, or when it started and left mail it had not
+   * confirmed. That holds for a body that reported success too: one that leaves with exit 0 having
+   * confirmed none of its own mail did not do that work (a machine's own runner, which is given no
+   * credential, can never take or confirm any). Every successor points to its immediate predecessor and
+   * keeps its snapshot; the chain ends after JOB_RETRIES, and the mail then stays with the last attempt
+   * until fresh mail arrives.
+   * The one case where unconfirmed mail starts a new chain: a body that reported success and confirmed part
+   * of its mail (it took less than the whole batch to stay inside its input budget). The rest is fresh mail
+   * for the next admission. Each such job settles at least one piece, so the mail itself bounds them. */
   finish(id: string, box: string, exitCode: number, logTail = ''): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, claimedJobStates);
@@ -231,14 +239,20 @@ export class Jobs {
       if (stopped) return { job: stopped };
       // A runner's stdout/stderr can contain the private prompt or reply.
       const failed = before.state === 'starting' || exitCode !== 0;
+      const held = (states: readonly (typeof inbox.$inferSelect)['state'][]) =>
+        !!this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), inArray(inbox.state, states))).get();
+      const progressed = !failed && held(['done']), unsettled = !failed && !progressed && held(['waiting', 'taken']);
       const job = this.end(before, failed ? 'failed' : 'done',
-        { exitCode, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at });
-      const retry = failed ? this.retry(before, at) : undefined;
+        { exitCode, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
+      if (progressed) { this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run(); return { job }; }
+      const retry = this.retry(before, at);
+      // Out of attempts: what this body left was not delivered, and says so like a failure's.
+      if (unsettled && !retry) this.delivery(id, 'failed');
       return retry ? { job, retry } : { job };
     }, { behavior: 'immediate' });
   }
 
-  /** Queue the next attempt of work whose last attempt failed or was lost, if it has any left. */
+  /** Queue the next attempt of work whose last attempt ended with a reason to run again, if it has any left. */
   private retry(before: Job, at: string): Job | undefined {
     const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
     // Once a body has started, only mail it left unconfirmed is a reason to run again.
@@ -303,11 +317,10 @@ export class Jobs {
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
     this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
-    // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
+    // Unconfirmed mail survives a dead body, with no receipt fabricated for it. However the job ended, that
+    // mail stays with this job and is never handed back as fresh: retry() gives it to a successor within
+    // the bounded chain, or it waits for fresh mail.
     this.mail.returnTaken(job.id);
-    // What a finished body left unconfirmed is fresh mail for the next admission. After a stop, a failure
-    // or a loss it stays with this job: retry() hands it to a successor, or it waits for fresh mail.
-    if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
     // The job working in a conversation is its one job that has not ended, so ending that job is what
     // leaves the conversation with none. Clear its working indicator in the same transaction; an
     // unobserved Stop and the last reported agent state stay.

@@ -10,6 +10,7 @@ import { dockerEngine, DockerResponseError, type DockerEngine } from './docker-e
 import { BODY_SCRATCH } from './body-harness.js';
 import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type WorkerCommand } from './worker-process.js';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
+import { WorkerStop } from './worker-stop.js';
 
 export interface ContainerConfig {
   socket: string;
@@ -122,7 +123,7 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
         const listed = await engine.json('GET', `/containers/json?all=1&limit=8&filters=${filters}`, undefined, within);
         if (!Array.isArray(listed)) throw new Error('Invalid container list');
         if (!listed.length) return processes;
-        if (round >= 64) throw new Error('Containers a previous worker left could not be removed');
+        if (round >= 64) throw new WorkerStop('left');
         for (const row of listed) {
           const id: unknown = row && typeof row === 'object' && 'Id' in row ? row.Id : undefined;
           if (typeof id !== 'string' || !/^[a-f0-9]{12,64}$/.test(id)) throw new Error('Invalid container identity');

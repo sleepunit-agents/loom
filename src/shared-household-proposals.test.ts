@@ -444,13 +444,21 @@ it('takes what a card would replace off the cards an earlier version filed, and 
     what: 'Household settings: '+JSON.stringify(before)+' → '+JSON.stringify(after), changeSummary: 'Household settings: '+JSON.stringify(before)+' → '+JSON.stringify(after), why: 'Asked', ask: 'Change Household settings?', ifYes: 'Make the change shown on this card.', ifNo: 'Leave it as it is.',
     details: JSON.stringify({ change: 'settings', before, after }) }).run();
   older('a-old', 'used', { commsDays: 30 }, { commsDays: 14 }); older('a-waiting', 'pending', { commsDays: 14 }, { commsDays: 7 }); older('a-moved', 'pending', { commsDays: 21 }, { commsDays: 5 });
-  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
+  const notes: string[] = [];
+  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, startupNote: line => notes.push(line) }); clean.push(() => root.close());
   for (const row of db.select().from(approvals).all()) {
     expect(row.details).not.toContain('before'); expect(row.what).not.toContain('→'); expect(row.changeSummary).not.toContain('→');
     expect(JSON.parse(row.details)).toMatchObject({ change: 'settings', after: expect.anything(), seal: { nonce: expect.any(String), digest: expect.any(String) } });
   }
+  // The rewrite is outside the upgrade steps, so it says what it did, in one line with no card's content,
+  // and does nothing the second time.
+  expect(notes).toEqual(['Household cards: removed the stored earlier value from 3 cards filed by an older version']);
   const answer = async (id: string) => (await (await root.http.request('http://loom/api/approvals/answer', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials.sam }, body: JSON.stringify({ input: { id, answer: 'allow' }, id: 'allow-'+id }) })).json()) as { ok: boolean; code?: string };
   expect(await answer('a-moved')).toMatchObject({ ok: false, code: 'conflict' });
   expect(await answer('a-waiting')).toMatchObject({ ok: true });
   expect(db.select().from(household).get()).toMatchObject({ commsDays: 7 });
+  const rewritten = db.select().from(approvals).all();
+  await root.close();
+  const second = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, startupNote: line => notes.push(line) }); clean.push(() => second.close());
+  expect(notes).toHaveLength(1); expect(db.select().from(approvals).all()).toEqual(rewritten);
 });

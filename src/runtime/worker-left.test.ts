@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { workerLeft, type ProcessTable } from './worker-left.js';
+import { WorkerStop } from './worker-stop.js';
 
 const dirs: string[] = [], children: ChildProcess[] = [];
 afterEach(() => {
@@ -83,7 +84,7 @@ describe('what a killed worker left, by the rules', () => {
   it('refuses a directory a live worker holds, and takes over from one that is gone or whose pid is another process now', () => {
     const dir = state();
     writeFileSync(join(dir, 'worker'), JSON.stringify({ pid: 4242, born: 'then' }));
-    expect(() => workerLeft(dir, { table: table({ born: pid => pid === 4242 ? 'then' : 'self' }) })).toThrow('Another worker is running');
+    expect(() => workerLeft(dir, { table: table({ born: pid => pid === 4242 ? 'then' : 'self' }) })).toThrow(new WorkerStop('held'));
     workerLeft(dir, { table: table({ born: pid => pid === 4242 ? 'later' : 'self' }) }).close();
     writeFileSync(join(dir, 'worker'), JSON.stringify({ pid: 4242, born: 'then' }));
     workerLeft(dir, { table: table() }).close();
@@ -104,7 +105,7 @@ describe('what a killed worker left, by the rules', () => {
   it('rejects, and keeps the record, when a recorded body will not die', async () => {
     const dir = state(), stubborn = table({ born: pid => pid === 4242 ? 'then' : 'self', groupAlive: () => true });
     workerLeft(dir, { table: stubborn }).note(4242, { job: 'job' });
-    await expect(workerLeft(dir, { table: stubborn, waitMs: 100 }).reap()).rejects.toThrow('could not be ended');
+    await expect(workerLeft(dir, { table: stubborn, waitMs: 100 }).reap()).rejects.toThrow(new WorkerStop('left'));
     expect(readdirSync(dir).filter(name => name.startsWith('build-'))).toHaveLength(1);
   });
   it('ignores a record it cannot read rather than acting on it', async () => {

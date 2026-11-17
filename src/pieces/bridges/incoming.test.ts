@@ -9,7 +9,7 @@ import { agents, members, secrets, bridgeConnections, bridgePeople, bridgeChanne
 import { Conversations } from '../../core/conversations/index.js';
 import { BridgeIncoming, type IncomingMessage } from './incoming.js';
 import { expirePrivateBridgeWords, oldestPrivateBridgeWords } from '../../core/conversations/private-bridge-words.js';
-import { bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
+import { bridgeFileMessages, bridgeFiles, bridgeSendParts, bridgeSends } from '../../core/data/schema.js';
 import {normalizeSlack} from './normalize.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -300,6 +300,27 @@ it('reuses the original public channel place key',()=>{
  const f=fixture(),prior=new Conversations(f.db,f.now).open({agent:'art',venue:'discord',place:JSON.stringify(['w','room',null]),label:'Existing public room'});
  const row=f.ingress.receive(f.message);
  expect(row.conversation).toBe(prior.id);expect(f.db.select().from(conversations).all()).toHaveLength(1);
+});
+it('removes a private DM\'s files with its words, and keeps a file another message still carries', () => {
+  const f = fixture('slack');
+  // One direct message with words and one with a file alone; a room message that carries one of the same files.
+  const dm = f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' });
+  const bare = f.ingress.receive({ ...f.message, id: 'bare', channel: 'direct', isDm: true, text: '' });
+  const room = f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' });
+  const keep = (file: string, first: string, ...also: string[]) => {
+    f.db.insert(bridgeFiles).values({ connection: 'c', file, incoming: first, name: file, contents: Buffer.from(file), fetchedAt: f.now() }).run();
+    for (const incoming of [first, ...also]) f.db.insert(bridgeFileMessages).values({ connection: 'c', file, incoming }).run();
+  };
+  keep('PRIVATE', dm.id); keep('BARE', bare.id); keep('SHARED', dm.id, room.id); keep('ROOM', room.id);
+  const listed = () => f.db.select().from(bridgeFileMessages).all().map(row => `${row.file}@${row.incoming}`).sort();
+  expect(oldestPrivateBridgeWords(f.db)).toBe(Date.parse(f.now()));
+  expect(expirePrivateBridgeWords(f.db, '2026-11-14T11:59:59.999Z')).toBe(0);
+  expect(listed()).toHaveLength(5);
+  expirePrivateBridgeWords(f.db, f.now());
+  // Neither direct message lists a file any more. What only they carried is gone; the room's are untouched.
+  expect(listed()).toEqual([`ROOM@${room.id}`, `SHARED@${room.id}`]);
+  expect(f.db.select({ file: bridgeFiles.file }).from(bridgeFiles).all().map(row => row.file).sort()).toEqual(['ROOM', 'SHARED']);
+  expect(oldestPrivateBridgeWords(f.db)).toBeUndefined();
 });
 it('erases a private DM\'s words at the keep time, in every column that holds them, and nothing else', () => {
   const f = fixture(), dm = f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' });

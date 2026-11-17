@@ -148,8 +148,9 @@ A home (`~/.config/loom` unless `--home` or `LOOM_HOME` says otherwise) holds th
 Defined once, in `src/core/data/schema.ts`. `assets/data/schema.sql` is generated from it
 and creates a fresh database; `upgrades` in `src/core/data/database.ts` brings an older
 one to the same shape, and `src/core/data/shipped-shapes` pins the installation SQL of
-every schema number so `src/core/data/upgrade.test.ts` can prove it. Startup refuses a
-database it does not recognise without writing to it.
+every schema number. Startup holds a database to the pinned shape of its own number
+before it runs any step, and refuses one it does not recognise without writing to it;
+`src/core/data/upgrade.test.ts` proves the steps against the same shapes.
 
 | Area | Tables |
 |---|---|
@@ -162,7 +163,7 @@ database it does not recognise without writing to it.
 | Tempo | `triggers`, `trigger_log`, `trigger_edits`, `agent_pauses`, `tempo_settings` |
 | Changes | `changes`, `change_checks`, `change_people`, `change_tasks`, `change_sync` |
 | Runtime | `boxes`, `box_agents`, `box_facts`, `jobs`, `job_needs`, `agent_run_settings`, `agent_boxes`, `agent_house_secrets`, `agent_house_ports`, `agent_people`, `agent_denied_tools`, `model_accounts`, `model_account_windows`, `model_account_boxes`, `agent_models`, `account_signins` |
-| Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_send_parts`, `bridge_files`, `bridge_raw_events`, `bridge_resume` |
+| Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_send_parts`, `bridge_files`, `bridge_file_messages`, `bridge_raw_events`, `bridge_resume` |
 | Secrets | `secrets`, `secret_grants`, `secret_requests`, `secret_rules`, `secret_rule_agents`, `secret_uses`, `secret_changes`, `secret_write_journal` |
 | Measuring | `timing_days`, `measuring_settings` |
 | Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts) |

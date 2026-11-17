@@ -30,6 +30,9 @@ export const settingsInput = z.object({
   backupRecipients: z.array(z.string().trim().regex(/^(?:age1[0-9a-z]{20,100}|ssh-(?:ed25519|rsa) [A-Za-z0-9+/=]{40,1000}(?: [^\r\n]{0,100})?)$/)).max(50).transform(values => [...new Set(values)].sort()),
 }).partial().strict().refine(value => Object.keys(value).length > 0, 'Name at least one setting');
 /** What can be removed and restored: its row stays (setRemoved). */
+/** The household's answer for a secret no rule names: the choices are the column's own. */
+export const secretsDefaultInput = z.enum(household.secretsDefault.enumValues);
+export type SecretsDefault = z.infer<typeof secretsDefaultInput>;
 export const removable = z.enum(['member', 'agent', 'project', 'bridge']);
 export type Removable = z.infer<typeof removable>;
 export class HouseholdError extends Error {
@@ -105,6 +108,23 @@ export function householdService(db: DataDatabase, now: () => string) {
           db.delete(backupRecipients).run();
           if (recipients.length) db.insert(backupRecipients).values(recipients.map(recipient => ({ recipient }))).run();
         }
+        return { saved: true as const };
+      });
+    },
+    /** What a request for a secret is answered with when no rule covers it. Its own door and its own card,
+     * apart from the settings above; written here so the household row has one writer. */
+    setSecretsDefault(raw: SecretsDefault) {
+      const secretsDefault = secretsDefaultInput.parse(raw);
+      db.insert(household).values({ secretsDefault }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault } }).run();
+    },
+    /** The order members or agents are listed in: every one of them, named exactly once. */
+    setOrder(of: 'members' | 'agents', ids: readonly string[]) {
+      return db.transaction(() => {
+        const table = of === 'members' ? members : agents;
+        const have = db.select({ id: table.id }).from(table).all().map(row => row.id);
+        if (new Set(ids).size !== ids.length || have.length !== ids.length || have.some(id => !ids.includes(id)))
+          throw new HouseholdError('invalid', 'Name every one of the ' + of + ' exactly once');
+        ids.forEach((id, position) => db.update(table).set({ position }).where(eq(table.id, id)).run());
         return { saved: true as const };
       });
     },

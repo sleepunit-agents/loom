@@ -31,6 +31,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { BODY_SCRATCH } from './body-harness.js';
+import { WorkerStop } from './worker-stop.js';
 
 /** The few questions asked of the machine's process table; tests supply their own. */
 export interface ProcessTable {
@@ -125,13 +126,13 @@ export function workerLeft(dir: string, options: { table?: ProcessTable; waitMs?
   const table = options.table ?? linuxTable() ?? portableTable, waitMs = options.waitMs ?? 10_000;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stat = lstatSync(dir);
-  if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) throw new Error('Worker state directory must be a private directory of this user');
+  if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) throw new WorkerStop('state');
   const lock = join(dir, 'worker'), held = read(lock, holder);
-  if (held && held.pid !== process.pid && held.born && table.born(held.pid) === held.born) throw new Error('Another worker is running on this state directory');
+  if (held && held.pid !== process.pid && held.born && table.born(held.pid) === held.born) throw new WorkerStop('held');
   writeFileSync(lock, JSON.stringify({ pid: process.pid, born: table.born(process.pid) ?? null }), { mode: 0o600 });
   const gone = async (alive: () => boolean) => {
     for (const until = performance.now() + waitMs; alive();) {
-      if (performance.now() > until) throw new Error('A body a previous worker left could not be ended');
+      if (performance.now() > until) throw new WorkerStop('left');
       await delay(50);
     }
   };

@@ -124,6 +124,9 @@ export function sharedRoot(options: {
   notifications?: SharedNotificationOptions;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  /** One plain line for whoever runs the program, about stored rows it changed at start outside the
+   * upgrade steps. It names what was done and how many rows, never their content. */
+  startupNote?(line: string): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
@@ -148,13 +151,13 @@ export function sharedRoot(options: {
   const proposalDigest = (words: string) => proposalKey ? createHmac('sha256', proposalKey).update(words).digest('hex') : options.commsKey!.hash('household-proposal\0' + words);
   const householdProposals = sharedHouseholdProposals(db, householdSettings, projectSettings, ruleSettings, fingerprint => tokenSettings.revoke(fingerprint), now,
     { roles, setAccounts: input => householdAccess.setAccounts(input) },
-    { secrets: { setRule: input => late.requests!.setRule(input), setDefault: answer => late.requests!.setDefault(answer) },
+    { secrets: { setRule: input => late.requests!.setRule(input) },
       // Revoking a machine is written once, in setup.revokeMachine below.
       machines: { revoke: id => late.revokeMachine!(id) },
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
       tempo: () => late.tempo!(),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
-      digest: proposalDigest });
+      digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
   const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
@@ -281,7 +284,7 @@ export function sharedRoot(options: {
     rule(input: Parameters<typeof ruleSettings.set>[0], owner: string) { return ruleSettings.set(input, owner); },
     // Secrets and bridges.
     secretRule(input: Parameters<SecretRequests['setRule']>[0]) { requests.setRule(input); },
-    secretDefault(answer: Parameters<SecretRequests['setDefault']>[0]) { requests.setDefault(answer); },
+    secretDefault(answer: Parameters<typeof householdSettings.setSecretsDefault>[0]) { householdSettings.setSecretsDefault(answer); },
     houseSecrets(input: Parameters<typeof setHouseSecrets>[1]) { setHouseSecrets(db, input); },
     bridge(input: Parameters<BridgeSettings['change']>[0]) { return late.bridges!().change(input); },
     /** File a proposal card on an agent's behalf, as household.propose does for an outside caller. */

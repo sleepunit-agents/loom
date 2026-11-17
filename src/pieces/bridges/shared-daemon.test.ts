@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, bridgeResume, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeSendParts, bridgeFiles, bridgeFileMessages } from '../../core/data/schema.js';
 import {BridgeSettings} from './settings.js';
 import { SharedBridges, type SharedBridgeOptions } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
@@ -112,6 +112,17 @@ it('fetches attachments only after committed delivery, stores private bytes, and
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){expect(f.client.inTransaction).toBe(false);expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('delivered');return new Response('DATA',{headers:{'content-type':'application/octet-stream'}});}return original(url,options);});
  const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'../image x',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/image'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));expect(f.db.select().from(bridgeFiles).all()).toEqual([]);f.clock.advance(0);await f.daemon.idle();
  expect(f.db.select().from(bridgeFiles).get()).toMatchObject({file:'FABC',name:'image_x',contents:Buffer.from('DATA')});expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);f.clock.advance(1);await f.daemon.idle();expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+});
+it('lists a Slack file that is already kept under the second message that shares it, without fetching it again',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;let fetches=0;
+ f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){fetches++;return new Response('DATA',{headers:{'content-type':'application/octet-stream'}});}return original(url,options);});
+ const share=async(event:string,ts:string)=>{const frame=JSON.parse(f.raw(event,event).toString());frame.payload.event.ts=ts;frame.payload.event.files=[{id:'FABC',name:'image',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/image'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await f.daemon.idle();f.clock.advance(1);await f.daemon.idle();};
+ await share('first','1794432000.000001');await share('second','1794432000.000002');
+ const messages=f.db.select({id:bridgeIncoming.id}).from(bridgeIncoming).all().map(row=>row.id);expect(messages).toHaveLength(2);
+ expect(fetches).toBe(1);expect(f.db.select().from(bridgeFiles).all()).toHaveLength(1);
+ expect(f.db.select().from(bridgeFileMessages).all().map(row=>row.incoming).sort()).toEqual([...messages].sort());
+ // Nothing was left to fetch for the second message, so its frame is not kept waiting.
+ expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);
 });
 it.each([{state:'dropped' as const},{channel:'OTHER'},{member:null}])('revokes an attachment fetch when its saved incoming proof changes: %j',async change=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){f.writes.run(()=>f.db.update(bridgeIncoming).set(change).run());return new Response('DATA');}return original(url,options);});const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'file',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/file'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));f.clock.advance(0);await f.daemon.idle();expect(f.db.select().from(bridgeFiles).all()).toEqual([]);expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);

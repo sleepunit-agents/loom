@@ -10,7 +10,7 @@ import { BridgeReplyNotSent } from './outbound.js';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, bridgeFiles, inbox, inboxRefs, secretChanges } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, inbox, inboxRefs, secretChanges } from '../../core/data/schema.js';
 import type { DataWrites } from '../../core/data/writes.js';
 import type { SecretValueSource } from '../secrets/role.js';
 import type { HolderGeneration } from '../secrets/role.js';
@@ -223,7 +223,11 @@ export class SharedBridges {
     const descriptors=event.files.slice(0,5).map((file:Record<string,unknown>)=>({id:file?.id,name:file?.name,size:file?.size,url:file?.url_private_download??file?.url_private}));
     // Parsing/URL validation remains in the existing pure file transport. Only
     // descriptors from this authenticated durable frame enter the trusted seam.
-    const missing=descriptors.filter((file:{id:unknown})=>typeof file.id!=='string'||!this.options.db.select({file:bridgeFiles.file}).from(bridgeFiles).where(and(eq(bridgeFiles.connection,row.id),eq(bridgeFiles.file,file.id))).get());
+    // A file already kept (the same Slack file shared in an earlier message) is listed under this message
+    // too and not fetched again; the rest are fetched below.
+    const ids=descriptors.flatMap((file:{id:unknown})=>typeof file.id==='string'?[file.id]:[]);
+    const unkept=new Set(this.files.carry({connection:row.id,incoming:incoming.id,files:ids}));
+    const missing=descriptors.filter((file:{id:unknown})=>typeof file.id!=='string'||unkept.has(file.id));
     if(!missing.length)return;
     pendingFiles.set(incoming.id,missing);return false;
    })===64;}finally{

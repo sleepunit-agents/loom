@@ -169,13 +169,11 @@ it('closes a sign-in that ran out of time on the program\'s own tick, with no wo
   expect(f.row(late.id)).toMatchObject({ state: 'failed', why: 'It ran out of time' });
   expect(f.item(late.item)).toMatchObject({ answerText: '(used)', state: 'answered' });
 });
-it('drops, at start, the receipts an earlier version kept for the code and closes what ran out of time while it was down', async () => {
+it('closes, at start, what ran out of time while it was down', async () => {
+  // The receipts an earlier version kept for the code are removed by schema step 8 (core/data/upgrade.test.ts).
   const f = await fixture(db => {
-    db.insert(operationResults).values([{ caller: 'worker', id: 'old', operation: 'runtime.signInCode', inputHash: 'x', result: Buffer.from(JSON.stringify({ ok: true, value: { code, stop: false } })), expiresAt: '2999-01-01T00:00:00.000Z' },
-      { caller: 'worker', id: 'kept', operation: 'runtime.signInDone', inputHash: 'x', result: Buffer.from('{"ok":true,"value":{"saved":true}}'), expiresAt: '2999-01-01T00:00:00.000Z' }]).run();
     db.insert(accountSignins).values({ id: 'signin-stale', account: 'account', box: 'box', askedByKind: 'member', askedBy: 'member', state: 'asked', askedAt: '2000-01-01T00:00:00.000Z', changedAt: '2000-01-01T00:00:00.000Z' }).run();
   });
-  expect(f.db.select({ id: operationResults.id }).from(operationResults).all()).toEqual([{ id: 'kept' }]);
   expect(f.row('signin-stale')).toMatchObject({ state: 'failed', why: 'It ran out of time' });
 });
 it('lets an agent ask only with the authority of the member its current work is for', () => {

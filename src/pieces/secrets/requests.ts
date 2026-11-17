@@ -72,11 +72,6 @@ export class SecretRequests {
     });
   }
 
-  /** The household's answer for a secret no rule names. The one writer of it. */
-  setDefault(raw: z.input<typeof secretAnswer>): void {
-    const secretsDefault = secretAnswer.parse(raw);
-    this.db.insert(household).values({ secretsDefault }).onConflictDoUpdate({ target: household.singleton, set: { secretsDefault } }).run();
-  }
 
   setRule(raw: z.input<typeof secretRuleInput>): void {
     const input = secretRuleInput.parse(raw);

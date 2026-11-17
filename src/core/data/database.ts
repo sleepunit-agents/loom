@@ -192,6 +192,18 @@ const upgrades: readonly (readonly string[])[] = [
     'CREATE INDEX `jobs_agent_state_idx` ON `jobs` (`agent`,`state`)',
     'CREATE INDEX `jobs_box_state_idx` ON `jobs` (`box`,`state`)',
   ],
+  // 8: which messages carried a kept Slack file. A file was kept under the first message alone, so the
+  // same file shared again was not listed under the later one. Each file kept now is linked to the message
+  // it has. Both statements that make the table and its index are the fresh schema's own text.
+  [
+    "CREATE TABLE `bridge_file_messages` (\n\t`connection` text NOT NULL,\n\t`file` text NOT NULL,\n\t`incoming` text NOT NULL,\n\tPRIMARY KEY(`connection`, `file`, `incoming`),\n\tFOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`connection`,`file`) REFERENCES `bridge_files`(`connection`,`file`) ON UPDATE no action ON DELETE no action\n)",
+    'CREATE INDEX `bridge_file_messages_incoming_idx` ON `bridge_file_messages` (`incoming`)',
+    'INSERT INTO bridge_file_messages (connection, file, incoming) SELECT connection, file, incoming FROM bridge_files',
+    // runtime.signInCode was once a write, so its answers, the one-time code included, were kept as retry
+    // receipts. It is a read now and leaves none; the old ones go here, once. This ran at every start,
+    // outside the steps (src/shared-account-signin.ts), until this step.
+    "DELETE FROM operation_results WHERE operation = 'runtime.signInCode'",
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
@@ -205,9 +217,11 @@ function numberOf(client: Database.Database): number {
   if (!numbers.length || numbers.some((number, index) => number !== index + 1)) throw new Error(unknown);
   return numbers.length;
 }
-function applyUpgrades(client: Database.Database, from: number, now: () => string) {
+/** Run the steps after `from`, up to `to`. Exported for upgrade.test.ts alone, which stops at each number
+ * to hold the steps to the pinned shapes; the program always runs them all, through upgradeDataSchema. */
+export function applyUpgrades(client: Database.Database, from: number, now: () => string, to = dataSchemaNumber) {
   const mark = client.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)');
-  for (let number = from + 1; number <= dataSchemaNumber; number++) {
+  for (let number = from + 1; number <= to; number++) {
     for (const statement of upgrades[number - 2]) client.exec(statement);
     mark.run(number, now());
   }
@@ -252,9 +266,29 @@ export function dataSchemaShape(client: Database.Database): unknown[] {
   });
 }
 let freshShape: string | undefined;
-/** Recognise a household database without writing to it, and return its schema number. Its schema alone
- * is copied into memory and upgraded there; it is known only if that gives exactly the shape a fresh
- * database has. Anything else throws, so a foreign, interim or hand-altered database is never altered. */
+const shippedShapes = new Map<number, string>();
+/** The shape of a household as the program at that schema number installed it: the pinned installation
+ * SQL of that number (shipped-shapes/, never edited), read into memory. The files are source, so they are
+ * read from src/ beside dist/ as well as from src/ itself; package.json ships that directory. */
+function shippedShape(number: number): string {
+  let shape = shippedShapes.get(number);
+  if (!shape) {
+    const pinned = new Database(':memory:');
+    try {
+      pinned.exec(readFileSync(new URL(`../../../src/core/data/shipped-shapes/${number}.sql`, import.meta.url), 'utf8'));
+      shape = JSON.stringify(dataSchemaShape(pinned));
+    } finally { pinned.close(); }
+    shippedShapes.set(number, shape);
+  }
+  return shape;
+}
+/** Recognise a household database without writing to it, and return its schema number. It is known only
+ * if it has, as it is, exactly the shape the program at its number gave a household. Anything else throws,
+ * so a foreign, interim or hand-altered database is never altered. Comparing only the result of the
+ * pending steps would not do: a step that rebuilds or drops a table erases whatever was changed in it by
+ * hand, so the altered database would pass and the rebuild would then drop the altered data.
+ * When steps are pending they are also rehearsed on a copy of the schema in memory, and must give
+ * exactly the shape a fresh database has. */
 export function recogniseDataSchema(client: Database.Database): number {
   const number = numberOf(client);
   if (!freshShape) {
@@ -266,6 +300,10 @@ export function recogniseDataSchema(client: Database.Database): number {
     if (JSON.stringify(dataSchemaShape(client)) !== freshShape) throw new Error(unknown);
     return number;
   }
+  // Before any step, in memory or on the file: the database as it is against the pinned shape of its number.
+  let pinned: string;
+  try { pinned = shippedShape(number); } catch (error) { throw new Error(`The shipped shape of schema ${number} is missing from this installation; nothing was changed`, { cause: error }); }
+  if (JSON.stringify(dataSchemaShape(client)) !== pinned) throw new Error(unknown);
   const rehearsal = new Database(':memory:');
   try {
     // In the order they were made, so each index and trigger finds its table.

@@ -149,6 +149,8 @@ it('discards dangling-conversation words and their receipt fingerprint', async (
   // Fictional corruption fixture only; production foreign keys remain enabled.
   f.client.pragma('foreign_keys = OFF');
   f.db.update(jobs).set({ conversation: 'missing-conversation' }).where(eq(jobs.id, queued.id)).run();
+  // The job holds no mail here: mail it left unsettled would be tried again, in a conversation that is not there.
+  f.db.update(inbox).set({ job: null }).where(eq(inbox.job, queued.id)).run();
   f.client.pragma('foreign_keys = ON');
   const finish = { job: queued.id, exitCode: 0, logTail: 'dangling-private-output' };
   expect((await f.call('finish', finish, 'dangling')).status).toBe(200);

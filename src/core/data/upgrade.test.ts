@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDataSchema, dataSchemaNumber, dataSchemaShape, recogniseDataSchema, upgradeDataSchema } from './database.js';
+import { applyUpgrades, createDataSchema, dataSchemaNumber, dataSchemaShape, recogniseDataSchema, upgradeDataSchema } from './database.js';
 
 // The installation SQL exactly as each schema number shipped it, recovered from history and never edited.
 // Adding upgrade step N+1 means checking today's assets/data/schema.sql in here as N+1.sql.
@@ -120,6 +120,24 @@ describe('upgrading a household database', () => {
     expect(old.prepare('SELECT id, made_by FROM sessions').all()).toEqual([{ id: 'browser', made_by: null }]);
   });
 
+  it('links each kept Slack file to its message in step 8 and removes the receipts that held a sign-in code', () => {
+    const old = household(7);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}');
+      INSERT INTO secrets (name, description, changed_at, changed_by) VALUES ('s', '', '${at}', 'sam');
+      INSERT INTO bridge_connections (id, platform, agent, workspace, bot_user, token_secret, enabled, state, state_at) VALUES ('c', 'slack', 'art', 'w', 'bot', 's', 1, 'connected', '${at}');
+      INSERT INTO bridge_incoming (id, connection, channel, is_dm, user, text, posted_at, received_at, state) VALUES ('m1', 'c', 'r', 0, 'u', 'hi', '${at}', '${at}', 'delivered'), ('m2', 'c', 'r', 0, 'u', 'again', '${at}', '${at}', 'delivered');
+      INSERT INTO bridge_files (connection, file, incoming, name, contents, fetched_at) VALUES ('c', 'F1', 'm1', 'a.txt', x'6869', '${at}'), ('c', 'F2', 'm2', 'b.txt', x'6869', '${at}');
+      INSERT INTO operation_results (caller, id, operation, input_hash, result, expires_at) VALUES ('worker', 'old', 'runtime.signInCode', 'x', x'7b7d', '2999-01-01T00:00:00.000Z'), ('worker', 'kept', 'runtime.signInDone', 'x', x'7b7d', '2999-01-01T00:00:00.000Z')`);
+    upgradeDataSchema(old, () => '2026-11-16T00:00:00.000Z');
+    expect(old.prepare('SELECT connection, file, incoming FROM bridge_file_messages ORDER BY file').all()).toEqual([{ connection: 'c', file: 'F1', incoming: 'm1' }, { connection: 'c', file: 'F2', incoming: 'm2' }]);
+    expect(old.prepare('SELECT count(*) AS n FROM bridge_files').get()).toEqual({ n: 2 });
+    // The same file can now be listed under a second message; a link to a file that is not kept is refused.
+    old.prepare("INSERT INTO bridge_file_messages (connection, file, incoming) VALUES ('c', 'F1', 'm2')").run();
+    expect(() => old.prepare("INSERT INTO bridge_file_messages (connection, file, incoming) VALUES ('c', 'F9', 'm2')").run()).toThrow('FOREIGN KEY');
+    expect(old.prepare('SELECT id FROM operation_results').all()).toEqual([{ id: 'kept' }]);
+  });
+
   it('refuses to upgrade over a record whose member or agent is gone, and changes nothing', () => {
     // Step 6 puts guards on who edited a trigger. Before it nothing stopped that member's row being deleted,
     // and SQLite's own check does not see a kind-and-id reference.
@@ -174,6 +192,36 @@ describe('upgrading a household database', () => {
     expect(() => upgradeDataSchema(client)).toThrow('separate move');
     expect(everything(client)).toEqual(before);
     expect(client.prepare('SELECT * FROM migrations ORDER BY number').all()).toEqual(marks);
+  });
+
+  // Steps 6 and 7 rebuild or drop these tables, so a change made to one by hand is gone from the rehearsed
+  // result. Only the database as it is, held against the pinned shape of its number, shows it.
+  it.each<[string, number, string]>([
+    ['an extra column on jobs, which step 7 rebuilds', 6, 'ALTER TABLE jobs ADD COLUMN precious text'],
+    ['an extra column on conversations, which step 6 rebuilds', 5, 'ALTER TABLE conversations ADD COLUMN precious text'],
+    ['an extra index on jobs', 6, 'CREATE INDEX jobs_by_hand ON jobs (title)'],
+    ['an extra column on a table step 6 drops', 5, 'ALTER TABLE outside_effects ADD COLUMN precious text'],
+    ['an extra column on a table step 6 drops and makes again', 4, 'ALTER TABLE bridge_resume ADD COLUMN precious text'],
+    ['a trigger on a table step 7 rebuilds', 3, "CREATE TRIGGER jobs_by_hand BEFORE DELETE ON jobs BEGIN SELECT RAISE(ABORT, 'kept'); END"],
+  ])('refuses an older household with %s, before any step, and changes nothing in it', (_, number, alter) => {
+    const old = household(number); old.exec(alter);
+    const before = everything(old), marks = old.prepare('SELECT * FROM migrations ORDER BY number').all();
+    expect(() => recogniseDataSchema(old)).toThrow('separate move');
+    expect(() => upgradeDataSchema(old)).toThrow('separate move');
+    expect(everything(old)).toEqual(before);
+    expect(old.prepare('SELECT * FROM migrations ORDER BY number').all()).toEqual(marks);
+  });
+
+  it('gives a household that reached a number by steps exactly the pinned shape of that number', () => {
+    // Recognition holds a database to the pinned shape of its own number. A household installed earlier and
+    // upgraded since got there by the steps, so every step from every start must land on the pinned shape.
+    for (const from of numbers) for (const to of numbers.filter(number => number > from)) {
+      const old = household(from);
+      old.pragma('foreign_keys = OFF'); applyUpgrades(old, from, () => at, to);
+      const pinned = open(); pinned.exec(shipped(to));
+      expect(dataSchemaShape(old), `installed at ${from}, upgraded to ${to}`).toEqual(dataSchemaShape(pinned));
+      if (to < dataSchemaNumber) expect(recogniseDataSchema(old)).toBe(to);
+    }
   });
 
   it('recognises a readable household without opening it for writing', () => {
