@@ -412,7 +412,9 @@ Entries are grouped by the part of the program they belong to.
 ### Upgrade step 7 removed four kinds of existing data
 - **What.** A household upgraded from schema 6 or earlier lost every unused sign-in link, the
   `signin_challenges` table and the `waiting` job state (a job in it became `running`), and each posted
-  reply's one recorded id became the first row of its parts.
+  reply's one recorded id became the first row of its parts. It also moved, losing nothing, the two lines
+  the program itself had written into a job's `log_tail` (a lost job's "Lost while …" and a never-started
+  job's "Never started: …") into the new `ended_note` column, and cleared `log_tail` on those rows.
 - **Where.** Step 7 of `upgrades` in `src/core/data/database.ts`; `src/core/data/upgrade.test.ts` asserts it.
 - **Why accepted.** A sign-in link lives five minutes, and one made before the step cannot say which browser
   made it, which is what the step added; ask for another. `signin_challenges` was never written or read.
@@ -467,6 +469,8 @@ Entries are grouped by the part of the program they belong to.
   - `inbox.volume`, `inbox.quiet_until`: `src/core/tempo/volume.ts`. Tempo owns how loudly an item is shown.
   - `jobs.title`, `conversations.label`: `src/core/conversations/threads.ts`, the one place a title changes
     (next entry).
+  - `jobs.model`, `jobs.account`, `jobs.harness`: `src/runtime/dispatcher.ts`, in the transaction of the
+    claim. Which model, account and harness a job is placed on is decided at placement and nowhere else.
   - `inbox.words`, `bridge_sends.text`, `bridge_incoming.text`: `src/core/conversations/private-bridge-words.ts`
     erases the words of private direct messages when they expire, across the three tables that hold them.
   - `tokens.last_used_at`, `sessions.seen_at`: `src/shared-credentials.ts` stamps a credential when it is used.
@@ -497,12 +501,20 @@ Entries are grouped by the part of the program they belong to.
   follow a rename: add it to the list in `threads.ts`.
 
 ### An account's usage summary is stored beside the windows it is worked out from
-- **What.** `model_accounts.usage`, `usage_read_at`, `resets_at` and `has_room` are derived from
-  `model_account_windows`.
-- **Where.** `src/runtime/account-windows.ts`. The function that writes the summary is not exported and has
-  one caller, the one that records the windows.
+- **What.** `model_accounts.usage`, `usage_read_at` and `resets_at` are derived from
+  `model_account_windows`. `has_room` holds two facts: whether the windows leave room, and whether the last
+  read of the provider failed. A failed read sets it to false and changes no window, so it cannot be worked
+  out again from the windows alone; only the next successful read sets it back.
+- **Where.** `src/runtime/account-windows.ts`: the function that writes the summary (`recordSummary`) is not
+  exported and has one caller, the one that records the windows. `accountUsageUnavailable` in
+  `src/runtime/account-usage.ts` is the one other writer, of `has_room` only, called when a refresh fails
+  (`refreshAccountWindows`) and when a worker reports a failed read (`runtime.accountUnavailable` in
+  `src/shared-account-reports.ts`). `currentAccountCapacity` reads both facts: the stored `has_room` and the
+  windows as they have aged.
 - **Why accepted.** Admission reads the summary for every placement and the app shows it; both read one row.
-- **What would change the answer.** A second writer of either table.
+  The failed-read fact has no column of its own because closing admission is all it is used for.
+- **What would change the answer.** A third writer of either table, or anything that needs to tell "no room"
+  from "the last read failed": then the failed read gets its own column, in a schema step.
 
 ### Each agent's `memories.db` still has four unused conversation tables
 - **What.** `conversations`, `conversation_turns`, `conversation_days` and `conversation_digests` are created
