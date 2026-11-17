@@ -443,6 +443,16 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** Storing the zone each next time was worked out in, which is a schema
   change.
 
+### One harness's result-size hint rides on a tool every harness is served
+- **What.** `use_secret` carries `_meta: {'anthropic/maxResultSizeChars': …}`, a hint only Claude Code reads.
+  It is on the one tool definition all three harnesses get, not inside the Claude adapter.
+- **Where.** `src/runtime/body-secret-tools.ts`, with a comment at the site.
+- **Why accepted.** The body's tools server builds each tool once; it has no per-harness copy to hang a hint
+  on. The key is inert for a harness that does not know it, and adding a harness does not mean touching it.
+  Three reviews raised it and none found a failure behind it.
+- **What would change the answer.** A second harness needing a hint of its own on a tool. Then each adapter
+  adds its hints to the tools it is handed, and this one moves into the Claude adapter.
+
 ## Bridges and conversations
 
 ### Mail is delivered at least once
