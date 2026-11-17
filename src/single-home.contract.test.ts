@@ -638,6 +638,15 @@ it('asks policy.ts who may move a task to another project, at the one door that 
   expect(door).not.toMatch(/hasOwn\(sharing\.projects/);
 });
 
+it('holds a new question and a move that carries one to the one rule about who may be asked', () => {
+  // Putting a question to a person, and moving a task with an unanswered one, both ask policy.ts; the
+  // rule is written there and nowhere else, and nothing is handled when the answer comes.
+  const door = text('src/shared-task-access.ts');
+  expect(door.split('mayBeAskedAbout(').length).toBe(3);
+  expect(sources('src').filter(file => /function mayBeAskedAbout\b/.test(text(file)))).toEqual(['src/policy.ts']);
+  expect(text('src/shared-task-commands.ts')).toContain('strandedQuestion(db, command)');
+});
+
 it('asks policy.ts which agents Home shows', () => {
   const home = text('src/core/data/comms-home.ts');
   expect(home).toContain("mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work')");

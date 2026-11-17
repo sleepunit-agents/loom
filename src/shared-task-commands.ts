@@ -6,7 +6,7 @@ import type { DataDatabase } from './core/data/database.js';
 import { type Operations, OperationError } from './core/operations/index.js';
 import { taskCommandSchema, dispatchTaskCommand } from './apps/task-command.js';
 import type { TaskService } from './apps/tasks.js';
-import { taskCommandAllowed } from './shared-task-access.js';
+import { strandedQuestion, taskCommandAllowed } from './shared-task-access.js';
 import { canReadSharedConversation } from './shared-sharing.js';
 
 export function registerSharedTaskCommands(operations: Operations, db: DataDatabase, service: TaskService) {
@@ -19,6 +19,9 @@ export function registerSharedTaskCommands(operations: Operations, db: DataDatab
         const question = db.select().from(inbox).where(eq(inbox.id, command.question)).get();
         if (question?.state !== 'waiting') throw new OperationError('conflict', 'This question has already been answered or replaced');
       }
+      // A move the caller may make is still refused, in words, while it would strand a question.
+      const stranded = strandedQuestion(db, command);
+      if (stranded) throw new OperationError('conflict', stranded);
       const row = dispatchTaskCommand(service, command, ctx.viewer);
       // moveToProject answers with the tasks it moved; one already there is not among them.
       if (row && 'moved' in row) { for (const id of row.moved) ctx.changed('task', id); return { moved: row.moved }; }

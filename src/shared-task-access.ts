@@ -1,7 +1,7 @@
 /** Outside Tasks policy. Trusted taskService/dispatcher carry no policy.
  * Every decision here is the tasks rule from policy.ts, read for one task. */
-import { eq } from 'drizzle-orm';
-import { addressee, holds, inHousehold, namesCurrent, rules, type Viewer } from './policy.js';
+import { and, eq } from 'drizzle-orm';
+import { holds, inHousehold, mayBeAskedAbout, namesCurrent, rules, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { tasks, inbox } from './core/data/schema.js';
@@ -46,8 +46,27 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
     case 'edit': return command.input.project === undefined || command.input.project === task.project ? labels(task) : mayMove(task, command.input.project);
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
     case 'move': return command.before === null || !!visibleTask(command.before);
-    // The person asked must be able to see the task themselves; someone removed sees nothing.
-    case 'ask': return !!visibleTask(command.id, addressee(command.input.to.id));
+    // The person asked must be able to read the task themselves (policy.ts, `mayBeAskedAbout`); someone removed reads nothing.
+    case 'ask': return mayBeAskedAbout(command.input.to.id, task, sharing);
     default: return true;
   }
+}
+
+/** Why a move, or an edit that moves, cannot be made as things stand though the caller may make it: a task
+ * named carries an unanswered question for a person who could not read the task where it is going
+ * (policy.ts, `mayBeAskedAbout`, the rule a new question is held to). Nothing when the move may go ahead.
+ * The words name nobody: a question put in someone's own thread is not the mover's to learn of. */
+export function strandedQuestion(db: DataDatabase, command: TaskCommand): string | undefined {
+  const moves = command.action === 'moveToProject' ? command.ids.map(id => ({ id, to: command.project }))
+    : command.action === 'edit' && command.input.project !== undefined ? [{ id: command.id, to: command.input.project }] : [];
+  if (!moves.length) return undefined;
+  const sharing = sharedSharing(db);
+  for (const { id, to } of moves) {
+    const task = db.select().from(tasks).where(eq(tasks.id, id)).get();
+    if (!task || task.project === to) continue;
+    const waiting = db.select({ to: inbox.to }).from(inbox).where(and(eq(inbox.waitsOnKind, 'task'), eq(inbox.waitsOnId, id), eq(inbox.toKind, 'person'), eq(inbox.state, 'waiting'))).all();
+    if (waiting.some(question => !mayBeAskedAbout(question.to, { ...task, project: to }, sharing)))
+      return `Task ${id} has an unanswered question for someone who could not read it there. Have it answered, or put the question to someone who can, first`;
+  }
+  return undefined;
 }

@@ -208,6 +208,11 @@ alone. Three things change where work is filed.
   - *What stays.* Links stay: a parent and its children may be in different projects. Comments stay.
   - *The record.* One comment on each moved task, by the mover, saying from where to where. A task already
     in the project is left alone and gets no comment.
+  - *A waiting question stays with someone who can read it.* A question about a task is put only to a
+    person who can read the task (a household owner always can). So a move is refused while the task carries
+    an unanswered question for someone who could not read it where it is going: have it answered, or put
+    the question to someone who can, first. Both ask the one rule, `mayBeAskedAbout` in `src/policy.ts`.
+    Nothing is handled when the answer comes.
   - *One way.* An `edit` that names another project is this same move for one task: the same rule, the
     same mail, the same comment. Before 2026-11-17 such an edit left no comment and left the task's mail
     under the old project. `move` still means only a task's place in the hand-kept order.

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { createDataSchema, type DataDatabase } from './core/data/database.js';
 import * as s from './core/data/schema.js';
-import { holds, rules, tableRules, type ParentLookup, type Row, type Rule, type Viewer } from './policy.js';
+import { holds, mayBeAskedAbout, rules, tableRules, type ParentLookup, type Row, type Rule, type Viewer } from './policy.js';
 import { sqlRule } from './policy-sql.js';
 import { sharedSharing } from './shared-sharing.js';
 import { sharedQueryTables } from './next-data.js';
@@ -346,6 +346,22 @@ describe('asking for an agent to be let onto a project', () => {
     // A household owner for any agent. A member who has the agent is not thereby one; nor is someone removed.
     for (const agent of ['art', 'mark']) expect(asks({ kind: 'member', id: 'owner' }, agent)).toBe(true);
     for (const member of ['sam', 'lee', 'exowner', 'gone']) expect(asks({ kind: 'member', id: member }, 'art'), member).toBe(false);
+  });
+});
+
+describe('putting a question about a task to a person', () => {
+  it('is only for someone who can read the task where it is, or where it is going', () => {
+    const asked = (member: string, task: Row) => mayBeAskedAbout(member, task, sharedSharing(db));
+    const inPond = { project: 'pond', ownerKind: 'agent', owner: 'art' };
+    // sam is on pond; lee is not; a household owner reads every project; someone removed reads nothing.
+    expect([asked('sam', inPond), asked('lee', inPond), asked('owner', inPond), asked('gone', inPond), asked('ghost', inPond)]).toEqual([true, false, true, false, false]);
+    // The same question, asked of the task as it would be after a move.
+    expect([asked('sam', { ...inPond, project: 'side' }), asked('lee', { ...inPond, project: 'side' })]).toEqual([false, true]);
+    // Out of every project it is its owner's: art's task is read by sam, who has art, and not by lee.
+    expect([asked('sam', { ...inPond, project: null }), asked('lee', { ...inPond, project: null }), asked('owner', { ...inPond, project: null })]).toEqual([true, false, true]);
+    // It is the tasks rule, read for the person named: the two never differ.
+    for (const member of memberIds) for (const project of ['pond', 'side', 'shut', null])
+      expect(asked(member, { ...inPond, project }), `${member} ${project}`).toBe(holds(rules.task, { kind: 'member', id: member }, { ...inPond, project }, sharedSharing(db)));
   });
 });
 

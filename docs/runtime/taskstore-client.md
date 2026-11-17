@@ -28,6 +28,9 @@ moved (`moved`); one already there is left alone. Each moved task gets a comment
 by the mover saying from where to where. Its links and comments stay, and mail
 filed under the task's own labels goes with it. An `edit` that names another
 project is the same move for one task, by the same rule and with the same record.
+A move is refused (`conflict`) while a task named carries an unanswered question
+for a person who could not read it in the destination: `ask` only takes a person
+who can read the task, and a move may not undo that.
 
 To split a project: make the new project (a household owner, or an agent through
 `household.propose` with `change: "project"`), then `moveToProject` the chosen

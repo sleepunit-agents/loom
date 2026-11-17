@@ -267,3 +267,36 @@ it('makes an edit that names another project the same move: the rule, the record
   const visible = (who: 'sam' | 'lee') => f.db.select().from(inbox).where(talkVisibility({ kind: 'member', id: who }).inbox(getTableColumns(inbox))).all().length;
   expect([visible('sam'), visible('lee')]).toEqual([2, 0]);
 });
+
+it('refuses a move that would leave a waiting question with someone who could not read the task there', async () => {
+  const f = fixture(), make = (patch: object = {}) => f.root.services.tasks.create({ ...f.input, ...patch }, { kind: 'member', id: 'owner' });
+  f.db.insert(projectMembers).values([{ project: 'pond', member: 'lee' }, { project: 'other', member: 'sam' }]).run();
+  const asked = make({ project: 'pond' }), plain = make({ project: 'pond' });
+  // lee is on pond, so sam may ask lee about a pond task. lee is not on other.
+  expect((await f.call({ action: 'ask', id: asked.id, input: { to: { kind: 'member', id: 'lee' }, ask: 'Spend?', ifYes: 'Buy', ifNo: 'Wait' } }, 'sam', 'ask')).status).toBe(200);
+  const words = `Task ${asked.id} has an unanswered question for someone who could not read it there. Have it answered, or put the question to someone who can, first`;
+  const projectsOf = () => f.db.select({ project: tasks.project }).from(tasks).all().map(row => row.project);
+  // To a project lee is not on, and out of every project (it is sam's task): refused in words, by a move and by an edit, and nothing moves.
+  for (const [command, id] of [[{ action: 'moveToProject', ids: [plain.id, asked.id], project: 'other' }, 'move'], [{ action: 'moveToProject', ids: [asked.id], project: null }, 'private'],
+    [{ action: 'edit', id: asked.id, input: { project: 'other', title: 'Never' } }, 'edit']] as const) {
+    const refused = await f.call(command, 'sam', id);
+    expect(refused.status, id).toBe(409);
+    expect(await refused.json()).toMatchObject({ ok: false, code: 'conflict', message: words });
+  }
+  // A household owner is refused the same: the question is lee's to read wherever the task is.
+  expect((await f.call({ action: 'moveToProject', ids: [asked.id], project: 'other' }, 'owner', 'owner-move')).status).toBe(409);
+  expect(projectsOf()).toEqual(['pond', 'pond']);
+  expect(f.db.select().from(tasks).where(eq(tasks.id, asked.id)).get()).toMatchObject({ title: 'Pump', ask: 'Spend?' });
+  expect(f.db.select().from(taskComments).all()).toEqual([]);
+  // The task with no question moves; and once lee has answered, so does the other.
+  expect((await f.call({ action: 'moveToProject', ids: [plain.id], project: 'other' }, 'sam', 'plain')).status).toBe(200);
+  const question = f.db.select().from(inbox).where(eq(inbox.waitsOnId, asked.id)).get()!;
+  expect((await f.call({ action: 'answer', id: asked.id, question: question.id, answer: 'yes' }, 'lee', 'answer')).status).toBe(200);
+  expect((await f.call({ action: 'moveToProject', ids: [asked.id], project: 'other' }, 'sam', 'after')).status).toBe(200);
+  expect(projectsOf()).toEqual(['other', 'other']);
+  // A question to a household owner goes anywhere: an owner reads every project.
+  expect((await f.call({ action: 'ask', id: asked.id, input: { to: { kind: 'member', id: 'owner' }, ask: 'Sure?', ifYes: 'Go', ifNo: 'Stop' } }, 'sam', 'ask-owner')).status).toBe(200);
+  expect((await f.call({ action: 'moveToProject', ids: [asked.id], project: 'pond' }, 'owner', 'back')).status).toBe(200);
+  // And nobody is asked about a task they could not read: lee is not on other.
+  expect((await f.call({ action: 'ask', id: plain.id, input: { to: { kind: 'member', id: 'lee' }, ask: 'Spend?', ifYes: 'Buy', ifNo: 'Wait' } }, 'sam', 'ask-outside')).status).toBe(403);
+});
