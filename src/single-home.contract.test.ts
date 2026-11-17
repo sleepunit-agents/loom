@@ -333,7 +333,7 @@ it('takes a secret\'s standing answers from the columns, and writes the househol
   expect(secretAnswer.options).toEqual([...household.secretsDefault.enumValues]);
   expect(secretAnswer.options).toEqual([...secretRules.answer.enumValues]);
   expect(sources('src').filter(file => file !== 'src/core/data/schema.ts' && /'ask',\s*'auto',\s*'never'/.test(text(file)))).toEqual([]);
-  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set:\s*\{\s*secretsDefault/.test(text(file)))).toEqual(['src/apps/household.ts']);
+  expect(sources('src').filter(file => /\{\s*secretsDefault\b[^}]*\}\)\.onConflict|set(?::\s*|\()\{\s*secretsDefault/.test(text(file)))).toEqual(['src/apps/household.ts']);
   const client = new Database(':memory:');
   try {
     const db = createDataSchema(client, () => '2026-11-16T00:00:00.000Z'), requests = householdService(db, () => '2026-11-16T00:00:00.000Z');
