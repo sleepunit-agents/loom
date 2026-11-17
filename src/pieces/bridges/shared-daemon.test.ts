@@ -94,7 +94,9 @@ it('refuses the next part when connection identity changes during its fresh cred
  const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;let reads=0;
  f.source.read.mockImplementation(async()=>{const bytes=Buffer.from('synthetic:TOKEN');f.buffers.push(bytes);if(++reads===2)f.writes.run(()=>f.db.update(bridgeConnections).set({botUser:'UREPLACED'}).run());return bytes;});
  f.request.mockImplementation(async()=>Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}));
- f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);expect(f.db.select().from(bridgeSends).get()?.state).toBe('uncertain');expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'x'.repeat(4000)});f.daemon.changed();await f.daemon.idle();expect(f.request.mock.calls.filter(([url])=>String(url).endsWith('chat.postMessage'))).toHaveLength(1);
+ // The first part is out and stays sent. The second was refused before any request, so it has not left and waits; it is not in doubt.
+ expect(f.db.select().from(bridgeSends).all().map(row=>[row.id,row.state,row.text.length])).toEqual([['reply','sent',3900],['reply/rest','pending',100]]);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });
 it('flushes a preexisting pending send on the connected-state callback without a caller flush',async()=>{
  const f=fixture();f.db.insert(bridgeIncoming).values({id:'in',connection:'connection',channel:'CROOM',isDm:false,user:'UUSER',text:'Hi',postedAt:new Date(f.clock.now()).toISOString(),receivedAt:new Date(f.clock.now()).toISOString(),state:'delivered'}).run();f.daemon.sends.queue({id:'reply',incoming:'in',text:'Reply'});
@@ -157,6 +159,21 @@ it('keeps the Discord resume cursor across a restart and gives it to no lifetime
  f.db.insert(secretChanges).values({id:'change-2',secret:'TOKEN',action:'replace',by:'owner',at:new Date(f.clock.now()).toISOString()}).run();
  const third=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>third.close());
  await third.ready();await third.idle();expect(gateways).toHaveLength(4);expect(gateways[3].load()).toBeUndefined();
+});
+it('goes on receiving for the connection when one channel has details it cannot classify',async()=>{
+ const f=fixture(),usual=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async(url,init)=>String(url).endsWith('/conversations.info')&&new URLSearchParams(String(init?.body)).get('channel')==='CODD'
+  ?Response.json({ok:true,channel:{id:'CODD',is_group:true}}):usual(url,init));
+ await f.daemon.ready();await f.daemon.idle();
+ await f.transports[0].receive({},Buffer.from(f.raw('odd','ack-odd').toString().replace('CROOM','CODD').replace('000001','000002')));
+ await f.transports[0].receive({},f.raw());
+ f.clock.advance(0);await f.daemon.idle();
+ // The message in the readable room is delivered; the other waits, and the trouble is reported once.
+ expect(f.db.select().from(bridgeIncoming).all().map(row=>[row.channel,row.state])).toEqual([['CROOM','delivered']]);
+ expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);
+ expect(f.errors).toHaveLength(1);
+ f.clock.advance(5000);await f.daemon.idle();f.clock.advance(5000);await f.daemon.idle();
+ expect(f.errors).toHaveLength(1);
 });
 it('publishes an earlier committed intake when a later receipt in the drain fails',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const first=JSON.parse(f.raw('first','one').toString()),bad=JSON.parse(f.raw('bad','two').toString());first.payload.event.channel_type='channel';bad.payload.event.channel_type='channel';bad.payload.event.text=123;bad.payload.event.ts='1794432000.000002';

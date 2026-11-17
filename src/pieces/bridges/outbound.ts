@@ -34,28 +34,33 @@ export class BridgeReplyNotSent extends Error {
   constructor(readonly again: boolean) { super('Bridge reply was not sent'); }
 }
 
-/** One attempt for the engine's whole outbox row, never a retry loop.
+/** What one attempt achieved. `posted` is the text the platform confirmed, in order from the start, and
+ * `id` its last confirmed post. `rest` is the text that is not confirmed; empty means the whole reply is
+ * out. With a `rest`, `refused` is our own refusal when its first part provably never left this process;
+ * without `refused` that part may have reached the platform. */
+export interface ReplyAttempt { posted: string; id?: string; rest: string; refused?: BridgeReplyNotSent }
+
+/** One attempt for the engine's outbox row, never a retry loop.
  * The adapter's post callback MUST recheck authorization for every chunk, use
  * the bound address/thread and suppress platform-generated mentions. The engine
  * owns staging and durable uncertainty; this helper grants no right to send.
- * Only the final receipt is returned, matching the legacy send command.
- * BridgeReplyNotSent passes through only while no part has been posted; once
- * one part is out, a later part that was not sent still leaves the reply partial.
+ * It stops at the first part that is not confirmed and says how far it got, so
+ * the engine can keep what is out and deal with the remainder on its own.
+ * Nothing of an upstream error is returned: it can contain credentials or words.
  */
 export async function postReply(platform: Venue['platform'], text: string,
-  post: (text: string) => Promise<{ id: string }>): Promise<{ id: string }> {
+  post: (text: string) => Promise<{ id: string }>): Promise<ReplyAttempt> {
   const parts = replyParts(platform, text);
-  let receipt: { id: string } | undefined;
+  let confirmed = 0, id: string | undefined, refused: BridgeReplyNotSent | undefined;
   try {
     for (const part of parts) {
       const result = await post(part);
       if (!result || typeof result.id !== 'string' || !result.id.trim()) throw new Error();
-      receipt = { id: result.id };
+      id = result.id; confirmed++;
     }
   } catch (error) {
-    if (error instanceof BridgeReplyNotSent && !receipt) throw error;
-    // An upstream error can contain credentials, words, or a successful post.
-    throw new Error('Bridge reply attempt uncertain');
+    if (error instanceof BridgeReplyNotSent) refused = error;
   }
-  return receipt!;
+  // The parts are cut greedily from the start, so cutting the remainder again later gives the same parts.
+  return { posted: parts.slice(0, confirmed).join(''), ...(id === undefined ? {} : { id }), rest: parts.slice(confirmed).join(''), ...(refused ? { refused } : {}) };
 }

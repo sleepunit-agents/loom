@@ -92,18 +92,80 @@ it('retains a held receipt and retries current rules without blocking later even
   expect(f.db.select().from(turns).all()).toHaveLength(1);
 });
 
-it.each(['discord', 'slack'] as const)('waits for trusted %s channel metadata and expires missing metadata at one hour', platform => {
-  const f = fixture();
+it.each(['discord', 'slack'] as const)('keeps a %s event it cannot read yet for a day, delivers it when it can, and says so if it never could', platform => {
+  const f = fixture(), cached = f.channels[platform];
   f.channels[platform] = () => undefined;
-  if (platform === 'discord') f.receiver.discord(platform, f.discord(), f.checkpoint());
-  else f.receiver.slack(platform, f.slack());
+  if (platform === 'discord') { f.receiver.discord(platform, f.discord(), f.checkpoint()); f.receiver.discord(platform, f.discord(2, 'never'), f.checkpoint(2)); }
+  else { f.receiver.slack(platform, f.slack()); f.receiver.slack(platform, Buffer.from(f.slack('ack2', 'ev2').toString().replace('000001', '000002'))); }
   expect(f.receiver.drain(platform)).toBe(0);
-  expect(f.raw()).toHaveLength(1);
   expect(f.db.select().from(inbox).all()).toEqual([]);
-  f.clock.advance(3_600_000);
+  // Hours later, well past the hour a recorded frame is kept, the channel can at last be read.
+  f.clock.advance(5 * 3_600_000);
+  expect(f.raw()).toHaveLength(2);
+  expect(f.expired).toEqual([]);
+  f.channels[platform] = (connection, channel) => f.raw().length === 2 ? cached(connection, channel) as never : undefined;
+  expect(f.receiver.drain(platform)).toBe(1);
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  // The other stays unreadable for the whole day. Then it is gone for good, and that is said out loud, once.
+  f.clock.advance(19 * 3_600_000 - 1);
+  expect(f.raw()).toHaveLength(1);
+  f.clock.advance(1);
   expect(f.raw()).toEqual([]);
   expect(f.receiver.drain(platform)).toBe(0);
-  // The message is gone for good. That is said out loud, once.
+  expect(f.expired).toEqual([{ events: 1, held: 0 }]);
+});
+
+it('sets aside what the bot hears from another guild, without asking about its channel or holding anything up', () => {
+  const f = fixture();
+  f.channels.discord = (_connection, channel) => channel === 'room' ? { id: channel, guild: 'w', kind: 'channel' } : undefined;
+  const foreign = JSON.parse(f.discord(1, 'theirs').toString());
+  foreign.d.guild_id = 'another-guild'; foreign.d.channel_id = 'their-room';
+  f.receiver.discord('discord', Buffer.from(JSON.stringify(foreign)), f.checkpoint());
+  f.receiver.discord('discord', f.discord(2, 'ours'), f.checkpoint(2));
+  expect(f.receiver.missingChannels('discord')).toEqual([]);
+  expect(f.receiver.drain('discord')).toBe(2);
+  expect(f.raw()).toEqual([]);
+  expect(f.db.select().from(bridgeIncoming).all().map(row => row.id)).toEqual(['bi:["discord","ours"]']);
+});
+
+it('sets aside a message in a kind of channel that carries no conversation', () => {
+  const f = fixture();
+  f.channels.discord = (_connection, channel) => ({ id: channel, guild: 'w', kind: 'other' });
+  f.receiver.discord('discord', f.discord(), f.checkpoint());
+  expect(f.receiver.missingChannels('discord')).toEqual([]);
+  expect(f.receiver.drain('discord')).toBe(1);
+  expect(f.raw()).toEqual([]);
+  expect(f.db.select().from(bridgeIncoming).all()).toEqual([]);
+  expect(f.expired).toEqual([]);
+});
+
+it('reads a Slack private channel the same whether Slack calls it a channel or a group', () => {
+  const f = fixture();
+  // conversations.info says is_channel for a private channel; its message events say channel_type group.
+  const frame = JSON.parse(f.slack().toString());
+  frame.payload.event.channel_type = 'group';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(frame)));
+  expect(f.receiver.drain('slack')).toBe(1);
+  expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ state: 'delivered', isDm: false });
+  // What must still never pass: the channel's details say it is not direct and the event says it is.
+  frame.payload.event.channel_type = 'im'; frame.payload.event.ts = '1794432000.000002'; frame.payload.event_id = 'ev2';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(frame)));
+  expect(() => f.receiver.drain('slack')).toThrow('matching channel metadata');
+  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(1);
+});
+
+it('goes on past a frame it cannot read, reports it once, and counts it lost only when its day is up', () => {
+  const f = fixture();
+  f.receiver.discord('discord', Buffer.from('{"op":0,"t":"MESSAGE_CREATE","s":1,"d":{}}'), f.checkpoint());
+  f.receiver.discord('discord', f.discord(2), f.checkpoint(2));
+  expect(f.receiver.missingChannels('discord')).toEqual([]);
+  // The readable message behind it is delivered in the same pass.
+  expect(() => f.receiver.drain('discord')).toThrow();
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  expect(f.raw()).toHaveLength(1);
+  expect(f.receiver.drain('discord')).toBe(0);
+  f.clock.advance(86_400_000);
+  expect(f.raw()).toEqual([]);
   expect(f.expired).toEqual([{ events: 1, held: 0 }]);
 });
 
@@ -113,9 +175,10 @@ it('delivers a held message after its receipt has expired, once what held it is 
   f.receiver.discord('discord', f.discord(), f.checkpoint());
   f.receiver.drain('discord');
   expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ state: 'held', reason: 'Connection disabled' });
-  // The raw receipt goes at the hour; the held row does not go with it.
+  // The raw receipt goes at the hour; the held row does not go with it, and nothing has been lost.
   f.clock.advance(3_600_000);
-  expect(f.expired).toEqual([{ events: 1, held: 0 }]);
+  expect(f.raw()).toEqual([]);
+  expect(f.expired).toEqual([]);
   expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('held');
   f.receiver.drain('discord');
   expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('held');
@@ -145,6 +208,46 @@ it('closes a message held for a day, and one whose row cannot say what a retry n
   new BridgeReceiver(f.db, f.clock, { discord: () => undefined, slack: () => undefined }, expired => lost.push(expired)).close();
   expect(lost[1]).toEqual({ events: 0, held: 1 });
   expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('dropped');
+});
+
+it('closes a message held for a day while it runs, before trying it, and keeps none of its words', () => {
+  const f = fixture();
+  f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
+  f.receiver.discord('discord', f.discord(), f.checkpoint());
+  f.receiver.drain('discord');
+  f.clock.advance(86_400_000);
+  // Put right a moment too late: the message is a day old and is not delivered now.
+  f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
+  f.receiver.drain('discord');
+  expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ state: 'dropped', reason: 'Held too long to deliver: Connection disabled', text: '' });
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  expect(f.expired).toEqual([{ events: 0, held: 1 }]);
+});
+
+it('tries every held message in turn, however many stay held', () => {
+  const f = fixture();
+  f.db.insert(agents).values({ id: 'mark', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
+  for (const [index, message] of ['a', 'b', 'c'].entries()) {
+    f.receiver.discord('discord', f.discord(index + 1, message), f.checkpoint(index + 1));
+    f.clock.advance(1);
+  }
+  f.receiver.drain('discord');
+  f.clock.advance(3_600_000);
+  expect(f.raw()).toEqual([]);
+  // Enabled again, but the same bot now also stands for a second agent, so all three stay held.
+  f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
+  f.db.insert(bridgeConnections).values({ id: 'twin', platform: 'discord', agent: 'mark', workspace: 'w', botUser: 'bot', tokenSecret: 'bot', enabled: false, state: 'disconnected', stateAt: f.now() }).run();
+  const states = () => f.db.select().from(bridgeIncoming).all().map(row => row.state);
+  f.receiver.drain('discord', 1);
+  f.receiver.drain('discord', 1);
+  expect(states()).toEqual(['held', 'held', 'held']);
+  // That is put right. The next pass of one row goes on to the third message, not back to the first.
+  f.db.delete(bridgeConnections).where(eq(bridgeConnections.id, 'twin')).run();
+  f.receiver.drain('discord', 1);
+  expect(states()).toEqual(['held', 'held', 'delivered']);
+  f.receiver.drain('discord', 1); f.receiver.drain('discord', 1);
+  expect(states()).toEqual(['delivered', 'delivered', 'delivered']);
 });
 
 it.each(['discord', 'slack'] as const)('delivers later %s events while metadata is missing, then recovers the deferred message', platform => {
@@ -185,7 +288,7 @@ it('does not fetch or open sockets during receipt, drain, held retry or expiry',
   f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
   f.receiver.drain('discord');
   f.receiver.slack('slack', f.slack('ack2', 'ev2'));
-  f.clock.advance(3_600_000);
+  f.clock.advance(86_400_000);
   expect(f.raw()).toEqual([]);
   expect(request).not.toHaveBeenCalled();
   expect(WebSocket).not.toHaveBeenCalled();
@@ -295,18 +398,21 @@ it('does not return expired metadata targets, and rejects closed or unknown sour
   f.channels.slack = () => undefined;
   f.receiver.slack('slack', f.slack());
   expect(f.receiver.missingChannels('slack')).toEqual(['room']);
-  f.clock.advance(3_600_000);
+  f.clock.advance(86_400_000);
   expect(f.receiver.missingChannels('slack')).toEqual([]);
   expect(() => f.receiver.missingChannels('unknown')).toThrow('Unknown');
   f.receiver.close();
   expect(() => f.receiver.missingChannels('slack')).toThrow('closed');
 });
 
-it('surfaces malformed discovery frames while preserving their bytes and refusing foreign transactions', () => {
+it('passes over malformed discovery frames while preserving their bytes and refusing foreign transactions', () => {
   const f = fixture();
+  f.channels.discord = () => undefined;
   f.receiver.discord('discord', Buffer.from('{"op":0,"t":"MESSAGE_CREATE","s":1,"d":{}}'), f.checkpoint());
+  f.receiver.discord('discord', f.discord(2), f.checkpoint(2));
   const before = f.raw();
-  expect(() => f.receiver.missingChannels('discord')).toThrow();
+  // The frame that cannot be read does not keep the channel behind it from being looked up.
+  expect(f.receiver.missingChannels('discord')).toEqual(['room']);
   expect(f.raw()).toEqual(before);
   f.db.transaction(() => {
     expect(() => f.receiver.missingChannels('discord')).toThrow('own transaction');

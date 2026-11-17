@@ -31,5 +31,10 @@ export function parseInboxSourceId(value: string | null): { workspace: string; c
 }
 
 /** How an outside user is named where no household member stands for them:
- * the `person` of an agent's tier for someone on a platform. */
+ * the `person` of an agent's tier for someone on a platform. A tier is the
+ * agent's setting for that outside account and deliberately outlives a person
+ * link (docs/accepted-tradeoffs.md, "An outside account is named in three places"). */
 export const outsidePersonKey = (platform: 'discord' | 'slack', workspace: string, user: string): string => JSON.stringify([platform, workspace, user]);
+
+/** `bridge_sends.id` of what is left of a reply that was only partly posted (sends.ts). */
+export const restOfReply = (reply: string): string => `${reply}/rest`;

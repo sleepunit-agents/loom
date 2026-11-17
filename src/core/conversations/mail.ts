@@ -109,7 +109,9 @@ export class ConversationMail {
 
   /** The body has the mail: its sender sees it delivered. Call only after the body accepts the mail, never
    * on enqueue or take. This settles nothing. Mail is settled by its answer (settle, confirm), so a body
-   * that dies before answering leaves it to the job's next attempt, where it shows as held again. */
+   * that dies before answering leaves it to the job's next attempt, where it shows as held again. So an
+   * agent can be handed the same mail twice, and is never left with mail nobody answered
+   * (docs/accepted-tradeoffs.md, "Mail is delivered at least once"). */
   accept(conversation: string, job: string, itemId: string): Item {
     return this.comms.db.transaction(() => {
       const item = this.held(conversation, job, itemId);

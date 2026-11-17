@@ -197,10 +197,16 @@ export class Conversations {
     this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() }).where(and(eq(inbox.job, jobId), eq(inbox.state, 'taken'))).run();
   }
 
-  /** Replace the words of an answer that must not be kept (a one-time code) with a marker. The item
-   * stays answered; only words not already replaced change. */
+  /** Replace the words of an answer that must not be kept (a one-time code) with a marker, in every record
+   * that holds them: the answer on the question, and the copy of it mailed to the agent when the question
+   * was asked in a conversation (answer, above). The item stays answered; only words not already replaced
+   * change. A sealed answer has no plain words on the question and is left to its keep time. */
   redactAnswer(id: string, marker: string): void {
-    this.db.update(inbox).set({ answerText: marker, changedAt: this.now() }).where(and(eq(inbox.id, id), isNotNull(inbox.answerText), ne(inbox.answerText, marker))).run();
+    this.db.transaction(() => {
+      const at = this.now();
+      if (!this.db.update(inbox).set({ answerText: marker, changedAt: at }).where(and(eq(inbox.id, id), isNotNull(inbox.answerText), ne(inbox.answerText, marker))).run().changes) return;
+      this.db.update(inbox).set({ words: marker, changedAt: at }).where(and(eq(inbox.source, 'answer'), eq(inbox.sourceId, id), isNotNull(inbox.words), ne(inbox.words, marker))).run();
+    });
   }
 
   digest(input: DigestInput, questionItem?: string): typeof digests.$inferSelect {

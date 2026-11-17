@@ -1,13 +1,14 @@
 /** Trusted transport-to-conversation path. Call receipt methods only after the
  * platform transport authenticates. They persist original socket frames before
  * ACK/resume advancement; metadata lookup and admission happen in drain().
- * Channel resolvers read an authenticated adapter cache synchronously. Missing
- * metadata and held messages retain their receipt until retry or one-hour expiry.
- * A held message outlives its receipt: its row keeps what admission read, and
- * drain goes on trying it from the row for HELD_LIFETIME. Only a message that
- * never got a row (no channel metadata for the whole hour), a row from before
- * those fields were stored, or one held past HELD_LIFETIME is lost; composition
- * is told how many.
+ * Channel resolvers read an authenticated adapter cache synchronously.
+ * Nothing received is given up on before a day has passed. An event that cannot
+ * be read yet (no channel metadata, or a frame this code cannot make sense of)
+ * keeps its raw frame for UNREAD_EVENT_LIFETIME. A message that was read and
+ * held gets a row that keeps what admission read: its raw frame goes after an
+ * hour and drain goes on trying it from the row for HELD_LIFETIME. What is
+ * still undelivered after that day is closed or removed, and composition is
+ * told how many.
  * This service performs no network IO and is owned/closed by composition.
  */
 import { and, asc, eq, isNotNull, isNull, or, sql } from 'drizzle-orm';
@@ -15,7 +16,7 @@ import { z } from 'zod';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming } from '../../core/data/schema.js';
-import { BridgeEvents, RAW_EVENT_LIFETIME, type BridgeCheckpoint } from './events.js';
+import { BridgeEvents, RAW_EVENT_LIFETIME, type BridgeCheckpoint, type Consumed } from './events.js';
 import { BridgeIncoming } from './incoming.js';
 import { normalizeDiscord, normalizeSlack, type DiscordChannel, type SlackChannel } from './normalize.js';
 
@@ -25,6 +26,7 @@ const slackFrame = z.object({ type: z.literal('events_api'), payload: z.object({
   type: z.literal('event_callback'), event_id: id, team_id: id, event: z.object({ type: id }).passthrough(),
 }) });
 const channelField = z.object({ channel_id: id });
+const guildField = z.object({ guild_id: id.nullish() });
 const slackChannelField = z.object({ channel: id });
 
 /** How long a held message is still worth delivering. After a day an answer would come too late to be
@@ -38,13 +40,18 @@ export interface BridgeChannelCache {
 export class BridgeReceiver {
   private readonly events: BridgeEvents;
   private readonly incoming: BridgeIncoming;
-  /** `lost` hears of receipts that expired unprocessed, and how many of those were held messages now closed. */
+  /** Where the last pass over each connection's held rows stopped, so a full page of rows that stay held
+   * cannot keep later ones from being tried. */
+  private readonly heldAfter = new Map<string, { at: string; id: string }>();
+  /** Frames already reported as unreadable, so each is reported once while it waits. */
+  private readonly unreadable = new Set<string>();
+  /** `lost` hears of what can no longer be delivered: `events` received and never read before their frames
+   * expired, and `held` messages closed after HELD_LIFETIME. */
   constructor(private db: DataDatabase, private clock: Clock, private channels: BridgeChannelCache,
-    lost: (expired: { events: number; held: number }) => void = () => {}) {
+    private lost: (expired: { events: number; held: number }) => void = () => {}) {
     this.events = new BridgeEvents(db, clock, events => lost({ events, held: this.closeExpiredHeld() }));
-    // Rows left held by a process that stopped before their receipts expired.
-    const stale = this.closeExpiredHeld();
-    if (stale) lost({ events: 0, held: stale });
+    // Rows left held by a process that stopped before they could be closed.
+    this.closeHeld();
     this.incoming = new BridgeIncoming(db, () => new Date(clock.now()).toISOString());
   }
 
@@ -78,15 +85,16 @@ export class BridgeReceiver {
    * order and returns distinct missing channel ids, never message fields as
    * channel-kind evidence. No receipt is consumed or delivered here. Root owns
    * authenticated fetches, cache lifetime and bounded retry scheduling; call
-   * drain after filling the cache. Malformed frames throw as in drain(). */
+   * drain after filling the cache. A frame that cannot be read is passed over
+   * here, so it cannot keep the others from being looked up; drain() reports it. */
   missingChannels(connection: string, limit = 64, rotate = false): string[] {
     const source = this.connection(connection);
     const missing = new Set<string>();
-    this.events.drain(connection, (_id, raw) => {
+    this.events.drain(connection, (_id, raw) => { try {
       const payload = this.parse(raw);
       if (source.platform === 'discord') {
         const frame = discordFrame.parse(payload);
-        if (frame.t === 'MESSAGE_CREATE') {
+        if (frame.t === 'MESSAGE_CREATE' && !this.elsewhere(source, frame.d)) {
           const channel = channelField.parse(frame.d).channel_id;
           if (!this.channels.discord(connection, channel)) missing.add(channel);
         }
@@ -98,54 +106,95 @@ export class BridgeReceiver {
           if (!event.channel_type && !this.channels.slack(connection, channel)) missing.add(channel);
         }
       }
+      // A frame that cannot be read names no channel to look up. drain() reports it.
+      } catch { /* left for drain */ }
       return false;
     }, limit, rotate ? 'inspect' : 'peek');
     return [...missing];
   }
 
   /** Bounded synchronous pass; receipt removal and conversation delivery share
-   * one transaction. Held rows are retried against current household rules. A
-   * malformed message throws, leaving its receipt/writes intact for inspection;
-   * composition must report the failure, rather than spin an immediate retry. */
+   * one transaction. Held rows are retried against current household rules, and
+   * closed once they are too old to deliver. A frame that cannot be read does not
+   * stop the pass: its receipt and nothing else of it is kept, the rest of the
+   * pass runs, and then the first such error is thrown, once per frame, for
+   * composition to report. */
   drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void): number {
     const source = this.connection(connection);
+    this.closeHeld();
     // Held messages whose receipt is gone are tried from their own rows. Such a delivery has no raw frame,
     // so `delivered` is not called for it: a Slack message that waited this long arrives without its files.
     const expired = new Date(this.clock.now() - RAW_EVENT_LIFETIME).toISOString();
-    for (const held of this.db.select({ id: bridgeIncoming.id }).from(bridgeIncoming)
-      .where(and(eq(bridgeIncoming.connection, connection), eq(bridgeIncoming.state, 'held'), isNotNull(bridgeIncoming.mentions), sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${expired})`))
-      .orderBy(asc(bridgeIncoming.receivedAt)).limit(limit).all()) this.incoming.retry(held.id);
-    return this.events.drain(connection, (_id, raw, receivedAt) => {
-      const payload = this.parse(raw);
+    const page = (after?: { at: string; id: string }) => this.db.select({ id: bridgeIncoming.id, at: bridgeIncoming.receivedAt }).from(bridgeIncoming)
+      .where(and(eq(bridgeIncoming.connection, connection), eq(bridgeIncoming.state, 'held'), isNotNull(bridgeIncoming.mentions), sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${expired})`,
+        after ? sql`(julianday(${bridgeIncoming.receivedAt}) > julianday(${after.at}) or (julianday(${bridgeIncoming.receivedAt}) = julianday(${after.at}) and ${bridgeIncoming.id} > ${after.id}))` : undefined))
+      .orderBy(sql`julianday(${bridgeIncoming.receivedAt})`, asc(bridgeIncoming.id)).limit(limit).all();
+    const after = this.heldAfter.get(connection);
+    let held = page(after);
+    if (!held.length && after) { this.heldAfter.delete(connection); held = page(); }
+    for (const row of held) { this.heldAfter.set(connection, row); this.incoming.retry(row.id); }
+    let failure: unknown, failed = false;
+    const count = this.events.drain(connection, (receipt, raw, receivedAt): Consumed => {
       let message;
-      if (source.platform === 'discord') {
-        const frame = discordFrame.parse(payload);
-        if (frame.t !== 'MESSAGE_CREATE') return;
-        const channel = this.channels.discord(connection, channelField.parse(frame.d).channel_id);
-        if (!channel) return false;
-        message = normalizeDiscord(source, frame, channel);
-      } else {
-        const frame = slackFrame.parse(payload);
-        const event = frame.payload.event;
-        if (event.type !== 'message' && event.type !== 'app_mention') return;
-        const channel = this.channels.slack(connection, slackChannelField.parse(event).channel);
-        // normalizeSlack accepts the event's channel_type when present and
-        // otherwise requires trusted metadata. No guessed DM classification.
-        if (!channel && !event.channel_type) return false;
-        message = normalizeSlack(source, frame.payload, channel);
+      try {
+        const payload = this.parse(raw);
+        if (source.platform === 'discord') {
+          const frame = discordFrame.parse(payload);
+          if (frame.t !== 'MESSAGE_CREATE' || this.elsewhere(source, frame.d)) return;
+          const channel = this.channels.discord(connection, channelField.parse(frame.d).channel_id);
+          if (!channel) return false;
+          message = normalizeDiscord(source, frame, channel);
+        } else {
+          const frame = slackFrame.parse(payload);
+          const event = frame.payload.event;
+          if (event.type !== 'message' && event.type !== 'app_mention') return;
+          const channel = this.channels.slack(connection, slackChannelField.parse(event).channel);
+          // normalizeSlack accepts the event's channel_type when present and
+          // otherwise requires trusted metadata. No guessed DM classification.
+          if (!channel && !event.channel_type) return false;
+          message = normalizeSlack(source, frame.payload, channel);
+        }
+      } catch (error) {
+        // Unreadable now; a later version of this code, or better channel metadata, may read it. It waits
+        // as any unread event does, and is counted as lost if it is still unread when its frame expires.
+        const key = JSON.stringify([connection, receipt]);
+        if (!this.unreadable.has(key)) {
+          if (this.unreadable.size >= 4096) this.unreadable.clear();
+          this.unreadable.add(key);
+          if (!failed) { failed = true; failure = error; }
+        }
+        return false;
       }
       if (!message) return;
       const row=this.incoming.receive(message,true,receivedAt);
-      if(row.state==='held')return false;
-      return row.state==='delivered'?delivered?.(row,raw):undefined;
+      // The row keeps what a retry needs, so the frame need not outlive its hour.
+      if(row.state==='held')return 'recorded';
+      // A delivered message whose files are still to be fetched keeps its frame, which lists them, for that hour.
+      return row.state==='delivered'&&delivered?.(row,raw)===false?'recorded':undefined;
     }, limit);
+    if (failed) throw failure;
+    return count;
+  }
+
+  /** A Discord gateway session is the bot's, not the guild's: it also carries the messages of every other
+   * guild the bot has been added to. Those are not this connection's. The frame's own guild id is enough to
+   * set them aside; it is never used to decide what a message that is kept is. */
+  private elsewhere(source: { workspace: string }, data: unknown): boolean {
+    const guild = guildField.parse(data).guild_id;
+    return guild != null && guild !== source.workspace;
+  }
+
+  private closeHeld(): void {
+    const held = this.closeExpiredHeld();
+    if (held) this.lost({ events: 0, held });
   }
 
   /** Close the held rows nothing can deliver any more, and say so on the row: one held for HELD_LIFETIME,
-   * and one whose receipt has expired and whose row was written before it stored what a retry needs. */
+   * and one whose receipt has expired and whose row was written before it stored what a retry needs. A
+   * message that was never delivered keeps no words. */
   private closeExpiredHeld(): number {
     const before = (ms: number) => sql`julianday(${bridgeIncoming.receivedAt}) <= julianday(${new Date(this.clock.now() - ms).toISOString()})`;
-    return this.db.update(bridgeIncoming).set({ state: 'dropped', reason: sql`'Held too long to deliver: ' || coalesce(${bridgeIncoming.reason}, 'no reason recorded')` })
+    return this.db.update(bridgeIncoming).set({ state: 'dropped', text: '', reason: sql`'Held too long to deliver: ' || coalesce(${bridgeIncoming.reason}, 'no reason recorded')` })
       .where(and(eq(bridgeIncoming.state, 'held'), or(before(HELD_LIFETIME), and(isNull(bridgeIncoming.mentions), before(RAW_EVENT_LIFETIME))))).run().changes;
   }
 

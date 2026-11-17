@@ -38,8 +38,9 @@ describe('authenticated bridge channel metadata', () => {
       expect(cache.discord('c', 'channel')).toBeUndefined();
     }
     writer.put('channel', good);
+    // A kind that carries no conversation is remembered as that, so its messages are set aside, not waited on.
     expect(writer.put('channel', { ...good, type: 2 })).toBe(false);
-    expect(cache.discord('c', 'channel')).toBeUndefined();
+    expect(cache.discord('c', 'channel')).toEqual({ id: 'channel', guild: 'guild', kind: 'other' });
   });
   it.each(['im', 'mpim', 'channel', 'group'])('classifies Slack %s from evidence, never the id prefix', kind => {
     const cache = new BridgeChannels(), writer = cache.bind('c', { platform: 'slack', workspace: 'team' });

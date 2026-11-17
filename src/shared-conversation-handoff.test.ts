@@ -53,11 +53,13 @@ it('hands a real private brief through one inherited conversation, settled job a
  for(const table of [s.inbox,s.jobs,s.operationResults,s.conversations,s.turns])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain(brief.words);
  expect(f.db.$client.serialize().includes(Buffer.from(brief.words))).toBe(false);
 });
-it.each(['ordinary-agent','member','missing-agent','foreign-project','foreign-owner','spoofed-parent'] as const)('rejects %s before producing mail',async mode=>{
+it.each(['ordinary-agent','member','missing-agent','removed-agent','foreign-project','foreign-owner','spoofed-parent'] as const)('rejects %s before producing mail',async mode=>{
  const f=await fixture();let token=bodyCredentials.body,input:unknown=brief;
  if(mode==='ordinary-agent')token=bodyCredentials.agent;
  if(mode==='member')token=bodyCredentials.member;
  if(mode==='missing-agent')input={...brief,agent:'missing'};
+ // A removed agent keeps its rows, and the lists that named it; it is nobody to hand work to.
+ if(mode==='removed-agent')f.root.writes.run(()=>f.db.update(s.agents).set({removedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.agents.id,'mark')).run());
  if(mode==='foreign-project')f.root.writes.run(()=>f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run());
  if(mode==='foreign-owner')f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());
  if(mode==='spoofed-parent')input={...brief,parent:'other-job'};

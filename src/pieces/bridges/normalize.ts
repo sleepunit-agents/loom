@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import type { IncomingMessage } from './incoming.js';
+import { slackThread } from './place.js';
 
 const id = z.string().min(1).max(256);
 const timestamp = z.string().regex(/^\d{1,12}\.\d{6}$/);
@@ -32,11 +33,13 @@ export interface PlatformConnection { id: string; workspace: string }
 /** Discord MESSAGE_CREATE does not contain the channel's type or parent.
  * The authenticated adapter must resolve this from its channel cache/API.
  * Group DMs, like one-to-one DMs, have no guild and are direct conversations.
+ * `other` is a kind of channel loom carries no conversation in (the text chat of
+ * a voice or stage channel, for one): what is posted there is for nobody here.
  */
 export interface DiscordChannel {
   id: string;
   guild?: string;
-  kind: 'channel' | 'thread' | 'dm';
+  kind: 'channel' | 'thread' | 'dm' | 'other';
   group?: boolean;
   parent?: string;
 }
@@ -57,7 +60,7 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
   const dispatch = discordDispatch.parse(payload);
   if (dispatch.t !== 'MESSAGE_CREATE') return null;
   const message = discordMessage.parse(dispatch.d);
-  if (![0, 19, 20, 23].includes(message.type)) return null;
+  if (![0, 19, 20, 23].includes(message.type) || channel.kind === 'other') return null;
   if (message.channel_id !== channel.id || message.guild_id !== channel.guild
     || (channel.kind === 'dm' ? !!channel.guild : channel.guild !== connection.workspace)
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
@@ -78,6 +81,11 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
  * privacy from a channel id prefix or from a missing field.
  */
 export interface SlackChannel { id: string; kind: z.infer<typeof slackChannelType> }
+/** Whether a channel is a direct message, and of which sort, is all that is read from its kind. Slack
+ * itself does not name a private channel the same way twice: its events call one `group`, while the
+ * channel's own details say `is_channel` for any made since private channels and public ones were unified.
+ * So the two kinds of room are one kind here, and only a disagreement about being direct is a mismatch. */
+const slackRoom = (kind: SlackChannel['kind']): 'room' | 'im' | 'mpim' => kind === 'channel' || kind === 'group' ? 'room' : kind;
 export function normalizeSlack(connection: PlatformConnection, payload: unknown, channel?: SlackChannel): IncomingMessage | null {
   const envelope = slackEnvelope.parse(payload);
   if (envelope.team_id !== connection.workspace) throw Error('Slack event does not match connection workspace');
@@ -86,7 +94,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
   if (envelope.event.subtype && !['bot_message', 'file_share', 'thread_broadcast', 'me_message'].includes(envelope.event.subtype)) return null;
   const message = slackMessage.parse(envelope.event);
   const kind = message.channel_type ?? channel?.kind;
-  if (!kind || (channel && (channel.id !== message.channel || (message.channel_type && channel.kind !== message.channel_type)))) {
+  if (!kind || (channel && (channel.id !== message.channel || (message.channel_type && slackRoom(channel.kind) !== slackRoom(message.channel_type))))) {
     throw Error('Slack message needs matching channel metadata');
   }
   if (!message.user && !message.bot_id) throw Error('Slack message has no sender');
@@ -94,8 +102,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
   return {
     // Slack timestamps are unique per channel, not across a workspace.
     id: JSON.stringify([message.channel, message.ts]), connection: connection.id,
-    // Channel roots start threads; unthreaded DMs retain channel continuity.
-    channel: message.channel, thread: message.thread_ts ?? (kind === 'channel' || kind === 'group' ? message.ts : undefined),
+    channel: message.channel, thread: slackThread(kind, message.ts, message.thread_ts),
     isDm: kind === 'im' || kind === 'mpim',
     ...(kind === 'mpim' ? { groupDm: true } : {}),
     // Legacy integrations have only a bot id. Never confuse it with a user id.

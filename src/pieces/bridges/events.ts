@@ -8,15 +8,26 @@ import { bridgeConnections, bridgeRawEvents, bridgeResume } from '../../core/dat
  * ever read back, advanced or guarded against by the identity that stored it. */
 export interface BridgeCheckpoint { session: string; sequence: number; resumeUrl: string; identity: string }
 
-/** How long a received event's raw words are kept while it cannot be processed. */
+/** How long the raw frame of a message is kept once the message has a record of its own (a held message,
+ * or a delivered one whose files are still to be fetched). The record carries what a retry needs. */
 export const RAW_EVENT_LIFETIME = 3_600_000;
+/** How long a received event that nothing has yet been able to read is kept. The platform was told it
+ * arrived, so this frame is the only copy: it waits out a stopped program, a paused connection and channel
+ * details that cannot be fetched, for as long as a held message is retried (receiver.ts, HELD_LIFETIME).
+ * What that costs in kept raw words is in docs/accepted-tradeoffs.md ("An unread event is kept for a day"). */
+export const UNREAD_EVENT_LIFETIME = 86_400_000;
+/** What a drain callback says became of one event: nothing or true, it is dealt with and its frame is
+ * removed; false, it could not be read yet and waits; 'recorded', its message now has a record of its own
+ * and the frame is kept only until RAW_EVENT_LIFETIME after it arrived. */
+export type Consumed = void | boolean | 'recorded';
 /** Trusted adapter spool. Receipt and Discord cursor commit before platform ack.
  * Drain callbacks are synchronous and use this same database connection, so
  * normalisation and receipt removal either both commit or both roll back.
  * Raw reads reject expired events. Physical cleanup waits for any unrelated
  * SQL transaction to finish; callers must not hold transactions across awaits.
- * A receipt that is still here at its deadline was never processed: `expired`
- * is told how many were removed, after they are gone.
+ * A frame removed at its deadline without ever being read is a message lost: `expired` is told how many
+ * of those there were, after they are gone. A frame whose message was recorded is not counted. The two
+ * are told apart by the deadline itself: only a recorded frame's is RAW_EVENT_LIFETIME after its receipt.
  */
 export class BridgeEvents {
   private closed = false;
@@ -45,7 +56,7 @@ export class BridgeEvents {
       }
       // Retries preserve both original bytes and their original deadline.
       tx.insert(bridgeRawEvents).values({ connection, id, event,
-        receivedAt: new Date(now).toISOString(), expiresAt: new Date(now + RAW_EVENT_LIFETIME).toISOString(),
+        receivedAt: new Date(now).toISOString(), expiresAt: new Date(now + UNREAD_EVENT_LIFETIME).toISOString(),
       }).onConflictDoNothing().run();
     });
     this.sweep();
@@ -63,11 +74,11 @@ export class BridgeEvents {
     this.db.delete(bridgeResume).where(eq(bridgeResume.connection, connection)).run();
   }
 
-  /** One bounded pass. Returning false commits any writes but retains the raw
+  /** One bounded pass. Returning false or 'recorded' commits any writes but retains the raw
    * receipt for retry, without blocking later rows in this pass. Throwing rolls
    * back that event's writes; earlier committed events stay consumed. The limit
    * bounds rows examined, and the return value counts receipts removed. */
-  drain(connection: string, consume: (id: string, event: Buffer, receivedAt: string) => void | boolean, limit = 64, scan: 'consume' | 'inspect' | 'peek' = 'consume'): number {
+  drain(connection: string, consume: (id: string, event: Buffer, receivedAt: string) => Consumed, limit = 64, scan: 'consume' | 'inspect' | 'peek' = 'consume'): number {
     this.assertAvailable();
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw Error('Drain limit must be 1 through 64');
     this.sweep();
@@ -92,6 +103,11 @@ export class BridgeEvents {
         const result: unknown = consume(current.id, current.event, current.receivedAt);
         if (result && typeof (result as PromiseLike<unknown>).then === 'function') throw Error('Event consumer must be synchronous');
         if (result === false) return;
+        if (result === 'recorded') {
+          const until = new Date(Date.parse(current.receivedAt) + RAW_EVENT_LIFETIME).toISOString();
+          if (Date.parse(current.expiresAt) > Date.parse(until)) tx.update(bridgeRawEvents).set({ expiresAt: until }).where(key).run();
+          return;
+        }
         tx.delete(bridgeRawEvents).where(key).run();
         count++;
       });
@@ -118,8 +134,11 @@ export class BridgeEvents {
       return;
     }
     const now = new Date(this.clock.now()).toISOString();
-    const removed = this.db.delete(bridgeRawEvents).where(sql`julianday(${bridgeRawEvents.expiresAt}) <= julianday(${now})`).run().changes;
-    if (removed) this.expired(removed);
+    const due = sql`julianday(${bridgeRawEvents.expiresAt}) <= julianday(${now})`;
+    const unread = this.db.select({ receivedAt: bridgeRawEvents.receivedAt, expiresAt: bridgeRawEvents.expiresAt }).from(bridgeRawEvents).where(due).all()
+      .filter(row => Date.parse(row.expiresAt) - Date.parse(row.receivedAt) > RAW_EVENT_LIFETIME).length;
+    this.db.delete(bridgeRawEvents).where(due).run();
+    if (unread) this.expired(unread);
     const first = this.db.select({ expiresAt: bridgeRawEvents.expiresAt }).from(bridgeRawEvents)
       .orderBy(sql`julianday(${bridgeRawEvents.expiresAt})`).get();
     if (first) this.cancel = this.clock.at(Date.parse(first.expiresAt), () => this.sweep());

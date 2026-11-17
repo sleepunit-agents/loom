@@ -137,10 +137,15 @@ const trigger: Rule = any(householdOwner,
 const recipient: Rule = first([
   [equal('toKind', 'agent'), all(names('agent', 'to'), ownsAgent('to'))],
 ], all(names('member', 'to'), ownedByMember('to')));
+/** Who may answer an inbox item: the person it is addressed to, and nobody on their behalf. This is
+ * narrower than `recipient` on purpose: a household owner may address something to another member, and
+ * set how loudly it arrives, but does not answer for them. The read side's "can answer" and every door
+ * that records an answer ask this one rule. */
+const answers: Rule = all(equal('toKind', 'person'), self('to'));
 /** Who may set how loudly an inbox item arrives: someone in the household who may address its recipient. */
 const inboxVolume: Rule = all({ is: 'currentViewer' }, recipient);
 
-export const rules = { labelled, conversation, inTalk, task, trigger, recipient, inboxVolume, agentRoster, agentSetup, ownedByMember, householdOwner,
+export const rules = { labelled, conversation, inTalk, task, trigger, recipient, inboxVolume, answers, agentRoster, agentSetup, ownedByMember, householdOwner,
   project: any(householdOwner, inProject('id')) } as const;
 
 /** The read rule of every table served by the shared query door, by schema key. */
@@ -194,8 +199,11 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   bridgeChannelFilters: householdOwner, bridgeChannels: householdOwner, bridgePeople: householdOwner,
   // A received message is read with the conversation it went into. One that went into none (held or
   // dropped) is seen by household owners, who are the ones who can clear what held it; unless it is a
-  // direct message, which like a direct conversation is for the owners of its connection's agent.
+  // direct message, which is read as the conversation it would have joined: a linked member's own
+  // one-to-one message by that member alone, any other by the owners of its connection's agent.
   bridgeIncoming: first([[set('conversation'), seenWith('conversations', 'conversation')],
+    [all(equal('isDm', true), equal('groupDm', true)), seenWith('bridgeConnections', 'connection', agentOwners)],
+    [all(equal('isDm', true), set('member')), self('member')],
     [equal('isDm', true), seenWith('bridgeConnections', 'connection', agentOwners)]], householdOwner),
   bridgeSends: seenWith('bridgeIncoming', 'incoming'),
   secrets: householdOwner, secretGrants: householdOwner, secretRequests: householdOwner, secretRules: householdOwner,
@@ -297,6 +305,22 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: str
   return mayAct(v, r, s, 'act', operation)
     && (r.project === undefined || maySee(v, { project: r.project }, s))
     && (r.agent === undefined || maySee(v, { agent: r.agent }, s));
+}
+
+/** A member named by a request, asked about as a reader: "could the person this is addressed to see
+ * it?". A door asks this so that nothing is sent to someone about a record they may not read. The answer
+ * may only ever narrow what the caller is allowed. It is never the caller's own authority: nothing is
+ * granted, read or done as this viewer, and a viewer for any other purpose comes from authentication. */
+export const addressee = (member: string): Viewer => ({ kind: 'member', id: member });
+
+/** May one agent hand work to another in the open, outside any member's private thread? Both must be
+ * agents of the household now. In a project, both must be in it. Outside one, some current member must
+ * have both on their own list. A removed member is nobody here too: the agents left on their list are
+ * not thereby each other's peers. */
+export function mayHandOff(from: string, to: string, project: string | null, s: Sharing): boolean {
+  if (!s.agents?.includes(from) || !s.agents.includes(to)) return false;
+  if (project !== null) { const found = entry(s.projects, project); return !!found && found.agents.includes(from) && found.agents.includes(to); }
+  return Object.values(s.members).some(member => member.agents.includes(from) && member.agents.includes(to));
 }
 
 /** Owning Clock/Runtime execution only. A committed source supplies scope;

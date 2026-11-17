@@ -76,6 +76,19 @@ it('gives a direct message with no member to the agent\'s owners, and not to the
   expect(seen?.bridgeIncoming).not.toContainEqual({id:'dm'});expect(seen?.bridgeIncoming).not.toContainEqual({id:'held-dm'});expect(seen?.bridgeSends).not.toContainEqual({id:'dm'});
  }
 });
+it('keeps a held direct message from a linked member that member\'s alone, as its conversation would be',async()=>{
+ const f=fixture();
+ // Bob wrote to Art's bot one to one. The message was held, so it is in no conversation yet.
+ f.db.insert(bridgeIncoming).values({id:'held-private',connection:'c',channel:'D3',user:'bob-outside',member:'bob',isDm:true,text:'private words',state:'held',postedAt:f.at,receivedAt:f.at}).run();
+ // In a group direct message there are other senders: it is not private to one of them.
+ f.db.insert(bridgeIncoming).values({id:'held-group',connection:'c',channel:'G1',user:'bob-outside',member:'bob',isDm:true,groupDm:true,text:'group words',state:'held',postedAt:f.at,receivedAt:f.at}).run();
+ const seen=async(viewer:Viewer)=>((await f.read(viewer))?.bridgeIncoming as {id:string}[]).map(row=>row.id).filter(id=>id.startsWith('held-'));
+ expect(await seen({kind:'member',id:'bob'})).toEqual(['held-private']);
+ // Alice has the agent, and the owner runs the household: neither reads Bob's own words to it.
+ expect(await seen({kind:'member',id:'alice'})).toEqual(['held-group']);
+ expect(await seen({kind:'member',id:'owner'})).toEqual([]);
+ expect(await seen({kind:'agent',id:'art'})).toEqual([]);
+});
 it('rechecks ownership and private labels in retained query schemas after revocation',async()=>{
  const f=fixture(),viewer={kind:'member',id:'alice'} as const, schema=f.schema(viewer);
  f.db.delete(memberAgents).where(eq(memberAgents.member,'alice')).run();

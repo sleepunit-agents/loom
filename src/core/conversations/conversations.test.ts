@@ -170,6 +170,13 @@ it('closes only waiting items, by source or by id, returns unconfirmed mail to w
   service.redactAnswer(waiting.id, '(used)');
   expect(service.item(waiting.id).answerText).toBeNull();
   expect(service.resolveItem(waiting.id, 'Signed in')?.state).toBe('resolved');
+  // An answer to a question asked in a conversation is also mailed to its agent. The code goes from that copy too.
+  const asked = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'notice', sourceId: 'signin:3', fromKind: 'agent', fromId: 'art', words: 'Answer with the code', answers: 'words' });
+  service.answer(asked.id, 'jonathan', 'words', 'second-code');
+  expect(JSON.stringify(db.select().from(inbox).all())).toContain('second-code');
+  service.redactAnswer(asked.id, '(used)');
+  expect(db.select().from(inbox).where(eq(inbox.sourceId, asked.id)).get()).toMatchObject({ source: 'answer', toKind: 'agent', words: '(used)' });
+  expect(JSON.stringify(db.select().from(inbox).all())).not.toContain('second-code');
   const mail = ['a', 'b'].map(sourceId => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'thread', sourceId, fromKind: 'person', fromId: 'jonathan', words: sourceId }));
   for (const id of ['job-1', 'job-2']) db.insert(jobs).values({ id, agent: 'art', title: '', state: 'running', brief: '', model: 'm', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
   db.update(inbox).set({ state: 'taken', job: 'job-1', takenAt: service.now() }).where(eq(inbox.id, mail[0].id)).run();

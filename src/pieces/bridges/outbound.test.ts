@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { postReply, replyParts } from './outbound.js';
+import { BridgeReplyNotSent, postReply, replyParts } from './outbound.js';
 
 describe('outbound reply parts', () => {
   it.each([['discord', 2000], ['slack', 3900]] as const)('%s preserves legacy line replies within its cap', (platform, limit) => {
@@ -41,29 +41,36 @@ describe('outbound reply parts', () => {
 });
 
 describe('one sequential reply attempt', () => {
-  it('waits for each receipt before the next post and returns only the final id', async () => {
+  it('waits for each receipt before the next post and returns the final id with nothing left over', async () => {
     let release!: (receipt: { id: string }) => void;
     const first = new Promise<{ id: string }>(resolve => { release = resolve; });
     const post = vi.fn().mockReturnValueOnce(first).mockResolvedValueOnce({ id: 'last', text: 'not returned' });
     const sending = postReply('discord', 'x'.repeat(2001), post);
     expect(post).toHaveBeenCalledTimes(1);
     release({ id: 'first' });
-    await expect(sending).resolves.toEqual({ id: 'last' });
+    await expect(sending).resolves.toEqual({ posted: 'x'.repeat(2001), id: 'last', rest: '' });
     expect(post.mock.calls.map(args => args[0])).toEqual(['x'.repeat(2000), 'x']);
   });
-  it.each([0, 1, 2])('stops at failure on chunk %s without retry or leaking upstream details', async failed => {
+  it.each([0, 1, 2])('stops at failure on chunk %s without retry or leaking upstream details, and says what was confirmed', async failed => {
     const calls: string[] = [];
     const post = async (part: string) => {
       calls.push(part);
       if (calls.length === failed + 1) throw new Error('token-and-message-words');
       return { id: `post-${calls.length}` };
     };
-    await expect(postReply('discord', 'x'.repeat(4500), post)).rejects.toEqual(new Error('Bridge reply attempt uncertain'));
+    const attempt = await postReply('discord', 'x'.repeat(4500), post);
+    expect(attempt).toEqual({ posted: 'x'.repeat(2000 * failed), ...(failed ? { id: `post-${failed}` } : {}), rest: 'x'.repeat(4500 - 2000 * failed) });
+    expect(JSON.stringify(attempt)).not.toContain('token');
     expect(calls).toHaveLength(failed + 1);
   });
-  it.each([undefined, null, {}, { id: '' }, { id: ' ' }, { id: 123 }])('treats malformed receipt %j as uncertain and stops', async result => {
+  it('says when the part it stopped at never left', async () => {
+    const refusal = new BridgeReplyNotSent(true);
+    const post = vi.fn().mockResolvedValueOnce({ id: 'first' }).mockRejectedValueOnce(refusal);
+    expect(await postReply('discord', 'x'.repeat(2001), post)).toEqual({ posted: 'x'.repeat(2000), id: 'first', rest: 'x', refused: refusal });
+  });
+  it.each([undefined, null, {}, { id: '' }, { id: ' ' }, { id: 123 }])('treats malformed receipt %j as unconfirmed and stops', async result => {
     const post = vi.fn().mockResolvedValue(result);
-    await expect(postReply('slack', 'x'.repeat(4000), post)).rejects.toThrow('Bridge reply attempt uncertain');
+    expect(await postReply('slack', 'x'.repeat(4000), post)).toEqual({ posted: '', rest: 'x'.repeat(4000) });
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
