@@ -41,8 +41,12 @@ export interface IncomingMessage {
  * (core/conversations/private-bridge-words.ts) or never kept because the message
  * was dropped; none of these can be compared. */
 function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
+ return samePosting(row,message)&&(row.text===''||row.text===message.text);
+}
+/** The same message by everything but its words: where it was posted, by whom and when. */
+function samePosting(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'postedAt'>,message:IncomingMessage){
  return row.channel===message.channel&&row.thread===(message.thread??null)&&row.isDm===message.isDm
-  &&row.user===message.user&&(row.text===''||row.text===message.text)&&row.postedAt===message.postedAt;
+  &&row.user===message.user&&row.postedAt===message.postedAt;
 }
 
 export class BridgeIncoming {
@@ -61,7 +65,14 @@ export class BridgeIncoming {
       const id = incomingId(message.connection, message.id);
       const existing = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
       if (existing) {
-        if (!sameMessage(existing,message)) throw new Error('Incoming id reused for a different message');
+        // A second event for a message already on record, with other words, is an edit (Slack sends an
+        // `app_mention` when a posted message is edited to mention the bot). An edit is not a new message:
+        // nothing new is recorded, whatever state the first is in, and the agent keeps the words it was
+        // given. The caller has its row and counts the event as read.
+        if (!sameMessage(existing,message)) {
+          if (samePosting(existing,message)) return existing;
+          throw new Error('Incoming id reused for a different message');
+        }
         if (existing.state !== 'held' || !retryHeld) return existing;
       }
       const connection = this.db.select().from(bridgeConnections).where(eq(bridgeConnections.id, message.connection)).get();

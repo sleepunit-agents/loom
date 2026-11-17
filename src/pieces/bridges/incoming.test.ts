@@ -54,7 +54,13 @@ describe('shared-schema bridge ingress', () => {
     expect(f.db.select().from(turns).all()).toHaveLength(1);
     expect(f.ingress.receive(f.message)).toEqual(row);
     expect(f.db.select().from(turns).all()).toHaveLength(1);
-    expect(() => f.ingress.receive({ ...f.message, text: 'changed' })).toThrow('reused');
+    // The same message with other words is an edit: nothing new is recorded and the first stands.
+    expect(f.ingress.receive({ ...f.message, text: 'changed' })).toEqual(row);
+    expect(f.db.select().from(turns).all()).toHaveLength(1);
+    expect(f.db.select().from(inbox).all().map(item => item.words)).toEqual(['Friday?']);
+    // The same id from someone else, or somewhere else, is not that message at all.
+    expect(() => f.ingress.receive({ ...f.message, user: 'another' })).toThrow('reused');
+    expect(() => f.ingress.receive({ ...f.message, channel: 'elsewhere' })).toThrow('reused');
     f.ingress.receive({ ...f.message, id: 'm2' });
     expect(f.db.select().from(conversations).all()).toHaveLength(1);
     expect(f.db.select().from(turns).all().map(t => t.seq)).toEqual([1, 2]);
@@ -339,7 +345,8 @@ it('erases a private DM\'s words at the keep time, in every column that holds th
   expect(oldestPrivateBridgeWords(f.db)).toBeUndefined();
   // A late replay of the erased message is still the same message, not a reused id.
   expect(f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' })).toMatchObject({ id: dm.id, state: 'delivered', text: '' });
-  expect(() => f.ingress.receive({ ...f.message, id: 'room', text: 'Other words' })).toThrow('reused');
+  expect(f.ingress.receive({ ...f.message, id: 'room', text: 'Other words' })).toMatchObject({ text: 'Room words' });
+  expect(() => f.ingress.receive({ ...f.message, id: 'room', user: 'another' })).toThrow('reused');
 });
 
 it('keeps no words of a message it drops, direct or not', () => {

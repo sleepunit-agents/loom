@@ -420,3 +420,42 @@ it('passes over malformed discovery frames while preserving their bytes and refu
   });
   expect(f.db.select().from(inbox).all()).toEqual([]);
 });
+
+it('takes a second event for a delivered message with other words as an edit: nothing new, the frame read, the pass unbroken', () => {
+  const f = fixture();
+  f.receiver.slack('slack', f.slack());
+  expect(f.receiver.drain('slack')).toBe(1);
+  // Slack sends an app_mention when a posted message is edited to mention the bot: the same ts, new text.
+  const edited = JSON.parse(f.slack('ack2', 'ev2', 'app_mention').toString());
+  edited.payload.event.text = 'Friday? <@bot>';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(edited)));
+  const later = JSON.parse(f.slack('ack3', 'ev3').toString());
+  later.payload.event.ts = '1794432000.000002'; later.payload.event.text = 'And Saturday?';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(later)));
+  // Two passes: a pass starts after the last frame the one before it read, and comes round to the rest.
+  expect(f.receiver.drain('slack') + f.receiver.drain('slack')).toBe(2);
+  // The edit left the first message as it was, and the message behind it was delivered in the same pass.
+  expect(f.db.select().from(bridgeIncoming).all().map(row => row.text)).toEqual(['Friday?', 'And Saturday?']);
+  expect(f.db.select().from(inbox).all().map(row => row.words)).toEqual(['Friday?', 'And Saturday?']);
+  expect(f.db.select().from(turns).all()).toHaveLength(2);
+  expect(f.raw()).toEqual([]);
+  expect(f.receiver.drain('slack')).toBe(0);
+});
+it('goes on past a message intake refuses, and keeps its frame to try again', () => {
+  const f = fixture();
+  f.receiver.slack('slack', f.slack());
+  f.receiver.drain('slack');
+  // The same id from another user is not an edit. It is refused, and must not stop the frame behind it.
+  const reused = JSON.parse(f.slack('ack2', 'ev2').toString());
+  reused.payload.event.user = 'someone-else';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(reused)));
+  const later = JSON.parse(f.slack('ack3', 'ev3').toString());
+  later.payload.event.ts = '1794432000.000002';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(later)));
+  // Over the passes that reach both frames, the refusal is reported once and the other message is delivered.
+  const passes = [1, 2, 3, 4].map(() => { try { return f.receiver.drain('slack'); } catch (error) { return (error as Error).message; } });
+  expect(passes.filter(pass => typeof pass === 'string')).toEqual(['Incoming id reused for a different message']);
+  expect(passes.filter(pass => typeof pass === 'number').reduce((sum, pass) => sum + (pass as number), 0)).toBe(1);
+  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(2);
+  expect(f.raw()).toHaveLength(1);
+});
