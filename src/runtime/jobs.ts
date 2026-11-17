@@ -11,7 +11,7 @@ import { householdOwners, sharedSharing } from '../shared-sharing.js';
 import { Threads } from '../core/conversations/threads.js';
 import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
-import { BODY_EXIT, LOOM_EXIT } from './job-exit.js';
+import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
 
@@ -231,12 +231,12 @@ export class Jobs {
    * The one case where unconfirmed mail starts a new chain: a body that reported success and confirmed part
    * of its mail (it took less than the whole batch to stay inside its input budget). The rest is fresh mail
    * for the next admission. Each such job settles at least one piece, so the mail itself bounds them. */
-  finish(id: string, box: string, exitCode: number, logTail = ''): { job: Job; retry?: Job } {
+  finish(id: string, box: string, exitCode: number, logTail = '', exitBy?: WorkerExitBy): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, claimedJobStates);
       const at = this.now();
       // A body that says it left for a Stop is believed only while that Stop is still waiting for this job.
-      const stopped = exitCode === BODY_EXIT.stopped ? this.endIfStopAsked(before, { exitCode }) : undefined;
+      const stopped = exitCode === BODY_EXIT.stopped ? this.endIfStopAsked(before, { exitCode, exitBy: exitBy ?? null }) : undefined;
       if (stopped) return { job: stopped };
       // A runner's stdout/stderr can contain the private prompt or reply.
       const failed = before.state === 'starting' || exitCode !== 0;
@@ -244,7 +244,7 @@ export class Jobs {
         !!this.db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, id), inArray(inbox.state, states))).get();
       const progressed = !failed && held(['done']), unsettled = !failed && !progressed && held(['waiting', 'taken']);
       const job = this.end(before, failed ? 'failed' : 'done',
-        { exitCode, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
+        { exitCode, exitBy: exitBy ?? null, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
       if (progressed) { this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run(); return { job }; }
       const retry = this.retry(before, at);
       // Out of attempts: what this body left was not delivered, and says so like a failure's.
@@ -268,7 +268,7 @@ export class Jobs {
     const { id: _id, ...snapshot } = before;
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
       retryOf: before.id, retryAt: new Date(Date.parse(at) + (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth]).toISOString(), queuedAt: at,
-      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null, endedNote: null,
+      claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, exitBy: null, logTail: null, endedNote: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
     this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(unconfirmed).run();
@@ -309,7 +309,7 @@ export class Jobs {
         });
       const unplaced = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).all()
         .filter(job => now - Math.max(Date.parse(job.queuedAt), job.retryAt ? Date.parse(job.retryAt) : 0) > queueMs)
-        .map(job => this.end(job, 'failed', { endedAt: at, exitCode: LOOM_EXIT.unplaced,
+        .map(job => this.end(job, 'failed', { endedAt: at, exitCode: LOOM_EXIT.unplaced, exitBy: 'loom',
           endedNote: `Never started: no machine took it within ${Math.round(queueMs / 3_600_000)} hours` }));
       return [...lost, ...unplaced];
     }, { behavior: 'immediate' });

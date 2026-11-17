@@ -683,7 +683,9 @@ CREATE TABLE `triggers` (
 	`created_at` text NOT NULL,
 	`changed_at` text NOT NULL,
 	`wants_model` text,
+	`member` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "triggers_next_due_at_utc" CHECK("triggers"."next_due_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."next_due_at") = "triggers"."next_due_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."next_due_at") = "triggers"."next_due_at", 0)),
 	CONSTRAINT "triggers_last_fired_at_utc" CHECK("triggers"."last_fired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."last_fired_at") = "triggers"."last_fired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."last_fired_at") = "triggers"."last_fired_at", 0)),
 	CONSTRAINT "triggers_created_at_utc" CHECK("triggers"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."created_at") = "triggers"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."created_at") = "triggers"."created_at", 0)),
@@ -875,6 +877,7 @@ CREATE TABLE `jobs` (
 	`house_branch` text NOT NULL,
 	`build` text,
 	`exit_code` integer,
+	`exit_by` text,
 	`log_tail` text,
 	`ended_by` text,
 	`ended_reason` text,
@@ -897,7 +900,8 @@ CREATE TABLE `jobs` (
 	CONSTRAINT "jobs_heard_at_utc" CHECK("jobs"."heard_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."heard_at") = "jobs"."heard_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."heard_at") = "jobs"."heard_at", 0)),
 	CONSTRAINT "jobs_ended_at_utc" CHECK("jobs"."ended_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."ended_at") = "jobs"."ended_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."ended_at") = "jobs"."ended_at", 0)),
 	CONSTRAINT "jobs_state_choice" CHECK("jobs"."state" in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')),
-	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off', 'stop'))
+	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off', 'stop')),
+	CONSTRAINT "jobs_exit_by_choice" CHECK("jobs"."exit_by" in ('body', 'worker', 'loom', 'runner'))
 );
 
 CREATE UNIQUE INDEX `jobs_one_active_unique` ON `jobs` (`conversation`) WHERE "jobs"."state" in ('queued', 'starting', 'running');
@@ -1141,13 +1145,11 @@ CREATE TABLE `bridge_sends` (
 CREATE TABLE `bridge_files` (
 	`connection` text NOT NULL,
 	`file` text NOT NULL,
-	`incoming` text NOT NULL,
 	`name` text NOT NULL,
 	`contents` blob NOT NULL,
 	`fetched_at` text NOT NULL,
 	PRIMARY KEY(`connection`, `file`),
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_files_fetched_at_utc" CHECK("bridge_files"."fetched_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_files"."fetched_at") = "bridge_files"."fetched_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_files"."fetched_at") = "bridge_files"."fetched_at", 0))
 );
 

@@ -726,6 +726,9 @@ export const triggers = sqliteTable('triggers', {
   createdAt: text('created_at').notNull(),
   changedAt: text('changed_at').notNull(),
   wantsModel: text('wants_model'),
+  /** The member whose work a firing is, when the trigger puts an agent to work: apart from who set it
+   * (owner). Absent for the agent's own. */
+  member: text('member').references((): AnySQLiteColumn => members.id),
 }, t => [
   check('triggers_next_due_at_utc', utc(t.nextDueAt)),
   check('triggers_last_fired_at_utc', utc(t.lastFiredAt)),
@@ -931,6 +934,9 @@ export const jobs = sqliteTable('jobs', {
   houseBranch: text('house_branch').notNull(),
   build: text('build'),
   exitCode: integer('exit_code'),
+  // Who chose exit_code: loom's body program, the worker, loom itself, or a machine's own runner. Absent
+  // when nobody said (a job ended before this column, or reported by a worker from before it).
+  exitBy: text('exit_by', { enum: ["body", "worker", "loom", "runner"] }),
   logTail: text('log_tail'),
   endedBy: text('ended_by').references((): AnySQLiteColumn => members.id),
   // Why a person ended it: stuck work reset, work given up on, or Stop pressed in its conversation.
@@ -949,6 +955,7 @@ export const jobs = sqliteTable('jobs', {
   check('jobs_ended_at_utc', utc(t.endedAt)),
   check('jobs_state_choice', sql`${t.state} in ('queued', 'starting', 'running', 'done', 'failed', 'stopped', 'lost')`),
   check('jobs_ended_reason_choice', sql`${t.endedReason} in ('reset', 'write-off', 'stop')`),
+  check('jobs_exit_by_choice', sql`${t.exitBy} in ('body', 'worker', 'loom', 'runner')`),
   uniqueIndex('jobs_one_active_unique').on(t.conversation).where(sql`${t.state} in ('queued', 'starting', 'running')`),
   index('jobs_agent_state_idx').on(t.agent, t.state),
   index('jobs_box_state_idx').on(t.box, t.state),
@@ -1201,13 +1208,10 @@ export const bridgeSends = sqliteTable('bridge_sends', {
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),
 ]);
 
-/** Attachments fetched from Slack, kept for 14 days. */
+/** Attachments fetched from Slack, kept for 14 days. Which messages carried one is bridge_file_messages. */
 export const bridgeFiles = sqliteTable('bridge_files', {
   connection: text('connection').notNull().references((): AnySQLiteColumn => bridgeConnections.id),
   file: text('file').notNull(),
-  /** The message it was first fetched for. Every message that carried it is in bridge_file_messages, and
-   * that is what says who may read it. */
-  incoming: text('incoming').notNull().references((): AnySQLiteColumn => bridgeIncoming.id),
   name: text('name').notNull(),
   contents: blob('contents', { mode: 'buffer' }).notNull(),
   fetchedAt: text('fetched_at').notNull(),
@@ -1351,6 +1355,7 @@ export const membersRelations = relations(members, ({ many }) => ({
   approvalRulesBySetBy: many(approvalRules, { relationName: 'approval_rules_set_by' }),
   boxesByOwner: many(boxes, { relationName: 'boxes_owner' }),
   jobsByMember: many(jobs, { relationName: 'jobs_member' }),
+  triggersByMember: many(triggers, { relationName: 'triggers_member' }),
   jobsByEndedBy: many(jobs, { relationName: 'jobs_ended_by' }),
   modelAccountsByOwner: many(modelAccounts, { relationName: 'model_accounts_owner' }),
   bridgePeopleByMember: many(bridgePeople, { relationName: 'bridge_people_member' }),
@@ -1606,6 +1611,7 @@ export const approvalRecordRelations = relations(approvalRecord, ({ one }) => ({
 
 export const triggersRelations = relations(triggers, ({ one, many }) => ({
   projectRow: one(projects, { fields: [triggers.project], references: [projects.id], relationName: 'triggers_project' }),
+  memberRow: one(members, { fields: [triggers.member], references: [members.id], relationName: 'triggers_member' }),
   triggerLogByTrigger: many(triggerLog, { relationName: 'trigger_log_trigger' }),
   triggerEditsByTrigger: many(triggerEdits, { relationName: 'trigger_edits_trigger' }),
 }));
@@ -1765,7 +1771,6 @@ export const bridgeIncomingRelations = relations(bridgeIncoming, ({ one, many })
   memberRow: one(members, { fields: [bridgeIncoming.member], references: [members.id], relationName: 'bridge_incoming_member' }),
   conversationRow: one(conversations, { fields: [bridgeIncoming.conversation], references: [conversations.id], relationName: 'bridge_incoming_conversation' }),
   bridgeSendsByIncoming: many(bridgeSends, { relationName: 'bridge_sends_incoming' }),
-  bridgeFilesByIncoming: many(bridgeFiles, { relationName: 'bridge_files_incoming' }),
 }));
 
 export const bridgeSendsRelations = relations(bridgeSends, ({ one }) => ({
@@ -1775,7 +1780,6 @@ export const bridgeSendsRelations = relations(bridgeSends, ({ one }) => ({
 
 export const bridgeFilesRelations = relations(bridgeFiles, ({ one }) => ({
   connectionRow: one(bridgeConnections, { fields: [bridgeFiles.connection], references: [bridgeConnections.id], relationName: 'bridge_files_connection' }),
-  incomingRow: one(bridgeIncoming, { fields: [bridgeFiles.incoming], references: [bridgeIncoming.id], relationName: 'bridge_files_incoming' }),
 }));
 
 export const secretsRelations = relations(secrets, ({ one, many }) => ({

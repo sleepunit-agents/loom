@@ -11,6 +11,7 @@ import { Jobs, workingIn, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
 import type { WorkerRunPolicy } from './worker.js';
+import type { WorkerExitBy } from './job-exit.js';
 export class Dispatcher {
   readonly jobs: Jobs;
   readonly machines: Machines;
@@ -118,11 +119,11 @@ export class Dispatcher {
   }
   /** Root reports job/retry source changes to Tempo after this transaction
    * commits. The HTTP adapter returns only {ok:true} to the worker. */
-  finish(box: string, job: string, exitCode: number, logTail: string) {
+  finish(box: string, job: string, exitCode: number, logTail: string, exitBy?: WorkerExitBy) {
     this.machines.heartbeat(box);
     return this.db.transaction(() => {
       this.liveMachine(box);
-      return this.jobs.finish(job, box, exitCode, logTail);
+      return this.jobs.finish(job, box, exitCode, logTail, exitBy);
     }, { behavior: 'immediate' });
   }
 }

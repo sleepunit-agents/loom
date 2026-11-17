@@ -21,7 +21,7 @@ export interface TempoOptions {
   knows?(name: string): boolean;
   instructions?(file: string): string;
   /** The member a firing of this trigger is private work for, or nobody when it is the agent's own
-   * (policy.ts, triggerWorksFor). Throws when that member may no longer be worked for; the firing then
+   * (read from `triggers.member`; src/shared-tempo.ts). Throws when that member may no longer be worked for; the firing then
    * fails. Without it every firing is the agent's own. */
   worksFor?(trigger: Trigger): string | undefined;
   /** Read Changes' persisted occurrence revision during source recovery. */

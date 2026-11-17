@@ -138,6 +138,42 @@ describe('upgrading a household database', () => {
     expect(old.prepare('SELECT id FROM operation_results').all()).toEqual([{ id: 'kept' }]);
   });
 
+  it('drops the stale first message of a kept file in step 9, and says who a trigger works for and whose an exit code is only where that is known', () => {
+    const old = household(8);
+    old.exec(`INSERT INTO agents (id, about, mark_bg, mark_fg, face_shape, face_eyes) VALUES ('art', '', '', '', 'pebble', 'dot');
+      INSERT INTO members (id, role, joined_at) VALUES ('sam', 'owner', '${at}'), ('kim', 'member', '${at}');
+      INSERT INTO secrets (name, description, changed_at, changed_by) VALUES ('s', '', '${at}', 'sam');
+      INSERT INTO bridge_connections (id, platform, agent, workspace, bot_user, token_secret, enabled, state, state_at) VALUES ('c', 'slack', 'art', 'w', 'bot', 's', 1, 'connected', '${at}');
+      INSERT INTO bridge_incoming (id, connection, channel, is_dm, user, text, posted_at, received_at, state) VALUES ('m1', 'c', 'd', 1, 'u', '', '${at}', '${at}', 'delivered'), ('m2', 'c', 'r', 0, 'u', 'again', '${at}', '${at}', 'delivered');
+      INSERT INTO bridge_files (connection, file, incoming, name, contents, fetched_at) VALUES ('c', 'F1', 'm1', 'a.txt', x'6869', '${at}');
+      INSERT INTO bridge_file_messages (connection, file, incoming) VALUES ('c', 'F1', 'm2');
+      INSERT INTO triggers (id, owner_kind, owner, source_kind, lifespan, target_kind, to_kind, "to", note, enabled, state, created_at, changed_at) VALUES
+        ('kims', 'member', 'kim', 'time', 'once', 'inbox', 'agent', 'art', '', 1, 'standing', '${at}', '${at}'),
+        ('sams', 'member', 'sam', 'time', 'once', 'inbox', 'agent', 'art', '', 1, 'standing', '${at}', '${at}'),
+        ('own', 'agent', 'art', 'time', 'once', 'inbox', 'agent', 'art', '', 1, 'standing', '${at}', '${at}'),
+        ('note', 'member', 'kim', 'time', 'once', 'inbox', 'person', 'kim', '', 1, 'standing', '${at}', '${at}');
+      INSERT INTO jobs (id, agent, title, state, brief, model, started_by_kind, started_by, house_repository, house_file, house_branch, exit_code, ended_note, queued_at, claimed_at, ended_at) VALUES
+        ('unplaced', 'art', '', 'failed', '', 'm', 'agent', 'art', 'r', 'f', 'b', 31, 'Never started: no machine took it within 6 hours', '${at}', NULL, '${at}'),
+        ('ran-31', 'art', '', 'failed', '', 'm', 'agent', 'art', 'r', 'f', 'b', 31, NULL, '${at}', '${at}', '${at}'),
+        ('ran-14', 'art', '', 'failed', '', 'm', 'agent', 'art', 'r', 'f', 'b', 14, NULL, '${at}', '${at}', '${at}'),
+        ('ran-0', 'art', '', 'done', '', 'm', 'agent', 'art', 'r', 'f', 'b', 0, NULL, '${at}', '${at}', '${at}')`);
+    upgradeDataSchema(old, () => '2026-11-16T00:00:00.000Z');
+    // The file and its bytes are kept, under the one message that still lists it. The message it was first
+    // fetched for, which had stopped listing it, is named nowhere and is not listed again.
+    expect(old.prepare("SELECT name FROM pragma_table_info('bridge_files') ORDER BY name").all().map(row => (row as { name: string }).name)).toEqual(['connection', 'contents', 'fetched_at', 'file', 'name']);
+    expect(old.prepare('SELECT connection, file, name, hex(contents) AS contents, fetched_at FROM bridge_files').all()).toEqual([{ connection: 'c', file: 'F1', name: 'a.txt', contents: '6869', fetched_at: at }]);
+    expect(old.prepare('SELECT incoming FROM bridge_file_messages').all()).toEqual([{ incoming: 'm2' }]);
+    // A link still needs a kept file, and a kept file with a link cannot be deleted from under it.
+    expect(() => old.prepare("INSERT INTO bridge_file_messages (connection, file, incoming) VALUES ('c', 'F9', 'm2')").run()).toThrow('FOREIGN KEY');
+    expect(() => old.prepare("DELETE FROM bridge_files WHERE file = 'F1'").run()).toThrow('FOREIGN KEY');
+    // A member's trigger that puts an agent to work is for that member, as its firing read it before. Others are nobody's.
+    expect(old.prepare('SELECT id, member FROM triggers ORDER BY id').all()).toEqual([{ id: 'kims', member: 'kim' }, { id: 'note', member: null }, { id: 'own', member: null }, { id: 'sams', member: 'sam' }]);
+    expect(() => old.prepare("UPDATE triggers SET member = 'nobody' WHERE id = 'own'").run()).toThrow('FOREIGN KEY');
+    // Only the job no machine took is known to be loom's code. A code a machine reported may have been anyone's.
+    expect(old.prepare('SELECT id, exit_by FROM jobs ORDER BY id').all()).toEqual([{ id: 'ran-0', exit_by: null }, { id: 'ran-14', exit_by: null }, { id: 'ran-31', exit_by: null }, { id: 'unplaced', exit_by: 'loom' }]);
+    expect(() => old.prepare("UPDATE jobs SET exit_by = 'harness' WHERE id = 'ran-14'").run()).toThrow('CHECK');
+  });
+
   it('refuses to upgrade over a record whose member or agent is gone, and changes nothing', () => {
     // Step 6 puts guards on who edited a trigger. Before it nothing stopped that member's row being deleted,
     // and SQLite's own check does not see a kind-and-id reference.

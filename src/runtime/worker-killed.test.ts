@@ -14,10 +14,16 @@ const run = async (script: string) => {
 
 it('records a body a signal ended as killed, and not as the exit code 1 a body uses for its own failure', async () => {
   const killed = await run("process.kill(process.pid, 'SIGKILL'); setInterval(() => {}, 1000)");
-  expect(killed).toMatchObject({ exitCode: WORKER_EXIT.killed, own: false });
-  expect(exitStage(killed.exitCode)).toBe('body killed');
-  // A body that ends by itself with 1 is still its own word.
+  // The code is the worker's word, and says so: the stage is named for the worker's 29.
+  expect(killed).toMatchObject({ exitCode: WORKER_EXIT.killed, own: false, signalled: true });
+  expect(exitStage(killed.exitCode, 'worker')).toBe('body killed');
+  // A program that ends by itself with 1 is still its own word. From loom's body that is "body input"; from
+  // a machine's own runner the same number names no stage of loom's.
   const failed = await run('process.exit(1)');
-  expect(failed).toMatchObject({ exitCode: 1, own: true });
-  expect(exitStage(failed.exitCode)).toBe('body input');
+  expect(failed).toMatchObject({ exitCode: 1, own: true, signalled: false });
+  expect(exitStage(failed.exitCode, 'body')).toBe('body input');
+  expect(exitStage(failed.exitCode, 'runner')).toBeUndefined();
+  // A runner that exits by itself with the worker's own number was not ended by a signal.
+  const own = await run(`process.exit(${WORKER_EXIT.killed})`);
+  expect(own).toMatchObject({ exitCode: WORKER_EXIT.killed, own: true, signalled: false });
 });

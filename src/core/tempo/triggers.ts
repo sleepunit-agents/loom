@@ -103,9 +103,12 @@ export class TriggerEngine {
     const agent = this.agent(t);
     return !!agent && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, agent)).get();
   }
-  set(value: NewTrigger): Trigger {
+  /** `member` is whom the trigger's work is for, when that is a member and not the agent itself. It is the
+   * door's to say (shared-tempo-access.ts, recordedTrigger) and never part of what a caller sends. */
+  set(value: NewTrigger, member?: string): Trigger {
     this.open();
     const v = triggerInput.parse(value);
+    if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
     if ((v.ownerKind === 'household') !== !v.owner) throw new Error('Trigger needs its owner');
     if (!!v.toKind !== !!v.to) throw new Error('A recipient needs both kind and id');
     if (v.targetKind === 'inbox' && (!v.toKind || !v.to)) throw new Error('Inbox target needs a recipient');
@@ -117,7 +120,7 @@ export class TriggerEngine {
     const due = this.due(v.sourceKind, v.times, v.days, v.lifespan);
     const id = v.id ?? `tr-${randomUUID()}`;
     this.db.transaction(() => {
-      this.db.insert(triggers).values({ ...v, id, enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
+      this.db.insert(triggers).values({ ...v, id, member: member ?? null, enabled: true, state: 'standing', nextDueAt: due, createdAt: this.now(), changedAt: this.now() }).run();
       if (this.paused(this.get(id))) this.db.update(triggers).set({ state: 'held' }).where(eq(triggers.id, id)).run();
       this.log(id, 'set');
     });

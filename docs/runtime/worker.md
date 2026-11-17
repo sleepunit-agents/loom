@@ -110,6 +110,22 @@ private conversation (its log tail is dropped, because output can hold the
 conversation's words). The tables are in `src/runtime/job-exit.ts`; job history
 shows the stage name beside the number (`JobRecord.exitStage`).
 
+The row also keeps who chose the number (`jobs.exit_by`, `JobRecord.exitBy`),
+because a machine's own runner may exit with any of these numbers and mean
+something of its own. The worker says it when it reports the job:
+
+- `body`: loom's body program, which the worker knows by having given it a
+  body's credential (`"bodyBootstrap":true`).
+- `worker`: the worker itself, for a body it could not get running or lost, or
+  one a signal ended.
+- `runner`: a machine's own runner, which is given no credential.
+- `loom`: loom itself, for a job no machine took. No worker can report this one.
+
+A stage is named only when the number is in the table of whoever chose it. A
+runner's code is shown as the bare number. So is the code of a job that ended
+before the column was kept, or was reported by a worker from before it: nobody
+said whose it was, and no stage is guessed.
+
 | Code | Stage | Meaning |
 | --- | --- | --- |
 | 0 | | Success. |
@@ -136,9 +152,7 @@ shows the stage name beside the number (`JobRecord.exitStage`).
 | 29 | body killed | The body did not end by itself: a signal ended its process (the system's memory killer, an operator's kill), or its container was ended that way (a container exit of 128 plus a signal's number). The worker reports it; the body said nothing. |
 | 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 
-Any other code is the runner's own (a builder or a custom runner); a custom runner
-that exits with one of the numbers above is shown with that number's stage
-(`docs/accepted-tradeoffs.md`). A job swept
+Any other code is the runner's own (a builder or a custom runner). A job swept
 as lost has no exit code; its log tail says in which state it went silent. When
 a body ends by itself before the worker could hand it its input, the job carries
 the body's own code (for example 16), not the worker's 25.

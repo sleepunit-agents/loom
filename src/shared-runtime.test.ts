@@ -66,7 +66,9 @@ it('runs the real worker client through root authentication, shared dispatcher, 
       return { spawned: Promise.resolve(), exited: Promise.resolve({ exitCode: 0, logTail: 'private-log-output' }), release: released, stop: stopped };
     } } });
   expect(run).toBe('finished'); expect(released).toHaveBeenCalledOnce(); expect(stopped).toHaveBeenCalled();
-  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', box: 'worker', build: 'image:built', model: 'model', account: 'account', brief: '', logTail: null });
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', box: 'worker', build: 'image:built', model: 'model', account: 'account', brief: '', logTail: null,
+    // The worker gave this program no body credential, so its code is a machine's own runner's, and the row says so.
+    exitCode: 0, exitBy: 'runner' });
   expect(f.ended).toHaveBeenCalledExactlyOnceWith(queued.id); expect(f.errors).not.toHaveBeenCalled();
   const receipts = f.db.select().from(operationResults).all(); expect(receipts.map(row => row.operation).sort()).toEqual(['runtime.finish', 'runtime.next', 'runtime.started']);
   const stored = JSON.stringify(receipts.map(row => ({ ...row, result: row.result.toString('utf8') })));

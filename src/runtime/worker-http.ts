@@ -136,11 +136,11 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn
     // finished work into a lost job. Every try carries the same operation id: if loom saved the first one,
     // it answers the next from that receipt and the job is finished once.
-    finish: async (job, exitCode, logTail) => {
+    finish: async (job, exitCode, logTail, exitBy) => {
       const id = randomUUID(), pause = input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
       const until = performance.now() + FINISH_BUDGET_MS;
       for (let tries = 1; ; tries++) {
-        try { await call('finish', { job, exitCode, logTail }, ack, undefined, id, until - performance.now()); return; }
+        try { await call('finish', { job, exitCode, logTail, exitBy }, ack, undefined, id, until - performance.now()); return; }
         catch (error) {
           if (tries >= FINISH_TRIES || input.signal.aborted || until - performance.now() <= FINISH_PAUSE_MS) throw error;
           try { await pause(FINISH_PAUSE_MS, input.signal); } catch { throw error; }

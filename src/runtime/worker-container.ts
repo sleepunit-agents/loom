@@ -190,7 +190,8 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
           const [result] = await both;
           if (abort.signal.aborted || !result || typeof result !== 'object' || !('StatusCode' in result)
             || !Number.isSafeInteger(result.StatusCode) || ('Error' in result && result.Error)) throw new Error('Invalid container exit');
-          return { exitCode: containerExit(result.StatusCode as number), logTail: logs!.tail() };
+          const status = result.StatusCode as number, exitCode = containerExit(status);
+          return { exitCode, logTail: logs!.tail(), signalled: exitCode !== status };
         } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
       void exited.catch(() => {});

@@ -111,7 +111,7 @@ it('ends native work when a status report fails mid-run, publishes no late reply
  const pending=bodyProgram({...f.options,schedule:{every:(_ms,callback)=>{tick=callback;return()=>{};}},fetch:async(url,init)=>{
   if(String(url).endsWith('/status')&&++statuses>2)throw new Error(raw);return fetcher(url,init);
  }});
- await started;tick();expect(await pending).toBe(BODY_EXIT.contact);expect(exitStage(BODY_EXIT.contact)).toBe('body contact');expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
+ await started;tick();expect(await pending).toBe(BODY_EXIT.contact);expect(exitStage(BODY_EXIT.contact,'body')).toBe('body contact');expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(JSON.stringify(f.error.mock.calls)).not.toContain(raw);
 });
 it('refuses mail arriving after Stop was observed during an outstanding take',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,release!:()=>void,cancelled!:()=>void;
@@ -274,5 +274,5 @@ it('fails as mail, before loading anything for it, when a bridge job took words 
 });
 it('gives every stage its own code',()=>{
  const codes=[...Object.values(BODY_EXIT),...Object.values(WORKER_EXIT),...Object.values(LOOM_EXIT)];
- expect(new Set(codes).size).toBe(codes.length);expect(codes).not.toContain(0);expect(exitStage(BODY_EXIT.tools)).toBe('body tools');
+ expect(new Set(codes).size).toBe(codes.length);expect(codes).not.toContain(0);expect(exitStage(BODY_EXIT.tools,'body')).toBe('body tools');
 });

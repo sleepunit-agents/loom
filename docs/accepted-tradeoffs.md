@@ -126,21 +126,24 @@ Entries are grouped by the part of the program they belong to.
   - The firing's job keeps no brief and no log tail, like any private conversation's
     (`src/runtime/job-text.ts`); the body takes its words at the mail door. The member sees what the
     agent then does for them (a thread, a task), not a transcript of the run.
-  - The member is read from the trigger at each firing and judged on that moment's facts. A member who
-    left, lost the agent or left the trigger's project makes the firing fail (logged, and tried again at
-    the next time); one who became a household owner fires the same trigger as the whole agent.
+  - The member the work is for is stored on the trigger when it is set (`triggers.member`), apart from
+    who set it, and read at each firing. How far the work reaches is judged on that moment's facts. A
+    member who left, lost the agent or left the trigger's project makes the firing fail (logged, and tried
+    again at the next time); one who became a household owner fires the same trigger as the whole agent.
   - The trigger itself, with its words, is still read by the rule for triggers: the agent's other owners
     and the people in its project see it, as they see any trigger for that agent.
-- **Where.** "Scheduled work" in `src/policy.ts` (`triggerSetFor`, `triggerAsSet`, `triggerWorksFor`,
-  `maySetTrigger`, `mayStartTrigger`); asked by `src/shared-tempo-access.ts` and `src/shared-tempo.ts`;
-  the firing is `inbox` in `src/core/tempo/tempo.ts`.
+- **Where.** "Scheduled work" in `src/policy.ts` (`triggerSetFor`, `triggerAsSet`, `maySetTrigger`,
+  `mayStartTrigger`); the member is stored by `recordedTrigger` in `src/shared-tempo-access.ts` and read by
+  `worksFor` in `src/shared-tempo.ts`; the firing is `inbox` in `src/core/tempo/tempo.ts`.
 - **Why accepted.** A body reaches no further than the member it works for, and a schedule is one more
-  way of giving an agent words. Recording the member on the trigger's owner needs no new column.
+  way of giving an agent words.
 - **Checked.** `src/shared-tempo.test.ts`: "fires a trigger a member who is not a household owner set for
   an agent…" and "keeps a trigger an agent set for itself, and one an owner set, the whole agent's…".
-- **What would change the answer.** A column on a trigger for the member its work is for, apart from who
-  set it. Then an owner could set a trigger that runs as a member's, and a member's trigger could be
-  hidden from the agent's other owners.
+- **What would change the answer.** The column for the member is there (schema step 9), and today the door
+  fills it from the owner it records, so the two always agree on a trigger set through loom. Two things it
+  makes possible are not built: an owner setting a trigger that runs as another member's while staying its
+  owner, and a body's trigger keeping the agent as who set it. Hiding a member's trigger from the agent's
+  other owners is not wanted: the owner has ruled that owners may see that such work exists.
 
 ### A household owner may end a job they cannot read
 - **What.** `runtime.jobStop` is allowed to any household owner, and to a member who has the job's agent on
@@ -445,19 +448,6 @@ Entries are grouped by the part of the program they belong to.
 - **What would change the answer.** Storing the zone each next time was worked out in, which is a schema
   change.
 
-### A custom runner's exit code can read as one of loom's
-
-- **What.** A job's row keeps its exit code and not who chose it. loom's body program, the worker and loom
-  use the numbers 1, 10 to 29 and 31, and job history shows each with its stage ("body harness", "worker
-  build", "body killed"). A machine's own `{job, build}` runner that exits by itself with one of those
-  numbers is shown with that stage too, though its number means something of its own.
-- **Where.** `exitStage` in `src/runtime/job-exit.ts`, shown by `src/runtime/job-summary.ts`.
-- **Why accepted.** Telling them apart needs the row to say whose code it is, which is a new column. The
-  stage is a label beside the number and decides nothing: retries and mail follow the number being zero or
-  not. A body a signal ended is told apart without it (29, set by the worker).
-- **What would change the answer.** A household that runs custom runners and reads their codes. Then the
-  column (`jobs.exit_by`: body, worker, loom or runner), set where the worker reports the job.
-
 ## Bridges and conversations
 
 ### Mail is delivered at least once
@@ -635,6 +625,20 @@ Entries are grouped by the part of the program they belong to.
 - **Where.** Step 8 of `upgrades` in `src/core/data/database.ts`; `src/core/data/upgrade.test.ts` asserts it.
 - **Why accepted.** Those receipts held a one-time sign-in code, from when that operation was a write. It
   is a read now and leaves none. The program already deleted them at every start; the step does it once.
+- **What would change the answer.** As for step 6.
+
+### Upgrade step 9 removed one column, and left two new ones unsaid on old rows
+- **What.** A household upgraded from schema 8 or earlier lost `bridge_files.incoming`, the message a kept
+  Slack file was first fetched for. The step also added two columns it could only partly fill. `jobs.exit_by`
+  (who chose a job's exit code) is set to `loom` on a job no machine took and left empty on every other
+  ended job, so job history shows those older jobs' exit codes with no stage beside them.
+  `triggers.member` (whom a trigger's work is for) is copied from the owner of each trigger a member owns
+  that puts an agent to work, which is what a firing read before the step.
+- **Where.** Step 9 of `upgrades` in `src/core/data/database.ts`; `src/core/data/upgrade.test.ts` asserts it.
+- **Why accepted.** The messages that carried a file are the rows of `bridge_file_messages`, which step 8
+  filled from that column; the column was a second copy that went stale when its message stopped listing
+  the file. An exit code a machine reported before the step may have been loom's body program's or a
+  machine's own runner's, and the row never said which: no stage is better than a guessed one.
 - **What would change the answer.** As for step 6.
 
 ### A new person is two commits, not one

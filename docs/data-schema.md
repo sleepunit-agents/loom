@@ -51,8 +51,8 @@ To change the schema:
 
 A step may rebuild a table (create the new one, copy the rows, drop the old one,
 rename): SQLite cannot drop a column that carries a foreign key or change a CHECK
-in place. Step 6 does this to drop `conversations.job`, and step 7 to take a state
-out of `jobs.state`. For that reason the steps run with foreign keys
+in place. Step 6 does this to drop `conversations.job`, step 7 to take a state
+out of `jobs.state`, and step 9 to drop `bridge_files.incoming`. For that reason the steps run with foreign keys
 off, inside one transaction, and every reference in the database is checked
 (`PRAGMA foreign_key_check`) before the transaction commits; a step that would
 leave a row pointing at nothing changes nothing. The same check is made for the
@@ -77,7 +77,7 @@ upgraded database and a fresh one can hold the same table with its columns in a
 different order, and no statement may place a value by position
 (`src/stored-data.contract.test.ts` fails on an insert that does not name its columns).
 
-A step may also remove data, and steps 6, 7 and 8 do. What each removed and why is in
+A step may also remove data, and steps 6, 7, 8 and 9 do. What each removed and why is in
 [`accepted-tradeoffs.md`](accepted-tradeoffs.md).
 
 A change to existing rows belongs in a step. The one exception is a change SQL cannot

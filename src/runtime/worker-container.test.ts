@@ -51,7 +51,7 @@ it('runs the fixed in-image command with no ambient authority, releasing input o
   f.socket.push(null); f.wait.resolve({ StatusCode: 17 }); await flush();
   expect(f.engine.json).toHaveBeenLastCalledWith('DELETE', `/containers/${id}?force=1&v=1`, undefined, expect.any(AbortSignal));
   expect(control.finish).not.toHaveBeenCalled(); removed.resolve(undefined);
-  expect(await run).toBe('finished'); expect(control.finish).toHaveBeenCalledWith('job', 17, 'hello € error');
+  expect(await run).toBe('finished'); expect(control.finish).toHaveBeenCalledWith('job', 17, 'hello € error', 'runner');
 });
 it('applies only approved GPU, TCP listeners and explicitly configured nested socket', async () => {
   const f = fixture();
@@ -122,7 +122,7 @@ for (const bytes of [Buffer.from([1, 0]), Buffer.from([7, 0, 0, 0, 0, 0, 0, 0]),
 it('retains only the output tail and treats invalid wait output as failure', async () => {
   const f = fixture(), body = f.start(); await body.spawned;
   f.socket.push(frame('x'.repeat(100_000) + 'end')); f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
-  expect(await body.exited).toEqual({ exitCode: 0, logTail: 'x'.repeat(16_381) + 'end' }); await body.stop();
+  expect(await body.exited).toEqual({ exitCode: 0, logTail: 'x'.repeat(16_381) + 'end', signalled: false }); await body.stop();
   const bad = fixture(), other = bad.start(); await other.spawned;
   bad.socket.push(null); bad.wait.resolve({ StatusCode: 0, Error: { Message: 'failed' } });
   await expect(other.exited).rejects.toThrow(); await other.stop();
@@ -175,7 +175,7 @@ it('keeps running without a body timeout after both setup and cleanup intervals'
   vi.useFakeTimers(); const f = fixture(), body = f.start(); await body.spawned; await body.release();
   await vi.advanceTimersByTimeAsync(10_000);
   expect(f.engine.json.mock.calls.some(call => call[0] === 'DELETE')).toBe(false); expect(f.socket.destroyed).toBe(false);
-  f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); expect(await body.exited).toEqual({ exitCode: 0, logTail: '' });
+  f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); expect(await body.exited).toEqual({ exitCode: 0, logTail: '', signalled: false });
   await body.stop(); expect(vi.getTimerCount()).toBe(0);
 });
 it('generates distinct names for real attempts and uses the confirmed identity for cleanup', async () => {
@@ -256,7 +256,7 @@ it('keeps bootstrap bytes out of Docker metadata and discards credential-bearing
   await body.release({ origin: 'https://loom.example', job: job.id, token });
   expect(JSON.parse(f.writes[0])).toEqual({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: job.id, token: raw } });
   expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(raw); f.socket.push(frame(raw)); f.socket.push(frame(raw, 2)); f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
-  expect(await body.exited).toEqual({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
+  expect(await body.exited).toEqual({ exitCode: 0, logTail: '', signalled: false }); await body.stop(); token.fill(0);
 });
 
 it('selects each account/harness private mode for the actual container stdin envelope', async () => {
