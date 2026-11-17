@@ -4,14 +4,14 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { accountSignins, boxes, inbox, members, modelAccounts, modelAccountBoxes, tokens } from './core/data/schema.js';
+import { accountSignins, boxes, inbox, members, modelAccounts, modelAccountBoxes, operationResults, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { wordsKey } from './pieces/comms/crypto.js';
 import { generateX25519Identity } from 'age-encryption';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const worker = 'a'.repeat(64), otherWorker = 'b'.repeat(64), owner = 'c'.repeat(64), stranger = 'd'.repeat(64);
-async function fixture() {
+async function fixture(before: (db: ReturnType<typeof createDataSchema>) => void = () => {}) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString(), db = createDataSchema(client, now);
   db.insert(members).values([{ id: 'member', role: 'owner', joinedAt: now() }, { id: 'stranger', role: 'member', joinedAt: now() }]).run();
@@ -20,16 +20,19 @@ async function fixture() {
   db.insert(tokens).values([{ fingerprint: hash(worker), label: 'box', kind: 'runner', box: 'box', createdAt: now() }, { fingerprint: hash(otherWorker), label: 'other', kind: 'runner', box: 'other', createdAt: now() },
     { fingerprint: hash(owner), label: 'owner', kind: 'owner', member: 'member', createdAt: now() }, { fingerprint: hash(stranger), label: 'stranger', kind: 'owner', member: 'stranger', createdAt: now() }]).run();
   db.insert(modelAccounts).values({ id: 'account', owner: 'member', provider: 'provider', label: 'Codex subscription', hasRoom: false }).run();
+  before(db);
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, modelRoles: () => [], commsKey: wordsKey(await generateX25519Identity()) }); cleanup.push(() => root.close());
   let n = 0;
-  const call = async (key: string, name: string, input: unknown = {}) => {
-    const reply = await root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ id: 'call-' + ++n, input }) });
+  const call = async (key: string, name: string, input: unknown = {}, id = 'call-' + ++n) => {
+    const reply = await root.http.request('/api/' + name.replace('.', '/'), { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' }, body: JSON.stringify({ id, input }) });
     return { status: reply.status, ...(await reply.json() as { ok: boolean; value?: any; code?: string; message?: string }) };
   };
-  return { db, clock, call, item: (id: string) => db.select().from(inbox).where(eq(inbox.id, id)).get()!, row: (id: string) => db.select().from(accountSignins).where(eq(accountSignins.id, id)).get()! };
+  /** Every retry receipt as stored, to look for something that should not be kept. */
+  const receipts = () => db.select().from(operationResults).all().map(row => row.operation + ' ' + row.result.toString('utf8')).join('\n');
+  return { db, clock, call, receipts, item: (id: string) => db.select().from(inbox).where(eq(inbox.id, id)).get()!, row: (id: string) => db.select().from(accountSignins).where(eq(accountSignins.id, id)).get()! };
 }
 
-it('carries a page out and a code back, once, and records the sign-in only on the worker\'s word', async () => {
+it('carries a page out and a code back, and records the sign-in only on the worker\'s word', async () => {
   const f = await fixture();
   expect((await f.call(stranger, 'runtime.accountSignIn', { account: 'account', box: 'box' })).ok).toBe(false);
   expect((await f.call(worker, 'runtime.accountSignIn', { account: 'account', box: 'box' })).ok).toBe(false);
@@ -56,10 +59,9 @@ it('carries a page out and a code back, once, and records the sign-in only on th
   expect((await f.call(stranger, 'inbox.answer', { item: item.id, answer: 'words', words: '4/0AbCdEf_code-123' })).ok).toBe(false);
   const answered = await f.call(owner, 'inbox.answer', { item: item.id, answer: 'words', words: '4/0AbCdEf_code-123' }); expect(answered).toMatchObject({ ok: true });
   expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: '4/0AbCdEf_code-123', stop: false });
-  expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: null, stop: false });
-  expect(f.item(item.id).answerText).toBe('(used)');
   expect(f.db.select().from(modelAccountBoxes).all()).toEqual([]);
   expect((await f.call(worker, 'runtime.signInDone', { id, signedIn: true })).ok).toBe(true);
+  expect(f.item(item.id).answerText).toBe('(used)');
   expect(f.db.select().from(modelAccountBoxes).all()).toEqual([{ account: 'account', box: 'box' }]);
   expect((await f.call(owner, 'runtime.accountSignInStatus', { id })).value).toMatchObject({ state: 'done', why: null });
   expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code: null, stop: true });
@@ -85,5 +87,49 @@ it('ends a request nobody finished, refuses a pasted answer that is not a code, 
   await f.call(worker, 'runtime.signInNext'); await f.call(worker, 'runtime.signInPage', { id: second, link: 'https://provider.example/x' });
   await f.call(owner, 'inbox.answer', { item: f.row(second).item!, answer: 'words', words: 'sure, one moment; rm -rf' });
   expect((await f.call(worker, 'runtime.signInCode', { id: second })).value).toEqual({ code: null, stop: true });
+  // The worker reports its own reason for stopping; loom knows the better one.
+  await f.call(worker, 'runtime.signInDone', { id: second, signedIn: false, why: 'The sign-in was ended before it finished' });
   expect(f.row(second)).toMatchObject({ state: 'failed', why: 'That did not look like a sign-in code' });
+  expect(f.item(f.row(second).item!)).toMatchObject({ answerText: '(used)' });
+});
+const code = '4/0AbCdEf_code-123';
+async function waitingWithCode(f: Awaited<ReturnType<typeof fixture>>) {
+  const id = (await f.call(owner, 'runtime.accountSignIn', { account: 'account', box: 'box' })).value.id as string;
+  await f.call(worker, 'runtime.signInNext'); await f.call(worker, 'runtime.signInPage', { id, link: 'https://provider.example/x' });
+  const item = f.row(id).item!;
+  expect((await f.call(owner, 'inbox.answer', { item, answer: 'words', words: code })).ok).toBe(true);
+  return { id, item };
+}
+it('keeps the code in no retry receipt, and gives a worker that asks again the same answer', async () => {
+  const f = await fixture(), { id } = await waitingWithCode(f);
+  expect((await f.call(worker, 'runtime.signInCode', { id }, 'same-call')).value).toEqual({ code, stop: false });
+  // The reply was lost: the worker asks again, with the same call id or a new one.
+  expect((await f.call(worker, 'runtime.signInCode', { id }, 'same-call')).value).toEqual({ code, stop: false });
+  expect((await f.call(worker, 'runtime.signInCode', { id })).value).toEqual({ code, stop: false });
+  expect((await f.call(otherWorker, 'runtime.signInCode', { id })).ok).toBe(false);
+  expect(f.receipts()).not.toContain(code); expect(f.receipts()).not.toContain('runtime.signInCode');
+  await f.call(worker, 'runtime.signInDone', { id, signedIn: true });
+  expect((await f.call(worker, 'runtime.signInCode', { id }, 'same-call')).value).toEqual({ code: null, stop: true });
+  expect(f.receipts()).not.toContain(code);
+});
+it('blanks an answered code the worker never collected, when the sign-in fails or runs out of time', async () => {
+  const f = await fixture(), failed = await waitingWithCode(f);
+  expect(f.item(failed.item).answerText).toBe(code);
+  await f.call(worker, 'runtime.signInDone', { id: failed.id, signedIn: false, why: 'The worker stopped' });
+  expect(f.item(failed.item)).toMatchObject({ answerText: '(used)', state: 'answered' }); expect(f.row(failed.id)).toMatchObject({ state: 'failed', why: 'The worker stopped' });
+  const late = await waitingWithCode(f);
+  f.clock.advance(21 * 60_000);
+  // Out of time: the worker is told to stop without the code, and the next sweep blanks it.
+  expect((await f.call(worker, 'runtime.signInCode', { id: late.id })).value).toEqual({ code: null, stop: true });
+  expect((await f.call(worker, 'runtime.signInNext')).value).toBeNull();
+  expect(f.item(late.item).answerText).toBe('(used)'); expect(f.row(late.id)).toMatchObject({ state: 'failed', why: 'It ran out of time' });
+});
+it('drops, at start, the receipts an earlier version kept for the code and closes what ran out of time while it was down', async () => {
+  const f = await fixture(db => {
+    db.insert(operationResults).values([{ caller: 'worker', id: 'old', operation: 'runtime.signInCode', inputHash: 'x', result: Buffer.from(JSON.stringify({ ok: true, value: { code, stop: false } })), expiresAt: '2999-01-01T00:00:00.000Z' },
+      { caller: 'worker', id: 'kept', operation: 'runtime.signInDone', inputHash: 'x', result: Buffer.from('{"ok":true,"value":{"saved":true}}'), expiresAt: '2999-01-01T00:00:00.000Z' }]).run();
+    db.insert(accountSignins).values({ id: 'signin-stale', account: 'account', box: 'box', askedByKind: 'member', askedBy: 'member', state: 'asked', askedAt: '2000-01-01T00:00:00.000Z', changedAt: '2000-01-01T00:00:00.000Z' }).run();
+  });
+  expect(f.db.select({ id: operationResults.id }).from(operationResults).all()).toEqual([{ id: 'kept' }]);
+  expect(f.row('signin-stale')).toMatchObject({ state: 'failed', why: 'It ran out of time' });
 });

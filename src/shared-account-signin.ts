@@ -3,16 +3,17 @@
  * Someone asks (runtime.accountSignIn). The worker on that machine picks the request up and runs the
  * provider's own sign-in there. Loom carries two things and nothing else: the page to open, which goes to the
  * account's owner as an inbox item, and, where the provider shows one, the code the owner answers with, which
- * goes back to the worker once and is then blanked. Loom records the account as signed in on that machine
+ * goes back to the worker of that machine while the sign-in is open and is blanked when it ends, however it
+ * ends. The code is read, never returned by a write: a write's result is kept as a retry receipt. Loom records the account as signed in on that machine
  * only when the worker reports that the provider's own program says so. No credential passes through here.
  */
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { mayAct, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
-import { accountSignins, boxes, inbox, memberAgents, members, modelAccountBoxes, modelAccounts } from './core/data/schema.js';
+import { accountSignins, boxes, inbox, memberAgents, members, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
 import { inboxContentChanged } from './core/tempo/volume.js';
 import { OperationError, type Operations } from './core/operations/index.js';
@@ -56,12 +57,22 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
     const done = db.update(inbox).set({ state: 'resolved', resolution, changedAt: at }).where(and(eq(inbox.id, item), eq(inbox.state, 'waiting'))).returning().all();
     for (const row of done) inboxContentChanged(db, { kind: row.toKind, id: row.to }, row.id);
   };
+  /** The pasted code the owner answered with, while the request still waits for it. */
+  const pasted = (row: typeof accountSignins.$inferSelect) => {
+    const answer = row.item ? db.select().from(inbox).where(eq(inbox.id, row.item)).get() : undefined;
+    return answer?.state === 'answered' && answer.answer === 'words' && answer.answerText && answer.answerText !== USED ? answer.answerText.trim() : undefined;
+  };
   const end = (row: typeof accountSignins.$inferSelect, state: 'done' | 'failed', why: string | null, at: string) => {
     db.update(accountSignins).set({ state, why, changedAt: at }).where(eq(accountSignins.id, row.id)).run();
+    // The pasted code has no use once the sign-in is over, whether or not the worker ever collected it.
+    if (row.item) db.update(inbox).set({ answerText: USED, changedAt: at }).where(and(eq(inbox.id, row.item), isNotNull(inbox.answerText), ne(inbox.answerText, USED))).run();
     resolveItem(row.item, state === 'done' ? 'Signed in' : why ?? 'The sign-in did not finish', at);
   };
-  /** Close every open request that has run out of time. Called before anything reads them. */
+  /** Close every open request that has run out of time. Called at start and before a worker or a person
+   * is given one; nothing here runs on a timer, so a request is closed at the next of those. */
   const sweep = (at: string) => { for (const row of db.select().from(accountSignins).where(inArray(accountSignins.state, [...open])).all()) if (lapsed(row, at)) end(row, 'failed', 'It ran out of time', at); };
+  // runtime.signInCode was once a write, so its results, code included, were kept as retry receipts.
+  db.transaction(() => { db.delete(operationResults).where(eq(operationResults.operation, 'runtime.signInCode')).run(); sweep(now()); });
   const signedIn = new WeakSet<object>();
   const people = { write: true, recheckPolicy: true, refuses: true, doors: ['http', 'socket'] as const };
   const workers = { write: true, recheckPolicy: true, doors: ['http'] as const };
@@ -101,6 +112,8 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       const row = request(input.id)!, at = now();
       if (row.state !== 'started' || lapsed(row, at)) throw new OperationError('conflict', 'This sign-in is not waiting for its page');
       const of = account(row.account)!, box = db.select({ name: boxes.name }).from(boxes).where(eq(boxes.id, row.box)).get()!;
+      // A device code is for the person to read and grants nothing without the half the provider's program
+      // keeps on the worker, so it stays in the item's words after the sign-in ends.
       const words = input.userCode
         ? `Sign ${of.label} in on ${box.name}. Open the page and enter the code ${input.userCode}. There is nothing to answer: this clears when the sign-in finishes.`
         : `Sign ${of.label} in on ${box.name}. Open the page, sign in, then answer with the code it shows.`;
@@ -109,21 +122,18 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       db.update(accountSignins).set({ state: 'waiting', item: item.id, changedAt: at }).where(eq(accountSignins.id, row.id)).run();
       ctx.changed('accountSignin', row.id); ctx.changed('inbox', item.id); return { saved: true as const };
     } });
-  operations.register({ ...workers, doors: [...workers.doors], name: 'runtime.signInCode', input: id,
+  // A read, so no retry receipt holds the code. Asking again while the sign-in waits gives the same answer:
+  // a worker that lost the reply is not left holding a page open for a code that is gone.
+  operations.register({ doors: [...workers.doors], name: 'runtime.signInCode', input: id,
     output: z.object({ code: z.string().nullable(), stop: z.boolean() }).strict(),
     may: (viewer, input) => mine(viewer, input.id),
-    run(ctx, input) {
-      const row = request(input.id)!, at = now();
-      if (row.state === 'waiting' && lapsed(row, at)) { end(row, 'failed', 'It ran out of time', at); ctx.changed('accountSignin', row.id); }
-      if (request(input.id)!.state !== 'waiting' || !row.item) return { code: null, stop: request(input.id)!.state !== 'waiting' };
-      const answer = db.select().from(inbox).where(eq(inbox.id, row.item)).get();
-      if (answer?.state !== 'answered' || answer.answer !== 'words' || !answer.answerText || answer.answerText === USED) return { code: null, stop: false };
-      const code = answer.answerText.trim();
-      // The code is good once, in the sign-in the worker is holding open. It is handed over once and not kept.
-      db.update(inbox).set({ answerText: USED, changedAt: at }).where(eq(inbox.id, answer.id)).run();
-      ctx.changed('inbox', answer.id);
-      if (!signInCode.test(code)) { end(row, 'failed', 'That did not look like a sign-in code', at); ctx.changed('accountSignin', row.id); return { code: null, stop: true }; }
-      return { code, stop: false };
+    run(_ctx, input) {
+      const row = request(input.id)!;
+      if (row.state !== 'waiting' || lapsed(row, now())) return { code: null, stop: true };
+      const code = pasted(row);
+      if (code === undefined) return { code: null, stop: false };
+      // Anything that does not look like a code is not handed over; the worker stops and reports.
+      return signInCode.test(code) ? { code, stop: false } : { code: null, stop: true };
     } });
   operations.register({ ...workers, doors: [...workers.doors], name: 'runtime.signInDone',
     input: z.object({ id: name, signedIn: z.boolean(), why: z.string().max(300).refine(value => !/[\0\r\n]/.test(value)).optional() }).strict(), output: saved,
@@ -132,7 +142,9 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       const row = request(input.id)!, at = now();
       if (!open.includes(row.state as never)) return { saved: true as const };
       if (input.signedIn) { db.insert(modelAccountBoxes).values({ account: row.account, box: row.box }).onConflictDoNothing().run(); signedIn.add(input); ctx.changed('modelAccount', row.account); }
-      end(row, input.signedIn ? 'done' : 'failed', input.signedIn ? null : input.why ?? 'The sign-in did not finish', at);
+      const answer = pasted(row);
+      end(row, input.signedIn ? 'done' : 'failed', input.signedIn ? null
+        : answer !== undefined && !signInCode.test(answer) ? 'That did not look like a sign-in code' : input.why ?? 'The sign-in did not finish', at);
       ctx.changed('accountSignin', row.id); return { saved: true as const };
     },
     after(input) { if (signedIn.delete(input)) { const row = request(input.id); if (row) accountObservationCommitted(db, row.account); } } });
