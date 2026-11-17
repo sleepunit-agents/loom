@@ -40,7 +40,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     const name = `mind.${verb}`;
     operations.register(operation({ name, write: true, input: z.object({ slug: pageSlug, note: z.string().trim().min(1).max(4000).optional(), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(),
       recover,
-      may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
+      may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, input) {
         if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
         if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
@@ -67,7 +67,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   operations.register(operation({ name: 'mind.knowledgeAdd', write: true,
     input: z.object({ title: z.string().trim().min(1).max(200), domain: z.string().trim().toLowerCase().min(1).max(200),
       body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH), source: z.string().trim().max(4000).default(''), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(), recover,
-    may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeAdd'),
+    may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
     run(ctx, input) {
       if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
       if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
@@ -95,7 +95,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
   // body as a version first, in the same transaction, and keeps the newest ten.
   const replace = (name: string, op: string, input: z.ZodType<{ slug: string }>, next: (page: { id: number; body: string }, value: never) => string, source: (value: never) => string = () => '') =>
     operations.register(operation({ name, write: true, input, output: z.unknown(), recover,
-      may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', name),
+      may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, value) {
         if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
         if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');

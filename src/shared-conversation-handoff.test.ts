@@ -234,3 +234,15 @@ it.each(['project','owner'] as const)('withdraws published public handoff origin
  if(kind==='project')f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();else f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();
  await expect(response.text()).rejects.toThrow('Data access ended');await expect(copy.text()).rejects.toThrow('Data access ended');
 });
+
+it('keeps a handed-off direct message direct, so its words reach no wider audience than the message had',async()=>{
+ // An unlinked sender's direct message: nobody's private thread, in no project, shown only to the agent's owners.
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,project:null,direct:true}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();});
+ const created=await create(f,'direct');
+ expect(f.db.select({direct:s.conversations.direct,member:s.conversations.member,project:s.conversations.project}).from(s.conversations).where(eq(s.conversations.id,created.conversation)).get()).toEqual({direct:true,member:null,project:null});
+ // The same brief sent again finds the same conversation, still direct.
+ expect((await create(f,'direct')).conversation).toBe(created.conversation);
+ // The agent it was handed to still takes it.
+ f.clock.advance(60_000);const {token}=receive(f,created.conversation);
+ const taken=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(taken.status).toBe(200);
+});

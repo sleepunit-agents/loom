@@ -3,9 +3,9 @@ import type { Database } from 'better-sqlite3';
 import {maySee,mayAct,type Viewer,type Sharing} from '../../core/index.js';
 /** The same current capability projection for GraphQL and legacy clients. */
 export function knowledgeAccess(viewer:Viewer,sharing:Sharing){return {id:'knowledge',allowed:maySee(viewer,{type:'knowledge'},sharing),
- canAdd:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeAdd'),
- canVerify:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeVerify'),
- canRecheck:mayAct(viewer,{type:'knowledge'},sharing,'act','mind.knowledgeRecheck')};}
+ canAdd:mayAct(viewer,{type:'knowledge'},sharing,'act'),
+ canVerify:mayAct(viewer,{type:'knowledge'},sharing,'act'),
+ canRecheck:mayAct(viewer,{type:'knowledge'},sharing,'act')};}
 
 interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null; freshness_anchor?: string | null; sla_class?: string | null }
 /** How long a check of a page stands. The page shows it as due after this, and the sweep raises it then. */

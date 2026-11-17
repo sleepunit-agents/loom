@@ -43,7 +43,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
   };
   operations.register(operation({name:'mind.personAdd',write:true,recover,
     input:z.object({name:z.string().trim().min(1).max(CARD_NAME_MAX),summary:z.string().trim().max(CARD_SUMMARY_MAX).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(MAX_STRING).default('')}).strict(),output:z.unknown(),
-    may:v=>{const agent=agentNow();return mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd') && !!agent && mayAct(v,{type:'person',agent},options.sharing(),'act','mind.personAdd');},
+    may:v=>{const agent=agentNow();return mayAct(v,{type:'person'},options.sharing(),'act') && !!agent && mayAct(v,{type:'person',agent},options.sharing(),'act');},
     run(ctx,input){
       // Read once: the agent and its file are the same for the whole of this write.
       const agent=agentNow(),sources=current();

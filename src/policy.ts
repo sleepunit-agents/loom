@@ -484,7 +484,7 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   // authentication, including an agent terminal session without a job.
   return seen || r.type === 'knowledge' && v.kind === 'agent' && r.member === undefined && r.agent === undefined;
 }
-export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act', operation?: string): boolean {
+export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act'): boolean {
   if (isInternalCaller(v)) return true;
   if (!maySee(v, r, s)) return false;
   if (action === 'household') return isHouseholdOwner(v, s);
@@ -493,10 +493,10 @@ export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = '
   return true;
 }
 /** New fields must be visible separately; project access cannot smuggle in an agent. */
-export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: string): boolean {
+export function mayCreate(v: Viewer, r: RecordScope, s: Sharing): boolean {
   if (isInternalCaller(v)) return true;
   if (r.member !== undefined && (v.kind !== 'member' || r.member !== v.id)) return false;
-  return mayAct(v, r, s, 'act', operation)
+  return mayAct(v, r, s)
     && (r.project === undefined || maySee(v, { project: r.project }, s))
     && (r.agent === undefined || maySee(v, { agent: r.agent }, s));
 }

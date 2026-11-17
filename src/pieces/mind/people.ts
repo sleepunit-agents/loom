@@ -123,7 +123,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   }
   return {
     access(v){return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
-      agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd')};},
+      agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},options.sharing(),'act')};},
     nextDeadline,read, ids, sources, allowed,
     list(viewer:Viewer) {
       for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);

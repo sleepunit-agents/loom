@@ -27,11 +27,13 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
    const existing=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,input.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
    if(existing){
     const target=existing.conversation?cvs.conversation(existing.conversation):undefined;
-    if(!target||target.venue!=='handoff'||target.place!==job.id||target.agent!==input.agent||target.project!==cv.project||target.member!==cv.member)throw new OperationError('conflict','Handoff scope changed');
+    if(!target||target.venue!=='handoff'||target.place!==job.id||target.agent!==input.agent||target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
     return {conversation:target.id,item:existing.id};
    }
-   const target=cvs.open({agent:input.agent,venue:'handoff',place:job.id,label:input.label,project:cv.project,member:cv.member});
-   if(target.project!==cv.project||target.member!==cv.member)throw new OperationError('conflict','Handoff scope changed');
+   // The handoff carries every label that says who may read the words it came from: the project, the member,
+   // and whether it was a direct message.
+   const target=cvs.open({agent:input.agent,venue:'handoff',place:job.id,label:input.label,project:cv.project,member:cv.member,direct:cv.direct});
+   if(target.project!==cv.project||target.member!==cv.member||target.direct!==cv.direct)throw new OperationError('conflict','Handoff scope changed');
    const item=cvs.send({conversation:target.id,toKind:'agent',to:input.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string});
    cvs.turn({conversation:target.id,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});
    ctx.changed('conversations',target.id);ctx.changed('inbox',item.id);ctx.changed('turns',target.id);
