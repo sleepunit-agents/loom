@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { Duplex } from 'node:stream';
 import { containerWorkerExecutor } from './worker-container.js';
 import { workOnce, type WorkerAssignment } from './worker.js';
+import { WorkerStop } from './worker-stop.js';
 const deferred = <T>() => { let resolve!: (value: T) => void, reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const flush = async () => { await new Promise<void>(resolve => process.nextTick(resolve)); for (let n = 0; n < 30; n++) await Promise.resolve(); };
@@ -293,7 +294,7 @@ it('does not start beside containers it cannot list or cannot get rid of', async
   f.engine.json.mockResolvedValueOnce([{ Id: '../../etc' }]);
   await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('Invalid container identity');
   f.engine.json.mockImplementation(async (method: string) => method === 'GET' ? [{ Id: 'e'.repeat(64) }] : undefined);
-  await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('could not be removed');
+  await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow(new WorkerStop('left'));
   f.engine.json.mockRejectedValue(new Error('docker is down'));
   await expect(f.executor.endLeft!(f.abort.signal)).rejects.toThrow('docker is down');
 });

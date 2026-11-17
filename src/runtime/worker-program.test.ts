@@ -1,6 +1,8 @@
 import { it, expect, vi } from 'vitest';
 import { workerProgram } from './worker-program.js';
 import { defaultWorkerState } from './worker-left.js';
+import { WORKER_STOP, WorkerStop } from './worker-stop.js';
+import { BODY_EXIT, LOOM_EXIT, WORKER_EXIT } from './job-exit.js';
 const plan = { command: '/builder', args: [], cwd: '/work', env: { PATH: '/bin' } };
 const config = { url: 'https://loom.example', box: 'b', tokenFile: '/token', build: plan, runners: { claude: plan } };
 function fixture() {
@@ -32,14 +34,42 @@ it('ends what a killed worker left before it takes any work, and gives its state
 it('keeps its state under the temporary directory, by user and machine, when the configuration names no place', () => {
   expect(state).toMatch(/loom-worker-\d+-[0-9a-f]{16}$/); expect(state).not.toBe(defaultWorkerState('c'));
 });
-it.each(['another worker holds the state directory', 'what was left cannot be ended'] as const)('takes no work when %s', async why => {
+it.each([
+  ['another worker holds the state directory', 'held', 45, 'Worker stopped: another worker is running on the state directory\n'],
+  ['the state directory is not private', 'state', 44, 'Worker stopped: the state directory is not a private directory of this user\n'],
+  ['what was left cannot be ended', 'left', 46, 'Worker stopped: a process a previous worker left running could not be ended\n'],
+] as const)('takes no work when %s, and says which', async (_why, stage, code, line) => {
   const f = fixture(), close = vi.fn();
-  if (why === 'another worker holds the state directory') f.executor.mockImplementation(() => { throw new Error('Another worker is running on this state directory'); });
-  else f.executor.mockReturnValue({ close, endLeft: vi.fn(async () => { throw new Error('A body a previous worker left could not be ended'); }) });
-  expect(await workerProgram(f)).toBe(1);
+  if (stage === 'left') f.executor.mockReturnValue({ close, endLeft: vi.fn(async () => { throw new WorkerStop('left'); }) });
+  else f.executor.mockImplementation(() => { throw new WorkerStop(stage); });
+  expect(await workerProgram(f)).toBe(code);
   expect(f.run).not.toHaveBeenCalled();
-  expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
-  if (why === 'what was left cannot be ended') expect(close).toHaveBeenCalledOnce();
+  expect(f.error).toHaveBeenCalledExactlyOnceWith(line);
+  if (stage === 'left') expect(close).toHaveBeenCalledOnce();
+});
+it('gives every way it can stop its own line and its own exit code, none of them 0', () => {
+  const codes = Object.values(WORKER_STOP).map(([code]) => code), lines = Object.values(WORKER_STOP).map(([, line]) => line);
+  expect(new Set(codes).size).toBe(codes.length); expect(new Set(lines).size).toBe(lines.length);
+  expect(codes).not.toContain(0);
+  // Kept apart from the codes a job's row carries (job-exit.ts), except the shared "unexpected" 1.
+  const jobCodes: number[] = [...Object.values(BODY_EXIT), ...Object.values(WORKER_EXIT), ...Object.values(LOOM_EXIT)];
+  expect(codes.filter(code => code !== 1 && jobCodes.includes(code))).toEqual([]);
+});
+it('tells an unreadable configuration, an invalid one, an unreadable token file and wrong arguments apart from a failed slot', async () => {
+  const stopped = async (change: (f: ReturnType<typeof fixture>) => void) => {
+    const f = fixture(); change(f);
+    const code = await workerProgram(f);
+    expect(f.error).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
+    return [code, f.error.mock.calls[0][0]];
+  };
+  expect(await stopped(f => { f.args = []; })).toEqual([40, 'Worker stopped: expected the path of one configuration file\n']);
+  expect(await stopped(f => { f.read.mockRejectedValue(new Error('private path')); })).toEqual([41, 'Worker stopped: the configuration file could not be read or is not valid\n']);
+  expect(await stopped(f => { f.read.mockResolvedValue('{}'); })).toEqual([41, 'Worker stopped: the configuration file could not be read or is not valid\n']);
+  expect(await stopped(f => { f.read.mockImplementation(async path => { if (path === '/config') return JSON.stringify(config); throw new Error('private-token'); }); }))
+    .toEqual([42, 'Worker stopped: the token file could not be read\n']);
+  expect(await stopped(f => { f.control.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
+  expect(await stopped(f => { f.executor.mockImplementation(() => { throw new Error('private-token'); }); })).toEqual([43, 'Worker stopped: the worker could not be set up from its configuration\n']);
+  expect(await stopped(f => { f.run.mockRejectedValue(new Error('private-brief')); })).toEqual([49, 'Worker stopped: a body it started could not be ended, so it takes no more work\n']);
 });
 it('says so when something left is still running that it could not show to be a previous worker\'s, and goes on', async () => {
   const f = fixture(); f.executor.mockReturnValue({ endLeft: vi.fn(async () => ({ unverified: 2 })) });
@@ -61,14 +91,15 @@ it('never prints private configuration or execution diagnostics', async () => {
   for (const stage of ['read', 'control', 'executor', 'run'] as const) {
     const f = fixture();
     f[stage].mockImplementation(() => { throw new Error('private-token private-brief'); });
-    expect(await workerProgram(f)).toBe(1);
-    expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+    expect(await workerProgram(f)).toBeGreaterThan(0);
+    expect(f.error).toHaveBeenCalledOnce();
+    expect(Object.values(WORKER_STOP).map(([, line]) => `Worker stopped: ${line}\n`)).toContain(f.error.mock.calls[0][0]);
     expect(f.handlers.size).toBe(0);
   }
 });
 it('rejects malformed configuration before reading a token or launching', async () => {
   const f = fixture(); f.read.mockResolvedValue('{}');
-  expect(await workerProgram(f)).toBe(1);
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
   expect(f.read).toHaveBeenCalledTimes(1);
   expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
@@ -102,10 +133,10 @@ for (const mode of ['--account-signin', '--account-usage']) {
     const f = accountFixture(mode, { command: plan, account, ...(mode === '--account-signin' ? { box: 'b' } : {}) });
     f.signIn.mockRejectedValue(new Error('private credential'));
     f.usage.mockReturnValue(vi.fn().mockRejectedValue(new Error('private credential')));
-    expect(await workerProgram(f)).toBe(1); expect(f.output).not.toHaveBeenCalled();
+    expect(await workerProgram(f)).toBe(50); expect(f.output).not.toHaveBeenCalled();
     if (mode === '--account-signin') expect(f.signIn).toHaveBeenCalledOnce();
     else { expect(f.usage).toHaveBeenCalledOnce(); expect(f.usage.mock.results[0].value).toHaveBeenCalledOnce(); }
-    expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+    expect(f.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the account command did not complete\n');
     expect(f.handlers.size).toBe(0);
   });
   it(`cancels ${mode} and refuses a late successful observation`, async () => {
@@ -116,12 +147,12 @@ for (const mode of ['--account-signin', '--account-usage']) {
     f.usage.mockImplementation((_plan, options) => async () => {
       f.handlers.get('SIGTERM')!(); expect(options.signal.aborted).toBe(true); return [];
     });
-    expect(await workerProgram(f)).toBe(1); expect(f.output).not.toHaveBeenCalled();
+    expect(await workerProgram(f)).toBe(50); expect(f.output).not.toHaveBeenCalled();
     expect(f.handlers.size).toBe(0);
   });
   it(`rejects unrecognized config in ${mode} before any private command or token read`, async () => {
     const f = accountFixture(mode, { command: plan, account, ...(mode === '--account-signin' ? { box: 'b' } : {}), tokenFile: '/private-token' });
-    expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledTimes(1);
+    expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledTimes(1);
     expect(f.signIn).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled(); expect(f.output).not.toHaveBeenCalled();
   });
 }
@@ -135,7 +166,7 @@ it('passes a configured build deadline to the executor', async () => {
 for (const buildTimeoutMs of [0, 1.5, 3_600_001]) it(`rejects invalid configured deadline ${buildTimeoutMs} before launching`, async () => {
   const f = fixture();
   f.read.mockResolvedValue(JSON.stringify({ ...config, buildTimeoutMs }));
-  expect(await workerProgram(f)).toBe(1);
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]);
   expect(f.read).toHaveBeenCalledTimes(1);
   expect(f.executor).not.toHaveBeenCalled();
 });
@@ -154,7 +185,7 @@ for (const container of [{ socket: 'relative' }, { socket: '/docker.sock', privi
   it('rejects malformed container configuration before reading worker credentials', async () => {
     const f = fixture(), containerExecutor = vi.fn();
     f.read.mockResolvedValue(JSON.stringify({ ...config, container }));
-    expect(await workerProgram({ ...f, containerExecutor })).toBe(1);
+    expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]);
     expect(f.read).toHaveBeenCalledTimes(1); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 }
@@ -170,7 +201,7 @@ for (const accountRunners of [null, [], { sub: null }, { sub: [] }, { sub: { cla
   ...[{ command: '\0' }, { args: ['bad\0arg'] }, { cwd: '/bad\0dir' }, { env: { KEY: 'bad\0value' } }].map(patch => ({ sub: { claude: { ...plan, ...patch } } })),
 ]) it('rejects malformed nested account runners before token reads or execution', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, accountRunners }));
-  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config');
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config');
   expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
 });
 it('passes account bindings to container execution too', async () => {
@@ -182,13 +213,13 @@ it('passes account bindings to container execution too', async () => {
 
 for (const patch of [{ cwd: 'relative' }, { env: { 'BAD-KEY': 'value' } }]) it('rejects invalid container runner plans before the token or builder', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, container: { socket: '/fake/docker.sock' }, accountRunners: { sub: { claude: { ...plan, ...patch } } } }));
-  const containerExecutor = vi.fn(); expect(await workerProgram({ ...f, containerExecutor })).toBe(1);
+  const containerExecutor = vi.fn(); expect(await workerProgram({ ...f, containerExecutor })).toBe(WORKER_STOP.config[0]);
   expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.control).not.toHaveBeenCalled();
 });
 
 for (const facts of [[''], ['duplicate', 'duplicate'], ['bad\0fact'], ['bad\nline'], ['bad\rfact'], ['x'.repeat(257)], Array.from({ length: 129 }, (_, i) => 'fact'+i), null, 'gpu:5090']) it('rejects invalid configured machine facts before reading a token or executing', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, facts }));
-  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
 
 it('accepts explicit private bootstrap only in a configured runner, without putting it in argv or environment', async () => {
@@ -197,7 +228,7 @@ it('accepts explicit private bootstrap only in a configured runner, without putt
 });
 for (const bodyBootstrap of ['true', 1, null, {}]) it('refuses an invalid private runner bootstrap option before token reads', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, runners: { claude: { ...plan, bodyBootstrap } } }));
-  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
 });
 
 it('accepts private bootstrap in exact account/harness bindings', async () => {
@@ -206,9 +237,9 @@ it('accepts private bootstrap in exact account/harness bindings', async () => {
 });
 it('refuses a private bootstrap flag on a builder before reading its token', async () => {
   const f = fixture(); f.read.mockResolvedValue(JSON.stringify({ ...config, build: { ...plan, bodyBootstrap: true } }));
-  expect(await workerProgram(f)).toBe(1); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.executor).not.toHaveBeenCalled();
 });
 for (const mode of ['--account-signin', '--account-usage']) it(`refuses private bootstrap on the ${mode} command before private execution`, async () => {
   const f = accountFixture(mode, { command: { ...plan, bodyBootstrap: true }, account, ...(mode === '--account-signin' ? { box: 'box' } : {}) });
-  expect(await workerProgram(f)).toBe(1); expect(f.signIn).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled(); expect(f.read).toHaveBeenCalledOnce();
+  expect(await workerProgram(f)).toBe(WORKER_STOP.config[0]); expect(f.signIn).not.toHaveBeenCalled(); expect(f.usage).not.toHaveBeenCalled(); expect(f.read).toHaveBeenCalledOnce();
 });

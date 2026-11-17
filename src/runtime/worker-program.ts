@@ -12,6 +12,7 @@ import { containerWorkerExecutor } from './worker-container.js';
 import { REPORT_MS } from './silence.js';
 import { defaultWorkerState } from './worker-left.js';
 import type { WorkerExecutor } from './worker.js';
+import { WORKER_STOP, WorkerStop, workerStopLine, type WorkerStopStage } from './worker-stop.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
 const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
 const runnerCommand = command.extend({ bodyBootstrap: z.boolean().optional(), selectsAccount: z.boolean().optional() });
@@ -71,6 +72,8 @@ export async function workerProgram(input: {
   const abort = new AbortController();
   const stop = () => abort.abort();
   let executor: WorkerExecutor | undefined;
+  // The stage the worker is in: what a failure there is reported as (worker-stop.ts).
+  let stage: WorkerStopStage = 'usage';
   input.on('SIGINT', stop); input.on('SIGTERM', stop);
   async function observe(config: z.infer<typeof accountCommand>, remote?: { url: string; token: string; signal: AbortSignal }) {
     if (abort.signal.aborted) throw new Error('Cancelled');
@@ -95,27 +98,34 @@ export async function workerProgram(input: {
     const mode = input.args[0];
     if (mode === '--account-signin' || mode === '--account-usage') {
       if (input.args.length !== 2 || !input.output) throw new Error('Expected account command configuration');
+      stage = 'config';
       const raw: unknown = JSON.parse(await input.read(input.args[1]));
       // These one-shot worker commands receive only local owner configuration.
       // Local-only commands read no Loom token. Optional usage reporting reads
       // its configured machine credential; neither mode claims jobs or changes membership.
       if (mode === '--account-signin') {
         const config = signInCommand.parse(raw);
+        stage = 'account';
         await (input.signIn ?? signInAccount)(config.command, { ...config.account, box: config.box },
           { signal: abort.signal, timeoutMs: config.timeoutMs });
         if (abort.signal.aborted) throw new Error('Cancelled');
         input.output(JSON.stringify({ ...config.account, box: config.box, signedIn: true }) + '\n');
       } else {
         const config = usageCommand.parse(raw);
+        stage = 'token';
         const remote = config.report ? { url: config.report.url, token: (await input.read(config.report.tokenFile)).trim(), signal: abort.signal } : undefined;
+        stage = 'account';
         const windows = await observe(config, remote);
         input.output(JSON.stringify({ ...config.account, windows }) + '\n');
       }
       return 0;
     }
     if (input.args.length !== 1) throw new Error('Expected worker configuration path');
+    stage = 'config';
     const config = configSchema.parse(JSON.parse(await input.read(input.args[0])));
+    stage = 'token';
     const token = (await input.read(config.tokenFile)).trim();
+    stage = 'setup';
     const remote = { url: config.url, token, signal: abort.signal };
     const control = (input.control ?? httpWorkerControl)(config.facts === undefined ? remote : { ...remote, facts: config.facts });
     // The executor holds the state directory from here, and refuses it when another worker is alive on it.
@@ -125,6 +135,7 @@ export async function workerProgram(input: {
       : (input.executor ?? commandWorkerExecutor)({ ...config, state });
     // Before any report or claim: end what a worker killed before this one left running, or the work loom
     // has queued again would run beside it. If that cannot be done, this worker does not start.
+    stage = 'left';
     const found = await executor.endLeft?.(abort.signal);
     if (found?.unverified) input.error(`Worker left ${found.unverified} process group(s) running that it could not show to be a previous worker's\n`);
     // Refresh before admitting jobs, then alongside the worker slot. Each scan
@@ -136,6 +147,7 @@ export async function workerProgram(input: {
         catch { if (!abort.signal.aborted) input.error('Worker quota refresh unavailable\n'); }
       }
     };
+    stage = 'health';
     if (config.accountUsage) {
       const health = async () => { await (input.health ?? reportWorkerHealth)(config.facts === undefined ? remote : { ...remote, facts: config.facts }); };
       if (abort.signal.aborted) return 0;
@@ -159,7 +171,7 @@ export async function workerProgram(input: {
       }
     })() : undefined;
     // Attach a handler immediately; an unexpected timer failure stops the slot.
-    const settled = refresh?.catch(() => { abort.abort(); throw new Error('Quota refresh stopped'); });
+    const settled = refresh?.catch(() => { abort.abort(); throw new WorkerStop('refresh'); });
     settled?.catch(() => {});
     // Sign-ins asked for through loom run beside the job slot, one at a time. A failed poll is tried again
     // at the next interval; it never stops the worker.
@@ -178,11 +190,14 @@ export async function workerProgram(input: {
         try { await wait(config.accountSignIn!.intervalMs ?? 10_000, abort.signal); } catch { return; }
       }
     })().catch(() => {}) : undefined;
+    stage = 'slot';
     try { if (!abort.signal.aborted) await (input.run ?? runWorker)({ box: config.box, signal: abort.signal, control, executor }); }
     finally { abort.abort(); await settled; await signIns; }
     return 0;
-  } catch {
-    input.error('Worker stopped: invalid configuration or unavailable execution\n');
-    return 1;
+  } catch (error) {
+    // One fixed line and code for the stage; never the error's own words.
+    const at = error instanceof WorkerStop ? error.stage : stage;
+    input.error(workerStopLine(at));
+    return WORKER_STOP[at][0];
   } finally { executor?.close?.(); input.off('SIGINT', stop); input.off('SIGTERM', stop); }
 }

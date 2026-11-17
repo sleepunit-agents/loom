@@ -86,6 +86,12 @@ itself. The rule lives in `Jobs.retry` (`src/runtime/jobs.ts`).
   for two minutes) before the body started, or when the body started and left
   mail it had not settled. A body that failed after settling its mail is not
   run again.
+- That holds for a body that exits 0 too. One that settled none of its own mail
+  did not do the work (a machine's own runner is given no credential and can
+  never settle any), so it is tried again inside the same chain and its row
+  says "Finished without settling its mail". Only a body that exits 0 having
+  settled part of its batch, because it took less than the whole to stay
+  inside its input limit, leaves the rest as fresh mail for a new job.
 - Start retries wait 1, 2 and 4 seconds. Retries after a body has started wait
   5, 30 and 120 seconds, so the chain as a whole lasts longer than a loom
   restart: a body that failed only because loom was restarting gets an attempt
@@ -126,12 +132,39 @@ shows the stage name beside the number (`JobRecord.exitStage`).
 | 25 | worker release | Handing the started body its input. |
 | 26 | worker reap | The body's process could not be watched or reaped to its end. |
 | 27 | worker runner | This worker has no command for the job's harness, or none it can hold to the account loom placed the job on (see "Worker-local account runner bindings"). |
+| 28 | body tools | The body's own tools server, which the harness is given, could not be started. |
 | 31 | loom unplaced | No machine took the job within the queue deadline (24 hours from when it could first be claimed). Nothing ran; the job is not tried again, and its conversation takes fresh mail. |
 
 Any other code is the runner's own (a builder or a custom runner). A job swept
 as lost has no exit code; its log tail says in which state it went silent. When
 a body ends by itself before the worker could hand it its input, the job carries
 the body's own code (for example 16), not the worker's 25.
+
+### When the worker itself stops
+
+The worker program's own exit code is a different thing from a job's. It prints
+one fixed line, `Worker stopped: <reason>`, and exits with the code beside it
+(`src/runtime/worker-stop.ts`). The line is never the underlying error's words,
+which could hold a credential. 0 means it was asked to stop.
+
+| Code | Reason printed |
+| --- | --- |
+| 1 | an unexpected failure |
+| 40 | expected the path of one configuration file |
+| 41 | the configuration file could not be read or is not valid |
+| 42 | the token file could not be read |
+| 43 | the worker could not be set up from its configuration |
+| 44 | the state directory is not a private directory of this user |
+| 45 | another worker is running on the state directory |
+| 46 | a process a previous worker left running could not be ended |
+| 47 | the first health report to loom failed |
+| 48 | the account usage refresh stopped |
+| 49 | a body it started could not be ended, so it takes no more work |
+| 50 | the account command did not complete (`--account-signin`, `--account-usage`) |
+
+A worker that stops cannot report its own end, so loom records the job it held
+only as lost ("its worker stopped reporting"). Which stage stopped the worker
+is in that machine's log, by this line and code.
 
 Mail that cannot become a job at all (the agent was removed, or has no run
 settings or no model) leaves no job row. loom tells the agent's owners why in a

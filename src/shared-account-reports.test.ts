@@ -158,9 +158,9 @@ it('runs default worker failure reporting through the actual root without leakin
   const config = { command: { command: '/fake/reader', args: [], cwd: '/fake', env: {} }, account: f.identity, report: { url: 'https://loom.example', tokenFile: '/token' } };
   expect(await workerProgram({ args: ['--account-usage', '/config'], read: async path => path === '/config' ? JSON.stringify(config) : token,
     on: () => {}, off: () => {}, output, error, usage: () => async () => { throw Error('provider credential diagnostic'); },
-  })).toBe(1);
+  })).toBe(50);
   expect(fetcher).toHaveBeenCalledTimes(2); expect(output).not.toHaveBeenCalled();
-  expect(error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+  expect(error).toHaveBeenCalledExactlyOnceWith('Worker stopped: the account command did not complete\n');
   expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(false);
 });
 it('refuses stale witnesses after a trusted quota edit and across root restart', async () => {

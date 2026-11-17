@@ -3,6 +3,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
 import { workerProgram } from './worker-program.js';
+import { WORKER_STOP, workerStopLine } from './worker-stop.js';
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 const identity = { account: 'subscription', owner: 'member', provider: 'provider' };
@@ -62,7 +63,7 @@ for (const mode of ['--account-signin', '--account-usage'] as const) {
     await vi.advanceTimersByTimeAsync(deadline - 1);
     expect(settled).toBe(false); expect(f.kill).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(await result).toBe(1); expect(spawn).toHaveBeenCalledOnce();
+    expect(await result).toBe(WORKER_STOP.account[0]); expect(spawn).toHaveBeenCalledOnce();
     expect(f.kill).toHaveBeenCalledExactlyOnceWith(-123, 'SIGKILL');
     expect(f.input.output).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0); expect(vi.getTimerCount()).toBe(0);
   });
@@ -72,7 +73,7 @@ for (const mode of ['--account-signin', '--account-usage'] as const) {
     expect(f.kill).toHaveBeenCalledExactlyOnceWith(-123, 'SIGKILL');
     f.child.stdout.emit('data', JSON.stringify(mode === '--account-signin' ? { signedIn: true } : windows));
     f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
-    expect(await result).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
+    expect(await result).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0); expect(vi.getTimerCount()).toBe(0);
   });
 }
@@ -80,8 +81,8 @@ for (const output of ['not-json', JSON.stringify([{ ...windows[0], token: 'crede
   it('rejects invalid private quota output through the actual worker entry', async () => {
     const f = fixture('--account-usage'), result = workerProgram(f.input); await spawned(f);
     f.child.stdout.emit('data', output); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
-    expect(await result).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
-    expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+    expect(await result).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled();
+    expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('account'));
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
   });
 }
@@ -93,7 +94,7 @@ for (const patch of [
   { timeoutMs: 0 }, { timeoutMs: 1.5 }, { timeoutMs: 300_001 },
 ]) it('refuses malformed private command configuration before spawning', async () => {
   const f = fixture(mode); f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, ...patch }));
-  expect(await workerProgram(f.input)).toBe(1); expect(spawn).not.toHaveBeenCalled();
+  expect(await workerProgram(f.input)).toBe(WORKER_STOP.config[0]); expect(spawn).not.toHaveBeenCalled();
   expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.input.output).not.toHaveBeenCalled();
 });
 
@@ -103,8 +104,8 @@ for (const [output, code] of [['{"signedIn":false}', 0], ['not-json', 0], ['{"si
   it('never acknowledges unsuccessful or invalid private sign-in through the executable program', async () => {
     const f = fixture('--account-signin'), result = workerProgram(f.input); await spawned(f);
     f.child.stdout.emit('data', output); f.child.emit('close', code, null); await vi.advanceTimersByTimeAsync(0);
-    expect(await result).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
-    expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+    expect(await result).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled();
+    expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('account'));
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
   });
 }
@@ -112,11 +113,11 @@ for (const [output, code] of [['{"signedIn":false}', 0], ['not-json', 0], ['{"si
 it('rejects valid quota output when the private command exits unsuccessfully', async () => {
   const f = fixture('--account-usage'), result = workerProgram(f.input); await spawned(f);
   f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 7, null);
-  expect(await result).toBe(1); expect(f.input.output).not.toHaveBeenCalled(); expect(spawn).toHaveBeenCalledOnce();
+  expect(await result).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled(); expect(spawn).toHaveBeenCalledOnce();
 });
 it('refuses a box field in a usage configuration', async () => {
   const f = fixture('--account-usage'); f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, box: 'unexpected' }));
-  expect(await workerProgram(f.input)).toBe(1); expect(spawn).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
+  expect(await workerProgram(f.input)).toBe(WORKER_STOP.config[0]); expect(spawn).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
 });
 
 it('reports a successful configured quota read before acknowledging local completion', async () => {
@@ -134,8 +135,8 @@ it('does not retry or print a success after an uncertain quota report', async ()
   configureReporting(f);
   const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
   f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
-  expect(await pending).toBe(1); expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
-  expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+  expect(await pending).toBe(WORKER_STOP.account[0]); expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
+  expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('account'));
 });
 
 it('waits for a configured report and suppresses a late success after SIGTERM', async () => {
@@ -147,14 +148,14 @@ it('waits for a configured report and suppresses a late success after SIGTERM', 
   expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
   const signal = (report.mock.calls[0] as unknown as [ { signal: AbortSignal } ])[0].signal;
   f.handlers.get('SIGTERM')!(); expect(signal.aborted).toBe(true);
-  release({ recorded: true }); expect(await pending).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
+  release({ recorded: true }); expect(await pending).toBe(WORKER_STOP.account[0]); expect(f.input.output).not.toHaveBeenCalled();
 });
 for (const output of ['invalid-json', '[{"name":"week","usage":2}]']) it('reports unavailability rather than successful usage after a failed provider read', async () => {
   const f = fixture('--account-usage'), report = vi.fn();
   configureReporting(f);
   const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
   f.child.stdout.emit('data', output); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
-  expect(await pending).toBe(1); expect(report).not.toHaveBeenCalled(); expect(f.input.read.mock.calls.map(call => call[0])).toEqual(['/config', '/token']);
+  expect(await pending).toBe(WORKER_STOP.account[0]); expect(report).not.toHaveBeenCalled(); expect(f.input.read.mock.calls.map(call => call[0])).toEqual(['/config', '/token']);
   expect(f.input.usageUnavailable).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token: 'worker-credential' }), { ...identity, basis: '00000000-0000-4000-8000-000000000001' });
 });
 it('prints a local success only after the reporting promise acknowledges', async () => {
@@ -172,13 +173,13 @@ it('does not launch a provider after cancellation during the witness request', a
   const usageBasis = vi.fn(() => new Promise<{ basis: string }>(resolve => { release = resolve; }));
   const pending = workerProgram({ ...f.input, usageBasis }); await flush(); expect(usageBasis).toHaveBeenCalledOnce(); expect(spawn).not.toHaveBeenCalled();
   f.handlers.get('SIGTERM')!(); release({ basis: '00000000-0000-4000-8000-000000000001' });
-  expect(await pending).toBe(1); expect(spawn).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled();
+  expect(await pending).toBe(WORKER_STOP.account[0]); expect(spawn).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled();
 });
 it('does not retry an uncertain failure acknowledgement or leak provider diagnostics', async () => {
   const f = fixture('--account-usage'); configureReporting(f); const usageUnavailable = vi.fn(async () => { throw Error('private upstream failure'); });
   const pending = workerProgram({ ...f.input, usageUnavailable }); await spawned(f); f.child.emit('close', 1, null); await vi.advanceTimersByTimeAsync(0);
-  expect(await pending).toBe(1); expect(usageUnavailable).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
-  expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+  expect(await pending).toBe(WORKER_STOP.account[0]); expect(usageUnavailable).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
+  expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('account'));
 });
 
 it('does not request a witness after cancellation during its token file read', async () => {
@@ -187,7 +188,7 @@ it('does not request a witness after cancellation during its token file read', a
     ? JSON.stringify({ ...f.config, report: { url: 'https://loom.example', tokenFile: '/token' } })
     : new Promise<string>(resolve => { release = resolve; }));
   const pending = workerProgram(f.input); await flush(); expect(f.input.read).toHaveBeenCalledTimes(2);
-  f.handlers.get('SIGTERM')!(); release('worker-credential'); expect(await pending).toBe(1);
+  f.handlers.get('SIGTERM')!(); release('worker-credential'); expect(await pending).toBe(WORKER_STOP.account[0]);
   expect(f.input.usageBasis).not.toHaveBeenCalled(); expect(spawn).not.toHaveBeenCalled();
 });
 
@@ -195,6 +196,6 @@ it('does not report either outcome after cancelling an active reporting provider
   const f = fixture('--account-usage'); configureReporting(f); const reportUsage = vi.fn();
   const pending = workerProgram({ ...f.input, reportUsage }); await spawned(f);
   f.handlers.get('SIGTERM')!(); await vi.advanceTimersByTimeAsync(0);
-  expect(await pending).toBe(1); expect(f.input.usageBasis).toHaveBeenCalledOnce();
+  expect(await pending).toBe(WORKER_STOP.account[0]); expect(f.input.usageBasis).toHaveBeenCalledOnce();
   expect(reportUsage).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
 });

@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { workerProgram } from './worker-program.js';
 import type { WorkerCommand } from './worker-process.js';
+import { WORKER_STOP, workerStopLine } from './worker-stop.js';
 const command = { command: '/private-reader', args: [], cwd: '/private', env: {} };
 const account = { account: 'sub', owner: 'owner', provider: 'provider' };
 const windows = [{ name: 'week', usage: 0.2, readAt: '2026-11-15T00:00:00Z', resetsAt: '2026-11-16T00:00:00Z', durationMs: 604800000 }];
@@ -78,7 +79,7 @@ it('joins an in-flight background read after the worker slot stops and suppresse
 for (const patch of [{ readers: [] }, { intervalMs: 0 }, { intervalMs: 3600001 }, { intervalMs: 1.5 }, { readers: [{ command, account }, { command, account }] }, { readers: [{ command: { ...command, command: '\0' }, account }] }]) {
   it('rejects invalid refresh configuration before reading the machine token or starting commands', async () => {
     const f = fixture(); Object.assign(f.config.accountUsage, patch);
-    expect(await workerProgram(f.input)).toBe(1); expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
+    expect(await workerProgram(f.input)).toBe(WORKER_STOP.config[0]); expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
     expect(f.input.usage).not.toHaveBeenCalled(); expect(f.input.control).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled();
   });
 }
@@ -91,9 +92,9 @@ it('aborts and joins the worker slot after unexpected timer rejection without an
   try {
     const running = workerProgram(f.input); await flush(); expect(f.input.run).toHaveBeenCalledOnce();
     failure.reject(new Error('private timer diagnostics'));
-    expect(await running).toBe(1); await new Promise<void>(resolve => setImmediate(resolve));
+    expect(await running).toBe(WORKER_STOP.refresh[0]); await new Promise<void>(resolve => setImmediate(resolve));
     expect(signal.aborted).toBe(true); expect(f.handlers.size).toBe(0); expect(unhandled).not.toHaveBeenCalled();
-    expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+    expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('refresh'));
   } finally { process.off('unhandledRejection', unhandled); }
 });
 for (const stage of ['provider', 'basis', 'report'] as const) it(`runs a new read on a later scan after ${stage} failure`, async () => {
@@ -121,7 +122,7 @@ it('starts no refresh timer or provider/reporting work while an unconfigured wor
 });
 it('refuses more than32 distinct readers before reading the machine credential', async () => {
   const f = fixture(); f.config.accountUsage.readers = Array.from({ length: 33 }, (_, index) => ({ command, account: { ...account, account: 'subscription-'+index } }));
-  expect(await workerProgram(f.input)).toBe(1); expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
+  expect(await workerProgram(f.input)).toBe(WORKER_STOP.config[0]); expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
   expect(f.input.usage).not.toHaveBeenCalled(); expect(f.input.control).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled();
 });
 it('aborts and joins a pending background reader when the worker slot fails', async () => {
@@ -131,9 +132,9 @@ it('aborts and joins a pending background reader when the worker slot fails', as
   await flush(); tick.resolve(); await flush(); expect(f.provider).toHaveBeenCalledTimes(2);
   f.stopRun.reject(new Error('private execution diagnostic')); await flush();
   expect(f.input.usage.mock.calls[1][1].signal.aborted).toBe(true); expect(returned).toBe(false); expect(f.handlers.size).toBe(2);
-  pending.resolve(windows); expect(await running).toBe(1); expect(f.handlers.size).toBe(0);
+  pending.resolve(windows); expect(await running).toBe(WORKER_STOP.slot[0]); expect(f.handlers.size).toBe(0);
   expect(f.input.reportUsage).toHaveBeenCalledOnce(); expect(f.input.usageUnavailable).not.toHaveBeenCalled();
-  expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+  expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('slot'));
 });
 it('uses the documented one-minute interval when omitted from normal-worker configuration', async () => {
   const f = fixture(), { intervalMs: _unused, ...accountUsage } = f.config.accountUsage;
@@ -176,14 +177,14 @@ for (const synchronous of [false, true]) for (const outcome of ['success', 'fail
     const running = workerProgram(f.input); await flush(); await vi.advanceTimersByTimeAsync(15000);
     expect(f.input.usage.mock.calls[0][1].signal.aborted).toBe(true); expect(f.input.run).not.toHaveBeenCalled();
     if (outcome === 'failure') reader.reject(Error('private late quota failure')); else reader.resolve(windows);
-    expect(await running).toBe(1); await vi.advanceTimersByTimeAsync(0); expect(unhandled).not.toHaveBeenCalled();
+    expect(await running).toBe(WORKER_STOP.health[0]); await vi.advanceTimersByTimeAsync(0); expect(unhandled).not.toHaveBeenCalled();
     expect(f.input.reportUsage).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled();
-    expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n'); expect(vi.getTimerCount()).toBe(0);
+    expect(f.input.error).toHaveBeenCalledExactlyOnceWith(workerStopLine('health')); expect(vi.getTimerCount()).toBe(0);
   } finally { process.off('unhandledRejection', unhandled); vi.useRealTimers(); }
 });
 it('refuses an initial health failure before invoking private readers or claiming work', async () => {
   const f = fixture(); f.input.health.mockRejectedValueOnce(Error('private credential'));
-  expect(await workerProgram(f.input)).toBe(1); expect(f.provider).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
+  expect(await workerProgram(f.input)).toBe(WORKER_STOP.health[0]); expect(f.provider).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
 });
 
 it('cancels and joins the initial health request without opening a reader or claiming', async () => {
