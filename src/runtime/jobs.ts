@@ -16,6 +16,11 @@ const active = ['queued', 'starting', 'running', 'waiting'] as const;
 export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, active));
 /** One piece of work gets its first attempt and at most this many more, whatever made each attempt fail. */
 export const JOB_RETRIES = 3;
+/** How long each retry waits, by how many attempts came before it. A start that failed (no body ran) is
+ * usually the worker's own trouble and is tried again quickly. A body that started and then failed or went
+ * silent most often lost loom itself, to a restart or an upgrade, so those retries are spread over a few
+ * minutes: a schedule of seconds would spend every attempt before loom is back. */
+const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120_000];
 export class Jobs {
   constructor(readonly db: DataDatabase, readonly now: () => string) {}
 
@@ -184,7 +189,7 @@ export class Jobs {
     }
     const { id: _id, ...snapshot } = before;
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
-      retryOf: before.id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
+      retryOf: before.id, retryAt: new Date(Date.parse(at) + (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth]).toISOString(), queuedAt: at,
       claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();

@@ -95,9 +95,12 @@ it('tries a body that failed after starting again only for mail it left unconfir
     const result = f.runtime.finish(job.id, 'worker', 2, 'ignored-prefix:' + 'x'.repeat(20_000) + ':TAIL');
     expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_379) + ':TAIL' });
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
-    expect(result.retry).toMatchObject({ retryOf: job.id, state: 'queued', retryAt: new Date(Date.parse(f.now()) + 1000 * 2 ** n).toISOString() });
+    // After a body has started, the three retries wait 5 s, 30 s and 120 s: long enough in all to outlast a loom restart.
+    const wait = [5_000, 30_000, 120_000][n];
+    expect(result.retry).toMatchObject({ retryOf: job.id, state: 'queued', retryAt: new Date(Date.parse(f.now()) + wait).toISOString() });
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id, takenAt: null });
-    f.tick(1000 * 2 ** n); job = result.retry!;
+    f.tick(wait - 1); expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
+    f.tick(1); job = result.retry!;
   }
   // Out of attempts: the mail stays with the last one and no settle period admits it again.
   expect(f.db.select().from(jobs).all()).toHaveLength(4);
