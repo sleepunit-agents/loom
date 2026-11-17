@@ -13,7 +13,8 @@ export interface BridgeCheckpoint { session: string; sequence: number; resumeUrl
 export const RAW_EVENT_LIFETIME = 3_600_000;
 /** How long a received event that nothing has yet been able to read is kept. The platform was told it
  * arrived, so this frame is the only copy: it waits out a stopped program, a paused connection and channel
- * details that cannot be fetched, for as long as a held message is retried (receiver.ts, HELD_LIFETIME). */
+ * details that cannot be fetched, for as long as a held message is retried (receiver.ts, HELD_LIFETIME).
+ * What that costs in kept raw words is in docs/accepted-tradeoffs.md ("An unread event is kept for a day"). */
 export const UNREAD_EVENT_LIFETIME = 86_400_000;
 /** What a drain callback says became of one event: nothing or true, it is dealt with and its frame is
  * removed; false, it could not be read yet and waits; 'recorded', its message now has a record of its own

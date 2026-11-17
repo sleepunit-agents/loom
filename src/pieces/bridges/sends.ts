@@ -19,7 +19,8 @@ export interface SendTransport {
 /** A person's decision on one reply awaiting review, as one statement of the
  * rule. A held reply may be released to be sent or dismissed. An uncertain
  * reply may only be dismissed: the platform may already have it, and sending
- * again would risk posting it twice. The caller commits and publishes. */
+ * again would risk posting it twice (docs/accepted-tradeoffs.md, "A reply in
+ * doubt is never sent again"). The caller commits and publishes. */
 export function reviewReply(db: DataDatabase, id: string, decision: 'release' | 'dismiss'): void {
   const send = db.select().from(bridgeSends).where(eq(bridgeSends.id, id)).get();
   if (!send) throw new Error('Unknown send');
@@ -72,6 +73,8 @@ export class BridgeSends {
       }
       const incoming = tx.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, input.incoming)).get();
       if (!incoming || incoming.state !== 'delivered') throw new Error('No delivered message for reply');
+      // The reply carries its own address, copied from the message it answers (place.ts): a message's
+      // channel and thread never change, and the queue then needs no join to send.
       return tx.insert(bridgeSends).values({ id: input.id, incoming: incoming.id,
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread,
         text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),

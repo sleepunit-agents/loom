@@ -2,7 +2,11 @@ import {handoffPeersAssigned} from './handoff-access.js';
 import {handoffDeadline} from './handoff-words.js';
 import {hasPrivateInboxPayload,privateInboxDeadline,privateInboxAnswer} from './private-inbox-words.js';
 /** Body-only ephemeral mail. No operation receipt, job brief or shared cache ever
- * carries words. Confirming acceptance is a separate acknowledgement write. */
+ * carries words. Confirming acceptance is a separate acknowledgement write.
+ * This is a route of its own and not a registered operation, on purpose: an
+ * operation keeps its result as a retry receipt, and this result is the mail's
+ * decrypted words. The checks it makes in an operation's place are listed in
+ * docs/accepted-tradeoffs.md ("Taking mail is a route, not an operation"). */
 import { sameRequestOrigin } from '../data/origin.js';
 import { z } from 'zod';
 import { and,eq,inArray } from 'drizzle-orm';

@@ -46,7 +46,8 @@ export class BridgeSettings {
      // a new connection rather than reinterpretation of old private receipts.
      if(existing&&(['platform','workspace','botUser','agent'] as const).some(key=>existing[key]!==input[key]))throw Error('Connection identity is fixed');
      // A Discord bot's session hears every guild the bot is in and every direct message to it. Enabled
-     // connections for one bot in two guilds would each receive, and deliver, the same direct messages.
+     // connections for one bot in two guilds would each receive, and deliver, the same direct messages
+     // (docs/accepted-tradeoffs.md, "A Discord bot is connected in one guild at a time").
      if(input.platform==='discord'&&input.enabled&&this.db.select({id:bridgeConnections.id}).from(bridgeConnections).where(and(eq(bridgeConnections.platform,'discord'),eq(bridgeConnections.botUser,input.botUser),
       eq(bridgeConnections.enabled,true),ne(bridgeConnections.workspace,input.workspace),ne(bridgeConnections.id,input.id))).get())throw Error('This bot already has an enabled connection in another guild');
      const {action:_action,only,ignore,...config}=input;

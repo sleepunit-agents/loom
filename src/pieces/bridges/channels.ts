@@ -51,7 +51,8 @@ export class BridgeChannels implements BridgeChannelCache {
               if (!raw.parent_id || raw.parent_id === channel) throw Error('Discord thread needs a parent');
               value = { id: channel, guild: life.workspace, kind: 'thread', parent: raw.parent_id };
             } else {
-              // Remembered, so its messages are set aside at once and nobody asks Discord about it again.
+              // Remembered, so its messages are set aside at once and nobody asks Discord about it again
+              // (docs/accepted-tradeoffs.md, "Some Discord channels carry no conversation").
               life.channels.set(channel, { id: channel, guild: life.workspace, kind: 'other' });
               return false;
             }
