@@ -94,6 +94,12 @@ it('keeps recent action outcomes and agent mailbox reads addressed to the authen
   ]).run();
   expect(f.service.results(alice).map(r => r.id)).toEqual(['r1']);
   expect(f.service.results({ kind: 'agent', id: 'art' })).toEqual([]);
+  // One rule (policy.ts, ownNotice) for this read and for marking a notice read: an agent working for alice is not alice,
+  // and a member who has been removed reads nothing.
+  expect(f.service.results({ kind: 'agent', id: 'art', workingFor: 'alice' })).toEqual([]);
+  f.db.update(members).set({ removedAt: '2026-11-14T18:02:00.000Z' }).where(eq(members.id, 'bob')).run();
+  expect(f.service.results({ kind: 'member', id: 'bob' })).toEqual([]);
+  f.db.update(members).set({ removedAt: null }).where(eq(members.id, 'bob')).run();
   expect(() => f.service.results(alice, 51)).toThrow('Invalid action result limit');
   const encoded=await sealHandoff(f.key,'A brief','2026-11-14T18:00:00.000Z',14);
   const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'handoff', fromKind: 'agent', words: encoded });

@@ -13,6 +13,7 @@ import { createDataSchema } from '../core/data/database.js';
 import { agents, boxes, members, memberAgents, modelAccounts, modelAccountBoxes, modelAccountWindows, tokens } from '../core/data/schema.js';
 import { nextData } from '../next-data.js';
 import { modelAccountQueries } from './account-query.js';
+import { readModelAccounts } from '../core/data/model-account-read.js';
 import type { Viewer } from '../policy.js';
 import { GraphQLNonNull, GraphQLList, GraphQLUnionType } from 'graphql/index.js';
 const clean: (() => void | Promise<void>)[] = [];
@@ -229,7 +230,8 @@ it('does not establish ownership for a retained Viewer whose member no longer ex
   f.db.delete(members).where(eq(members.id, 'alice')).run();
   const projection = modelAccountQueries(f.db, f.now);
   const rows = await projection.fields.modelAccounts.resolve!({}, {}, { viewer }, {} as never) as unknown[];
-  expect(rows[0]).toEqual({ __typename: 'RuntimeAccountSummary', ...coarse[0] });
+  // Not the detail, and not the summary either: that is for someone in the household now (rules.accountSummary).
+  expect(rows).toEqual([]);
 });
 it('registers a private witness when only account locations are selected', async () => {
   let begin!: () => void, release!: () => void;
@@ -269,4 +271,14 @@ it.each(['http', 'socket', 'observe'])('keeps the shipped model-account page SQL
     counts.push(f.statements.filter(statement => /^select\b/i.test(statement)).length);
   }
   expect(counts).toEqual([counts[0], counts[0]]);
+});
+
+it('shows an account\'s name and level to whoever is in the household now, by a rule, and to nobody else', () => {
+  const f = fixture(), labels = (viewer: Viewer) => readModelAccounts(f.db, viewer).rows.map(row => row.label);
+  const all = ['Main subscription', 'Other subscription'];
+  for (const viewer of [{ kind: 'member', id: 'guest' }, { kind: 'agent', id: 'agent' }, { kind: 'agent', id: 'agent', workingFor: 'guest' }] as const) expect(labels(viewer)).toEqual(all);
+  for (const viewer of [{ kind: 'runner', id: 'private-box-id' }, { kind: 'service', id: 'tasks' }, { kind: 'member', id: 'nobody' }, { kind: 'agent', id: 'nobody' }] as const) expect(labels(viewer)).toEqual([]);
+  // A removed member, and a body whose member has been removed, are nobody (rules.accountSummary).
+  f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'guest')).run();
+  for (const viewer of [{ kind: 'member', id: 'guest' }, { kind: 'agent', id: 'agent', workingFor: 'guest' }] as const) expect(labels(viewer)).toEqual([]);
 });

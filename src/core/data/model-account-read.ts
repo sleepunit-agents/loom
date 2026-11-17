@@ -2,7 +2,7 @@
  * are separate generated batches; location joins never run once per account. */
 import { and, asc, inArray, sql, type AnyColumn } from 'drizzle-orm';
 import { rules, type Viewer } from '../../policy.js';
-import { sqlRule } from '../../policy-sql.js';
+import { sqlHolds, sqlRule } from '../../policy-sql.js';
 import type { DataDatabase } from './database.js';
 
 /** An account's private detail is its member's and household owners'. Rendered after Drizzle's
@@ -12,7 +12,8 @@ function privateAccount(viewer: Viewer, fields: Record<string, AnyColumn>) {
   return sql`${{ getSQL: () => allowed }}`;
 }
 export function readModelAccounts(db: DataDatabase, viewer: Viewer) {
-  const rows = db.query.modelAccounts.findMany({ columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),
+  // Two rules, both policy.ts's: the summary (name and coarse level) and the private detail.
+  const rows = !sqlHolds(db, rules.accountSummary, viewer) ? [] : db.query.modelAccounts.findMany({ columns: { id: true, label: true, hasRoom: true }, orderBy: f => asc(f.label),
     with: { modelAccountWindowsByAccount: { columns: { window: true, usage: true, usageReadAt: true, resetsAt: true, durationMs: true, reserve: true } } },
   }).sync();
   const privateRows = db.query.modelAccounts.findMany({ where: f => privateAccount(viewer, f),

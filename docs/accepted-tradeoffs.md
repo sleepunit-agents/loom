@@ -114,6 +114,34 @@ Entries are grouped by the part of the program they belong to.
   `secret_rule_agents`, or a table beside it). Then a rule that names the member serves that member's work
   and the card is asked once.
 
+### Work a member schedules for an agent is that member's private work
+- **What.** A trigger that puts an agent to work is the whole agent's when the agent set it for itself (in
+  a terminal session, a job for no member, or work for a household owner) or a household owner set it. One
+  set by a member who is not a household owner, or by a body doing that member's private work, is recorded
+  as that member's (`ownerKind` member) whatever owner the request named, and every firing is private work
+  for them: the conversation and the job carry the member, so the body reaches no further than they do
+  and is served no standing answer about a secret. Four things follow, and are accepted:
+  - Such a member cannot reword the agent's own triggers, or schedule the sweep (or any operation) for it:
+    both would run with the agent's whole reach on their word.
+  - The firing's job keeps no brief and no log tail, like any private conversation's
+    (`src/runtime/job-text.ts`); the body takes its words at the mail door. The member sees what the
+    agent then does for them (a thread, a task), not a transcript of the run.
+  - The member is read from the trigger at each firing and judged on that moment's facts. A member who
+    left, lost the agent or left the trigger's project makes the firing fail (logged, and tried again at
+    the next time); one who became a household owner fires the same trigger as the whole agent.
+  - The trigger itself, with its words, is still read by the rule for triggers: the agent's other owners
+    and the people in its project see it, as they see any trigger for that agent.
+- **Where.** "Scheduled work" in `src/policy.ts` (`triggerSetFor`, `triggerAsSet`, `triggerWorksFor`,
+  `maySetTrigger`, `mayStartTrigger`); asked by `src/shared-tempo-access.ts` and `src/shared-tempo.ts`;
+  the firing is `inbox` in `src/core/tempo/tempo.ts`.
+- **Why accepted.** A body reaches no further than the member it works for, and a schedule is one more
+  way of giving an agent words. Recording the member on the trigger's owner needs no new column.
+- **Checked.** `src/shared-tempo.test.ts`: "fires a trigger a member who is not a household owner set for
+  an agent…" and "keeps a trigger an agent set for itself, and one an owner set, the whole agent's…".
+- **What would change the answer.** A column on a trigger for the member its work is for, apart from who
+  set it. Then an owner could set a trigger that runs as a member's, and a member's trigger could be
+  hidden from the agent's other owners.
+
 ### A household owner may end a job they cannot read
 - **What.** `runtime.jobStop` is allowed to any household owner, and to a member who has the job's agent on
   their own list, by job id. The jobs read rule hides a job of another member's private thread from both.
@@ -458,11 +486,28 @@ Entries are grouped by the part of the program they belong to.
 
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
-  can resend it, and that holds for a long reply whose earlier parts were confirmed.
-- Where: `src/pieces/bridges/sends.ts` (`reviewReply`, and the state a stopped attempt leaves).
+  can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a
+  household owner who reads the reply; for a reply in a direct message, which the owner role does not
+  show, it is whoever the message is shown to (its own member, or the agent's owners for a message from
+  anybody else). The same people release a held reply.
+- Where: `src/pieces/bridges/sends.ts` (`reviewReply`, and the state a stopped attempt leaves); who may
+  review is `rules.reviewsReply` in `src/policy.ts`, asked by `src/shared-bridge-commands.ts`.
 - Why: the platform may have it, and neither Discord nor Slack lets a post be made idempotent. A missing
   part is visible and a person can say it again; a doubled one cannot be taken back by loom.
 - Would change it: a platform nonce that makes a repeat safe (Discord's `enforce_nonce`), used on every post.
+
+### An edited message is not read again
+- What: a second event for a message already on record, with other words, is taken for an edit. Nothing
+  new is recorded: the stored words, the turn and the agent's mail stay as first received, and the event
+  is counted as read. So a message edited to mention the bot after it was dropped stays dropped, and an
+  agent never sees a correction to a message it was given.
+- Where: `receive` in `src/pieces/bridges/incoming.ts`. The same id from another user, channel or time is
+  not an edit and is refused; `drain` in `receiver.ts` keeps that frame, reports it once and goes on.
+- Why: loom takes a message once. Discord edits are not listened for at all, and Slack tells loom of an
+  edit only as an `app_mention` when the edit adds a mention, so acting on edits would act on a small and
+  arbitrary part of them. A person who wants the agent to have the new words can say them again.
+- Would change it: wanting agents to follow edits. Then both platforms' edit events are taken, and an edit
+  becomes a new turn that names the message it changes.
 
 ### The Bridges screen shows a partly posted reply whole
 - What: a long reply is one row with all its words whatever happens to it. When it stops part way and is
