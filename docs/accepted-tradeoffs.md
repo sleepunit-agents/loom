@@ -538,7 +538,8 @@ Entries are grouped by the part of the program they belong to.
 ### The command-line clients and `loom mcp` take the program's address by different rules
 - **What.** `loom-taskstore`, `loom-token` and their siblings accept plain `http` to any host. `loom mcp`
   accepts plain `http` only to this machine. All three read the token file the same way.
-- **Where.** `src/cli/connection.ts` (`doorUrl`); `bodyOrigin` in `src/runtime/body-bootstrap.ts`.
+- **Where.** `src/cli/connection.ts` (`doorUrl`); `privateOrigin` in `src/core/private-origin.ts`, which the
+  worker, the body's clients and the secret client also use.
 - **Why accepted.** A household reaches its program over its own network with the command-line clients, and
   that has worked over plain `http`. An MCP session is started by a harness for an agent and carries that
   agent's token on every call.

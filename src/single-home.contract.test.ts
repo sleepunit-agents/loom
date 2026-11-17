@@ -7,6 +7,7 @@ import { agentInput, settingsInput } from './apps/household.js';
 import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
 import { keepUntilFor, validKeepDays, wordsDeadline, wordsKept } from './core/conversations/retention.js';
 import { createDataSchema } from './core/data/database.js';
+import { privateOrigin } from './core/private-origin.js';
 import { agents, household } from './core/data/schema.js';
 import { DEFAULT_STALE_DAYS, fieldState, freshUntil } from './backends/cards.js';
 import { MAX_SLUG } from './backends/people.js';
@@ -132,4 +133,16 @@ it('decides whether a card field is stale in one place', () => {
   // The door's People and Projects reads use it; none carries the default or the comparison itself.
   const copies = sources('src').filter(file => file !== 'src/backends/cards.ts' && /stale_after_days\s*\?\?/.test(text(file)));
   expect(copies).toEqual([]);
+});
+
+it('checks an address a credential is sent to in one place', () => {
+  for (const good of ['https://loom.example', 'https://loom.example:8443/', 'http://localhost:7777', 'http://127.0.0.1:7777', 'http://[::1]:7777'])
+    expect(privateOrigin(good).origin, good).toBe(new URL(good).origin);
+  for (const bad of ['http://loom.example', 'https://user@loom.example', 'https://loom.example/path', 'https://loom.example?x=1', 'https://loom.example#x', 'ftp://localhost', ' https://loom.example', 'https:loom.example', 'http://localhost.example'])
+    expect(() => privateOrigin(bad), bad).toThrow('Invalid private origin');
+  // The worker, the body's clients, the secret client and `loom mcp` call it; none lists this machine's names itself.
+  const copies = sources('src').filter(file => file !== 'src/core/private-origin.ts' && /\[\s*'(localhost|127\.0\.0\.1)'\s*,/.test(text(file)));
+  expect(copies).toEqual([]);
+  for (const file of ['src/runtime/worker-http.ts', 'src/runtime/conversation-client.ts', 'src/runtime/body-command-client.ts', 'src/runtime/body-bootstrap.ts', 'src/pieces/secrets/private-client.ts', 'src/shared-mcp-stdio.ts'])
+    expect(text(file), file).toContain('privateOrigin(');
 });
