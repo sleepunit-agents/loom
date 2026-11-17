@@ -3,7 +3,10 @@ import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeRawEvents, bridgeResume } from '../../core/data/schema.js';
 
-export interface BridgeCheckpoint { session: string; sequence: number; resumeUrl: string }
+/** A Discord resume cursor. `identity` names the credential the session was made under (connection,
+ * platform, workspace, agent, bot, token-secret name and that secret's last change): a cursor is only
+ * ever read back, advanced or guarded against by the identity that stored it. */
+export interface BridgeCheckpoint { session: string; sequence: number; resumeUrl: string; identity: string }
 
 /** How long a received event's raw words are kept while it cannot be processed. */
 export const RAW_EVENT_LIFETIME = 3_600_000;
@@ -29,10 +32,11 @@ export class BridgeEvents {
       const source = tx.select().from(bridgeConnections).where(eq(bridgeConnections.id, connection)).get();
       if (!source) throw Error('Unknown bridge connection');
       if (checkpoint) {
-        if (source.platform !== 'discord' || !checkpoint.session || !checkpoint.resumeUrl
+        if (source.platform !== 'discord' || !checkpoint.session || !checkpoint.resumeUrl || !checkpoint.identity
           || !Number.isSafeInteger(checkpoint.sequence) || checkpoint.sequence < 0) throw Error('Invalid Discord checkpoint');
         const old = tx.select().from(bridgeResume).where(eq(bridgeResume.connection, connection)).get();
-        if (old && (old.session !== checkpoint.session || old.sequence > checkpoint.sequence)) {
+        // Another identity's cursor is not this one's to continue; it is simply replaced.
+        if (old && old.identity === checkpoint.identity && (old.session !== checkpoint.session || old.sequence > checkpoint.sequence)) {
           throw Error('Reset Discord checkpoint before changing session or rewinding');
         }
         tx.insert(bridgeResume).values({ connection, ...checkpoint }).onConflictDoUpdate({
@@ -47,10 +51,11 @@ export class BridgeEvents {
     this.sweep();
   }
 
-  checkpoint(connection: string): BridgeCheckpoint | undefined {
+  /** The stored cursor, if this identity stored it. One left by another credential is as good as none. */
+  checkpoint(connection: string, identity: string): BridgeCheckpoint | undefined {
     this.assertAvailable();
-    const row = this.db.select().from(bridgeResume).where(eq(bridgeResume.connection, connection)).get();
-    return row && { session: row.session, sequence: row.sequence, resumeUrl: row.resumeUrl };
+    const row = this.db.select().from(bridgeResume).where(and(eq(bridgeResume.connection, connection), eq(bridgeResume.identity, identity))).get();
+    return row && { session: row.session, sequence: row.sequence, resumeUrl: row.resumeUrl, identity: row.identity };
   }
 
   reset(connection: string): void {

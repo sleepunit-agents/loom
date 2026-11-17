@@ -117,7 +117,7 @@ database it does not recognise without writing to it.
 | Bridges | `bridge_connections`, `bridge_channel_filters`, `bridge_channels`, `bridge_people`, `bridge_incoming`, `bridge_sends`, `bridge_files`, `bridge_raw_events`, `bridge_resume` |
 | Secrets | `secrets`, `secret_grants`, `secret_requests`, `secret_rules`, `secret_rule_agents`, `secret_uses`, `secret_changes`, `secret_write_journal` |
 | Measuring | `timing_days`, `measuring_settings` |
-| Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts), `outside_effects` |
+| Bookkeeping | `migrations` (the schema number), `operation_results` (retry receipts) |
 
 ### `agents/<agent>/memories.db`: one per agent
 

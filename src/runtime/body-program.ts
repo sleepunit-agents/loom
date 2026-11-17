@@ -1,5 +1,10 @@
 /** Fixed private child: bootstrap enters on stdin only, after the parent's
- * running ACK. Native execution and mail acceptance happen in this program. */
+ * running ACK. Native execution and mail acceptance happen in this program.
+ *
+ * Mail order. The body takes its mail and reports it received (the sender sees it delivered), but settles it
+ * only after the answer is recorded. A body that dies before answering therefore leaves the mail with its job,
+ * and loom tries the work again on the bounded retry chain (Jobs.retry). A body that dies after answering
+ * cannot cause a second answer: loom settles the mail in the same write as a thread reply or a bridge reply. */
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { workerAssignment } from './worker-http.js';
@@ -105,7 +110,8 @@ export async function bodyProgram(input: {
     });
     if (batch.stopRequested) { await retire(); await client.status(left); return BODY_EXIT.stopped; }
     if(signal.aborted)throw new Error();
-    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
+    // Mail with no words left to answer (they expired, or the item is muted) needs no answer: settle it now.
+    if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.settle();await client.status({state:'idle',work:''});return 0;}
     exit=BODY_EXIT.identity;
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
@@ -141,6 +147,9 @@ export async function bodyProgram(input: {
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
     }
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
+    // The answer is recorded; only now is the mail done. loom has already settled what a thread or bridge reply
+    // answers, so this covers the rest: background work, and earlier bridge messages the one reply also answers.
+    await client.settle();
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});

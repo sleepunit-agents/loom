@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
-import { members, memberAgents, agents, messages, inbox, operationResults, threads, boxes, jobs, conversations, tokens, sessions } from '../core/data/schema.js';
+import { members, memberAgents, agents, messages, inbox, operationResults, threads, boxes, jobs, tokens, sessions } from '../core/data/schema.js';
 import {sharedUiProgram} from '../../test/fixtures/shared-ui-program.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
@@ -81,7 +81,6 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
       db.insert(sessions).values({id:hash(ownerCookie),token:hash(ownerToken),device:'Browser',via:'token',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}).run();
       db.insert(boxes).values({id:'browser-box',name:'Fixture box',owner:'settings-owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
       db.insert(jobs).values({id:'browser-body',box:'browser-box',agent:'art',conversation:settingsThread.conversation,member:'settings-owner',title:'Settings body',state:'running',brief:'',model:'fixture',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
-      db.update(conversations).set({job:'browser-body'}).where(eq(conversations.id,settingsThread.conversation)).run();
       db.insert(tokens).values({fingerprint:hash(bodyToken),label:'Fixture body',kind:'agent',agent:'art',job:'browser-body',createdAt:now()}).run();
     });
     await context.addCookies([{name:'loom_ui',value:ownerCookie,url}]);

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { generateX25519Identity } from 'age-encryption';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, household, inbox, inboxRefs, jobs, members, messages } from '../data/schema.js';
+import { agents, household, inbox, inboxRefs, jobs, members, messages } from '../data/schema.js';
 import { wordsKey } from '../../pieces/comms/crypto.js';
 import { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
@@ -19,7 +19,6 @@ async function fixture() {
   const key = wordsKey(await generateX25519Identity()), comms = new CommsMessages(db, key, now);
   const thread = comms.threads.open({ id: 'th:one', member: 'jonathan', agent: 'art', title: 'Pump' });
   db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: thread.conversation, title: 'Pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: now() }).run();
-  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, thread.conversation)).run();
   const plain = (words: string) => comms.threads.conversations.send({ conversation: thread.conversation, toKind: 'agent', to: 'art', source: 'trigger', fromKind: 'schedule', words });
   const send = (words: string) => comms.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words });
   return { client, db, key, comms, thread, plain, send, mail: new ConversationMail(comms), at: (value: string) => { time = value; } };
@@ -91,7 +90,7 @@ it.each(['ended', 'replaced', 'mute', 'recipient', 'content', 'delete'] as const
   const mail = new ConversationMail(new CommsMessages(db, { ...key, open: async blob => { await gate; return key.open(blob); } }, comms.now));
   const pending = mail.prepareTake(thread.conversation, 'job-1');
   if (change === 'ended') db.update(jobs).set({ state: 'lost' }).where(eq(jobs.id, 'job-1')).run();
-  if (change === 'replaced') db.update(conversations).set({ job: null }).where(eq(conversations.id, thread.conversation)).run();
+  if (change === 'replaced') db.update(jobs).set({ conversation: null }).where(eq(jobs.id, 'job-1')).run();
   if (change === 'mute') db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, message.inboxItem!)).run();
   if (change === 'recipient') db.update(inbox).set({ toKind: 'person', to: 'jonathan' }).where(eq(inbox.id, message.inboxItem!)).run();
   if (change === 'content') db.update(messages).set({ words: await key.seal('Replacement') }).where(eq(messages.thread, thread.id)).run();

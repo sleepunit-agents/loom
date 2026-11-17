@@ -7,13 +7,14 @@ import type {DataDatabase} from './core/data/database.js';
 import {jobs,tokens} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import type {Viewer} from './policy.js';
+import {liveWorker} from './shared-worker.js';
 const input=z.object({job:z.string().min(1).max(200),fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
 type EnrollmentProof=Readonly<{box:string;fingerprint:string}>;
 export function registerSharedBodyEnrollment(operations:Operations,db:DataDatabase,options:{
  now():string;runnerEnrollment(viewer:Viewer):EnrollmentProof|undefined;
 }){
  const target=(viewer:Viewer,value:z.infer<typeof input>)=>{
-  const proof=options.runnerEnrollment(viewer);if(viewer.kind!=='runner'||!proof||proof.box!==viewer.id)return;
+  const proof=options.runnerEnrollment(viewer);if(!proof||!liveWorker(db,viewer,proof))return;
   const job=db.select().from(jobs).where(eq(jobs.id,value.job)).get();
   if(!job||job.state!=='starting'||job.box!==proof.box)return;
   const old=db.select().from(tokens).where(eq(tokens.fingerprint,value.fingerprint)).get();

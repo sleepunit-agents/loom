@@ -7,15 +7,24 @@ import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, agents, conversations, inbox, jobNeeds, jobs, messages, threads } from '../core/data/schema.js';
 import { Threads } from '../core/conversations/threads.js';
+import { Conversations } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT } from './job-exit.js';
 
 export type Job = typeof jobs.$inferSelect;
 const active = ['queued', 'starting', 'running', 'waiting'] as const;
+/** Join condition: this job is the one working in the conversation row, that is, its one job that has not ended. */
+export const workingIn = (job: string) => and(eq(jobs.conversation, conversations.id), eq(jobs.id, job), inArray(jobs.state, active));
 /** One piece of work gets its first attempt and at most this many more, whatever made each attempt fail. */
 export const JOB_RETRIES = 3;
+/** How long each retry waits, by how many attempts came before it. A start that failed (no body ran) is
+ * usually the worker's own trouble and is tried again quickly. A body that started and then failed or went
+ * silent most often lost loom itself, to a restart or an upgrade, so those retries are spread over a few
+ * minutes: a schedule of seconds would spend every attempt before loom is back. */
+const START_RETRY_MS = [1_000, 2_000, 4_000], RUN_RETRY_MS = [5_000, 30_000, 120_000];
 export class Jobs {
-  constructor(readonly db: DataDatabase, readonly now: () => string) {}
+  private readonly mail: Conversations;
+  constructor(readonly db: DataDatabase, readonly now: () => string) { this.mail = new Conversations(db, now); }
 
   get(id: string): Job {
     const row = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
@@ -32,7 +41,7 @@ export class Jobs {
 
   private keepText(job: Pick<Job, 'conversation'>): boolean {
     if (!job.conversation) return true;
-    const conversation = this.db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
+    const conversation = this.db.select({ venue: conversations.venue, member: conversations.member, direct: conversations.direct }).from(conversations)
       .where(eq(conversations.id, job.conversation)).get();
     return keepJobText(conversation);
   }
@@ -76,7 +85,6 @@ export class Jobs {
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
       this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
       this.delivery(job.id,'held');
-      this.db.update(conversations).set({ job: job.id }).where(eq(conversations.id, conversationId)).run();
       return job;
     }, { behavior: 'immediate' });
   }
@@ -116,14 +124,15 @@ export class Jobs {
     });
   }
 
-  /** A Comms Stop asked for on this job's thread and not yet taken. Only the job its conversation
-   * currently points at, for the agent it still belongs to, can be meant; a thread nobody opened has no
+  /** A Comms Stop asked for on this job's thread and not yet taken. Only the job now working in the
+   * conversation (its one job that has not ended), for the agent it still belongs to, can be meant; a thread nobody opened has no
    * one to record as having ended it. */
   private stopAsked(job: Pick<Job, 'id' | 'agent' | 'conversation'>): { thread: string; member: string } | undefined {
     if (!job.conversation) return undefined;
     const row = this.db.select({ thread: threads.id, stop: threads.stopRequested, member: conversations.member }).from(threads)
       .innerJoin(conversations, eq(conversations.id, threads.conversation))
-      .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id), eq(conversations.agent, job.agent), eq(conversations.venue, 'loom'))).get();
+      .innerJoin(jobs, workingIn(job.id))
+      .where(and(eq(conversations.id, job.conversation), eq(conversations.agent, job.agent), eq(conversations.venue, 'loom'))).get();
     return row?.stop && row.member ? { thread: row.thread, member: row.member } : undefined;
   }
 
@@ -182,13 +191,12 @@ export class Jobs {
     }
     const { id: _id, ...snapshot } = before;
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
-      retryOf: before.id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
+      retryOf: before.id, retryAt: new Date(Date.parse(at) + (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth]).toISOString(), queuedAt: at,
       claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
     this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(unconfirmed).run();
     this.delivery(retry.id,'held');
-    if (before.conversation) this.db.update(conversations).set({ job: retry.id }).where(eq(conversations.id, before.conversation)).run();
     return retry;
   }
 
@@ -221,19 +229,15 @@ export class Jobs {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
     this.delivery(job.id,state==='failed'||state==='lost'?'failed':'held');
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
-    this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() })
-      .where(and(eq(inbox.job, job.id), eq(inbox.state, 'taken'))).run();
+    this.mail.returnTaken(job.id);
     // What a finished body left unconfirmed is fresh mail for the next admission. After a stop, a failure
     // or a loss it stays with this job: retry() hands it to a successor, or it waits for fresh mail.
     if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
-    if (job.conversation) {
-      const detached=this.db.update(conversations).set({job:null})
-        .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id))).returning({id:conversations.id}).get();
-      // This exact body has ended. Clear its working indicator in the same
-      // transaction; an unobserved Stop and the last reported agent state stay.
-      if(detached)this.db.update(threads).set({working:false,workingSince:null,workingBeat:null})
-        .where(eq(threads.conversation,detached.id)).run();
-    }
+    // The job working in a conversation is its one job that has not ended, so ending that job is what
+    // leaves the conversation with none. Clear its working indicator in the same transaction; an
+    // unobserved Stop and the last reported agent state stay.
+    if (job.conversation && active.includes(job.state as typeof active[number])) this.db.update(threads)
+      .set({ working: false, workingSince: null, workingBeat: null }).where(eq(threads.conversation, job.conversation)).run();
     return ended;
   }
 }

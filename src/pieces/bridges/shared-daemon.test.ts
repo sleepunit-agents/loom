@@ -138,7 +138,7 @@ it('connects Discord through its owned live cursor and durably retains raw befor
  const f=fixture({discord:options=>{gateway=options;expect(options.load()).toBeUndefined();return {close:async()=>{}};}});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();expect(gateway).toBeDefined();
  const raw=Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})),checkpoint={session:'session',seq:1,url:'wss://gateway.discord.gg'};await gateway!.commit({type:'READY',data:{},seq:1},checkpoint,raw);expect(f.db.select().from(bridgeRawEvents).get()?.event).toEqual(raw);expect(gateway!.load()).toEqual(checkpoint);await gateway!.reset();expect(gateway!.load()).toBeUndefined();
 });
-it('keeps the Discord resume cursor across a restart and forgets it when the connection\'s own secret changes',async()=>{
+it('keeps the Discord resume cursor across a restart and gives it to no lifetime under a changed secret, however the change and a stop were ordered',async()=>{
  type Gateway=Parameters<NonNullable<SharedBridgeOptions['discord']>>[0];const gateways:Gateway[]=[];
  const discord:SharedBridgeOptions['discord']=options=>{gateways.push(options);return {close:async()=>{}};};
  const f=fixture({discord});f.db.update(bridgeConnections).set({platform:'discord',workspace:'456',botUser:'123',appSecret:null}).run();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users/@me')?{id:'123',bot:true}:{id:'456'}));await f.daemon.ready();await f.daemon.idle();
@@ -147,9 +147,16 @@ it('keeps the Discord resume cursor across a restart and forgets it when the con
  await f.daemon.close();expect(f.db.select().from(bridgeResume).all()).toHaveLength(1);
  const second=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>second.close());
  await second.ready();await second.idle();expect(gateways).toHaveLength(2);expect(gateways[1].load()).toEqual(checkpoint);
- // The token was replaced: the old session belongs to the old credential.
+ // The token was replaced: the old session belongs to the old credential, so the next lifetime is given no cursor.
  f.db.insert(secretChanges).values({id:'change-1',secret:'TOKEN',action:'replace',by:'owner',at:new Date(f.clock.now()).toISOString()}).run();second.changed(true);await second.idle();
- expect(f.db.select().from(bridgeResume).all()).toEqual([]);
+ expect(gateways).toHaveLength(3);expect(gateways[2].load()).toBeUndefined();
+ // The same holds when the program stopped between the secret write and noticing it: the cursor row
+ // names the credential it was made under, so nothing has to run at the right moment to forget it.
+ await gateways[2].commit({type:'READY',data:{},seq:1},{...checkpoint,session:'later'},Buffer.from(JSON.stringify({op:0,t:'READY',s:1,d:{user:{id:'123'}}})));
+ expect(gateways[2].load()).toEqual({...checkpoint,session:'later'});await second.close();
+ f.db.insert(secretChanges).values({id:'change-2',secret:'TOKEN',action:'replace',by:'owner',at:new Date(f.clock.now()).toISOString()}).run();
+ const third=new SharedBridges({db:f.db,clock:f.clock,writes:f.writes,source:f.source,effectsAllowed:()=>true,changed(){},reportError(){},request:f.request,discord});clean.push(()=>third.close());
+ await third.ready();await third.idle();expect(gateways).toHaveLength(4);expect(gateways[3].load()).toBeUndefined();
 });
 it('publishes an earlier committed intake when a later receipt in the drain fails',async()=>{
  const f=fixture();await f.daemon.ready();await f.daemon.idle();const first=JSON.parse(f.raw('first','one').toString()),bad=JSON.parse(f.raw('bad','two').toString());first.payload.event.channel_type='channel';bad.payload.event.channel_type='channel';bad.payload.event.text=123;bad.payload.event.ts='1794432000.000002';

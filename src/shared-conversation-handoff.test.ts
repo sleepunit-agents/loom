@@ -48,6 +48,7 @@ it('hands a real private brief through one inherited conversation, settled job a
  const {sdk,job}=receive(f,cv.id);
  expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:'alice',project:'pond',brief:''});
  expect(await sdk.takeAndAccept(async item=>{expect(item).toMatchObject({source:'handoff',fromKind:'agent',fromId:'art',words:brief.words,keepUntil:new Date(handoffDeadline(stored,14)).toISOString()});})).toMatchObject({accepted:1});
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('taken');await sdk.settle();
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('done');
  for(const table of [s.inbox,s.jobs,s.operationResults,s.conversations,s.turns])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain(brief.words);
  expect(f.db.$client.serialize().includes(Buffer.from(brief.words))).toBe(false);
@@ -215,10 +216,10 @@ it.each(['project','owner'] as const)('withholds a pending public brief after %s
  release();const response=await pending;expect(response.status).toBe(403);expect(await response.text()).not.toContain(brief.words);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()?.state).toBe('waiting');
 });
-it('keeps private handoff body words visible to a household owner who is not its member',async()=>{
+it('keeps private handoff body words from a household owner who is not its member',async()=>{
  const f=await fixture(),created=await create(f),token='fictional-owner-body-read-'.repeat(4);
  f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional owner',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();});
- const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toEqual({data:{inboxItem:null}});
 });
 
 it.each(['project','owner'] as const)('withdraws published public handoff originals and clones after %s assignment changes',async kind=>{

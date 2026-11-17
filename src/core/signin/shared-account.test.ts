@@ -53,6 +53,20 @@ it('binds registration challenges to the exact fresh browser and rejects expired
  expect((await f.post('/passkeys/options')).status).toBe(401);
  expect(f.db.select().from(passkeys).all()).toEqual([]);
 });
+it('ends the browsers a passkey signed in when that passkey is removed, and no others',async()=>{
+ const f=fixture(),key=await f.add();
+ key.counter=1;const challenge=(await(await f.post('/login/passkey/options')).json()).challenge;
+ expect((await f.post('/login/passkey',key.assertion(challenge))).status).toBe(200);
+ const made=f.db.select().from(sessions).where(eq(sessions.via,'passkey')).get()!;expect(made.passkey).toBe(f.db.select().from(passkeys).get()!.id);
+ // The browser the link signed in is not the passkey's: it stays, and its notifications with it.
+ const linked=f.db.select().from(sessions).all().filter(row=>row.via!=='passkey').map(row=>row.id);expect(linked.length).toBeGreaterThan(0);
+ f.db.insert(notificationDevices).values({endpoint:'https://push.example/passkey',member:'sam',session:made.id,keys:'{}',device:'Phone',createdAt:made.issuedAt,seenAt:made.issuedAt}).run();
+ const account=(await f.read()).data.account;
+ expect((await f.post('/api/account/removePasskey',{input:{ref:account.passkeys[0].ref},id:'remove'})).status).toBe(200);
+ expect(f.db.select().from(passkeys).all()).toEqual([]);
+ expect(f.db.select().from(sessions).all().map(row=>row.id).sort()).toEqual(linked.sort());
+ expect(f.db.select().from(notificationDevices).all()).toEqual([]);
+});
 it('serves only personal metadata and ends the selected browser and its notifications through shared commands',async()=>{
  const f=fixture(),key=await f.add();
  const sam=(await f.read()).data.account,other=(await f.read('other')).data.account;

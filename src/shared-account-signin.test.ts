@@ -129,6 +129,13 @@ it('blanks an answered code the worker never collected, when the sign-in fails o
   expect((await f.call(worker, 'runtime.signInNext')).value).toBeNull();
   expect(f.item(late.item).answerText).toBe('(used)'); expect(f.row(late.id)).toMatchObject({ state: 'failed', why: 'It ran out of time' });
 });
+it('closes a sign-in that ran out of time on the program\'s own tick, with no worker polling and nobody asking', async () => {
+  const f = await fixture(), late = await waitingWithCode(f);
+  // Past the sign-in's twenty minutes, and across at least one of the runtime's sweeps.
+  f.clock.advance(21 * 60_000);
+  expect(f.row(late.id)).toMatchObject({ state: 'failed', why: 'It ran out of time' });
+  expect(f.item(late.item)).toMatchObject({ answerText: '(used)', state: 'answered' });
+});
 it('drops, at start, the receipts an earlier version kept for the code and closes what ran out of time while it was down', async () => {
   const f = await fixture(db => {
     db.insert(operationResults).values([{ caller: 'worker', id: 'old', operation: 'runtime.signInCode', inputHash: 'x', result: Buffer.from(JSON.stringify({ ok: true, value: { code, stop: false } })), expiresAt: '2999-01-01T00:00:00.000Z' },

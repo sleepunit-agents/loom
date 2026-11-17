@@ -113,7 +113,7 @@ it.each(['discord', 'slack'] as const)('feeds deferred %s socket receipts into s
     const writer = channels.bind('c', { platform, workspace: 'w' });
     if (platform === 'discord') receiver.discord('c', Buffer.from(JSON.stringify({ op: 0, t: 'MESSAGE_CREATE', s: 1,
       d: { id: 'm', type: 0, channel_id: 'channel', guild_id: 'w', author: { id: 'user' }, content: 'Hello', timestamp: now(), mentions: [] },
-    })), { session: 's', sequence: 1, resumeUrl: 'wss://gateway.discord.gg/' });
+    })), { session: 's', sequence: 1, resumeUrl: 'wss://gateway.discord.gg/', identity: 'identity' });
     else receiver.slack('c', Buffer.from(JSON.stringify({ type: 'events_api', payload: { type: 'event_callback', team_id: 'w', event_id: 'e',
       event: { type: 'message', channel: 'channel', user: 'user', text: 'Hello', ts: '1794432000.000001' },
     } })));

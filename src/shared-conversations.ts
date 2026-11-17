@@ -5,8 +5,9 @@ import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import type { DataDatabase } from './core/data/database.js';
 import type { Clock } from './core/clock.js';
 import type { Operations } from './core/operations/index.js';
-import { workVisibility } from './core/data/work-visibility.js';
-import { mayAct, mayCreate, maySee, type RecordScope } from './policy.js';
+import { conversationVisibility } from './core/data/conversation-visibility.js';
+import type { AnyColumn } from 'drizzle-orm';
+import { mayAct, mayCreate, type RecordScope, type Viewer } from './policy.js';
 import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { sharedSharing } from './shared-sharing.js';
 import { CommsMessages } from './core/conversations/messages.js';
@@ -19,7 +20,8 @@ import type { WordsKey } from './core/conversations/words.js';
 export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKey) {
   const now = () => new Date(clock.now()).toISOString();
   const service = new CommsMessages(db, key, now);
-  const policy = (viewer: Parameters<typeof workVisibility>[0], fields: Parameters<NonNullable<ReturnType<typeof workVisibility>['approvals']>>[0]) => workVisibility(viewer).approvals!(fields);
+  // A thread is read by the rule of its conversation: its own member, nobody else.
+  const policy = (viewer: Viewer, fields: Record<string, AnyColumn>) => conversationVisibility(viewer).conversations!(fields);
   const questionPolicy=conversationQuestionPolicy(db);
   const queries = new CommsQueries(db, key, policy, now), inbox = new InboxQueries(db, key, questionPolicy.visibility, now, (viewer, item) => tempoCommandAllowed(db, viewer, { action: 'volume', item }), (viewer,items)=>readInboxVolume(db,viewer,items,f=>questionPolicy.sourceVisibility(viewer,f)));
   const summaries = new ConversationSummaries(db, key, now);
@@ -39,8 +41,7 @@ export function sharedConversations(db: DataDatabase, clock: Clock, key: WordsKe
         }
         if ('item' in access) return !!inbox.item(viewer,access.item.id)
           && (access.action === 'read' || access.item.toKind === 'person' && access.item.to === viewer.id);
-        // Household owners can read another person's private thread; its member
-        // remains the only person who can send or manage it.
+        // A thread is its member's alone, to read, send to or manage (docs/specs/comms.md, rule 2).
         return access.conversation.member === viewer.id && mayAct(viewer, scope(access.conversation), sharing, access.action === 'send' ? 'give-work' : 'act');
       } });
     },

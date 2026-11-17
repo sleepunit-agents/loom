@@ -2,13 +2,13 @@
  * of caller policy; no body inherits a member's general registry identity. */
 import {getTableColumns,sql,eq,and,type AnyColumn,type SQL} from 'drizzle-orm';
 import type {Viewer} from './policy.js';
-import {maySee} from './policy.js';
-import {sharedSharing} from './shared-sharing.js';
+import {canReadSharedConversation} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
 import {tasks,approvals,members,inbox,secretRequests} from './core/data/schema.js';
 import {bridgeSecretsVisibility} from './core/data/bridge-secrets-visibility.js';
 import {taskVisibility} from './core/data/visibility.js';
 import {workVisibility} from './core/data/work-visibility.js';
+import {talkVisibility} from './core/data/conversation-visibility.js';
 import type {BodyQuestionAuthority} from './core/conversations/body-operations.js';
 type Fields=Record<string,AnyColumn>;
 type Kind='task'|'approval';
@@ -26,11 +26,11 @@ export function conversationQuestionPolicy(db:DataDatabase){
   or (${f.waitsOnKind}='secret-request' and exists(select 1 from ${secretRequests}
     where ${secretRequests.id}=${f.waitsOnId} and ${bridgeSecretsVisibility(viewer).secretRequests!(getTableColumns(secretRequests))}))
  )`;
- const visibility=(viewer:Viewer,f:Fields)=>sql`(${workVisibility(viewer).approvals!(f)}) and ${sourceVisibility(viewer,f)}`;
+ const visibility=(viewer:Viewer,f:Fields)=>sql`(${talkVisibility(viewer).inbox(f)}) and ${sourceVisibility(viewer,f)}`;
  const ask:BodyQuestionAuthority=(viewer,cv,q)=>{
   const recipient=db.select().from(members).where(eq(members.id,q.to)).get();
   // This checks the destination's visibility; it never acts as that member.
-  if(!recipient||!maySee({kind:'member',id:recipient.id},{type:'conversation',agent:cv.agent,member:cv.member??undefined,project:cv.project??undefined},sharedSharing(db)))return false;
+  if(!recipient||!canReadSharedConversation(db,{kind:'member',id:recipient.id},cv.id))return false;
   if(!q.waitsOnKind&&!q.waitsOnId)return true;
   if(!q.waitsOnKind||!q.waitsOnId||!canRead({kind:'member',id:recipient.id},q.waitsOnKind,q.waitsOnId))return false;
   if(canRead(viewer,q.waitsOnKind,q.waitsOnId))return true;

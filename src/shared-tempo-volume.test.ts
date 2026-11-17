@@ -19,7 +19,6 @@ function fixture(tempo?:SharedTempoOptions){
  const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,reportError(error){throw error;}});
  const source=root.services.conversations.open({agent:'art',venue:'loom',place:'chat',label:'Sam chat',member:'sam',project:'pond'});
  db.insert(jobs).values({id:'body',box:'box',agent:'art',conversation:source.id,project:'pond',member:'sam',title:'Chat',state:'running',brief:'',model:'model',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
- db.update(conversations).set({job:'body'}).where(eq(conversations.id,source.id)).run();
  db.insert(tokens).values([{fingerprint:hash(body),label:'Body',kind:'agent',agent:'art',job:'body',createdAt:now()},{fingerprint:hash(unbound),label:'Agent',kind:'agent',agent:'art',createdAt:now()}]).run();
  const item=root.services.conversations.send({toKind:'person',to:'sam',source:'notice',fromKind:'agent',project:'pond',words:'Work to read'});
  const other=root.services.conversations.send({toKind:'person',to:'other',source:'notice',fromKind:'agent',project:'pond',words:'Other work'});
@@ -59,9 +58,9 @@ it('refuses another recipient, an unbound agent, and stale source authority even
  expect((await f.call('inbox.volume',{item:f.other.id,volume:'mute'},'other')).status).toBe(403);
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'unbound',unbound)).status).toBe(403);
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(200);
- f.db.update(conversations).set({job:null}).where(eq(conversations.id,f.source.id)).run();
+ f.db.update(jobs).set({conversation:null}).where(eq(jobs.id,'body')).run();
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(403);
- f.db.update(conversations).set({job:'body'}).where(eq(conversations.id,f.source.id)).run();
+ f.db.update(jobs).set({conversation:f.source.id}).where(eq(jobs.id,'body')).run();
  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
  expect((await f.call('inbox.volume',{item:f.item.id,volume:'mute'},'mute')).status).toBe(401);
  expect(f.root.services.conversations.item(f.other.id).volume).toBe('full');

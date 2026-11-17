@@ -7,6 +7,7 @@ import { operation, OperationError, type Operations } from '../operations/index.
 import { agentStatus, messages,threads } from '../data/schema.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
+import { ConversationMail } from './mail.js';
 const privateWork={working:'Working privately',waiting:'Waiting privately',idle:'',offline:''}as const;
 export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean):void {
  const db=service.db,current=conversationBodyScope(db,proof,privateAssignment);
@@ -33,7 +34,11 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
     return prepared();
    };
   },
-  run(ctx,_input,prepared){const found=threadFor(ctx.viewer),message=(prepared as ()=>{seq:number})();ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
+  run(ctx,input,prepared){
+   const found=threadFor(ctx.viewer),message=(prepared as ()=>{seq:number})();
+   // A reply answers the mail this job took: both are saved together (ConversationMail.settle). A card is progress, not an answer.
+   if(input.kind==='reply')for(const id of new ConversationMail(service).settle(found.cv.id,found.job.id))ctx.changed('inbox',id);
+   ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
  }));
 
  operations.register(operation({...common,name:'conversation.title',
@@ -49,7 +54,7 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   },
  }));
  operations.register(operation({...common,name:'conversation.status',
-  input:z.object({state:z.enum(['working','waiting','idle','offline']),work:z.string().max(600).refine(text=>!/[\r\n\v\f\u0085\u2028\u2029]/u.test(text),'Use one line'),seenStop:z.literal(true).optional()}).strict(),
+  input:z.object({state:z.enum(['working','waiting','idle','offline']),work:z.string().max(600).refine(text=>!/[\r\n\v\f\u0085\u2028\u2029]/u.test(text),'Use one line')}).strict(),
   output:z.object({saved:z.literal(true),stopRequested:z.boolean()}).strict(),
   run(ctx,input){
    const found=requireCurrent(ctx.viewer),at=service.now();
@@ -59,7 +64,8 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    const thread=found.cv.venue==='loom'?db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get():undefined;
    let stopRequested=false;
    // Waiting still owns a live body: the thread must keep its Stop control.
-   if(thread){service.threads.working(thread.id,input.state==='working'||input.state==='waiting');stopRequested=thread.stopRequested;if(input.seenStop)service.threads.takeStop(thread.id);ctx.changed('threads',thread.id);}
+   // The body is told of a Stop here and never takes it: Jobs.endIfStopAsked does, when the worker reports the body gone.
+   if(thread){service.threads.working(thread.id,input.state==='working'||input.state==='waiting');stopRequested=thread.stopRequested;ctx.changed('threads',thread.id);}
    ctx.changed('agent_status',found.cv.agent);return {saved:true as const,stopRequested};
   },
  }));

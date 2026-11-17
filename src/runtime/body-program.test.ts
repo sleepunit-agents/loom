@@ -8,7 +8,7 @@ function fixture() {
   const input = Buffer.from(JSON.stringify({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } }));
   const abort = new AbortController(), calls: { path: string; body: Record<string, unknown> }[] = [], error = vi.fn();
   const native = vi.fn(async (_job: WorkerAssignment, _words: string, _signal: AbortSignal) => {
-    expect(calls.map(row => row.path).filter(path=>path!=='startup')).toEqual(['status', 'take', 'confirm', 'status']);
+    expect(calls.map(row => row.path).filter(path=>path!=='startup')).toEqual(['status', 'take', 'accept', 'status']);
     expect(input.every(byte => byte === 0)).toBe(true);
     return { text: 'Actual answer', model: 'observed', actions: [{ model: 'action-model' }] };
   });
@@ -19,15 +19,19 @@ function fixture() {
     if(path==='startup')return Response.json({aliases:[]});
     const values = {
       take: { job: 'job', conversation: 'cv', stopRequested, items: [{ id: 'mail', seq: 1, source: 'thread', sourceId: null, fromKind: 'person', fromId: 'alice', at: '2026-11-15T00:00:00.000Z', words: 'PRIVATE MAIL', keepUntil: null, verdict: null, refs: [] }] },
-      digest:{saved:true,digest:'digest',revision:1,item:null}, reply:{saved:true}, confirm: { saved: true }, status: { saved: true, stopRequested }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 },
+      digest:{saved:true,digest:'digest',revision:1,item:null}, reply:{saved:true}, accept:{saved:true},confirm: { saved: true }, status: { saved: true, stopRequested }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 },
     };
     return Response.json({ ok: true, value: values[path as keyof typeof values] });
   });
   const options = { args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house' }), stdin: async () => input, env: { ACCOUNT_PROFILE: '/private/profile' }, signal: abort.signal, fetch: fetcher, native,loadMemory:async()=>null,error };
   return { options, input, native, error, calls, abort, stop: () => { stopRequested = true; } };
 }
-it('accepts within the child, confirms before native execution, and reports actual response/action models', async () => {
+it('accepts within the child, settles its mail only after the answer is recorded, and reports actual response/action models', async () => {
   const f = fixture(); expect(await bodyProgram(f.options)).toBe(0);
+  // Received before the model runs (the native fake checks that); done once, after the reply.
+  const paths = f.calls.map(row => row.path);
+  expect(paths.filter(path => path === 'confirm')).toHaveLength(1); expect(paths.indexOf('confirm')).toBeGreaterThan(paths.indexOf('message'));
+  expect(f.calls.find(row => row.path === 'confirm')?.body.input).toEqual({ items: ['mail'] });
   expect(f.native).toHaveBeenCalledWith(job, 'PRIVATE MAIL', expect.any(AbortSignal));
   expect(f.calls.find(row => row.path === 'message')?.body.input).toMatchObject({ kind: 'reply', words: 'Actual answer', model: 'observed' });
   expect(f.calls.find(row => row.path === 'turn')?.body.input).toEqual({ kind: 'action', model: 'action-model', outcome: 'progressed' });
@@ -67,6 +71,18 @@ it('erases bootstrap at cancellation while startup remains pending, before its p
   expect(await pending).toBe(BODY_EXIT.startup); expect(f.native).not.toHaveBeenCalled(); expect(f.calls.map(row=>row.path)).toEqual(['status']);
 });
 
+it.each(['the model fails','loom does not take the reply'] as const)('leaves its mail unsettled for the next attempt when %s',async how=>{
+ const f=fixture(),fetcher=f.options.fetch;
+ if(how==='the model fails')f.native.mockImplementation(async()=>{throw new Error();});
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{if(how==='loom does not take the reply'&&String(url).endsWith('/message'))throw new Error();return fetcher(url,init);}}))
+  .toBe(how==='the model fails'?BODY_EXIT.harness:BODY_EXIT.record);
+ expect(f.calls.some(row=>row.path==='accept')).toBe(true);expect(f.calls.some(row=>row.path==='confirm')).toBe(false);
+});
+it('settles mail that has no words left to answer, without running the model',async()=>{
+ const f=fixture(),fetcher=f.options.fetch;
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(!String(url).endsWith('/take'))return response;const batch=await response.json();batch.value.items[0].words=null;return Response.json(batch);}})).toBe(0);
+ expect(f.native).not.toHaveBeenCalled();expect(f.calls.map(row=>row.path).filter(path=>path!=='startup')).toEqual(['status','take','accept','confirm','status']);
+});
 it('never reports private native diagnostics as a body error',async()=>{
  const f=fixture();expect(await bodyProgram({...f.options,native:async()=>{throw new Error(raw);}})).toBe(BODY_EXIT.harness);
  expect(f.error).toHaveBeenCalledExactlyOnceWith('Body stopped: invalid input or unavailable execution\n');
@@ -75,7 +91,7 @@ it('never reports private native diagnostics as a body error',async()=>{
 
 it('honors a Stop arriving after mail acceptance and before native startup',async()=>{
  const f=fixture(),fetcher=f.options.fetch;
- expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(String(url).endsWith('/confirm'))f.stop();return response;}})).toBe(BODY_EXIT.stopped);
+ expect(await bodyProgram({...f.options,fetch:async(url,init)=>{const response=await fetcher(url,init);if(String(url).endsWith('/accept'))f.stop();return response;}})).toBe(BODY_EXIT.stopped);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
 });
 it('keeps native work reported, serializes beats, and erases bootstrap before stopped native work settles',async()=>{
@@ -87,7 +103,7 @@ it('keeps native work reported, serializes beats, and erases bootstrap before st
  await started;f.stop();tick();tick();await cancelled;expect(owned!.every(byte=>byte===0)).toBe(true);expect(startupSignal!.aborted).toBe(true);close();
  expect(await pending).toBe(BODY_EXIT.stopped);expect(cancel).toHaveBeenCalledOnce();
  expect(f.calls.filter(row=>row.path==='status'&&(row.body.input as {state:string}).state==='working')).toHaveLength(3);
- expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});expect(f.calls.some(row=>row.path==='message')).toBe(false);
+ expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});expect(f.calls.some(row=>row.path==='message'||row.path==='confirm')).toBe(false);
 });
 it('ends native work when a current body status beat fails, without publishing a late reply',async()=>{
  const f=fixture(),fetcher=f.options.fetch;let tick!:()=>void,entered!:()=>void,statuses=0;const started=new Promise<void>(resolve=>{entered=resolve;});

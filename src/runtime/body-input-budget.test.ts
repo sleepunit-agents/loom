@@ -24,10 +24,10 @@ it('keeps native output bounded at one MiB independently of the larger input cei
 });
 it.each(['declared','streamed'] as const)('shrinks an oversized %s unaccepted Root batch without confirming skipped mail',async mode=>{
  const f=await bodyFixture(clean);expect((await f.send('FIRST PRIVATE','one')).status).toBe(200);expect((await f.send('SECOND PRIVATE','two')).status).toBe(200);
- const abort=new AbortController(),limits:number[]=[],accepted:string[]=[],confirmations:string[][]=[],emitted:Uint8Array[]=[],copies:Buffer[]=[];let cancelled=false;
+ const abort=new AbortController(),limits:number[]=[],accepted:string[]=[],receipts:string[][]=[],confirmations:string[][]=[],emitted:Uint8Array[]=[],copies:Buffer[]=[];let cancelled=false;
  const client=bodyConversationClient({url:'http://127.0.0.1/',token:raw.body,job:'job',conversation:f.thread.conversation,clock:f.clock,signal:abort.signal,fetch:async(url,init)=>{
   const path=new URL(String(url)).pathname,input=JSON.parse(String(init?.body)).input,response=await f.root.http.request(new Request(url,init));
-  if(path.endsWith('/confirm'))confirmations.push(input.items);
+  if(path.endsWith('/accept'))receipts.push(input.items);if(path.endsWith('/confirm'))confirmations.push(input.items);
   if(path.endsWith('/take')){
    limits.push(input.limit);if(input.limit>1){expect(response.status).toBe(200);await response.body?.cancel();
     let chunks=0;const stream=new ReadableStream<Uint8Array>({pull(controller){const part=new Uint8Array(mode==='streamed'?1_048_576:1).fill(90);emitted.push(part);controller.enqueue(part);if(++chunks>17)controller.close();},cancel(){cancelled=true;}},{highWaterMark:0});
@@ -39,7 +39,9 @@ it.each(['declared','streamed'] as const)('shrinks an oversized %s unaccepted Ro
  try{expect(await client.takeAndAccept(async item=>{accepted.push(item.words!);},2)).toEqual({accepted:1,stopRequested:false});}finally{spy.mockRestore();}
  if(mode==='streamed'){expect(emitted.length).toBeGreaterThan(0);expect(copies.length).toBeGreaterThan(0);expect(emitted.every(part=>part.every(byte=>byte===0))).toBe(true);expect(copies.every(part=>part.every(byte=>byte===0))).toBe(true);}
  expect(limits).toEqual([2,1]);expect(cancelled).toBe(true);expect(accepted).toEqual(['FIRST PRIVATE']);
- const items=f.db.select().from(s.inbox).all();expect(confirmations).toEqual([[items[0].id]]);expect(items.map(item=>item.state)).toEqual(['done','taken']);
+ let items=f.db.select().from(s.inbox).all();expect(receipts).toEqual([[items[0].id]]);expect(confirmations).toEqual([]);expect(items.map(item=>item.state)).toEqual(['taken','taken']);
+ // Settling covers only what the sink accepted, never the mail the reduced take skipped.
+ await client.settle();items=f.db.select().from(s.inbox).all();expect(confirmations).toEqual([[items[0].id]]);expect(items.map(item=>item.state)).toEqual(['done','taken']);
  f.root.writes.run(()=>new Jobs(f.db,()=>new Date(f.clock.now()).toISOString()).finish('job','box',0));
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,items[1].id)).get()).toMatchObject({state:'waiting',job:null});
  expect(f.db.select().from(s.messages).all().map(message=>message.delivery)).toEqual(['delivered','held']);

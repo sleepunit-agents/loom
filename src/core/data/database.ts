@@ -26,6 +26,17 @@ export function createDataSchema(client: Database.Database, now: () => string = 
   })();
   return dataDatabase(client, now);
 }
+/** The guards on a member-or-agent kind and id pair, as the installation SQL had them when step 6 was written. */
+function kindAndIdGuards(table: string, kind: string, id: string): string[] {
+  const guards: string[] = [];
+  for (const [tag, parent] of [['member', 'members'], ['agent', 'agents']]) {
+    for (const event of ['INSERT', 'UPDATE']) guards.push(`CREATE TRIGGER "${table}_${id}_${tag}_${event.toLowerCase()}" BEFORE ${event} ON "${table}" WHEN NEW."${kind}" = '${tag}' AND NEW."${id}" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "${parent}" WHERE id = NEW."${id}") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END`);
+    guards.push(`CREATE TRIGGER "${table}_${id}_${tag}_parent_delete" BEFORE DELETE ON "${parent}" WHEN 1 AND EXISTS (SELECT 1 FROM "${table}" WHERE "${id}" = OLD.id AND "${kind}" = '${tag}') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END`);
+    guards.push(`CREATE TRIGGER "${table}_${id}_${tag}_parent_update" BEFORE UPDATE OF id ON "${parent}" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "${table}" WHERE "${id}" = OLD.id AND "${kind}" = '${tag}') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END`);
+  }
+  for (const event of ['INSERT', 'UPDATE']) guards.push(`CREATE TRIGGER "${table}_${id}_pair_${event.toLowerCase()}" BEFORE ${event} ON "${table}" WHEN NOT coalesce(((NEW."${id}" IS NULL AND NEW."${kind}" IS NULL) OR (NEW."${id}" IS NOT NULL AND NEW."${kind}" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END`);
+  return guards;
+}
 /** Changes to an existing household's database since its first shape, in order. Number 1 is the
  * first shape itself. A fresh database is created whole and marked as having them all. */
 const upgrades: readonly (readonly string[])[] = [
@@ -50,6 +61,57 @@ const upgrades: readonly (readonly string[])[] = [
   // 5: asking a worker machine to sign a model account in. Both statements are the fresh schema's own text.
   ["CREATE TABLE `account_signins` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`account` text NOT NULL,\n\t`box` text NOT NULL,\n\t`asked_by_kind` text NOT NULL,\n\t`asked_by` text NOT NULL,\n\t`state` text NOT NULL,\n\t`item` text,\n\t`why` text,\n\t`asked_at` text NOT NULL,\n\t`changed_at` text NOT NULL,\n\tFOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"account_signins_asked_at_utc\" CHECK(\"account_signins\".\"asked_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"account_signins\".\"asked_at\") = \"account_signins\".\"asked_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"account_signins\".\"asked_at\") = \"account_signins\".\"asked_at\", 0)),\n\tCONSTRAINT \"account_signins_changed_at_utc\" CHECK(\"account_signins\".\"changed_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"account_signins\".\"changed_at\") = \"account_signins\".\"changed_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"account_signins\".\"changed_at\") = \"account_signins\".\"changed_at\", 0)),\n\tCONSTRAINT \"account_signins_asked_by_kind_choice\" CHECK(\"account_signins\".\"asked_by_kind\" in ('member', 'agent')),\n\tCONSTRAINT \"account_signins_state_choice\" CHECK(\"account_signins\".\"state\" in ('asked', 'started', 'waiting', 'done', 'failed'))\n)",
    "CREATE INDEX `account_signins_box_state_idx` ON `account_signins` (`box`,`state`)"],
+  // 6: one step for several changes.
+  [
+    // A browser remembers which passkey signed it in, so removing the passkey can end it.
+    'ALTER TABLE sessions ADD COLUMN passkey text REFERENCES passkeys(id)',
+    // What admission read from the platform event, so a held message can be tried again from its own row
+    // after the raw event has expired. All absent on a row from before this step.
+    ...['mentions text', 'replies_to text', 'parent text',
+      ...['group_dm', 'bot', 'webhook'].map(name => `${name} integer CHECK (${name} in (0, 1))`)].map(column => `ALTER TABLE bridge_incoming ADD COLUMN ${column}`),
+    // The Discord resume cursor now names the credential it was made under. A cursor from before does not,
+    // so it is forgotten: each Discord connection identifies afresh once.
+    'DROP TABLE bridge_resume',
+    "CREATE TABLE `bridge_resume` (\n\t`connection` text PRIMARY KEY NOT NULL,\n\t`session` text NOT NULL,\n\t`sequence` integer NOT NULL,\n\t`resume_url` text NOT NULL,\n\t`identity` text NOT NULL,\n\tFOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action\n)",
+    // Never written or read.
+    'DROP TABLE outside_effects',
+    // conversations loses `job` (the job working in a conversation is the one active row in `jobs`) and gains
+    // `direct`. SQLite cannot drop a column that carries a foreign key, so the table is rebuilt; this is why
+    // upgrades run with foreign keys off and are checked whole before they commit. A conversation is direct
+    // if a direct message was ever delivered into it.
+    `CREATE TABLE conversations_rebuilt (
+	id text PRIMARY KEY NOT NULL,
+	agent text NOT NULL,
+	project text,
+	member text,
+	venue text NOT NULL,
+	place text NOT NULL,
+	label text NOT NULL,
+	direct integer DEFAULT false NOT NULL,
+	started_at text NOT NULL,
+	last_at text NOT NULL,
+	turn_count integer NOT NULL,
+	FOREIGN KEY (agent) REFERENCES agents(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (project) REFERENCES projects(id) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (member) REFERENCES members(id) ON UPDATE no action ON DELETE no action,
+	CHECK (direct in (0, 1)),
+	CHECK (started_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', started_at) = started_at or strftime('%Y-%m-%dT%H:%M:%fZ', started_at) = started_at, 0)),
+	CHECK (last_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', last_at) = last_at or strftime('%Y-%m-%dT%H:%M:%fZ', last_at) = last_at, 0)),
+	CHECK (venue in ('loom', 'discord', 'slack', 'wake', 'handoff'))
+)`,
+    `INSERT INTO conversations_rebuilt (id, agent, project, member, venue, place, label, direct, started_at, last_at, turn_count)
+      SELECT id, agent, project, member, venue, place, label,
+        EXISTS (SELECT 1 FROM bridge_incoming WHERE bridge_incoming.conversation = conversations.id AND bridge_incoming.is_dm = 1),
+        started_at, last_at, turn_count FROM conversations`,
+    'DROP TABLE conversations',
+    'ALTER TABLE conversations_rebuilt RENAME TO conversations',
+    'CREATE UNIQUE INDEX `conversations_place_unique` ON `conversations` (`agent`,`venue`,`place`)',
+    'CREATE INDEX `conversations_project_idx` ON `conversations` (`project`)',
+    'CREATE INDEX `conversations_member_idx` ON `conversations` (`member`)',
+    'CREATE INDEX `conversations_agent_last_at_idx` ON `conversations` (`agent`,`last_at`)',
+    // Who edited a trigger and who asked for an account sign-in are a kind and an id, guarded like the others.
+    ...kindAndIdGuards('trigger_edits', 'by_kind', 'by'), ...kindAndIdGuards('account_signins', 'asked_by_kind', 'asked_by'),
+  ],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
@@ -113,15 +175,20 @@ let freshShape: string | undefined;
  * database has. Anything else throws, so a foreign, interim or hand-altered database is never altered. */
 export function recogniseDataSchema(client: Database.Database): number {
   const number = numberOf(client);
+  if (!freshShape) {
+    const fresh = new Database(':memory:');
+    try { createDataSchema(fresh); freshShape = JSON.stringify(dataSchemaShape(fresh)); } finally { fresh.close(); }
+  }
+  // The usual start: nothing is pending, so there is nothing to rehearse and the file's own shape is read.
+  if (number === dataSchemaNumber) {
+    if (JSON.stringify(dataSchemaShape(client)) !== freshShape) throw new Error(unknown);
+    return number;
+  }
   const rehearsal = new Database(':memory:');
   try {
     // In the order they were made, so each index and trigger finds its table.
     for (const { sql } of client.prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY rowid").all() as { sql: string }[]) rehearsal.exec(sql);
     applyUpgrades(rehearsal, number, () => new Date().toISOString());
-    if (!freshShape) {
-      const fresh = new Database(':memory:');
-      try { createDataSchema(fresh); freshShape = JSON.stringify(dataSchemaShape(fresh)); } finally { fresh.close(); }
-    }
     if (JSON.stringify(dataSchemaShape(rehearsal)) !== freshShape) throw new Error(unknown);
   } catch (error) {
     // A schema SQLite cannot rebuild or a step that does not apply is as unknown as a wrong shape.
@@ -134,5 +201,16 @@ export function recogniseDataSchema(client: Database.Database): number {
  * program does not know. */
 export function upgradeDataSchema(client: Database.Database, now: () => string = () => new Date().toISOString()) {
   if (client.inTransaction) throw new Error('Upgrade the data schema outside a transaction');
-  client.transaction(() => applyUpgrades(client, recogniseDataSchema(client), now)).immediate();
+  // A step that rebuilds a table drops the old one while other tables still point at it, which SQLite
+  // allows only with foreign keys off. So the steps run with them off, every reference is checked before
+  // the commit, and the connection gets its own setting back.
+  const enforced = client.pragma('foreign_keys', { simple: true });
+  client.pragma('foreign_keys = OFF');
+  try {
+    client.transaction(() => {
+      const from = recogniseDataSchema(client);
+      applyUpgrades(client, from, now);
+      if (from < dataSchemaNumber && (client.pragma('foreign_key_check') as unknown[]).length) throw new Error('Upgrading this household database would leave a record pointing at nothing; nothing was changed');
+    }).immediate();
+  } finally { client.pragma(`foreign_keys = ${enforced ? 'ON' : 'OFF'}`); }
 }

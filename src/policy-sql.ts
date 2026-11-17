@@ -60,14 +60,15 @@ export function sqlRule(rule: Rule, viewer: Viewer, fields: RuleFields): SQL {
       case 'names': return part.kind === 'member'
         ? sql`exists (select 1 from ${as(members, 'policy_named_member')} where ${namedMember.id} = ${field(part.field)} and ${namedMember.removedAt} is null)`
         : sql`exists (select 1 from ${as(agents, 'policy_named_agent')} where ${namedAgent.id} = ${field(part.field)} and ${namedAgent.removedAt} is null)`;
-      case 'equal': return part.value === null ? sql`${field(part.field)} is null` : sql`${field(part.field)} is ${text(part.value)}`;
+      case 'equal': return part.value === null ? sql`${field(part.field)} is null`
+        : typeof part.value === 'boolean' ? sql`${field(part.field)} is ${sql.raw(part.value ? '1' : '0')}` : sql`${field(part.field)} is ${text(part.value)}`;
       case 'set': return sql`${field(part.field)} is not null`;
       case 'any': return group(part.of, 'or', no);
       case 'all': return group(part.of, 'and', yes);
       case 'first': return sql`case ${sql.join(part.cases.map(([when, then]) => sql`when ${build(when, row, depth)} then ${build(then, row, depth)}`), sql.raw(' '))} else ${build(part.otherwise, row, depth)} end`;
       case 'seenWith': {
         const table = schema[part.table], name = `policy_parent_${depth}`, parent = alias(table, name);
-        return sql`exists (select 1 from ${as(table, name)} where ${parent.id} = ${field(part.field)} and ${build(tableRules[part.table], getTableColumns(parent), depth + 1)})`;
+        return sql`exists (select 1 from ${as(table, name)} where ${parent.id} = ${field(part.field)} and ${build(part.as ?? tableRules[part.table], getTableColumns(parent), depth + 1)})`;
       }
     }
   };

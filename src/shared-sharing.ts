@@ -31,5 +31,5 @@ export function householdOwners(db: DataDatabase): string[] {
 export function canReadSharedConversation(db: DataDatabase, viewer: Viewer, id: string): boolean {
   const row = db.select().from(conversations).where(eq(conversations.id, id)).get();
   return !!row && maySee(viewer, { type: 'conversation', agent: row.agent, project: row.project ?? undefined,
-    member: row.member ?? undefined }, sharedSharing(db));
+    member: row.member ?? undefined, direct: row.direct }, sharedSharing(db));
 }

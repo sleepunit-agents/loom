@@ -74,6 +74,63 @@ failed process cleanup, so it cannot claim more work after uncertain reaping.
 SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
+## Attempts, retries and exit codes
+
+The server decides whether work runs again; the worker never retries a job
+itself. The rule lives in `Jobs.retry` (`src/runtime/jobs.ts`).
+
+- One piece of work gets its first attempt and at most three more
+  (`JOB_RETRIES`). Each new attempt is a new job row whose `retry_of` names the
+  attempt before it, so the chain is the history.
+- An attempt is tried again when it failed or was lost (its worker went silent
+  for two minutes) before the body started, or when the body started and left
+  mail it had not settled. A body that failed after settling its mail is not
+  run again.
+- Start retries wait 1, 2 and 4 seconds. Retries after a body has started wait
+  5, 30 and 120 seconds, so the chain as a whole lasts longer than a loom
+  restart: a body that failed only because loom was restarting gets an attempt
+  after loom is back.
+- When the chain is used up, the unsettled mail stays with the last attempt and
+  shows as failed. Nothing runs until fresh mail arrives in the conversation;
+  the next job then takes the old mail with the new.
+- A job stopped by a person is never retried.
+
+A failed job says where it failed by its exit code, the one field kept for a
+private conversation (its log tail is dropped, because output can hold the
+conversation's words). The tables are in `src/runtime/job-exit.ts`; job history
+shows the stage name beside the number (`JobRecord.exitStage`).
+
+| Code | Stage | Meaning |
+| --- | --- | --- |
+| 0 | | Success. |
+| 1 | body input | Failed before the body knew what it was asked to do. |
+| 10 | body stopped | Not a failure: the body saw a Comms Stop and left. loom records the job as stopped if a Stop really is waiting for it; otherwise the exit is an ordinary failure. |
+| 11 | body startup | Startup secrets or other startup inputs. |
+| 12 | body mail | Taking and accepting mail. |
+| 13 | body identity | Loading the agent's memory identity. |
+| 14 | body harness | The native model run. |
+| 15 | body record | Recording the answer in loom. |
+| 16 | body config | The machine's body file could not be read or is not valid. |
+| 17 | body envelope | What the worker handed over on stdin is not a body's input. |
+| 18 | body assignment | The assignment names a harness or venue this body cannot serve, or one the harness would refuse. No mail has been taken. |
+| 19 | body report | The first report to loom failed: loom unreachable, or the job no longer this body's. |
+| 21 | worker input | Fetching the private repository input. |
+| 22 | worker build | The build command. |
+| 23 | worker launch | Starting the body's process. |
+| 24 | worker enroll | Registering the body's credential with loom. |
+| 25 | worker release | Handing the started body its input. |
+| 26 | worker reap | The body's process could not be watched or reaped to its end. |
+
+Any other code is the runner's own (a builder or a custom runner). A job swept
+as lost has no exit code; its log tail says in which state it went silent.
+
+Mail and its answer. A body takes its mail, reports it received (`conversation.accept`:
+the sender sees it delivered) and settles it (`conversation.confirm`) only after
+the answer is recorded. loom itself settles the mail in the same write as a
+thread reply or a bridge reply, so a body that dies after answering cannot have
+the mail answered again, and a body that dies before answering leaves the mail
+for the next attempt.
+
 The fresh `sharedRoot` mounts these authenticated runner operations on the
 same shared connection and write/receipt boundary. The canonical current bearer
 runner proof supplies the machine identity; runner-labelled cookies are refused.
@@ -246,7 +303,9 @@ The worker's explicitly configured account environment reaches the child and
 native CLI; no ambient worker environment is added.
 
 The child takes mail through the canonical body client into its own context,
-confirms acceptance, then invokes Claude with the assignment's exact model.
+reports it received, then invokes Claude with the assignment's exact model. It
+settles the mail only after the answer is recorded (see "Attempts, retries and
+exit codes").
 Always-denied tool patterns and applicable outside/unknown guest-only patterns
 go into native --disallowedTools. A household person's missing outside tier
 does not make that person a guest. The CLI uses dontAsk permission mode,
@@ -391,8 +450,10 @@ attempt until fresh mail resumes work.
 
 The terminal job and heartbeat receipt commit before Tempo is notified. A failed
 receipt preserves the previous active job and Stop request, while cached heartbeat
-replay cannot restore active authority. Running-body Stop remains with the receiving
-body's status protocol. Preparation changes the thread working indicator, without
+replay cannot restore active authority. A running body's Stop remains with the
+receiving body: its status reports tell it of the Stop, it drops its work and
+exits 10, and loom takes the Stop when the worker reports that exit. A status
+report cannot take a Stop. Preparation changes the thread working indicator, without
 inventing a reported agent status or consuming another conversation's Stop.
 
 ## Machine registry

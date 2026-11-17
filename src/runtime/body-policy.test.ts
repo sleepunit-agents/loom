@@ -46,6 +46,18 @@ it('uses the linked member key and ignores unrelated people and conversations', 
   f.db.insert(agentPeople).values([{ agent: 'art', person: 'owner', tier: 3 }, { agent: 'art', person: f.key, tier: 1 }]).run();
   expect(workerPolicy(f.db, { id: 'other-job', agent: 'art', conversation: linked.conversation }).people).toEqual([{ kind: 'person', person: 'owner', tier: 3 }]);
 });
+it('keeps the tier set for an outside person after they are linked to a member', () => {
+  const f = fixture(), outside = JSON.stringify(['discord', 'w', 'linked']);
+  // The owner placed this Discord user in a tier while they were still an outsider; saved tiers are only ever outside keys.
+  f.db.insert(agentPeople).values([{ agent: 'art', person: outside, tier: 2 }, { agent: 'mark', person: outside, tier: 3 }]).run();
+  f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'linked', member: 'owner' }).run();
+  const linked = f.receive('linked', 'linked', 'linked-dm'), job = { id: 'other-job', agent: 'art', conversation: linked.conversation };
+  expect(f.db.select().from(inbox).where(eq(inbox.conversation, linked.conversation!)).get()).toMatchObject({ fromKind: 'person', fromId: 'owner' });
+  expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'owner', tier: 2 }]);
+  // A tier stored under the member's own id still comes first.
+  f.db.insert(agentPeople).values({ agent: 'art', person: 'owner', tier: 3 }).run();
+  expect(workerPolicy(f.db, job).people).toEqual([{ kind: 'person', person: 'owner', tier: 3 }]);
+});
 it('does not borrow a higher tier from a receipt in another conversation', () => {
   const f = fixture(), other = f.receive('high', 'other', 'other-room');
   const item = f.db.select().from(inbox).where(eq(inbox.job, f.job.id)).get()!;

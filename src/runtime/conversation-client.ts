@@ -1,6 +1,8 @@
 /** Current-body client. The parent supplies its existing enrolled body bearer.
- * Words travel only through a bounded response and the body's acceptance sink;
- * outstanding confirmations retain IDs only and retry before any new input. */
+ * Words travel only through a bounded response and the body's acceptance sink.
+ * Mail gets two reports, both by id only. `accept` says the body has it, so its sender sees it delivered;
+ * an outstanding one is sent again before any new input. `confirm` settles it, and is sent by settle()
+ * only once the answer is recorded: mail a body dies holding stays with its job for the next attempt. */
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -33,7 +35,8 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
  if(origin.username||origin.password||origin.search||origin.hash||origin.pathname!=='/'||origin.protocol!=='https:'&&!(origin.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(origin.hostname))
   ||!options.token||/[\0\r\n]/.test(options.token)||!options.job||!options.conversation||!Number.isSafeInteger(timeout)||timeout<1||timeout>30_000)throw unavailable();
  const lifetimeAbort=new AbortController(),lifetime=AbortSignal.any([options.signal,lifetimeAbort.signal]);
- let closed=false,taking=false,pending:{id:string;items:string[]}|undefined;
+ let closed=false,taking=false,received:{id:string;items:string[]}|undefined,settling:{id:string;items:string[]}|undefined;
+ const unsettled:string[]=[];
  const controllers=new Set<AbortController>();
  const current=()=>!closed&&!lifetime.aborted;
  async function call<T>(name:string,input:unknown,schema:z.ZodType<T>,id?:string,namespace:'conversation'|'bridges'|'secrets'='conversation'):Promise<T>{
@@ -63,12 +66,13 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
   }
  }
  const saved=z.object({saved:z.literal(true)}).strict(),messageResult=z.object({saved:z.literal(true),seq:z.number().int()}).strict();
- async function confirmPending(){if(pending){await call('confirm',{items:pending.items},saved,pending.id);pending=undefined;}}
+ // Each report keeps its operation id until loom has answered it, so a repeat after a lost answer is the same write.
+ async function reportReceived(){if(received){await call('accept',{items:received.items},saved,received.id);received=undefined;}}
  return {
   async takeAndAccept(accept:(item:BodyMail,signal:AbortSignal)=>Promise<void>,limit=50):Promise<{accepted:number;stopRequested:boolean}>{
    if(taking||!current()||!Number.isInteger(limit)||limit<1||limit>100)throw unavailable();taking=true;
    try{
-    await confirmPending();
+    await reportReceived();
     let requested=limit,input:z.infer<typeof batch>;
     for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
     const multipleHistories=input.items.filter(row=>row.history.length>0).length>1;
@@ -81,6 +85,8 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     let accepted=0;
     for(const row of input.items){
      if(!current())throw unavailable();
+     // loom hands back mail this job still holds unsettled; what the sink already has is not given to it twice.
+     if(unsettled.includes(row.id)||settling?.items.includes(row.id))continue;
      const answerDeadline=row.keepUntil===null?Infinity:Date.parse(row.keepUntil),questionDeadline=row.questionKeepUntil===null?Infinity:Date.parse(row.questionKeepUntil);
      if(!Number.isFinite(answerDeadline)&&row.keepUntil!==null||!Number.isFinite(questionDeadline)&&row.questionKeepUntil!==null)throw unavailable();
      const privateWords=row.words!==null&&clock.now()<answerDeadline,questionCurrent=privateWords&&row.question!==null&&clock.now()<questionDeadline;
@@ -96,10 +102,15 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
       if(!current()||privateWords&&clock.now()>=deadline){sinkAbort.abort();throw unavailable();}
      }catch{sinkAbort.abort();throw unavailable();}
      finally { cancelExpiry?.();sinkSignal.removeEventListener('abort',rejectStopped); }
-     pending??={id:randomUUID(),items:[]};pending.items.push(row.id);accepted++;
+     received??={id:randomUUID(),items:[]};received.items.push(row.id);unsettled.push(row.id);accepted++;
     }
-    await confirmPending();return {accepted,stopRequested:input.stopRequested};
+    await reportReceived();return {accepted,stopRequested:input.stopRequested};
    }catch{throw unavailable();}finally{taking=false;}
+  },
+  /** Settle every item accepted so far. Call once its answer is recorded, or when it needs none. */
+  async settle():Promise<void>{
+   if(!settling&&unsettled.length)settling={id:randomUUID(),items:unsettled.splice(0)};
+   if(settling){await call('confirm',{items:settling.items},saved,settling.id);settling=undefined;}
   },
   requestSecret(input:{id:string;secret:string;why:string;minutes:number;scope:'agent'|'job'}){return call('request',input,z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),input.id,'secrets');},
   secretRequestStatus(id:string){return call('requestStatus',{id},z.object({id:z.string(),state:z.enum(['pending','allowed','denied','cancelled','revoked'])}).strict(),undefined,'secrets');},

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { eq, notInArray } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { agents, members, projects, boxes, agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs, threads as threadRows } from '../core/data/schema.js';
@@ -9,6 +9,8 @@ import { BODY_EXIT } from './job-exit.js';
 
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(db => db.close()));
+/** The job working in the conversation: its one job that has not ended. */
+const working = (f: { db: ReturnType<typeof createDataSchema> }) => f.db.select().from(jobs).where(notInArray(jobs.state, ['done', 'failed', 'lost', 'stopped'])).all().map(job => job.id);
 function fixture(venue: 'loom' | 'handoff' | 'wake' = 'wake') {
   const client = new Database(':memory:'); opened.push(client);
   let at = '2026-11-14T20:00:00.000Z';
@@ -35,7 +37,7 @@ it('admits nonempty inbox once and snapshots house, model, labels and needs', ()
   expect(f.db.select().from(jobNeeds).all()).toEqual([{ job: job.id, need: 'gpu' }]);
   f.db.update(agentRunSettings).set({ houseFile: 'changed' }).run();
   expect(f.runtime.get(job.id).houseFile).toBe('Housefile');
-  expect(f.db.select().from(conversations).get()?.job).toBe(job.id);
+  expect(working(f)).toEqual([job.id]);
 });
 it('claims once, rejects other workers, takes mail only when running and preserves confirmed receipts', () => {
   const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
@@ -55,7 +57,7 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   expect(f.runtime.heartbeat(job.id, 'worker', 'running')).toMatchObject({ state: 'running', heardAt: f.now() });
   expect(f.runtime.finish(job.id, 'worker', 0, 'complete').job).toMatchObject({ state: 'done', exitCode: 0, logTail: 'complete', build: 'image' });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'done', job: job.id, doneAt: receipt.doneAt });
-  expect(f.db.select().from(conversations).get()?.job).toBeNull();
+  expect(working(f)).toEqual([]);
   expect(() => f.runtime.heartbeat(job.id, 'worker', 'running')).toThrow();
 });
 it('retries a failed start three times as new linked jobs, without retrying the exhausted chain on old mail', () => {
@@ -69,7 +71,7 @@ it('retries a failed start three times as new linked jobs, without retrying the 
     expect(result.job.state).toBe('failed');
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
     expect(result.retry).toMatchObject({ retryOf: job.id, houseFile: 'Housefile', model: 'primary', box: null, state: 'queued' });
-    expect(f.db.select().from(conversations).get()?.job).toBe(result.retry!.id);
+    expect(working(f)).toEqual([result.retry!.id]);
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id });
     expect(f.runtime.admit(f.conversation.id)?.id).toBe(result.retry!.id);
     expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
@@ -93,9 +95,12 @@ it('tries a body that failed after starting again only for mail it left unconfir
     const result = f.runtime.finish(job.id, 'worker', 2, 'ignored-prefix:' + 'x'.repeat(20_000) + ':TAIL');
     expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_379) + ':TAIL' });
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
-    expect(result.retry).toMatchObject({ retryOf: job.id, state: 'queued', retryAt: new Date(Date.parse(f.now()) + 1000 * 2 ** n).toISOString() });
+    // After a body has started, the three retries wait 5 s, 30 s and 120 s: long enough in all to outlast a loom restart.
+    const wait = [5_000, 30_000, 120_000][n];
+    expect(result.retry).toMatchObject({ retryOf: job.id, state: 'queued', retryAt: new Date(Date.parse(f.now()) + wait).toISOString() });
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id, takenAt: null });
-    f.tick(1000 * 2 ** n); job = result.retry!;
+    f.tick(wait - 1); expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
+    f.tick(1); job = result.retry!;
   }
   // Out of attempts: the mail stays with the last one and no settle period admits it again.
   expect(f.db.select().from(jobs).all()).toHaveLength(4);
@@ -119,7 +124,7 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   const retry = f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
   expect(retry).toMatchObject({ state: 'queued', box: null });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
-  expect(f.db.select().from(conversations).get()?.job).toBe(retry.id);
+  expect(working(f)).toEqual([retry.id]);
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
 });
 it('records a Comms Stop the same way whether the worker\'s heartbeat or the body\'s own exit brings the news', () => {
@@ -231,6 +236,15 @@ it('keeps private Comms words out of the durable job brief and retry snapshots',
   expect(result.job.logTail).toBeNull(); expect(result.retry?.brief).toBe('');
   expect(JSON.stringify(f.db.select().from(jobs).all())).not.toContain('PRIVATE_');
   expect(result.retry?.retryOf).toBe(job.id);
+});
+it('copies no words of a direct message into a job, whoever sent it', () => {
+  // A direct message from someone outside the household has no member to be private to; its words still
+  // belong in the conversation's mail and nowhere a job row can show them.
+  const f = fixture(); f.db.update(conversations).set({ direct: true }).run(); f.send();
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.brief).toBe('');
+  f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
+  expect(f.runtime.finish(job.id, 'worker', 2, 'DIRECT_REPLY_MARKER')).toMatchObject({ job: { logTail: null }, retry: { brief: '' } });
 });
 for (const exitCode of [0, 2]) it(`does not retain private body output after exit ${exitCode}`, () => {
   const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;

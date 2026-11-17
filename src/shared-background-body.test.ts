@@ -25,9 +25,11 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
  const errors:string[]=[];
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/fixture'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,schedule:{every:()=>()=>{}},
   fetch:async(url,init)=>f.root.http.request(new Request(String(url),init)),
-  native:async(assigned,words)=>{if(authored){const result=await f.call('digest',{summary:'Authored decisions',items:[{kind:'task',text:'Keep the inspection task'}],question:{to:'alice',answers:'yes-no',words:'Inspect the pump?'}},'authored-digest',token);expect(result.status).toBe(200);}expect(assigned).toEqual(job);expect(words).toBe('Compare three fictitious pumps');expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('done');return {text:'Three pumps compared.',model:'actual-background-model',actions:[{model:'actual-tool-model'}]};},
+  native:async(assigned,words)=>{if(authored){const result=await f.call('digest',{summary:'Authored decisions',items:[{kind:'task',text:'Keep the inspection task'}],question:{to:'alice',answers:'yes-no',words:'Inspect the pump?'}},'authored-digest',token);expect(result.status).toBe(200);}expect(assigned).toEqual(job);expect(words).toBe('Compare three fictitious pumps');expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('taken');return {text:'Three pumps compared.',model:'actual-background-model',actions:[{model:'actual-tool-model'}]};},
   error:text=>errors.push(text)})).toBe(0);
  expect(errors).toEqual([]);
+ // Settled only after the work was recorded.
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,mail.id)).get()?.state).toBe('done');
  expect(f.db.select().from(s.turns).all()).toEqual(expect.arrayContaining([expect.objectContaining({conversation,kind:'reply',model:'actual-background-model',run:'job'}),expect.objectContaining({conversation,kind:'action',model:'actual-tool-model',run:'job'})]));
  expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:authored?'Authored decisions':'Completed this stretch of work.',revision:1})]);
  if(authored){expect(f.db.select().from(s.digestItems).all()).toEqual([expect.objectContaining({kind:'task',text:'Keep the inspection task'})]);

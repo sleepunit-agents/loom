@@ -1,5 +1,5 @@
 import { assertReadSchema } from './core/data/read-schema.js';
-import { conversationTables, conversationVisibility } from './core/data/conversation-visibility.js';
+import { conversationTables, conversationVisibility, talkVisibility } from './core/data/conversation-visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
 import { getTableColumns } from 'drizzle-orm';
 import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
@@ -62,15 +62,14 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const schema = (viewer: Viewer, full = false) => {
     const records=full?undefined:programRecords?.(viewer),selected=records===undefined?sharedQueryTables:sharedQueryTables.filter(name=>records.includes(name));
     return withQueryFields(selected.length?dataQueries(db.$client, {tables:selected,
-    // Every rule is stated in policy.ts, apart from the bridge and secret tables' own file.
+    // Every rule is stated in policy.ts.
     visibility: { ...boxVisibility(viewer), ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       ...measuringVisibility(viewer), ...tempoVisibility(viewer),
       ...sqlVisibility(viewer, ['agentStatus', 'agentModels', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'members', 'memberAgents', 'memberPreferences']),
     },
   }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
-    // Jobs carry the same agent/project/private-member labels as Approvals.
-    // Reuse its canonical SQL rather than maintain another sharing policy.
-    ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
+    // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
+    ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer))),
   });};
   // Refuse unsupported extensions before admitting any HTTP/socket work.
   assertReadSchema(schema({ kind: 'member', id: '' }, true));

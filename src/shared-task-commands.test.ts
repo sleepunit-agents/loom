@@ -60,7 +60,9 @@ it('validates both relation ends, proposed sharing and private conversation sour
   expect(f.db.select().from(taskLinks).all()).toEqual([]);
   expect(f.db.select().from(tasks).all()).toHaveLength(2);
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
-  expect((await f.call({ action: 'create', input: { ...f.input, source: { kind: 'conversation', id: cv.id } } }, 'owner')).status).toBe(200);
+  // Another member's private conversation is no source for a household owner's task either; it is for its own member.
+  expect((await f.call({ action: 'create', input: { ...f.input, source: { kind: 'conversation', id: cv.id } } }, 'owner')).status).toBe(403);
+  expect((await f.call({ action: 'create', input: { ...f.input, owner: { kind: 'member', id: 'lee' }, source: { kind: 'conversation', id: cv.id } } }, 'lee')).status).toBe(200);
 });
 it('checks current sharing before cached receipts, then denies revoked credentials', async () => {
   const f = fixture(), command = { action: 'create', input: { ...f.input, project: 'pond', owner: { kind: 'member', id: 'lee' } } };

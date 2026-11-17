@@ -8,14 +8,14 @@
  * only when the worker reports that the provider's own program says so. No credential passes through here.
  */
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { mayAct, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
+import { liveWorker } from './shared-worker.js';
 import type { DataDatabase } from './core/data/database.js';
 import { accountSignins, boxes, inbox, jobs, modelAccountBoxes, modelAccounts, operationResults } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
-import { inboxContentChanged } from './core/tempo/volume.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { accountObservationCommitted } from './runtime/account-completion.js';
 
@@ -53,18 +53,9 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
     const member = viewer.kind === 'agent' ? workingFor(viewer) : undefined;
     return !!member && memberMay(member, input);
   };
-  const machine = (viewer: Viewer) => {
-    if (viewer.kind !== 'runner' || runner(viewer)?.box !== viewer.id) return false;
-    const row = db.select({ revokedAt: boxes.revokedAt }).from(boxes).where(eq(boxes.id, viewer.id)).get();
-    return !!row && row.revokedAt === null;
-  };
+  const machine = (viewer: Viewer) => !!liveWorker(db, viewer, runner(viewer));
   const mine = (viewer: Viewer, key: string) => machine(viewer) && request(key)?.box === viewer.id;
   const lapsed = (row: typeof accountSignins.$inferSelect, at: string) => Date.parse(at) - Date.parse(row.askedAt) > SIGNIN_MS;
-  const resolveItem = (item: string | null, resolution: string, at: string) => {
-    if (!item) return;
-    const done = db.update(inbox).set({ state: 'resolved', resolution, changedAt: at }).where(and(eq(inbox.id, item), eq(inbox.state, 'waiting'))).returning().all();
-    for (const row of done) inboxContentChanged(db, { kind: row.toKind, id: row.to }, row.id);
-  };
   /** The pasted code the owner answered with, while the request still waits for it. */
   const pasted = (row: typeof accountSignins.$inferSelect) => {
     const answer = row.item ? db.select().from(inbox).where(eq(inbox.id, row.item)).get() : undefined;
@@ -73,11 +64,14 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
   const end = (row: typeof accountSignins.$inferSelect, state: 'done' | 'failed', why: string | null, at: string) => {
     db.update(accountSignins).set({ state, why, changedAt: at }).where(eq(accountSignins.id, row.id)).run();
     // The pasted code has no use once the sign-in is over, whether or not the worker ever collected it.
-    if (row.item) db.update(inbox).set({ answerText: USED, changedAt: at }).where(and(eq(inbox.id, row.item), isNotNull(inbox.answerText), ne(inbox.answerText, USED))).run();
-    resolveItem(row.item, state === 'done' ? 'Signed in' : why ?? 'The sign-in did not finish', at);
+    if (!row.item) return;
+    const mail = new Conversations(db, () => at);
+    mail.redactAnswer(row.item, USED);
+    mail.resolveItem(row.item, state === 'done' ? 'Signed in' : why ?? 'The sign-in did not finish');
   };
-  /** Close every open request that has run out of time. Called at start and before a worker or a person
-   * is given one; nothing here runs on a timer, so a request is closed at the next of those. */
+  /** Close every open request that has run out of time. Called at start, before a worker or a person is
+   * given one, and by the program's periodic sweep (the returned `expire`), so an answered code is
+   * blanked within one sweep of its request running out even when no worker polls and nobody asks. */
   const sweep = (at: string) => { for (const row of db.select().from(accountSignins).where(inArray(accountSignins.state, [...open])).all()) if (lapsed(row, at)) end(row, 'failed', 'It ran out of time', at); };
   // runtime.signInCode was once a write, so its results, code included, were kept as retry receipts.
   db.transaction(() => { db.delete(operationResults).where(eq(operationResults.operation, 'runtime.signInCode')).run(); sweep(now()); });
@@ -156,5 +150,6 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       ctx.changed('accountSignin', row.id); return { saved: true as const };
     },
     after(input) { if (signedIn.delete(input)) { const row = request(input.id); if (row) accountObservationCommitted(db, row.account); } } });
+  return { /** For the program's periodic sweep. */ expire() { db.transaction(() => sweep(now())); } };
 }
 const USED = '(used)';

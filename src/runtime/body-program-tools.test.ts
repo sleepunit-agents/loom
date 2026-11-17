@@ -34,8 +34,8 @@ it('preserves current Root permissions and stable write receipts',async()=>{
  f.db.update(s.jobs).set({state:'done'}).run();expect(await f.call('loom_commands',{})).toMatchObject({isError:true});expect(await f.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});
 });
 it.each([
- ['conversation.take',{}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
- ['conversation.status',{state:'idle',work:'',seenStop:true}],['conversation.message',{kind:'reply',words:'hello',clientId:'one',model:'MADE UP'}],['bridges.reply',{incoming:'fake',text:'hello',latencyMs:1}],
+ ['conversation.take',{}],['conversation.accept',{items:['fake']}],['conversation.confirm',{batch:'fake'}],['conversation.turn',{kind:'action',model:'MADE UP'}],
+ ['conversation.status',{state:'idle',work:''}],['conversation.message',{kind:'reply',words:'hello',clientId:'one',model:'MADE UP'}],['bridges.reply',{incoming:'fake',text:'hello',latencyMs:1}],
 ]as const)('keeps runtime-owned %s facts and private routes out of model calls',async(operation,input)=>{
  const f=await fixture();expect(await f.call('loom_command',{operation,input,id:'forged'})).toMatchObject({isError:true});expect(f.db.select().from(s.turns).all()).toHaveLength(0);expect(f.fetcher.mock.calls.some(([url])=>String(url).includes('/api/'+operation.replace('.','/')))).toBe(false);
 });
@@ -82,7 +82,6 @@ it('cancels one request while another already pending request completes normally
  const first=tools.call('loom_query',{query:'{one}'},a.signal),second=tools.call('loom_query',{query:'{two}'});await started;a.abort();expect(await first).toMatchObject({isError:true});releases[1](Response.json({data:{two:'still current'}}));expect(decoded(await second)).toEqual({data:{two:'still current'}});const cancelled=vi.fn();releases[0](new Response(new ReadableStream({cancel:cancelled})));await Promise.resolve();await Promise.resolve();expect(cancelled).toHaveBeenCalledOnce();
 });
 it.each(['idle','offline'])('does not let the model clear a live turn by reporting %s',async state=>{const f=await fixture();expect(await f.call('loom_command',{operation:'conversation.status',input:{state,work:''},id:'fake-end'})).toMatchObject({isError:true});expect(f.fetcher).not.toHaveBeenCalled();expect(f.onStatus).not.toHaveBeenCalled();});
-it.each(['working','waiting'])('does not let a %s model status acknowledge Stop',async state=>{const f=await fixture();expect(await f.call('loom_command',{operation:'conversation.status',input:{state,work:'Checking',seenStop:true},id:'ack'})).toMatchObject({isError:true});expect(f.fetcher).not.toHaveBeenCalled();});
 it.each([['conversation.message',{kind:'reply',words:'hello',clientId:'one',latencyMs:2}],['bridges.reply',{incoming:'fake',text:'hello',model:'MADE_UP_MODEL'}]])('rejects the remaining runtime-owned telemetry fields on %s',async(operation,input)=>{const f=await fixture();expect(await f.call('loom_command',{operation,input,id:'telemetry'})).toMatchObject({isError:true});expect(f.fetcher).not.toHaveBeenCalled();});
 it('publishes only generic code-interface metadata through actual MCP discovery',async()=>{
  const f=await fixture();f.db.update(s.agents).set({about:'PRIVATE_DESCRIPTOR_RECORD_CANARY'}).where(eq(s.agents.id,'art')).run();f.db.insert(s.secrets).values({name:'PRIVATE_DESCRIPTOR_SECRET_CANARY',description:'PRIVATE_SECRET_DESCRIPTION',changedAt:new Date(f.clock.now()).toISOString(),changedBy:'alice'}).run();

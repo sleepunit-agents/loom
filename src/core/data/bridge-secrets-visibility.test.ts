@@ -50,22 +50,31 @@ function fixture() {
 }
 it('uses conversation labels for incoming and replies, preserving private-member precedence',async()=>{
  const f=fixture();
- expect(await f.read({kind:'member',id:'owner'})).toMatchObject({bridgeConnections:[{id:'c'},{id:'d'}],bridgeIncoming:[{id:'own'},{id:'private'},{id:'project'},{id:'unlabelled'}],secrets:[{name:'TOKEN'}],bridgePeople:[{user:'outside'}]});
+ // A household owner sets the bridges up and reads the household's rooms, and a message that went nowhere; not a member's private conversation.
+ expect(await f.read({kind:'member',id:'owner'})).toMatchObject({bridgeConnections:[{id:'c'},{id:'d'}],bridgeIncoming:[{id:'own'},{id:'project'},{id:'unlabelled'}],bridgeSends:[{id:'own'},{id:'project'}],secrets:[{name:'TOKEN'}],bridgePeople:[{user:'outside'}]});
  expect(await f.read({kind:'member',id:'alice'})).toMatchObject({bridgeConnections:[{id:'c'}],bridgeIncoming:[{id:'own'},{id:'private'}],bridgeSends:[{id:'own'},{id:'private'}],secrets:[],bridgePeople:[]});
  expect(await f.read({kind:'member',id:'bob'})).toMatchObject({bridgeConnections:[],bridgeIncoming:[{id:'project'}],bridgeSends:[{id:'project'}],secrets:[]});
  expect(await f.read({kind:'agent',id:'art'})).toMatchObject({bridgeConnections:[],bridgeIncoming:[{id:'own'}],bridgeSends:[{id:'own'}],secrets:[]});
  expect(await f.read({kind:'runner',id:'r'})).toMatchObject({bridgeConnections:[],bridgeIncoming:[],bridgeSends:[],secrets:[]});
 });
-it('keeps direct-message words from the agent\'s own token, whoever sent them',async()=>{
+it('gives a direct message with no member to the agent\'s owners, and not to the agent\'s own token or the owner role',async()=>{
  const f=fixture();
  // A DM from someone with no person link, and a group DM: neither has a member to be private to.
- f.db.insert(conversations).values({id:'dm',agent:'art',venue:'slack',place:'dm',label:'dm',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+ f.db.insert(conversations).values({id:'dm',agent:'art',direct:true,venue:'slack',place:'dm',label:'dm',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
  f.db.insert(bridgeIncoming).values({id:'dm',connection:'c',channel:'D1',user:'stranger',isDm:true,text:'for the agent only',state:'delivered',postedAt:f.at,receivedAt:f.at,conversation:'dm'}).run();
  f.db.insert(bridgeSends).values({id:'dm',incoming:'dm',connection:'c',channel:'D1',text:'the answer',state:'sent',createdAt:f.at}).run();
  // A body of the same agent working anywhere else holds this identity. It reads its rooms, not its DMs.
  expect(await f.read({kind:'agent',id:'art'})).toMatchObject({bridgeIncoming:[{id:'own'}],bridgeSends:[{id:'own'}]});
  // The people the agent answers to still can.
  expect(await f.read({kind:'member',id:'alice'})).toMatchObject({bridgeIncoming:[{id:'own'},{id:'private'},{id:'dm'}],bridgeSends:[{id:'own'},{id:'private'},{id:'dm'}]});
+ // A direct message that was held went into no conversation. It is still for the owners of its connection's agent.
+ f.db.insert(bridgeIncoming).values({id:'held-dm',connection:'c',channel:'D2',user:'stranger',isDm:true,text:'held words',state:'held',postedAt:f.at,receivedAt:f.at}).run();
+ expect((await f.read({kind:'member',id:'alice'}))?.bridgeIncoming).toContainEqual({id:'held-dm'});
+ // The owner role alone does not own the agent: it reads neither, and neither does a project-mate or the agent.
+ for(const viewer of [{kind:'member',id:'owner'},{kind:'member',id:'bob'},{kind:'agent',id:'art'}] as const){
+  const seen=await f.read(viewer);
+  expect(seen?.bridgeIncoming).not.toContainEqual({id:'dm'});expect(seen?.bridgeIncoming).not.toContainEqual({id:'held-dm'});expect(seen?.bridgeSends).not.toContainEqual({id:'dm'});
+ }
 });
 it('rechecks ownership and private labels in retained query schemas after revocation',async()=>{
  const f=fixture(),viewer={kind:'member',id:'alice'} as const, schema=f.schema(viewer);
@@ -85,7 +94,7 @@ it('mounts both exact registered selections through the authenticated shared HTT
   const {bridgesQuery}=await import('../../../web/src/pieces/bridges/data');
   const read=async(query:string,credential=bearer)=>{const response=await root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+credential,'content-type':'application/json'},body:JSON.stringify({query})});expect(response.status).toBe(200);return response.json();};
   expect(await read(settingsQuery)).toMatchObject({data:{secretsReader:{id:'owner',defaultAnswer:'ask'},secrets:[{name:'TOKEN'}]}});
-  const bridge=await read(bridgesQuery);expect(bridge.errors).toBeUndefined();expect(bridge.data).toMatchObject({bridgeReader:{id:'owner'},bridgeActivity:[{id:'c',received:4,delivered:3,held:1},{id:'d',received:0}]});
+  const bridge=await read(bridgesQuery);expect(bridge.errors).toBeUndefined();expect(bridge.data).toMatchObject({bridgeReader:{id:'owner'},bridgeActivity:[{id:'c',received:3,delivered:2,held:1},{id:'d',received:0}]});
   const alice='c'.repeat(64);
   f.db.insert(tokens).values({fingerprint:createHash('sha256').update(alice).digest('hex'),kind:'owner',member:'alice',label:'alice',createdAt:f.at}).run();
   const scoped=await read(bridgesQuery,alice);expect(scoped.errors).toBeUndefined();
@@ -100,6 +109,8 @@ it('refreshes real live activity at deadlines, reschedules after writes and canc
  const f=fixture(),bearer='a'.repeat(64),day=86400_000;
  f.db.insert(tokens).values({fingerprint:createHash('sha256').update(bearer).digest('hex'),kind:'owner',member:'owner',label:'test',createdAt:f.at}).run();
  f.db.update(bridgeIncoming).set({receivedAt:new Date(f.clock.now()-day+1000).toISOString()}).run();
+ // Counted for this owner: none of the four messages is in a member's private conversation.
+ f.db.update(conversations).set({member:null}).where(eq(conversations.id,'private')).run();
  const cancelled:ReturnType<typeof vi.fn>[]=[];
  const instrumented={now:()=>f.clock.now(),at:(time:number,fn:()=>void)=>{const cancel=f.clock.at(time,fn),spy=vi.fn(cancel);cancelled.push(spy);return spy;}};
  const root=nextData(f.db,instrumented,()=>true),http=createServer();root.attach(http);

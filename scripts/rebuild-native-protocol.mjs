@@ -55,7 +55,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
       execution=bodyProgram({args:[configuration],read:path=>readFile(path,'utf8'),stdin:async()=>bodyBytes,env:{},signal:AbortSignal.any([parentSignal,stopped.signal]),clock,
        native:async(job,words,bodySignal)=>{
         const expectedWords=expected.get(job.id);
-        observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare('SELECT job FROM conversations WHERE id=?').get(job.conversation)?.job};
+        observed={job:job.id,conversation:job.conversation,requestedModel:job.model,hadInput:words.includes(expectedWords),running:db.prepare('SELECT state FROM jobs WHERE id=?').get(job.id)?.state==='running',currentJob:db.prepare("SELECT id FROM jobs WHERE conversation=? AND state IN ('queued','starting','running','waiting')").get(job.conversation)?.id};
         let finished=false;
         const call=async(name,input)=>{
          if(finished||bodySignal.aborted||!['digest','turn','status'].includes(name))throw Error('Native fixture command is unavailable');
@@ -80,7 +80,7 @@ export async function nativeProtocolSmoke({app,example,clock,home,signal,native,
    const row=db.prepare('SELECT state,model,conversation,box,log_tail FROM jobs WHERE id=?').get(observed.job);
    if(!commandToken?.every(byte=>byte===0))throw Error('Native fixture capability was not erased');
    if(row?.state!=='done'||row.model!==observed.requestedModel||row.conversation!==observed.conversation||row.box!==box)throw Error('The native fixture body did not finish in its assigned scope: '+JSON.stringify({row,observed}));
-   if(db.prepare('SELECT job FROM conversations WHERE id=?').get(observed.conversation)?.job!==null)throw Error('The conversation retained a completed current job');
+   if(db.prepare("SELECT id FROM jobs WHERE conversation=? AND state IN ('queued','starting','running','waiting')").get(observed.conversation))throw Error('The conversation retained a completed current job');
    if(row.log_tail?.includes('PRIVATE_NATIVE_FIXTURE_OUTPUT'))throw Error('Native worker output escaped into job metadata');
    runs.push({...observed,state:row.state,bootstrapErased:true});expected.delete(observed.job);
   }

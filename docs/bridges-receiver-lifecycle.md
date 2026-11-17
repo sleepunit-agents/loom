@@ -37,6 +37,26 @@ pending work; a replacement identity cannot read it. Discord reset only removes
 the current checkpoint; it retains message tombstones. Existing one-hour raw-word
 expiry remains independent and does not retire either platform's identity.
 
+## What is implemented today
+
+The Discord resume cursor is stored (`bridge_resume`) and resumed across a
+restart, a pause and a lost socket. Its row records the identity it was made
+under: the SHA-256 of `JSON.stringify([connection id, platform, workspace,
+agent, bot, token-secret name, the last change to the connection's secrets])`,
+computed in `src/pieces/bridges/shared-daemon.ts`. A lifetime is given the
+cursor only if its own identity is the stored one, so after a secret is replaced
+or the secret name changes the next lifetime identifies afresh, whether or not
+the program was running when the change was made. The credential epoch here is
+the newest `secret_changes` row for the connection's secrets; the permanent
+retirement described below is still open.
+
+Raw event words still expire after one hour. A message that was held (its
+connection disabled, or its bot's agent ambiguous) keeps a `bridge_incoming` row
+with what admission read, and is tried again from that row for a day after its
+raw event is gone. A message that never got a row, because its channel's
+metadata could not be read for the whole hour, is lost and counted in the
+daemon's report.
+
 ## Owning transition
 
 Implement an explicit next-side retirement transition owned jointly by Bridges

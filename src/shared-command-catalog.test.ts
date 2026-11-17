@@ -40,7 +40,7 @@ it.each(['ended','revoked-machine','ownership','current-job','current-agent']as 
   if(change==='ended')f.db.update(s.jobs).set({state:'done'}).run();
   if(change==='revoked-machine')f.db.update(s.boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).run();
   if(change==='ownership')f.db.delete(s.memberAgents).run();
-  if(change==='current-job')f.db.update(s.conversations).set({job:null}).run();
+  if(change==='current-job')f.db.update(s.jobs).set({conversation:null}).run();
   if(change==='current-agent')f.db.update(s.conversations).set({agent:'mark'}).run();
  });expect([401,403]).toContain((await f.post()).status);
 });

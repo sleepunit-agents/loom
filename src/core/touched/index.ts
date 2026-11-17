@@ -18,7 +18,7 @@ export interface TouchSource {
 }
 /** The same notification operation as all other doors. It cannot write content or grant visibility. */
 export function installTouched(operations: Operations, resolve: (viewer: Viewer, change: Change) => Change | undefined) {
-  operations.register(operation({ name: 'core.touched', input: change, output: z.null(), doors: ['direct', 'mcp'],
+  operations.register(operation({ name: 'core.touched', input: change, output: z.null(), doors: ['direct'],
     may: (viewer, input) => !!resolve(viewer, input),
     run(ctx, input) { const target = resolve(ctx.viewer, input); if (target) ctx.changed(target.type, target.id); return null; },
   }));

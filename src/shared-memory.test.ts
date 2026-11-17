@@ -134,7 +134,9 @@ it('builds project sections from current visible Tasks, Changes and Conversation
   app.services.conversations.open({agent:'fiction',venue:'wake',place:'private',project:'pond',member:'other',label:'PRIVATE CONVERSATION'});
  });
  const read=async()=>{const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryProject(id:"fiction:pond") { changes { open failing running } sections { key available total conversationIds groups { title items { title } } items { title } } } }'})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
- const owner=await read();expect(JSON.stringify(owner)).toContain('PRIVATE TASK');expect(JSON.stringify(owner)).toContain('PRIVATE CHANGE');expect(JSON.stringify(owner)).toContain('PRIVATE CONVERSATION');
+ const owner=await read();expect(JSON.stringify(owner)).toContain('PRIVATE TASK');expect(JSON.stringify(owner)).toContain('PRIVATE CHANGE');
+ // Another member's private conversation is not the household owner's to read; the project's shared one is.
+ expect(JSON.stringify(owner)).not.toContain('PRIVATE CONVERSATION');expect(JSON.stringify(owner)).toContain('Visible conversation');
  app.writes.run(()=>{f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();f.db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();});
  const member=await read(),words=JSON.stringify(member);expect(words).toContain('Pond visible task');expect(words).toContain('Visible change');expect(words).toContain('Visible conversation');expect(words).not.toContain('PRIVATE');
  expect(member.memoryProject.changes).toEqual({open:1,failing:1,running:0});

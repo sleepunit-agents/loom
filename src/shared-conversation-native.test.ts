@@ -15,7 +15,7 @@ const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const stop of 
 it('delivers private Comms mail to an enrolled native child, accepts its reply/digest and returns the person answer through one Inbox',async()=>{
  const f=await bodyFixture(clean,{initialTime:Date.now(),modelRoles:()=>[{model:'requested-model',provider:'provider',harness:'fixture',series:'series'}]});
  f.root.writes.run(()=>{
-  f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();
+  f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.delete(s.jobs).run();
   f.db.insert(s.boxAgents).values({box:'box',agent:'art',lent:false}).run();f.db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();f.db.insert(s.agentModels).values({agent:'art',model:'requested-model',position:0}).run();
   f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
   f.db.insert(s.modelAccounts).values({id:'account',owner:'alice',provider:'provider',label:'Fixture account',hasRoom:true}).run();
@@ -59,7 +59,9 @@ it('delivers private Comms mail to an enrolled native child, accepts its reply/d
  const messages=f.db.select().from(s.messages).all();expect(messages.find(row=>row.kind==='card')).toMatchObject({tool:'Read',cardState:'done'});
  const recovered=[];for(const message of messages){expect(message.words).not.toBeNull();recovered.push(await f.key.open(message.words!));}expect(recovered).toEqual([input,card,reply,JSON.stringify({words:question,answers:'yes-no'}),'yes']);
  expect(f.db.select().from(s.conversationPeople).all().map(row=>row.who).sort()).toEqual(['alice','art']);expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:2,summary:'Fictitious work complete',inboxItem:null});
- expect(f.db.select().from(s.threadRefs).get()?.ref).toBe('t-4242');expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,stopRequested:false});
+ expect(f.db.select().from(s.threadRefs).get()?.ref).toBe('t-4242');
+ // A body's status report cannot take a Stop. This fixture body leaves with exit 0, not BODY_EXIT.stopped, so the Stop stays on the thread.
+ expect(f.db.select().from(s.threads).get()).toMatchObject({working:false,stopRequested:true});
  expect((await bearer('runtime.finish',{job:job.id,exitCode:0,logTail:reply})).status).toBe(200);expect(f.db.select().from(s.jobs).get()).toMatchObject({state:'done',brief:'',logTail:null});expect((await bearer('conversation.status',{state:'working',work:''},token)).status).toBe(401);
  const read=await fetch(url+'/graphql',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:'{recentConversations(agent:"art",limit:1,answeredOnly:true){lastAnswer{words}}}'})});const selected=await read.json();expect(selected.errors).toBeUndefined();expect(selected.data.recentConversations[0].lastAnswer.words).toBe(reply);
  const durable=f.db.$client.serialize();for(const words of [input,reply,card,question,token]){expect(durable.includes(Buffer.from(words))).toBe(false);expect(output.join('')+errors.join('')).not.toContain(words);expect(childArgs.join(' ')).not.toContain(words);}

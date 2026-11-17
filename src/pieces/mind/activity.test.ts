@@ -51,13 +51,13 @@ it('checks conversation references at the end of a long episode before listing o
  expect(list(app,partial).entries).toEqual([]);
  expect(read(app,'e~art~long-private',partial)).toBeUndefined();
 });
-it('uses private agent policy and includes other members’ private conversations for household owners',async()=>{
+it('uses private agent policy and keeps another member’s private conversations from a household owner',async()=>{
  const a=source(),b=source();a.add('m-art');b.add('m-other');
  const rows=[run('dg-visible'),run('dg-private',{conversation:conv('cv-222222222222',{venue:'loom',member:'partial',label:'Partial private thread'})}),run('dg-unscoped-comms',{conversation:conv('cv-333333333333',{venue:'loom',label:'No member'})})];
  a.add('m-comms',{metadata:JSON.stringify({where:'loom:thread',conversation:'cv-222222222222'})});a.add('m-mislabeled',{metadata:JSON.stringify({where:'terminal',conversation:'cv-222222222222'})});a.add('m-unknown',{metadata:JSON.stringify({where:'terminal',conversation:'cv-444444444444'})});
- const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-private','d~art~dg-unscoped-comms','d~art~dg-visible','e~other~m-other']);
+ const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-unscoped-comms','d~art~dg-visible','e~other~m-other']);
  expect(list(app,partial).entries.map(e=>e.id)).toEqual(expect.arrayContaining(['d~art~dg-private','d~art~dg-visible']));expect(list(app,partial).entries.some(e=>e.agent==='other')).toBe(false);
- expect(read(app,'d~art~dg-private')).toBeDefined();expect(read(app,'e~art~m-mislabeled')).toBeDefined();expect(read(app,'e~other~m-other',partial)).toBeUndefined();
+ expect(read(app,'d~art~dg-private')).toBeUndefined();expect(read(app,'d~art~dg-private',partial)).toBeDefined();expect(read(app,'e~art~m-mislabeled')).toBeUndefined();expect(read(app,'e~other~m-other',partial)).toBeUndefined();
  expect(app.reader.window('recent',{kind:'member',id:'outsider'})).toBeUndefined();expect(list(app,{kind:'agent',id:'art'}).entries.some(e=>e.agent==='other')).toBe(false);
 });
 it('shows shared project conversations without opening the agent’s episode files',async()=>{

@@ -1,4 +1,3 @@
-import {z} from 'zod';
 import {presentedCredential} from './core/data/authentication.js';
 import {guardedResponse,responseAvailability} from './core/data/guarded-response.js';
 /** MCP is an adapter over the canonical shared HTTP operations and query door. */

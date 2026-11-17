@@ -1,10 +1,10 @@
 /** Trusted bridge ingress. Platform adapters supply authenticated event fields;
  * person identity comes exclusively from household person links. */
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { incomingId, inboxSourceId } from './keys.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, inbox, inboxRefs } from '../../core/data/schema.js';
+import { incomingId, inboxSourceId, parseIncomingId } from './keys.js';
+import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -20,6 +20,9 @@ export interface IncomingMessage {
   text: string;
   postedAt: string;
   mentions: readonly string[];
+  /** The outside user whose message this one explicitly answers, when the platform says: the author of
+   * the message a Discord reply points at, or of the root a Slack thread reply hangs under. */
+  repliesTo?: string;
   bot?: boolean;
   webhook?: boolean;
 }
@@ -38,9 +41,10 @@ export class BridgeIncoming {
   }
 
   /** Atomically records the event, turn, conversation and unified inbox item.
-   * Duplicate events never append a second turn. Held events require explicit
-   * retry with the platform envelope (kept by the raw-event adapter). The trusted
-   * spool supplies its original receipt time when processing was delayed. */
+   * Duplicate events never append a second turn. A held event is tried again
+   * only when asked: with the platform envelope while the raw-event adapter
+   * still has it, and from its own row afterwards (retry). The trusted spool
+   * supplies its original receipt time when processing was delayed. */
   receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
       const id = incomingId(message.connection, message.id);
@@ -58,6 +62,18 @@ export class BridgeIncoming {
       const senders = peers.filter(p => p.botUser === message.user);
       const sender = senders[0];
       const link = this.db.select().from(bridgePeople).where(and(eq(bridgePeople.platform, connection.platform), eq(bridgePeople.workspace, connection.workspace), eq(bridgePeople.user, message.user))).get();
+      // Who the message is addressed to: whoever it mentions, the author of the message it explicitly
+      // replies to, and the bot whose own message its thread hangs under. Nothing looser counts: a bot
+      // that has merely spoken in the thread, or spoke last in the room, is not addressed. A thread's root
+      // is known as a bot's only if loom posted it, and a reply posted in parts records its last part.
+      const addressed = new Set(message.mentions);
+      if (message.repliesTo) addressed.add(message.repliesTo);
+      if (message.thread) {
+        const root = this.db.select({ connection: bridgeSends.connection }).from(bridgeSends)
+          .where(and(inArray(bridgeSends.connection, peers.map(p => p.id)), eq(bridgeSends.channel, channel), eq(bridgeSends.postedId, message.thread))).get();
+        const poster = root && peers.find(p => p.id === root.connection);
+        if (poster) addressed.add(poster.botUser);
+      }
       let state: 'held' | 'dropped' | 'delivered' = 'delivered';
       let reason: string | null = null;
       let matchedMember = sender ? null : link?.member ?? null;
@@ -67,11 +83,14 @@ export class BridgeIncoming {
       else if (peers.some(p => p.botUser === connection.botUser && p.agent !== connection.agent)) { state = 'held'; reason = 'Ambiguous connection agent'; }
       else if (new Set(senders.map(p => p.agent)).size > 1) { state = 'held'; reason = 'Ambiguous bot identity'; }
       else if ((message.bot || message.webhook || sender) && (!sender || !route?.botsMayTalk)) { state = 'dropped'; reason = 'Unknown bot or bots disabled'; }
-      else if (!message.isDm && !message.mentions.includes(connection.botUser)) {
-        if (peers.some(p => message.mentions.includes(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
+      else if (!message.isDm && !addressed.has(connection.botUser)) {
+        if (peers.some(p => addressed.has(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
       }
       const at = this.now();
-      const row = existing ?? this.db.insert(bridgeIncoming).values({ id, connection: connection.id, channel: message.channel, thread: message.thread, isDm: message.isDm, user: message.user, text: message.text, postedAt: message.postedAt, receivedAt: receivedAt ?? at, state: 'pending' }).returning().get();
+      const row = existing ?? this.db.insert(bridgeIncoming).values({ id, connection: connection.id, channel: message.channel, thread: message.thread, isDm: message.isDm, user: message.user, text: message.text, postedAt: message.postedAt, receivedAt: receivedAt ?? at, state: 'pending',
+        // What admission reads and nothing else keeps, so a held message can be tried again from this row.
+        mentions: JSON.stringify(message.mentions), repliesTo: message.repliesTo ?? null, parent: message.parent ?? null,
+        groupDm: !!message.groupDm, bot: !!message.bot, webhook: !!message.webhook }).returning().get();
       let conversation: string | null = null;
       let deliveredAt = at;
       if (state === 'delivered') {
@@ -104,7 +123,7 @@ export class BridgeIncoming {
           // place; duplicate delivery always keeps its original recorded scope.
           const place = JSON.stringify([connection.workspace, message.channel, message.thread ?? null,
             ...(message.isDm ? [message.groupDm ? ['group'] : ['member', member]] : [])]);
-          conversation = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member }).id;
+          conversation = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member, direct: message.isDm }).id;
         }
         if (!delivered) {
           this.conversations.turn({ conversation, kind: 'message', fromKind, fromId });
@@ -112,6 +131,21 @@ export class BridgeIncoming {
         }
       }
       return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
+    });
+  }
+
+  /** Try a held message again from its own row, against the household's rules as they are now. This is
+   * the retry once the raw event has expired. A row from before the admission fields were stored cannot
+   * say whom it mentioned and is returned as it is. */
+  retry(id: string): typeof bridgeIncoming.$inferSelect | undefined {
+    return this.db.transaction(() => {
+      const row = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
+      const message = row && parseIncomingId(row.id, row.connection);
+      if (!row || row.state !== 'held' || row.mentions === null || !message) return row;
+      return this.receive({ id: message, connection: row.connection, channel: row.channel, isDm: row.isDm, user: row.user, text: row.text, postedAt: row.postedAt,
+        mentions: JSON.parse(row.mentions) as string[], bot: !!row.bot, webhook: !!row.webhook,
+        ...(row.thread === null ? {} : { thread: row.thread }), ...(row.parent === null ? {} : { parent: row.parent }),
+        ...(row.repliesTo === null ? {} : { repliesTo: row.repliesTo }), ...(row.groupDm ? { groupDm: true } : {}) }, true, row.receivedAt);
     });
   }
 }

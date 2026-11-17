@@ -1,21 +1,21 @@
-import { inboxContentChanged } from '../../core/tempo/volume.js';
 /** Trusted shared-model value writes. Outside doors authenticate an owner before
  * calling this service. The holder owns values; the journal owns retry identity.
  * A positive holder receipt finishes metadata after a crash. A negative receipt
  * never proves that a write is undone, and never releases the reservation.
  */
 import { createHash, createHmac, createSecretKey } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
-import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents, inbox } from '../../core/data/schema.js';
+import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents } from '../../core/data/schema.js';
+import { Conversations } from '../../core/conversations/index.js';
 import type { AsyncSecretMutations } from './async-values.js';
 import type { HolderWrite } from './holder-store.js';
-import { secretName } from './input.js';
+import { secretName, secretDescription } from './input.js';
 import { secretHasValue } from './presence.js';
 
 const identity = z.object({ id: z.uuid(), member: z.string().min(1).max(256), name: secretName }).strict();
-const setInput = identity.extend({ mode: z.enum(['add', 'replace']), description: z.string().max(4000).optional(),
+const setInput = identity.extend({ mode: z.enum(['add', 'replace']), description: secretDescription.optional(),
   value: z.string().refine(value => Buffer.byteLength(value) > 0 && Buffer.byteLength(value) <= 65536) }).strict();
 type Journal = typeof secretWriteJournal.$inferSelect;
 const unavailable = () => new Error('Secret write awaits reconciliation');
@@ -134,9 +134,7 @@ export class SecretValues {
           if (request.state !== 'pending' && request.state !== 'allowed') continue;
           const state = request.state === 'pending' ? 'cancelled' : 'revoked';
           this.db.update(secretRequests).set({ state, answeredAt: at }).where(eq(secretRequests.id, request.id)).run();
-          const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: state, changedAt: at })
-            .where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, request.id), eq(inbox.state, 'waiting'))).returning().all();
-          for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
+          new Conversations(this.db, () => at).resolveSource('secret-request', request.id, state);
         }
         this.db.delete(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).run();
         this.db.insert(secretRules).values({ secret: row.secret, answer: 'ask', minutes: 30 })
@@ -170,4 +168,10 @@ export class SecretValues {
   }
   /** Root closes/cancels the transport before closing the shared database. */
   close(): void { this.closed = true; }
+}
+
+/** Change what a named secret is for, and nothing else about it. False when no secret has that name. */
+export function describeSecret(db: DataDatabase, input: { secret: string; description: string; by: string; at: string }): boolean {
+  const description = secretDescription.parse(input.description);
+  return db.update(secrets).set({ description, changedAt: input.at, changedBy: input.by }).where(eq(secrets.name, input.secret)).run().changes > 0;
 }

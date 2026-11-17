@@ -13,6 +13,8 @@ const discordMessage = z.object({
   author: z.object({ id, bot: z.boolean().optional() }),
   content: z.string(), timestamp: z.iso.datetime({ offset: true }),
   mentions: z.array(z.object({ id })), webhook_id: id.optional(),
+  // Present on a reply (type 19); null when the message replied to has been deleted.
+  referenced_message: z.object({ author: z.object({ id }) }).nullish(),
 });
 const discordDispatch = z.object({ op: z.literal(0), t: z.string(), d: z.unknown() });
 const slackEnvelope = z.object({ type: z.literal('event_callback'), team_id: id,
@@ -21,6 +23,8 @@ const slackEnvelope = z.object({ type: z.literal('event_callback'), team_id: id,
 const slackMessage = z.object({
   channel: id, channel_type: slackChannelType.optional(),
   ts: timestamp, thread_ts: timestamp.optional(), text: z.string(),
+  // On a reply in a thread: who wrote the thread's root message.
+  parent_user_id: id.optional(),
   user: id.optional(), bot_id: id.optional(), subtype: z.string().optional(),
 });
 
@@ -37,11 +41,13 @@ export interface DiscordChannel {
   parent?: string;
 }
 
-/** Who the author summoned by writing their mention. Discord's `mentions` list
- * also names the author of a message being replied to (the reply ping), which
- * is not a summons: a plain reply to one bot's message in a room another agent
- * answers must still reach that agent. The list stays the authority on who a
- * written mention resolved to; the text only says which of them were written. */
+/** Who the author mentioned by writing their mention. Discord's `mentions` list
+ * also names the author of a message being replied to, but only when the
+ * sender left the reply ping on, so it is not how a reply is recognised: an
+ * explicit reply addresses the author of the message it answers whether or not
+ * it pings, and that is carried separately as `repliesTo`. The list stays the
+ * authority on who a written mention resolved to; the text only says which of
+ * them were written. */
 function discordSummons(content: string, resolved: string[]): string[] {
   const written = new Set([...content.matchAll(/<@!?([^<>\s]+)>/g)].map(match => match[1]));
   return [...new Set(resolved.filter(id => written.has(id)))];
@@ -62,6 +68,7 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
     isDm: channel.kind === 'dm', user: message.author.id, text: message.content,
     postedAt: new Date(message.timestamp).toISOString(),
     mentions: discordSummons(message.content, message.mentions.map(mention => mention.id)),
+    ...(message.type === 19 && message.referenced_message ? { repliesTo: message.referenced_message.author.id } : {}),
     bot: message.author.bot ?? false, webhook: !!message.webhook_id,
   };
 }
@@ -94,6 +101,8 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
     // Legacy integrations have only a bot id. Never confuse it with a user id.
     user: message.user ?? `bot:${message.bot_id}`, text: message.text,
     postedAt: new Date(millis).toISOString(),
+    // Slack's only reply is a reply in a thread; it answers the thread's root.
+    ...(message.thread_ts && message.thread_ts !== message.ts && message.parent_user_id ? { repliesTo: message.parent_user_id } : {}),
     mentions: [...new Set([...message.text.replace(/```[\s\S]*?(?:```|$)|`[^`\n]*(?:`|$)/g, '').matchAll(/<@([A-Za-z0-9]+)(?:\|[^>]+)?>/g)].map(match => match[1]))],
     bot: !!message.bot_id || message.subtype === 'bot_message',
   };

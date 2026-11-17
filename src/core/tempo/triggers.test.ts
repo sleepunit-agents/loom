@@ -97,8 +97,9 @@ it('holds an agent-owned operation with no inbox recipient, and skips the times 
   expect(db.select().from(triggerLog).where(andTrigger(t.id)).all().map(l => [l.event, l.note])).toContainEqual(['missed', 'time:2026-11-14T18:01:00.000Z']);
   clock.advance(60_000); expect(operations).toEqual(['tasks.reconcile']);
 });
-// The missed-time rule (stated on TriggerEngine): a time fires at most MISSED_GRACE_MS late, however it came to be late.
-it.each(['pause', 'restart', 'slow clock'] as const)('fires a time up to the grace late after a %s, and skips it beyond that', how => {
+// The missed-time rule (stated on TriggerEngine): a standing trigger's time fires at most MISSED_GRACE_MS late,
+// however it came to be late; a once-only trigger fires late, however late, and is never dropped.
+it.each(['pause', 'restart', 'slow clock'] as const)('fires a time up to the grace late after a %s; beyond that skips a standing time and still fires a once-only one', how => {
   for (const late of [MISSED_GRACE_MS, MISSED_GRACE_MS + 1]) {
     const f = fixture(), due = f.clock.now() + 60_000;
     const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
@@ -119,14 +120,33 @@ it.each(['pause', 'restart', 'slow clock'] as const)('fires a time up to the gra
       expect(f.row(once.id)).toMatchObject({ state: 'fired', enabled: false });
       expect(events(lane.id)).not.toContain('missed');
     } else {
-      expect(f.items()).toEqual([]);
-      expect(f.row(once.id)).toMatchObject({ state: 'stopped', enabled: false, nextDueAt: null, lastFiredAt: null });
-      expect(events(lane.id).at(-1)).toBe('missed'); expect(events(once.id).at(-1)).toBe('missed');
+      expect(f.items().map(i => i.words)).toEqual(['Once']);
+      expect(f.row(once.id)).toMatchObject({ state: 'fired', enabled: false, nextDueAt: null });
+      expect(events(lane.id).at(-1)).toBe('missed'); expect(events(once.id)).not.toContain('missed');
     }
     // Either way the lane stands for tomorrow, and nothing fires a second time to catch up.
     expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-15T18:01:00.000Z' });
-    engine.tick(); expect(f.items()).toHaveLength(late <= MISSED_GRACE_MS ? 2 : 0);
+    engine.tick(); expect(f.items()).toHaveLength(late <= MISSED_GRACE_MS ? 2 : 1);
   }
+});
+it.each(['pause', 'restart'] as const)('fires a once-only trigger exactly once after a %s of days, and skips every standing time that passed meanwhile', how => {
+  const f = fixture();
+  const lane = f.engine.set({ ...f.base, times: '12:01', days: null, lifespan: 'until-stopped' });
+  const once = f.engine.set({ ...f.base, instructions: 'Once' }), wall = f.engine.set({ ...f.base, times: '12:02', instructions: 'Once by wall time' });
+  let engine = f.engine;
+  if (how === 'pause') f.engine.pause('art'); else f.engine.close();
+  f.clock.advance(9 * 86_400_000); expect(f.items()).toEqual([]);
+  if (how === 'pause') f.engine.resume('art');
+  else { engine = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => engine.close()); engine.tick(); }
+  expect(f.items().map(i => i.words).sort()).toEqual(['Once', 'Once by wall time']);
+  for (const id of [once.id, wall.id]) {
+    expect(f.row(id)).toMatchObject({ state: 'fired', enabled: false, nextDueAt: null });
+    expect(f.db.select().from(triggerLog).where(andTrigger(id)).all().map(l => l.event).filter(e => e === 'fired' || e === 'missed')).toEqual(['fired']);
+  }
+  expect(f.row(lane.id)).toMatchObject({ state: 'standing', enabled: true, nextDueAt: '2026-11-23T18:01:00.000Z' });
+  // Nothing fires again: not at the next scan, not after another restart.
+  engine.tick(); engine.close(); const again = new TriggerEngine(f.db, f.clock, f.effects); stops.push(() => again.close()); again.tick();
+  expect(f.items()).toHaveLength(2);
 });
 it('says which step of a firing failed', () => {
   const failures = (f: ReturnType<typeof fixture>) => f.db.select().from(triggerLog).all().filter(l => l.event === 'failure').map(l => l.note);

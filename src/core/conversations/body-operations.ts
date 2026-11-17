@@ -37,9 +37,14 @@ export function registerConversationBodyOperations(operations:Operations, servic
    const day=service.now().slice(0,10);new ConversationHistory(db,service.now).finding({...input,conversation:cv.id,day});ctx.changed('findings',cv.id);return {saved:true as const,day};
   },
  }));
- operations.register(operation({...common,name:'conversation.confirm',
-  input:z.object({items:z.array(z.string().min(1)).min(1).max(100)}).strict(),output:z.object({saved:z.literal(true)}).strict(),
-  may(viewer,input){const found=current(viewer);return !!found&&input.items.every(id=>{try{const item=conversationsService.item(id);return item.conversation===found.cv.id&&item.toKind==='agent'&&item.to===found.cv.agent&&item.job===found.job.id&&['taken','done'].includes(item.state)&&sameMailScope(item,found.cv);}catch{return false;}});},
+ // Two reports about mail this job took. `accept`: the body has it, so its sender sees it delivered; nothing
+ // is settled. `confirm`: the mail is dealt with (its answer is recorded, or it needs none) and is done.
+ const heldMail=(viewer:Viewer,items:readonly string[])=>{const found=current(viewer);return !!found&&items.every(id=>{try{const item=conversationsService.item(id);return item.conversation===found.cv.id&&item.toKind==='agent'&&item.to===found.cv.agent&&item.job===found.job.id&&['taken','done'].includes(item.state)&&sameMailScope(item,found.cv);}catch{return false;}});};
+ const mailReport={input:z.object({items:z.array(z.string().min(1)).min(1).max(100)}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:(viewer:Viewer,input:{items:string[]})=>heldMail(viewer,input.items)};
+ operations.register(operation({...common,...mailReport,name:'conversation.accept',
+  run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items)mail.accept(cv.id,job.id,id);ctx.changed('messages',cv.id);return {saved:true as const};},
+ }));
+ operations.register(operation({...common,...mailReport,name:'conversation.confirm',
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items){mail.confirm(cv.id,job.id,id);ctx.changed('inbox',id);}ctx.changed('messages',cv.id);return {saved:true as const};},
  }));
  const question=z.object({to:z.string().min(1),answers:z.enum(['yes-no','words']),words:z.string().min(1).max(100_000),why:z.string().max(100_000).optional(),ifYes:z.string().max(100_000).optional(),ifNo:z.string().max(100_000).optional(),link:z.string().max(2000).optional(),waitsOnKind:z.enum(['approval','task']).optional(),waitsOnId:z.string().min(1).optional(),refs:z.array(z.string().min(1)).max(100).optional()}).strict().refine(q=>!!q.waitsOnKind===!!q.waitsOnId,'Use both wait-on kind and id');

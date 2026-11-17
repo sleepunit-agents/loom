@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
-import { recordAccountUsage, accountUsageUnavailable } from './runtime/account-usage.js';
+import { accountUsageUnavailable } from './runtime/account-usage.js';
 import { refreshAccountWindows, recordAccountWindows } from './runtime/account-windows.js';
 import { dataDatabase } from './core/data/database.js';
 import { Operations } from './core/operations/index.js';
@@ -280,10 +280,9 @@ for (const failed of [false, true]) it(`does not apply a trusted ${failed ? 'fai
   expect(await pending).toEqual({ refreshed: false }); expect(f.db.select().from(modelAccounts).get()?.hasRoom).toBe(true);
 });
 
-for (const writer of ['windows', 'summary', 'unavailable'] as const) it(`shares standalone ${writer} completions with reporting witnesses`, async () => {
+for (const writer of ['windows', 'unavailable'] as const) it(`shares standalone ${writer} completions with reporting witnesses`, async () => {
   const f = fixture(); if (writer !== 'unavailable') await f.call(); const basis = await f.basis(), otherHandle = dataDatabase(f.client);
   if (writer === 'windows') expect(recordAccountWindows(otherHandle, f.identity, f.observation.windows, f.now())).toBe(true);
-  else if (writer === 'summary') expect(recordAccountUsage(otherHandle, { ...f.identity, windows: f.observation.windows, now: f.now() }).recorded).toBe(true);
   else expect(accountUsageUnavailable(otherHandle, f.identity)).toBe(true);
   const response = writer === 'unavailable' ? await f.call({ ...f.observation, basis }, 'old-success')
     : await f.operation('accountUnavailable', { ...f.identity, basis });

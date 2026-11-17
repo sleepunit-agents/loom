@@ -364,8 +364,10 @@ it('enrolls through the canonical Root then uses the private child credential fo
             expect(f.db.select().from(inbox).where(eq(inbox.id, item.id)).get()?.state).toBe('taken');
             accepted.push(item.words!);
           })).toEqual({ accepted: 1, stopRequested: false });
-          expect(f.db.select().from(inbox).get()?.state).toBe('done');
+          expect(f.db.select().from(inbox).get()?.state).toBe('taken');
           await child.turn({ kind: 'note', model: 'observed-native-model', outcome: 'progressed' });
+          // The work is recorded; only now is its mail settled.
+          await child.settle(); expect(f.db.select().from(inbox).get()?.state).toBe('done');
         } finally { child.close(); }
         exit({ exitCode: 0, logTail: raw });
       },
