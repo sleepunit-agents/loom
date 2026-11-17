@@ -459,12 +459,16 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: operations gaining a result that is never stored. Then this becomes one.
 
 ### Policy is asked about the person a request names
-- What: two doors build a viewer from an id in the request and ask the read rules about it: asking
-  someone about a task (`tasks.command` `ask`) and a body's question to a person.
-- Where: `src/shared-task-access.ts`, `src/shared-conversation-questions.ts`, through `addressee` in
-  `src/policy.ts`.
+- What: three doors build a viewer from a member's id and ask the read rules about it: asking someone
+  about a task (`tasks.command` `ask`), a body's question to a person, and a body setting how loudly its
+  member's own inbox item arrives. The first two take the id from the request; the third takes it from the
+  body's credential.
+- Where: `src/shared-task-access.ts`, `src/shared-conversation-questions.ts`, `src/shared-tempo-access.ts`
+  (`volume`), through `addressee` in `src/policy.ts`.
 - Why: the question is "could the person this is addressed to read it", so that nothing is sent to
-  someone about a record they may not see. The answer only ever narrows what the caller may do.
+  someone about a record they may not see, and a body changes the volume only of an item its member
+  reads. The answer only ever narrows what the caller may do: what allows the caller is its own rule
+  (`rules.inboxVolume` for the third, whose body half is `forItsMember`).
 - Would change it: any use of such a viewer to allow, read or write something. `addressee` says so.
 
 ## Stored data
