@@ -3,6 +3,7 @@
  * reads {job,house} JSON on stdin and emits {build:string} JSON on stdout. A
  * runner reads {job,build} JSON on stdin after the running acknowledgement.
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
+import { BUILD_DEADLINE_DEFAULT_MS, BUILD_DEADLINE_MAX_MS, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
 import { bodyInput } from './body-bootstrap.js';
 import { BODY_SCRATCH } from './body-harness.js';
 import { harnessLeftovers } from './body-harnesses.js';
@@ -179,8 +180,8 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   state?: string;
 }, runtime: ProcessRuntime = native, open: typeof workerLeft = workerLeft): WorkerExecutor {
   const buildPlan = command(config.build);
-  const buildTimeoutMs = config.buildTimeoutMs ?? 300_000;
-  if (!Number.isSafeInteger(buildTimeoutMs) || buildTimeoutMs < 1 || buildTimeoutMs > 3_600_000)
+  const buildTimeoutMs = config.buildTimeoutMs ?? BUILD_DEADLINE_DEFAULT_MS;
+  if (!validDeadline(buildTimeoutMs, BUILD_DEADLINE_MAX_MS))
     throw new Error('Invalid worker build deadline');
   const runner = workerRunner(config), left = config.state === undefined ? undefined : open(config.state);
   const noted = (attempt: ReturnType<typeof launch>, job: WorkerAssignment, scratch?: string) => {
@@ -271,7 +272,7 @@ export function commandUsageProvider(plan: WorkerCommand, options: {
   signal: AbortSignal; timeoutMs?: number;
 }, runtime: ProcessRuntime = native): UsageProvider {
   const fixed = command(plan), timeoutMs = options.timeoutMs ?? 30_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000)
+  if (!validDeadline(timeoutMs, STEP_DEADLINE_MAX_MS))
     throw new Error('Invalid quota reader deadline');
   return async identity => {
     const abort = new AbortController();

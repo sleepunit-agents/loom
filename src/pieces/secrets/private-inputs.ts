@@ -1,6 +1,6 @@
 /** Trusted one-attempt handoff engine. External doors bind a real body/worker;
  * installed code needs no service grant. Values are never receipts or records. */
-import {createHash} from 'node:crypto';
+import {secretUseId} from './use-id.js';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {Clock} from '../../core/clock.js';
@@ -46,7 +46,7 @@ export class SecretPrivateInputs {
   for(const [key,until] of this.delivered)if(until<=this.clock.now())this.delivered.delete(key);
   if(this.delivered.size>=4096)throw failed();
   const target=this.db.select().from(jobs).where(eq(jobs.id,input.job)).get();if(!target)throw failed('denied');
-  const id='use-input-'+createHash('sha256').update('loom-private-secret-input-v1\0').update(JSON.stringify([target.agent,target.id,input.attempt])).digest('hex');
+  const id=secretUseId(target.agent,target.id,input.attempt);
   const permitted=()=>this.available(current)&&this.db.select({agent:jobs.agent}).from(jobs).where(eq(jobs.id,target.id)).get()?.agent===target.agent&&!!this.requests.grantFor(input.secret,target.agent,target.id)
    &&!this.db.select({id:secretWriteJournal.id}).from(secretWriteJournal).where(and(eq(secretWriteJournal.secret,input.secret),eq(secretWriteJournal.state,'prepared'))).get();
   this.commit(()=>{

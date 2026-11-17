@@ -1,5 +1,6 @@
 /** Worker/body recipient. Binary values bypass common operation envelopes.
  * One read and one metadata ACK; uncertainty erases bytes instead of replaying. */
+import {SECRET_USE_ID} from './use-id.js';
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {privateOrigin} from '../../core/private-origin.js';
@@ -50,7 +51,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    const received=await post('read',input,current,signal,65536);value=received.bytes;owned.add(value);
    if(optional&&received.response.status===204){value.fill(0);owned.delete(value);return undefined;}
    const use=received.response.headers.get('x-loom-secret-use');
-   if(received.response.headers.get('content-type')?.split(';')[0]!=='application/octet-stream'||!use||!/^use-input-[a-f0-9]{64}$/.test(use)||!value.length)throw unavailable();
+   if(received.response.headers.get('content-type')?.split(';')[0]!=='application/octet-stream'||!use||!SECRET_USE_ID.test(use)||!value.length)throw unavailable();
    const ack=await post('confirm',{use,...(job?{job}:{})},current,signal,4096);
    try{if(!z.object({confirmed:z.literal(true)}).strict().safeParse(JSON.parse(ack.bytes.toString('utf8'))).success||!current())throw unavailable();}finally{ack.bytes.fill(0);}
    owned.delete(value);return value;

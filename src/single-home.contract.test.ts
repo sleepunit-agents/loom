@@ -17,6 +17,8 @@ import { DEFAULT_STALE_DAYS, fieldState, freshUntil } from './backends/cards.js'
 import { MAX_SLUG } from './backends/people.js';
 import { MAX_PROJECT_SLUG } from './backends/projects.js';
 import { secretAgent } from './pieces/secrets/input.js';
+import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
+import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
 import { HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SLUG, householdId, slug } from './slug.js';
 
 const root = new URL('../', import.meta.url).pathname;
@@ -194,5 +196,27 @@ it('makes and reads a merge approval\'s target in one place', () => {
   expect(COMMIT.test(head + '0')).toBe(false);
   // A card that is filed and a standing rule that reads it cannot disagree: no other file spells the format or a commit id.
   const copies = sources('src').filter(file => file !== 'src/apps/merge-target.ts' && /\{40\}|#\[1-9\]\[0-9\]\*/.test(text(file)));
+  expect(copies).toEqual([]);
+});
+
+it('holds a worker\'s configuration to limits that are written once', () => {
+  for (const max of [STEP_DEADLINE_MAX_MS, BUILD_DEADLINE_MAX_MS]) {
+    expect([validDeadline(1, max), validDeadline(max, max)]).toEqual([true, true]);
+    expect([validDeadline(0, max), validDeadline(max + 1, max), validDeadline(1.5, max), validDeadline(NaN, max)]).toEqual([false, false, false, false]);
+  }
+  expect(['PATH', '_x', 'A1'].every(name => ENV_NAME.test(name))).toBe(true);
+  expect(['1A', 'A-B', '', 'A=B'].some(name => ENV_NAME.test(name))).toBe(false);
+  // What reads the file and what uses each part take the numbers from the one file, so a configuration that parses runs.
+  const copies = sources('src/runtime').filter(file => file !== 'src/runtime/worker-limits.ts'
+    && /\b300_?000\b|[<>]=?\s*3_?600_?000\b|\[A-Za-z_\]\[A-Za-z0-9_\]\*/.test(text(file)));
+  expect(copies).toEqual([]);
+});
+
+it('makes a private secret use\'s id and checks its shape in one place', () => {
+  const id = secretUseId('art', 'job-1', 'attempt-1');
+  expect(SECRET_USE_ID.test(id)).toBe(true);
+  expect(secretUseId('art', 'job-1', 'attempt-1')).toBe(id);
+  expect(secretUseId('art', 'job-1', 'attempt-2')).not.toBe(id);
+  const copies = sources('src').filter(file => file !== 'src/pieces/secrets/use-id.ts' && /use-input-/.test(text(file)));
   expect(copies).toEqual([]);
 });
