@@ -194,8 +194,11 @@ export const tableRules: Readonly<Record<TableWithRule, Rule>> = {
   bridgeChannelFilters: householdOwner, bridgeChannels: householdOwner, bridgePeople: householdOwner,
   // A received message is read with the conversation it went into. One that went into none (held or
   // dropped) is seen by household owners, who are the ones who can clear what held it; unless it is a
-  // direct message, which like a direct conversation is for the owners of its connection's agent.
+  // direct message, which is read as the conversation it would have joined: a linked member's own
+  // one-to-one message by that member alone, any other by the owners of its connection's agent.
   bridgeIncoming: first([[set('conversation'), seenWith('conversations', 'conversation')],
+    [all(equal('isDm', true), equal('groupDm', true)), seenWith('bridgeConnections', 'connection', agentOwners)],
+    [all(equal('isDm', true), set('member')), self('member')],
     [equal('isDm', true), seenWith('bridgeConnections', 'connection', agentOwners)]], householdOwner),
   bridgeSends: seenWith('bridgeIncoming', 'incoming'),
   secrets: householdOwner, secretGrants: householdOwner, secretRequests: householdOwner, secretRules: householdOwner,

@@ -4,6 +4,7 @@
  */
 import { z } from 'zod';
 import type { IncomingMessage } from './incoming.js';
+import { slackThread } from './place.js';
 
 const id = z.string().min(1).max(256);
 const timestamp = z.string().regex(/^\d{1,12}\.\d{6}$/);
@@ -101,8 +102,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
   return {
     // Slack timestamps are unique per channel, not across a workspace.
     id: JSON.stringify([message.channel, message.ts]), connection: connection.id,
-    // Channel roots start threads; unthreaded DMs retain channel continuity.
-    channel: message.channel, thread: message.thread_ts ?? (kind === 'channel' || kind === 'group' ? message.ts : undefined),
+    channel: message.channel, thread: slackThread(kind, message.ts, message.thread_ts),
     isDm: kind === 'im' || kind === 'mpim',
     ...(kind === 'mpim' ? { groupDm: true } : {}),
     // Legacy integrations have only a bot id. Never confuse it with a user id.

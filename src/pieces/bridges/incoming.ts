@@ -1,9 +1,10 @@
 /** Trusted bridge ingress. Platform adapters supply authenticated event fields;
  * person identity comes exclusively from household person links. */
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
 import { incomingId, inboxSourceId, parseIncomingId } from './keys.js';
+import { conversationPlace } from './place.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, bridgeSends, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
@@ -27,8 +28,9 @@ export interface IncomingMessage {
   webhook?: boolean;
 }
 
-/** Stored words that are empty were either sent empty or erased at the keep
- * time (core/conversations/private-bridge-words.ts); neither can be compared. */
+/** Stored words that are empty were sent empty, erased at the keep time
+ * (core/conversations/private-bridge-words.ts) or never kept because the message
+ * was dropped; none of these can be compared. */
 function sameMessage(row:Pick<typeof bridgeIncoming.$inferSelect,'channel'|'thread'|'isDm'|'user'|'text'|'postedAt'>,message:IncomingMessage){
  return row.channel===message.channel&&row.thread===(message.thread??null)&&row.isDm===message.isDm
   &&row.user===message.user&&(row.text===''||row.text===message.text)&&row.postedAt===message.postedAt;
@@ -81,6 +83,12 @@ export class BridgeIncoming {
       else if (filters.some(f => f.rule === 'ignore' && f.channel === channel) || (filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === channel))) { state = 'dropped'; reason = 'Channel filtered'; }
       else if (message.user === connection.botUser) { state = 'dropped'; reason = 'Own message'; }
       else if (peers.some(p => p.botUser === connection.botUser && p.agent !== connection.agent)) { state = 'held'; reason = 'Ambiguous connection agent'; }
+      // A Discord bot's session hears every direct message to the bot, whichever guild its connection
+      // names. With enabled connections for one bot in two guilds both would deliver it, as two
+      // conversations (within one guild the copies are one Inbox item, below). Settings refuses that
+      // setup; a database that has it anyway delivers through neither.
+      else if (message.isDm && connection.platform === 'discord' && this.db.select({ id: bridgeConnections.id }).from(bridgeConnections)
+        .where(and(eq(bridgeConnections.platform, 'discord'), eq(bridgeConnections.botUser, connection.botUser), eq(bridgeConnections.enabled, true), ne(bridgeConnections.workspace, connection.workspace))).get()) { state = 'held'; reason = 'Bot is connected in another guild'; }
       else if (new Set(senders.map(p => p.agent)).size > 1) { state = 'held'; reason = 'Ambiguous bot identity'; }
       else if ((message.bot || message.webhook || sender) && (!sender || !route?.botsMayTalk)) { state = 'dropped'; reason = 'Unknown bot or bots disabled'; }
       else if (!message.isDm && !addressed.has(connection.botUser)) {
@@ -112,17 +120,11 @@ export class BridgeIncoming {
           conversation = delivered.conversation;
           matchedMember = delivered.fromKind === 'person' ? delivered.fromId : null;
         } else {
-          // Which conversation a message joins is decided here and nowhere else.
-          // The adapter supplies the platform's own address (channel, and the
-          // thread a message starts or sits in); the place adds the workspace
-          // and, for a DM, who it is private to. Only a one-to-one DM from a
-          // linked member is private to a member: a group DM has several
-          // senders, and an unlinked sender is nobody in this household.
+          // Which conversation a message joins is the rule in place.ts. Only a one-to-one DM from a linked
+          // member is private to a member: a group DM has several senders, and an unlinked sender is
+          // nobody in this household. A duplicate delivery (above) keeps its original recorded scope.
           const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
-          // Future messages after a person-link change receive a new private
-          // place; duplicate delivery always keeps its original recorded scope.
-          const place = JSON.stringify([connection.workspace, message.channel, message.thread ?? null,
-            ...(message.isDm ? [message.groupDm ? ['group'] : ['member', member]] : [])]);
+          const place = conversationPlace(connection.workspace, message, member);
           conversation = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member, direct: message.isDm }).id;
         }
         if (!delivered) {
@@ -130,7 +132,8 @@ export class BridgeIncoming {
           this.conversations.send({ toKind: 'agent', to: connection.agent, conversation, source: connection.platform, sourceId, fromKind, fromId, words: message.text, refs: [id] });
         }
       }
-      return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
+      // A dropped message is never delivered or tried again, and nobody is shown it: it keeps no words.
+      return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null, ...(state === 'dropped' ? { text: '' } : {}) }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
   }
 

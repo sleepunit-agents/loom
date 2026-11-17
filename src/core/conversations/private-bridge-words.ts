@@ -1,20 +1,24 @@
-/** A member's private bridge DM is private words, like a Comms thread: it is
- * kept for the household's keep time and then erased. The words sit in three
- * columns (the Inbox item a body took them from, the received message, and the
- * replies sent back), so all three are erased here together. Records of who
- * wrote when, and what became of it, stay.
+/** A direct message on a bridge is private words, like a Comms thread: it is
+ * kept for the household's keep time and then erased. That is every direct
+ * conversation: a linked member's own, one with someone unlinked, and a group
+ * one. The words sit in three columns (the Inbox item a body took them from,
+ * the received message, and the replies sent back), so all three are erased
+ * here together. Records of who wrote when, and what became of it, stay.
  * `bridge_incoming.text` and `bridge_sends.text` cannot be null, so erased
  * words are the empty string there. A reply still waiting to be sent, or
- * awaiting a person's review, keeps its words until that is settled. */
-import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+ * awaiting a person's review, keeps its words until that is settled.
+ * A message that went into no conversation holds no words to erase: a dropped
+ * one never keeps them, and a held one loses them when it is closed
+ * (pieces/bridges/incoming.ts, receiver.ts). */
+import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { bridgeIncoming, bridgeSends, conversations, inbox } from '../data/schema.js';
 
 type Stamp = typeof inbox.at | typeof bridgeIncoming.receivedAt | typeof bridgeSends.createdAt;
-/** The rows that still hold a private DM's words, by the column that dates each. */
+/** The rows that still hold a direct message's words, by the column that dates each. */
 function held(db: DataDatabase) {
   const private_ = db.select({ id: conversations.id }).from(conversations)
-    .where(and(isNotNull(conversations.member), inArray(conversations.venue, ['discord', 'slack'])));
+    .where(and(or(isNotNull(conversations.member), eq(conversations.direct, true)), inArray(conversations.venue, ['discord', 'slack'])));
   return {
     mail: and(inArray(inbox.source, ['discord', 'slack']), isNotNull(inbox.words), inArray(inbox.conversation, private_))!,
     sent: and(ne(bridgeSends.text, ''), inArray(bridgeSends.state, ['sent', 'dismissed']),

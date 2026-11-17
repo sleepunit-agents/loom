@@ -316,3 +316,43 @@ it('erases a private DM\'s words at the keep time, in every column that holds th
   expect(f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' })).toMatchObject({ id: dm.id, state: 'delivered', text: '' });
   expect(() => f.ingress.receive({ ...f.message, id: 'room', text: 'Other words' })).toThrow('reused');
 });
+
+it('keeps no words of a message it drops, direct or not', () => {
+  const f = fixture();
+  // An `only` filter drops everything outside its channels, a linked member's direct message included.
+  f.db.insert(bridgeChannelFilters).values({ connection: 'c', channel: 'elsewhere', rule: 'only' }).run();
+  expect(f.ingress.receive({ ...f.message, id: 'dm', channel: 'direct', isDm: true, text: 'Private words' }))
+    .toMatchObject({ state: 'dropped', reason: 'Channel filtered', member: 'jonathan', conversation: null, text: '' });
+  expect(f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' })).toMatchObject({ state: 'dropped', text: '' });
+  // A replay of a dropped message is still that message.
+  expect(f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' })).toMatchObject({ state: 'dropped', text: '' });
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+});
+it('holds a Discord direct message while its bot is connected in two guilds, and then delivers it once', () => {
+  const f = fixture();
+  // One bot, two guilds: both gateway sessions hear every direct message to the bot.
+  f.db.insert(bridgeConnections).values({ id: 'second', platform: 'discord', agent: 'art', workspace: 'other-guild', botUser: 'bot-art', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
+  const dm = { ...f.message, id: 'dm', channel: 'direct', isDm: true };
+  expect(f.ingress.receive(dm)).toMatchObject({ state: 'held', reason: 'Bot is connected in another guild', conversation: null });
+  expect(f.ingress.receive({ ...dm, connection: 'second' })).toMatchObject({ state: 'held', reason: 'Bot is connected in another guild', conversation: null });
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  // A room message belongs to one guild and is not held up by this.
+  expect(f.ingress.receive(f.message).state).toBe('delivered');
+  f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'second')).run();
+  expect(f.ingress.retry('bi:["c","dm"]')).toMatchObject({ state: 'delivered' });
+  expect(f.ingress.retry('bi:["second","dm"]')).toMatchObject({ state: 'held', reason: 'Connection disabled' });
+  expect(f.db.select().from(inbox).all().filter(item => item.words === 'Friday?' && item.sourceId?.includes('direct'))).toHaveLength(1);
+});
+it('erases the words of every direct message at the keep time, whoever it is from', () => {
+  const f = fixture();
+  const stranger = f.ingress.receive({ ...f.message, id: 'stranger', channel: 'direct-1', isDm: true, user: 'stranger', text: 'Unlinked words' });
+  const group = f.ingress.receive({ ...f.message, id: 'group', channel: 'direct-2', isDm: true, groupDm: true, text: 'Group words' });
+  f.ingress.receive({ ...f.message, id: 'room', text: 'Room words' });
+  expect([stranger, group].map(row => f.db.select().from(conversations).where(eq(conversations.id, row.conversation!)).get())).toEqual([
+    expect.objectContaining({ member: null, direct: true }), expect.objectContaining({ member: null, direct: true })]);
+  expect(oldestPrivateBridgeWords(f.db)).toBe(Date.parse(f.now()));
+  expect(expirePrivateBridgeWords(f.db, f.now())).toBe(4);
+  expect(f.db.select({ words: inbox.words }).from(inbox).all().map(row => row.words)).toEqual([null, null, 'Room words']);
+  expect(f.db.select({ text: bridgeIncoming.text }).from(bridgeIncoming).all().map(row => row.text)).toEqual(['', '', 'Room words']);
+  expect(oldestPrivateBridgeWords(f.db)).toBeUndefined();
+});
