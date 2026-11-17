@@ -704,6 +704,20 @@ Entries are grouped by the part of the program they belong to.
   them back before the harness starts, and the worker to carry them. Kept history is then the fallback
   for a new harness, a new model or a session too large to keep.
 
+### A channel's brief is a page of the agent's, and a missing one is told, not fatal
+- What: a channel's rule may name a brief (`bridge_channels.brief`): the name of a role page of the
+  answering agent, `roles/<brief>.md` in its Memory, beside the page for the venue. The body of every
+  conversation in that channel is given it after the agent's identity and before the mail. When the agent
+  has no page of that name the body works without it, and loom tells the agent's owners in their Inbox,
+  once for a channel and brief. A direct conversation has no brief.
+- Where: the rule is `src/pieces/bridges/settings.ts`; the body asks loom for the name and reports a
+  missing page (`bridges.brief`, `bridges.briefMissing` in `src/shared-bridge-reply.ts`) and reads the page
+  itself (`bodyChannelBrief` in `src/runtime/body-memory-identity.ts`).
+- Why: what an agent should keep in mind in one room (a client's channel) is the agent's own writing and
+  belongs with its other pages, where it is versioned and read by the agent. The rule only names it, so
+  an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
+- Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
+
 ### A reply in doubt is never sent again
 - What: when a post fails after its request left, the reply is `uncertain`. A person can dismiss it. Nobody
   can resend it, and that holds for a long reply whose earlier parts were confirmed. The person is a

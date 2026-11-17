@@ -167,3 +167,22 @@ it('hands the body that takes the next bridge message what was said before in th
  // What the harness is given: the earlier exchange, then the new words.
  expect(JSON.parse(seen[0])).toMatchObject({input:'And again',history:[{words:'Hello'},{words:'Looking'},{words:'Hello back'}]});
 });
+it('tells the body of a bridge conversation the brief its channel\'s rule names, and tells the owners once when the agent has no such page',async()=>{
+ const f=fixture();const incoming=await f.receive();
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();});
+ // The rule names none.
+ expect(await f.call('bridges','brief',{})).toMatchObject({status:200,body:{value:{brief:null}}});
+ expect((await f.call('bridges','briefMissing',{})).status).toBe(403);
+ f.root.writes.run(()=>{f.db.update(bridgeChannels).set({brief:'onterris'}).run();});
+ expect(await f.call('bridges','brief',{})).toMatchObject({status:200,body:{value:{brief:'onterris'}}});
+ // Only the body holding this conversation's job is told.
+ expect((await f.call('bridges','brief',{},token.other)).status).toBe(403);expect((await f.call('bridges','brief',{},token.owner)).status).toBe(403);
+ expect((await f.call('bridges','briefMissing',{},token.other)).status).toBe(403);
+ // The body found no page of that name. The owner is told, once however many bodies find the same.
+ const notices=()=>f.db.select().from(inbox).all().filter(item=>item.source==='notice'&&item.sourceId?.startsWith('brief-missing:'));
+ expect((await f.call('bridges','briefMissing',{})).status).toBe(200);expect((await f.call('bridges','briefMissing',{})).status).toBe(200);
+ expect(notices()).toMatchObject([{toKind:'person',to:'owner',words:'The rule for slack channel CROOM names the brief "onterris", and art has no role page of that name. Its work there goes on without it.'}]);
+ // Another brief for the same channel is another thing to be told of.
+ f.root.writes.run(()=>{f.db.update(bridgeChannels).set({brief:'field'}).run();});
+ expect((await f.call('bridges','briefMissing',{})).status).toBe(200);expect(notices()).toHaveLength(2);
+});

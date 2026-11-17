@@ -7,7 +7,9 @@ import { and,asc,desc,eq,getTableColumns,inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
+import { bridgeChannels,bridgeIncoming,bridgeConnections,bridgeFileMessages,bridgeFiles,bridgeSends,inbox,inboxRefs,turns } from './core/data/schema.js';
+import { householdOwners,sharedSharing } from './shared-sharing.js';
+import { membersWithAgent } from './policy.js';
 import { bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
 import type { conversationBodyScope } from './core/conversations/body-scope.js';
 import type { Conversations } from './core/conversations/index.js';
@@ -48,6 +50,40 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    }
    if(!existing){const turn=conversations.turn({conversation:bound.conversation,kind:'reply',fromKind:'agent',fromId:bound.agent,run:bound.job,model:input.model,outcome:input.outcome});ctx.changed('turns',`${bound.conversation}:${turn.seq}`);ctx.changed('conversations',bound.conversation);}
    ctx.changed('bridge-send',input.id);return {saved:true as const};
+  },
+ });
+ // The brief the channel's rule names for the bodies of its conversations (settings.ts): the name of a role
+ // page of the agent's. The body reads the page from its own Memory. A direct conversation, and a channel
+ // with no rule or no brief, has none.
+ const briefOf=(viewer:Viewer)=>{
+  const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||(found.cv.venue!=='discord'&&found.cv.venue!=='slack'))return;
+  const message=db.select({channel:bridgeIncoming.channel,parent:bridgeIncoming.parent,isDm:bridgeIncoming.isDm,platform:bridgeConnections.platform,workspace:bridgeConnections.workspace})
+   .from(bridgeIncoming).innerJoin(bridgeConnections,eq(bridgeConnections.id,bridgeIncoming.connection))
+   .where(and(eq(bridgeIncoming.conversation,found.cv.id),eq(bridgeIncoming.state,'delivered'),eq(bridgeConnections.agent,found.cv.agent))).get();
+  if(!message)return{agent:found.cv.agent,brief:null,channel:null};
+  const channel=message.parent??message.channel;
+  const rule=message.isDm?undefined:db.select({brief:bridgeChannels.brief}).from(bridgeChannels).where(and(eq(bridgeChannels.platform,message.platform),eq(bridgeChannels.workspace,message.workspace),eq(bridgeChannels.channel,channel))).get();
+  return{agent:found.cv.agent,brief:rule?.brief??null,channel,platform:message.platform,workspace:message.workspace};
+ };
+ operations.register({name:'bridges.brief',write:false,doors:['http'],input:z.object({}).strict(),output:z.object({brief:z.string().nullable()}).strict(),
+  may:viewer=>!!briefOf(viewer),
+  run(ctx){const found=briefOf(ctx.viewer);if(!found)throw new OperationError('denied','Current bridge body required');return{brief:found.brief};},
+ });
+ // The body found no such page. The work goes on without the brief; the agent's owners are told, once for
+ // a channel and brief, so a rule that names a page nobody wrote does not stay unnoticed.
+ operations.register({name:'bridges.briefMissing',write:true,recheckPolicy:true,doors:['http'],input:z.object({}).strict(),output:z.object({saved:z.literal(true)}).strict(),
+  may:viewer=>!!briefOf(viewer)?.brief,
+  run(ctx){
+   const found=briefOf(ctx.viewer);if(!found?.brief)throw new OperationError('denied','Current bridge body with a brief required');
+   const key=`brief-missing:${JSON.stringify([found.agent,found.platform,found.workspace,found.channel,found.brief])}`;
+   let to=membersWithAgent(found.agent,sharedSharing(db));if(!to.length)to=householdOwners(db);
+   for(const member of to){
+    if(db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.toKind,'person'),eq(inbox.to,member),eq(inbox.source,'notice'),eq(inbox.sourceId,key))).get())continue;
+    const item=conversations.send({toKind:'person',to:member,member,source:'notice',sourceId:key,fromKind:'unknown',
+     words:`The rule for ${found.platform} channel ${found.channel} names the brief "${found.brief}", and ${found.agent} has no role page of that name. Its work there goes on without it.`,refs:[found.agent]});
+    ctx.changed('inbox',item.id);
+   }
+   return{saved:true as const};
   },
  });
  // One more message from the body during its run, to the place of the latest bridge message its job took:

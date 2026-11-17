@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, bridgeConnections } from '../../core/data/schema.js';
+import { agents, members, secrets, bridgeChannels, bridgeConnections } from '../../core/data/schema.js';
 import { BridgeSettings } from './settings.js';
 
 const clients: Database.Database[] = [];
@@ -53,4 +53,17 @@ it('does not switch a removed connection on: it is restored first, and then enab
   f.db.update(bridgeConnections).set({ removedAt: null }).run();
   f.settings.change({ ...f.discord, id: 'home', workspace: 'guild-1' });
   expect(f.enabled()).toEqual(['home']);
+});
+it('keeps the brief a channel\'s rule names, and none when the rule names none', () => {
+  const f = fixture(), rule = { action: 'channel' as const, platform: 'discord' as const, workspace: 'guild', channel: 'pond', answers: 'art', botsMayTalk: false };
+  const brief = () => f.db.select().from(bridgeChannels).get()?.brief;
+  // A card filed before there were briefs has no such field: the rule has none.
+  f.settings.change(rule); expect(brief()).toBeNull();
+  f.settings.change({ ...rule, brief: 'onterris' }); expect(brief()).toBe('onterris');
+  expect(f.settings.read(rule)).toMatchObject({ channel: 'pond', brief: 'onterris' });
+  // The same rule saved again without one takes it away: a rule says the whole of what it is.
+  f.settings.change({ ...rule, brief: null }); expect(brief()).toBeNull();
+  // A brief is a page's name, and nothing that could be a path.
+  for (const bad of ['', '../creed', 'roles/onterris', 'a b', '.hidden']) expect(() => f.settings.change({ ...rule, brief: bad }), bad).toThrow();
+  expect(brief()).toBeNull();
 });

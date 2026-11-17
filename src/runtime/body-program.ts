@@ -16,7 +16,7 @@ import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import {bodyCommandClient} from './body-command-client.js';
-import {bodyMemoryIdentity} from './body-memory-identity.js';
+import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
@@ -42,6 +42,8 @@ export async function bodyProgram(input: {
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
   /** Trusted in-process seam; production reads the current body's declared Memory. */
   loadMemory?: (agent:string,signal:AbortSignal)=>Promise<string|null>;
+  /** The same seam for a bridge channel's brief. */
+  loadBrief?: typeof bodyChannelBrief;
   error: (text: string) => void;
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
@@ -126,7 +128,12 @@ export async function bodyProgram(input: {
     exit=BODY_EXIT.identity;
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
     const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent,job.venue));
-    if(signal.aborted)throw new Error();if(memory)context.unshift(memory);
+    if(signal.aborted)throw new Error();
+    // A bridge channel's rule may name a brief: one more of the agent's role pages, for conversations there.
+    // A brief that cannot be found is never a reason to fail: the work goes on and loom tells the owners.
+    const brief=bridge?await (input.loadBrief??bodyChannelBrief)(memoryClient,job.agent):null;
+    if(signal.aborted)throw new Error();
+    if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
