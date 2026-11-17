@@ -23,7 +23,7 @@ import {memoryQueryFields} from './transport/memory-queries.js';
 import {installMindKnowledgeActions} from './pieces/mind/actions.js';
 import {installMindPeopleActions} from './pieces/mind/people-actions.js';
 import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
-import {verifyKnowledgePages,deriveSlaClass} from './backends/knowledge-verification.js';
+import {verifyKnowledgePages} from './backends/knowledge-verification.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 import {createPersonHalf} from './backends/people-creation.js';
@@ -82,7 +82,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){
     installTouched(operations,mindTouchResolver(touches));
-    const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,classify:(domain,anchor)=>deriveSlaClass(anchor,domain)});closers.push(knowledge.close);
+    const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages});closers.push(knowledge.close);
     const agent=settings?.defaultAgent??undefined;
     const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:agents.find(a=>a.agent===agent)?.memories,agent,sharing,create:createPersonHalf});closers.push(actions.close);
     if(commands)notes.register(operations,commands);

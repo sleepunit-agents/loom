@@ -24,3 +24,10 @@ it('reads and writes memory operation receipts in one module', () => {
   const users = sources('src').filter(file => /\b(FROM|INTO)\s+mind_operation_receipts\b/i.test(text(file)));
   expect(users).toEqual(['src/pieces/mind/receipt-schema.ts']);
 });
+
+it('writes knowledge page rows, their words and their citations only in the knowledge store', () => {
+  // The door's page actions call the store's primitives (src/backends/knowledge-writes.ts) on their own transaction.
+  const writers = sources('src').filter(file => !file.startsWith('src/backends/')
+    && /\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+(pages|citations)\b|\bUPDATE\s+pages\b/i.test(text(file)));
+  expect(writers).toEqual([]);
+});
