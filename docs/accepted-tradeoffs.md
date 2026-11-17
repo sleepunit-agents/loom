@@ -702,22 +702,55 @@ Entries are grouped by the part of the program they belong to.
 - Would change it: stale reactions after restarts being a nuisance. Then what is shown is kept in a table
   and cleared at start.
 
-### A bridge body is handed what was said, not what it did
-- What: every run is a fresh harness session. The body that takes a Discord or Slack message is handed
-  the earlier words of that conversation: the messages an earlier body finished with and what was posted
-  back, newest first up to 1 MB and a hundred lines, then in order. It is not handed what earlier bodies
-  did: the files they read, their tool results, their reasoning. Words erased at the keep time (a direct
-  conversation's) are not there to hand over, and a line due to be erased carries that time.
+### A harness session is kept between bodies, sealed, for the next body alone
+- What: a bridge conversation's body continues the session the last body of that conversation left. When
+  it has answered, the body packs the harness's own files for the session (for Claude Code, the transcript
+  `projects/<directory>/<session>.jsonl` and the tool results beside it), gzipped, and hands them to loom;
+  loom keeps one for a conversation and harness (`conversation_sessions`), sealed with the household's
+  words key. The next body of the same harness is handed it, puts the files back and tells the harness to
+  continue (`claude --resume`). It is then told only the new mail: not the kept history, and not the
+  agent's identity pages again. Only Claude Code keeps sessions so far; another harness starts fresh.
+- Limits, each stated once in `src/core/conversations/session-limit.ts`: a packed session holds at most
+  700 KB (`SESSION_BYTES`; what one request through loom's door carries) and 64 files; it is kept for the
+  household's keep time for words; it is handed on only within one family of models.
+- Starts fresh instead, with the kept history ("what was said", `bridge-history.ts`): no session kept; a
+  different harness or family of models; a session past the keep time; one too large to pack (which also
+  removes the one kept before); a conversation answered after the session was saved (its body died after
+  replying, or another harness answered since), so that a session behind what was said is never
+  continued; a harness that cannot continue the session it was handed and ends having said nothing, in
+  which case the same body runs the work once more, afresh.
+- Who can read it: nobody but the body holding the conversation's job. The table is not served by the
+  query door and no page shows it, to an owner either: a session is the model's own record of the
+  conversation, words included. Both doors (`conversation.session`, `conversation.sessionSave`) ask for
+  that body. A conversation has one unended job at a time, so two bodies cannot each continue and save one
+  session.
+- Where: `src/core/conversations/sessions.ts` and `shared-conversation-sessions.ts`; the body's side is
+  `src/runtime/body-session.ts`, `body-program.ts` and the adapter (`claude-body.ts`, `sessionFiles`).
+- Why: without it a model remembers what was said and not what it did: the files it read, its tool
+  results, its reasoning. loom keeps the session, not a worker, because a body's container is thrown away
+  and the next body may run on any machine. Sealed and unread because it holds the words of what may be a
+  private conversation. The body removes the files from its machine once they are handed over.
+- What this costs: a continued session re-reads all of itself on every message, and grows until it passes
+  the size limit and the conversation starts fresh. A body killed between answering and saving leaves a
+  transcript in the harness's directory until its container goes; on a machine that runs bodies as plain
+  processes it stays until the account's directory is cleaned. A continued session does not see changes
+  to the agent's identity pages until it next starts fresh.
+- Would change it: sessions passing 700 KB so often that conversations keep starting over. Then a session
+  is sent in pieces, or the harness's own compaction is asked for before the limit. Or Codex bodies
+  answering on bridges: its sessions directory is packed the same way, in its adapter.
+
+### A bridge body that starts fresh is handed what was said, not what was done
+- What: a body that does not continue a session (above) is handed the earlier words of its conversation:
+  the messages an earlier body finished with and what was posted back, newest first up to 1 MB and a
+  hundred lines, then in order. Words erased at the keep time (a direct conversation's) are not there to
+  hand over, and a line due to be erased carries that time.
 - Where: `src/core/conversations/bridge-history.ts`, attached once by `prepareTake` in `mail.ts`; the body
   accepts it in `src/runtime/conversation-client.ts`. A Comms thread's is `history-context.ts`.
-- Why: without it every message was answered as if it were the first. Handing over the words needs no
-  session to be kept: a body's container is thrown away, and the next job may run on another machine.
-  It is the conversation's own words given to the conversation's own job, so nothing is read that the
-  mail does not already show.
-- Would change it: resuming the harness's own session, as the older bridge did. That needs loom to keep a
-  conversation's session files between jobs (sealed, erased with the words) and the body program to put
-  them back before the harness starts, and the worker to carry them. Kept history is then the fallback
-  for a new harness, a new model or a session too large to keep.
+- Why: it needs nothing kept but what loom keeps anyway, so it is always there to fall back on. It is the
+  conversation's own words given to the conversation's own job, so nothing is read that the mail does not
+  already show.
+- Would change it: handing it to a continued session too, if sessions prove to miss things said by others
+  in a room while no body was running. Today a continued session is told only its own new mail.
 
 ### A channel's brief is a page of the agent's, and a missing one is told, not fatal
 - What: a channel's rule may name a brief (`bridge_channels.brief`): the name of a role page of the

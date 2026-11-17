@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- **Bridges: a body continues the session the last body of its conversation left.** When a Claude Code body of a Discord or Slack conversation has answered, it hands loom its session's files (gzipped, at most 700 KB); loom keeps one per conversation and harness in `conversation_sessions`, sealed with the words key, for the household's keep time. The next body is handed it and runs `claude --resume`, told only the new mail. With no session, another harness or model family, a session too large or too old, or one saved before the conversation's last answer, the body starts fresh with the kept history. New body operations `conversation.session` and `conversation.sessionSave`; nobody else can read a session, and no query serves the table. Claude Code no longer runs with `--no-session-persistence` for these bodies.
+
 - **Bridges: `bridges.say` can carry files on Discord.** `files` takes up to four, 600 KB together. From a body's tools each is `{path}`, read by the body program from the body's working directory or scratch directory only; the door itself takes `{name, contents}` (base64). They are kept in `bridge_send_files` until the post is settled and go out with its last part.
 
 - **Bridges: a body can open what was sent to it.** A delivered Discord message's attachments (the first five, up to 8 MB each) are fetched and kept like Slack files. A body with file tools is given the kept files of the messages it took, written into its scratch directory, with each path named in its input. The links stay in the words.

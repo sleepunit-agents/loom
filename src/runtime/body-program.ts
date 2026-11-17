@@ -11,7 +11,7 @@ import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { bodyHarness, harnessCannotRun, harnesses } from './body-harnesses.js';
-import { BODY_SCRATCH, type HarnessRun } from './body-harness.js';
+import { BODY_SCRATCH, HarnessResumeUnavailable, type HarnessRun } from './body-harness.js';
 import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
@@ -19,6 +19,7 @@ import {bodyCommandClient} from './body-command-client.js';
 import {bodyMemoryIdentity,bodyChannelBrief} from './body-memory-identity.js';
 import {saveBodyAttachments} from './body-attachments.js';
 import {bodyFileReader} from './body-files.js';
+import {bodySessions,type BodySessions} from './body-session.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 import { BODY_EXIT } from './job-exit.js';
@@ -44,6 +45,8 @@ export async function bodyProgram(input: {
   startup?: (job: WorkerAssignment, bootstrap: BodyBootstrap, signal: AbortSignal) => Promise<void>;
   /** Trusted in-process seam; production reads the current body's declared Memory. */
   loadMemory?: (agent:string,signal:AbortSignal)=>Promise<string|null>;
+  /** The same seam for a bridge conversation's kept harness session. */
+  sessions?: BodySessions;
   /** The same seam for the files sent with bridge messages. */
   saveAttachments?: typeof saveBodyAttachments;
   /** The same seam for a bridge channel's brief. */
@@ -56,7 +59,8 @@ export async function bodyProgram(input: {
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
   let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
-  let memoryClient:ReturnType<typeof bodyCommandClient>|undefined;
+  let memoryClient:ReturnType<typeof bodyCommandClient>|undefined,sessionClient:ReturnType<typeof bodyCommandClient>|undefined;
+  let keeper:BodySessions|undefined,saved=false;
   const context: string[] = [], incoming:string[]=[];
   const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
@@ -108,6 +112,16 @@ export async function bodyProgram(input: {
     if (signal.aborted) throw new Error();
     work='Working on accepted mail';
     exit=BODY_EXIT.mail;
+    // A bridge conversation's body continues the session the last one left, when loom hands one over
+    // (body-session.ts). It is then told the new mail alone: the session already holds what came before.
+    // With none, it starts fresh and is told the conversation's kept history with its mail.
+    if(bridge){
+      sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:input.signal,fetch:input.fetch,clock:input.clock});
+      keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
+    }
+    const resume=await keeper?.take();
+    if(signal.aborted)throw new Error();
+    const continued:string[]=[];
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
     // outside the household may have arrived since; nobody looked that sender up, so they count as a guest.
     const claimed=job.run?.policy?.mail;let lateStranger=false;
@@ -120,7 +134,7 @@ export async function bodyProgram(input: {
         incoming.push(refs[0]);
       }
       if(claimed&&item.fromKind==='unknown'&&!claimed.includes(item.id))lateStranger=true;
-      const words=bodyMailContext(item);if(words!==null)context.push(words);
+      const words=bodyMailContext(item);if(words!==null){context.push(words);continued.push(item.history.length?bodyMailContext({...item,history:[]})!:words);}
     });
     if (batch.stopRequested) { await retire(); await tell(left); return BODY_EXIT.stopped; }
     if(signal.aborted)throw new Error();
@@ -140,7 +154,7 @@ export async function bodyProgram(input: {
     // What was sent with the messages, written where a body with file tools can open it (body-attachments.ts).
     const sent=bridge&&plan.reach==='all'?await (input.saveAttachments??saveBodyAttachments)(memoryClient,incoming,input.env[BODY_SCRATCH]):null;
     if(signal.aborted)throw new Error();
-    if(sent)context.push(sent);
+    if(sent){context.push(sent);continued.push(sent);}
     if(brief)context.unshift(brief);if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
@@ -157,11 +171,22 @@ export async function bodyProgram(input: {
     }
     if(signal.aborted)throw new Error();
     exit=BODY_EXIT.harness;
-    const native = input.native ?? bodyHarness(job.harness, { ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    const harness = () => input.native ?? bodyHarness(job.harness, { ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
+    // A second one for the case the session cannot be continued: each takes its own copy of the tools file.
+    const native = harness(), afresh = resume ? harness() : undefined;
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     const room=lateStranger&&job.run?.policy?{...job,run:{...job.run,policy:withUnknownSender(job.run.policy)}}:job;
-    try { answer = await native(room, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
+    try {
+      if(!keeper)answer = await native(room, context.join('\n\n'), signal);
+      else try { answer = await native(room, (resume?continued:context).join('\n\n'), signal, resume?{resume}:{}); }
+      catch (error) {
+        // The harness could not continue the session and did nothing: the same work, afresh, with the history.
+        if(!(error instanceof HarnessResumeUnavailable)||!afresh||signal.aborted)throw error;
+        answer = await afresh(room, context.join('\n\n'), signal, {});
+      }
+      if(tools&&!tools.allowsReply(answer.text))throw new Error();
+    }
     catch { if(!stopped) throw new Error(); }
     finally { await retire(); }
     if(stopped && !input.signal.aborted) { await tell(left); return BODY_EXIT.stopped; }
@@ -177,6 +202,9 @@ export async function bodyProgram(input: {
     // The answer is recorded; only now is the mail done. loom has already settled what a thread or bridge reply
     // answers, so this covers the rest: background work, and earlier bridge messages the one reply also answers.
     await client.settle();
+    // The answer is on record. Hand loom the session this run left, for the next body of this conversation,
+    // and take its files off this machine. Never a reason to fail work that is done.
+    try{await keeper?.save(answer.session);saved=true;}catch{/* loom sees the kept session is behind the answer */}
     // Reply words have their own storage and retention. Completion metadata must
     // not make a second durable copy, and must preserve any model-authored digest.
     await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
@@ -190,5 +218,5 @@ export async function bodyProgram(input: {
     // A report that failed is why the work was dropped, whichever stage was dropped.
     input.error('Body stopped: invalid input or unavailable execution\n'); return unavailable?BODY_EXIT.contact:exit;
   }
-  finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { await retire(); if(!saved){try{keeper?.discard();}catch{}} sessionClient?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }
