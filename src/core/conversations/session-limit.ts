@@ -7,6 +7,8 @@
  * How long a session is kept is the household's keep time for words (core/data/comms-days.ts): it holds
  * the conversation's words, so it is erased when they are. */
 export const SESSION_BYTES = 700 * 1024;
+/** The most a packed session may unpack to: a bound on what a pack can make the body that opens it hold. */
+export const SESSION_UNPACKED_BYTES = 48 * 1024 * 1024;
 /** The most files a packed session lists. */
 export const SESSION_FILES = 64;
 /** A harness session's id, as it may appear in a file name: never a path. */

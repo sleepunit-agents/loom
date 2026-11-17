@@ -17,10 +17,8 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 import { z } from 'zod';
 import type { bodyCommandClient } from './body-command-client.js';
 import { harnessSessionFiles } from './body-harnesses.js';
-import { SESSION_BYTES, SESSION_FILES, SESSION_ID } from '../core/conversations/session-limit.js';
+import { SESSION_BYTES, SESSION_FILES, SESSION_ID, SESSION_UNPACKED_BYTES as UNPACKED_BYTES } from '../core/conversations/session-limit.js';
 
-/** The most a packed session may unpack to: a bound on what loom's answer can make this process hold. */
-const UNPACKED_BYTES = 64 * 1024 * 1024;
 const packed = z.array(z.object({ rel: z.string().min(1).max(1024), data: z.base64() }).strict()).min(1).max(SESSION_FILES);
 type Env = Readonly<Record<string, string | undefined>>;
 type Client = Pick<ReturnType<typeof bodyCommandClient>, 'command'>;
