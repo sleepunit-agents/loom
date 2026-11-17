@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, like, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { tasks, taskComments, taskLinks, inbox } from '../core/data/schema.js';
-import { projectRefusal } from '../core/data/project-in-use.js';
+import { projectRefusal, projectRetired, taskShelved } from '../core/data/project-in-use.js';
 import { taskId } from '../slug.js';
 
 const person = z.object({ kind: z.enum(['member', 'agent']), id: z.string().trim().min(1) });
@@ -147,6 +147,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     create(input, actor) {
       const value = taskCreateSchema.parse(input); person.parse(actor);
       return db.transaction(() => {
+        requireUsable(value.project);
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
         const n = db.select({ n: sql<number>`coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0) + 1` }).from(tasks).get()!.n;
         const at = now(), id = taskId(n);
@@ -164,7 +165,8 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     ready() {
       const blocked = db.select({ id: taskLinks.task }).from(taskLinks).innerJoin(tasks, eq(tasks.id, taskLinks.dependsOn))
         .where(and(eq(taskLinks.type, 'blocks'), ne(tasks.status, 'closed')));
-      return db.select().from(tasks).where(and(eq(tasks.status, 'open'), ne(tasks.type, 'epic'), sql`${tasks.id} not in (${blocked})`))
+      // A shelved task is not work (core/data/project-in-use.ts).
+      return db.select().from(tasks).where(and(eq(tasks.status, 'open'), ne(tasks.type, 'epic'), sql`${tasks.id} not in (${blocked})`, sql`not ${taskShelved(tasks)}`))
         .orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all();
     },
     list(status) { return db.select().from(tasks).where(status ? eq(tasks.status, status) : undefined).orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all(); },
@@ -179,7 +181,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         return touch(id, patch);
       });
     },
-    claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
+    claim(id, actor) { person.parse(actor); return db.transaction(() => { if (projectRetired(db, row(id).project)) throw new Error(`Project ${row(id).project} is retired: its tasks are shelved until it is revived`); if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
     unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
     close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
     move(id, before) {
@@ -243,10 +245,11 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
 
 /** A task may have no project, or one that is in use (core/data/project-in-use.ts, where that is stated).
  * The outside door asks this for a new task, an edit and a move (shared-task-access.ts), and the service
- * asks it again before it moves anything. The answer is why not, in the words a caller is told, or nothing
+ * asks it again before it files or moves anything. A new task and a task moved in `enter` the project, which
+ * must not be retired; a task edited where it is `stand`s, and a retired project will do. The answer is why not, in the words a caller is told, or nothing
  * when the project will do. */
-export function taskProjectRefusal(db: DataDatabase, project: string | null): string | undefined {
-  return project === null ? undefined : projectRefusal(db, project)?.message;
+export function taskProjectRefusal(db: DataDatabase, project: string | null, to: 'enter' | 'stand' = 'enter'): string | undefined {
+  return project === null ? undefined : projectRefusal(db, project, to)?.message;
 }
 
 /** Every task filed under one project is filed under another: for a merge of the two (shared-projects.ts).

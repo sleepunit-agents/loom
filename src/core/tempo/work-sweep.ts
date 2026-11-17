@@ -1,6 +1,7 @@
 import { and, eq, ne, or, sql, getTableColumns } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
+import { taskShelved } from '../data/project-in-use.js';
 import { approvals, changes, tasks } from '../data/schema.js';
 import { taskVisibility } from '../data/visibility.js';
 import { workVisibility } from '../data/work-visibility.js';
@@ -17,7 +18,8 @@ export function workSweepParts(db: DataDatabase, clock: Clock): readonly SweepPa
   return [
     { name: 'Tasks', open(who) {
       const kind = who.kind === 'person' ? 'member' : 'agent';
-      const where = and(ne(tasks.status, 'closed'),
+      // Open work: not closed, and not shelved with a retired project (core/data/project-in-use.ts).
+      const where = and(ne(tasks.status, 'closed'), sql`not ${taskShelved(tasks)}`,
         taskVisibility({kind: who.kind === 'person' ? 'member' : 'agent',id: who.id}).tasks!(getTableColumns(tasks)),
         or(and(eq(tasks.assigneeKind, kind), eq(tasks.assignee, who.id)),
           and(sql`${tasks.assignee} is null`, eq(tasks.ownerKind, kind), eq(tasks.owner, who.id))));

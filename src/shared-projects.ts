@@ -1,5 +1,5 @@
 import { readSharing } from './core/data/sharing.js';
-import { projectRefusal } from './core/data/project-in-use.js';
+import { projectRefusal, projectStateRefusal } from './core/data/project-in-use.js';
 import { repoId } from './pieces/changes/model.js';
 import { reprojectChanges } from './apps/changes.js';
 import { refileTasks } from './apps/tasks.js';
@@ -57,6 +57,8 @@ export const projectLabelled:Readonly<Record<string,(db:DataDatabase,from:string
  // After the repositories have moved: each pull request is filed under its repository's project.
  changes(db){reprojectChanges(db);},
 };
+/** A project retired, or revived. */
+export const projectStateInput=z.object({project:id}).strict();
 /** One agent let onto one project. */
 export const projectJoinInput=z.object({project:id,agent:householdId}).strict();
 /** The one refusal for an agent that is on the project already, in the words both doors use. */
@@ -81,15 +83,29 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
   /** One project as it stands, removed or not, or null when there is none: what a merge card is sealed on. */
   describe(project:string){
    const row=db.select().from(projects).where(eq(projects.id,project)).get();if(!row)return null;
-   return{id:row.id,name:row.name,removed:!!row.removedAt,
+   return{id:row.id,name:row.name,removed:!!row.removedAt,retired:!!row.retiredAt,
     members:db.select().from(projectMembers).where(eq(projectMembers.project,project)).all().map(link=>link.member).sort(),
     agents:db.select().from(projectAgents).where(eq(projectAgents.project,project)).all().map(link=>link.agent).sort(),
     repositories:db.select().from(projectRepositories).where(eq(projectRepositories.project,project)).all().map(link=>link.repository).sort()};
   },
+  /** Why this project cannot be retired, or revived, as it stands; nothing when it can. A removed project is
+   * neither: it is restored first. */
+  stateRefusal(raw:z.input<typeof projectStateInput>,retire:boolean):OperationError|undefined{
+   const value=projectStateInput.parse(raw),refused=projectStateRefusal(db,value.project,retire);
+   return refused&&new OperationError(refused.code,refused.message);
+  },
+  /** Retire a project, or revive it. One column of the project's own row changes and nothing else: no task,
+   * member, agent, repository or record is touched. What a retired project means for its tasks is derived
+   * from that column wherever work is picked (core/data/project-in-use.ts). Reversible either way. */
+  setRetired(raw:z.input<typeof projectStateInput>,retire:boolean){const value=projectStateInput.parse(raw);return db.transaction(()=>{
+   const refused=this.stateRefusal(value,retire);if(refused)throw refused;
+   db.update(projects).set({retiredAt:retire?now():null}).where(eq(projects.id,value.project)).run();
+   return{id:value.project};
+  });},
   /** Why this agent cannot be added to this project as things stand, or nothing when it can. */
   joinRefusal(raw:z.input<typeof projectJoinInput>):OperationError|undefined{
    const value=projectJoinInput.parse(raw);
-   const unusable=projectRefusal(db,value.project),agent=db.select().from(agents).where(eq(agents.id,value.agent)).get();
+   const unusable=projectRefusal(db,value.project,'stand'),agent=db.select().from(agents).where(eq(agents.id,value.agent)).get();
    if(unusable)return new OperationError(unusable.code,unusable.message);
    if(!agent)return new OperationError('not-found','No agent has the id '+value.agent);
    if(agent.removedAt)return new OperationError('invalid','Agent '+value.agent+' is removed');
@@ -107,7 +123,9 @@ export function sharedProjects(db:DataDatabase,now:()=>string=()=>new Date().toI
   mergeRefusal(raw:z.input<typeof projectMergeInput>):OperationError|undefined{
    const value=projectMergeInput.parse(raw);
    if(value.from===value.into)return new OperationError('invalid','A project cannot be merged into itself');
-   for(const project of [value.from,value.into]){const unusable=projectRefusal(db,project);if(unusable)return new OperationError(unusable.code,unusable.message);}
+   // What is merged away may be retired: that is how a shelved project's work is taken up. What it is merged
+   // into takes new records, so it must be in use.
+   for(const [project,to] of [[value.from,'stand'],[value.into,'enter']] as const){const unusable=projectRefusal(db,project,to);if(unusable)return new OperationError(unusable.code,unusable.message);}
    // A repository has one project. After the merge every repository of either is the other's alone, unless a
    // third project also lists it.
    const bound=db.select().from(projectRepositories).all(),merged=[value.from,value.into];

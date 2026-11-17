@@ -85,8 +85,8 @@ it('files every record of the merged project under the other, in every table tha
     expect(filedUnder(f.db, table, column, 'garden'), name).toBe(kept.has(name) ? { project_members: 3, project_agents: 2 }[name] : before[name]);
   }
   // The people, agents and repositories of pond are garden's too. A repository has one project: it moved.
-  expect(f.service.describe('garden')).toEqual({ id: 'garden', name: 'garden', removed: false, members: ['kit', 'lee', 'sam'], agents: ['art', 'mark'], repositories: ['github:fixture/garden', 'github:fixture/pond'] });
-  expect(f.service.describe('pond')).toEqual({ id: 'pond', name: 'pond', removed: true, members: ['kit', 'lee'], agents: ['mark'], repositories: [] });
+  expect(f.service.describe('garden')).toEqual({ id: 'garden', name: 'garden', removed: false, retired: false, members: ['kit', 'lee', 'sam'], agents: ['art', 'mark'], repositories: ['github:fixture/garden', 'github:fixture/pond'] });
+  expect(f.service.describe('pond')).toEqual({ id: 'pond', name: 'pond', removed: true, retired: false, members: ['kit', 'lee'], agents: ['mark'], repositories: [] });
   expect(f.db.select().from(projectRepositories).where(eq(projectRepositories.project, 'pond')).all()).toEqual([]);
   // pond is kept and marked removed; garden and the project that took no part are as they were.
   expect(f.db.select().from(projects).all()).toEqual([{ id: 'pond', name: 'pond', removedAt: later, retiredAt: null }, { id: 'garden', name: 'garden', removedAt: null, retiredAt: null }, { id: 'shed', name: 'shed', removedAt: null, retiredAt: null }]);

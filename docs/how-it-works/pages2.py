@@ -787,6 +787,7 @@ def tools():
             row("Approvals: ask permission for a merge or a command. Withdraw the request, use an allowance once, or report a step taken under a tell-me-after rule.", G + ", with a job"),
             row("Propose a dangerous action for a person to allow and confirm: revoking a token, revoking a machine, signing out a browser, merging one project into another. Loom carries it out.", "propose"),
             row("Ask to be let onto a project it is not on. A household owner answers each such card; no standing rule does.", "propose"),
+            row("Propose that a project be retired, or revived. A retired project keeps everything; its unfinished tasks are shelved, not work, until it is revived.", "propose"),
             row("See the approvals it may see, and which are still waiting.", "approvals"),
             row("Changes: read pull requests and who each is waiting on. Merge under an approval.", G),
             row("Tempo: set a trigger, stop it, or run it now.", G),

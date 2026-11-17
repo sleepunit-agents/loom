@@ -1,4 +1,4 @@
-/** Household changes an agent asks for: a project, being let onto a project, a member, an agent's
+/** Household changes an agent asks for: a project, retiring or reviving one, being let onto one, a member, an agent's
  * description, the household's own settings, a standing approval rule, or how
  * an agent treats outside people and which tools its body is not given.
  * Four dangerous actions are proposed the same way: revoking a token, revoking
@@ -64,13 +64,15 @@ import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
 import {householdService,HouseholdError,memberInput,agentInput,settingsInput,removable,GITHUB_LOGIN} from './apps/household.js';
 import {householdSettings} from './core/data/household-settings.js';
-import {alreadyOnProject,projectInput,projectJoinInput,projectMergeInput,type sharedProjects} from './shared-projects.js';
+import {alreadyOnProject,projectInput,projectJoinInput,projectMergeInput,projectStateInput,type sharedProjects} from './shared-projects.js';
 import {approvalRuleInput,type approvalRulesService} from './apps/approval-rules.js';
 import {agentBodyPolicyInput,readAgentBodyPolicy,saveAgentBodyPolicy} from './shared-agent-body-policy.js';
 const operation='household.change';
 const kinds={project:projectInput,
  // One project emptied into another and removed. Its records cannot be told apart again afterwards.
  projectMerge:projectMergeInput,
+ // A project set aside whole, and brought back. Either can be undone by the other, so each is a setting.
+ projectRetire:projectStateInput,projectRevive:projectStateInput,
  // One agent let onto one project: what an agent asks when it is told to work somewhere it is not.
  projectJoin:projectJoinInput,
  member:memberInput,agent:agentInput,settings:settingsInput,rule:approvalRuleInput,bodyPolicy:agentBodyPolicyInput,
@@ -133,7 +135,8 @@ const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
  :value.change==='boxSettings'?value.input.box:value.change==='runSettings'||value.change==='models'||value.change==='agentAccounts'?value.input.agent
  :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member
- :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' onto project '+value.input.project:value.input.id;
+ :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' onto project '+value.input.project
+ :value.change==='projectRetire'||value.change==='projectRevive'?value.input.project:value.input.id;
 const label=(value:Proposal)=>value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs':value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
@@ -142,12 +145,17 @@ const target=(value:Proposal)=>'household:'+(name(value)===''?value.change:(valu
 // The card's own words, for everyone who may read it: the change asked for, never what it would replace.
 const mergeWords=(value:Proposal)=>'Merge '+label(value)+'. Everything filed under the first is filed under the second, and the first is removed.';
 const joinWords=(value:Proposal)=>value.change==='projectJoin'?'Let '+value.input.agent+' work on project '+value.input.project:'';
-const said=(value:Proposal)=>value.change==='projectMerge'?mergeWords(value):value.change==='projectJoin'?joinWords(value)+'. Nothing else about the project changes.':value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
+const stateWords=(value:Proposal)=>value.change==='projectRetire'?'Retire project '+name(value)+'. Everything in it stays and stays readable; its unfinished tasks are shelved until it is revived.'
+ :'Revive project '+name(value)+'. Its shelved tasks are work again, as they were.';
+const isState=(value:Proposal)=>value.change==='projectRetire'||value.change==='projectRevive';
+const said=(value:Proposal)=>isState(value)?stateWords(value):value.change==='projectMerge'?mergeWords(value):value.change==='projectJoin'?joinWords(value)+'. Nothing else about the project changes.':value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):value.change in danger?danger[value.change as keyof typeof danger].verb+' '+label(value)
  :label(value)+': '+JSON.stringify(sorted(value.input));
 // The same with what it would replace, for a household owner.
-const summary=(value:Proposal,before:unknown)=>value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
+const summary=(value:Proposal,before:unknown)=>isState(value)?stateWords(value)+' As it stands: '+JSON.stringify(before):value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
 const cardWords=(value:Proposal)=>dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+ :value.change==='projectRetire'?{ask:'Retire project '+name(value)+'?',ifYes:'Nothing is deleted or closed, and who reads it does not change. Its unfinished tasks are shelved: not ready, not claimed, not counted as open work. No new task is filed under it. Reviving it brings everything back as it was.',ifNo:'It stays in use.'}
+ :value.change==='projectRevive'?{ask:'Revive project '+name(value)+'?',ifYes:'Its shelved tasks are work again, each as it was left.',ifNo:'It stays retired.'}
  :value.change==='projectJoin'?{ask:joinWords(value)+'?',ifYes:value.input.agent+' is added to project '+value.input.project+' and sees what is filed under it. Nothing else about the project changes.',ifNo:value.input.agent+' stays off the project.'}
  :value.change==='remove'?{ask:'Remove '+label(value)+'?',ifYes:'It is taken out of use. Its history stays, and it can be restored.',ifNo:'It stays as it is.'}
  :value.change==='restore'?{ask:'Restore '+label(value)+'?',ifYes:'It is put back in use.',ifNo:'It stays removed.'}
@@ -180,6 +188,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const before=(value:Proposal):unknown=>{
   if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);return row?sorted({id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
   if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
+  if(value.change==='projectRetire'||value.change==='projectRevive'){const project=projects.describe(value.input.project);return sorted({project:project&&{id:project.id,removed:project.removed,retired:project.retired}});}
   // A join card is sealed on what it changes and nothing more: that the project and the agent are in use, and
   // whether that agent is on it. Another agent let onto the same project meanwhile does not move its ground.
   if(value.change==='projectJoin'){const project=projects.describe(value.input.project),agent=db.select({id:agents.id,removedAt:agents.removedAt}).from(agents).where(eq(agents.id,value.input.agent)).get();
@@ -230,6 +239,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    if(value.change==='project')projects.save(value.input);
    else if(value.change==='projectMerge')projects.merge(value.input);
    else if(value.change==='projectJoin')projects.join(value.input);
+   else if(value.change==='projectRetire'||value.change==='projectRevive')projects.setRetired(value.input,value.change==='projectRetire');
    else if(value.change==='member')household.setMember(value.input);
    else if(value.change==='agent')household.setAgent(value.input);
    else if(value.change==='settings')household.setSettings(value.input);
@@ -266,6 +276,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const refusal=(value:Proposal,was:unknown)=>
   value.change==='projectMerge'?projects.mergeRefusal(value.input)
   :value.change==='projectJoin'?projects.joinRefusal(value.input)
+  :value.change==='projectRetire'||value.change==='projectRevive'?projects.stateRefusal(value.input,value.change==='projectRetire')
   :value.change==='bodyPolicy'&&was===null?new OperationError('invalid','Unknown agent')
   :value.change==='boxSettings'&&was===null?new OperationError('not-found','No live machine has that id')
   :value.change in danger&&was===null?new OperationError('not-found',value.change==='tokenRevoke'?'No live token has that label':value.change==='boxRevoke'?'No live machine has that name':'No such signed-in browser')

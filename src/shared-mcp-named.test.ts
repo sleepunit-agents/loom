@@ -260,6 +260,10 @@ it('proposes a change, sees the approval waiting, and reads its own inbox',async
   expect((await art.call('approvals',{state:'pending'})).text).toContain('## Merge project fictional-pond into fictional-shed?');
   expect((await art.call('propose',{change:'projectMerge',input:{from:'fictional-pond'},why:'x'})).error).toBe(true);
   expect(p.composition.services.projects.describe('fictional-pond')).toMatchObject({removed:false,agents:['art']});
+  // Retiring a project is proposed the same way, and its mirror.
+  expect((await art.call('propose',{change:'projectRetire',input:{project:'fictional-shed'},why:'FICTIONAL_RETIRE'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
+  expect((await art.call('approvals',{state:'pending'})).text).toContain('## Retire project fictional-shed?');
+  expect((await art.call('propose',{change:'projectRevive',input:{project:'fictional-shed'},why:'FICTIONAL_REVIVE'})).error).toBe(false);
   // Asking to be let onto a project: for itself only, and not onto one it is already on.
   expect((await art.call('propose',{change:'projectJoin',input:{project:'fictional-shed',agent:'art'},why:'FICTIONAL_JOIN'})).text).toMatch(/^Filed approval a-[0-9a-f-]+\. It waits for a household owner\.$/);
   expect((await art.call('approvals',{state:'pending'})).text).toContain('## Let art work on project fictional-shed?');

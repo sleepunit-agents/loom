@@ -632,7 +632,7 @@ it('asks policy.ts who may move a task to another project, at the one door that 
   // shared-projects.ts says that of an agent only; what is said of a project is in the one file, which tasks, joins and merges all call.
   expect(text('src/shared-projects.ts')).not.toMatch(/'Project '|'No project /);
   expect(text('src/shared-projects.ts').split('projectRefusal(db,').length).toBe(3);
-  expect(text('src/apps/tasks.ts')).toContain('projectRefusal(db, project)?.message');
+  expect(text('src/apps/tasks.ts')).toContain('projectRefusal(db, project, to)?.message');
   expect(sources('src').filter(file => /projects\.removedAt\b/.test(text(file)) && /Refusal/.test(text(file)))).toEqual(['src/core/data/project-in-use.ts']);
   expect(door.split('taskProjectRefusal(db, ').length).toBe(3);
   expect(door).not.toMatch(/hasOwn\(sharing\.projects/);
@@ -645,6 +645,17 @@ it('holds a new question and a move that carries one to the one rule about who m
   expect(door.split('mayBeAskedAbout(').length).toBe(3);
   expect(sources('src').filter(file => /function mayBeAskedAbout\b/.test(text(file)))).toEqual(['src/policy.ts']);
   expect(text('src/shared-task-commands.ts')).toContain('strandedQuestion(db, command)');
+});
+
+it('reads whether a project is retired, and whether a task is shelved, in one place', () => {
+  // The column is read in the one file and written by the projects' owner; nobody else works it out.
+  expect(sources('src').filter(file => /retiredAt|retired_at/.test(text(file)) && !['src/core/data/schema.ts', 'src/core/data/database.ts'].includes(file)).sort()).toEqual(['src/core/data/project-in-use.ts', 'src/shared-projects.ts']);
+  // Every reader that picks work asks the one filter: the ready queue, readiness in the data door, the sweep, the hub.
+  for (const file of ['src/apps/tasks.ts', 'src/core/data/queries.ts', 'src/core/tempo/work-sweep.ts', 'src/shared-memory-projects.ts']) expect(text(file), file).toContain('taskShelved(');
+  for (const file of ['src/core/conversations/inbox-query.ts', 'src/core/data/inbox-read.ts']) expect(text(file), file).toContain('waitsOnShelvedTask(inbox)');
+  // The app is told; it does not look at a project to decide.
+  for (const file of sourcesOf('web/src', /\.tsx?$/)) expect(text(file), file).not.toMatch(/retiredAt|retired_at/);
+  expect(text('web/src/pieces/tasks/query.ts')).toContain('isReady isShelved');
 });
 
 it('asks policy.ts which agents Home shows', () => {

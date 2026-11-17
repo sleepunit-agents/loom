@@ -48,6 +48,40 @@ filed under. Moving a task to another of those, merging two of them, and splitti
 then move the chosen tasks into it) are in [owners.md](owners.md), "Moving a task, and merging or splitting
 projects". None of them touches a card.
 
+### Retiring a project
+
+*Added 2026-11-18. The owner: "phasecraft for example is effectively retired for now. I don't want it gone,
+but retiring a project should retire all of its tasks and shit."*
+
+A household project is in use, retired or removed. Retired is the state between: set aside whole, and
+brought back whole.
+
+- **How.** Two household changes, `projectRetire` and `projectRevive`, each with `{ "project": "<id>" }`,
+  proposed like any other and answered by a household owner. Each is undone by the other, so each is a
+  setting, and a standing rule for settings may answer it.
+- **What stays.** Everything. The project's tasks, conversations, records, members, agents and repositories
+  are kept, and read by exactly who could read them before. Nothing is deleted, closed or rewritten.
+- **Its unfinished tasks are shelved.** A task is shelved when its project is retired and the task is not
+  closed. That is worked out from the project wherever work is picked; it is never written on the task, so
+  no task changes when a project is retired or revived. A shelved task:
+  - is not ready (`task_ready`, `loom-taskstore ready`, the app's Ready list and the desk's counts);
+  - is in no list or count of open work: the work sweep does not name it, and the app counts it under
+    Shelved and nowhere else;
+  - cannot be claimed;
+  - is still shown under its project, marked shelved with what it was, and can be read, commented on,
+    edited and closed;
+  - does not ask for attention: a question waiting on it is still its person's mail, and is out of
+    "needs you" and its counts until the project is revived.
+- **Reviving** brings back exactly what was there: each task's status, who holds it, its question and its
+  place in the order.
+- **Nothing new goes in.** No task is created in a retired project and none is moved into one. A task may be
+  moved out, which is how one piece of work is taken up again. A merge into a retired project is refused; a
+  merge from one is allowed, and its tasks are work in the project they join.
+- **Removed and retired.** A removed project cannot be retired or revived; restore it first. A retired
+  project can be removed, and stays marked retired.
+- The state is one column, `projects.retired_at` (schema step 10). What it means is stated once, in
+  `src/core/data/project-in-use.ts`.
+
 ### Asking to work on a project
 
 *Added 2026-11-17. The owner: "I go hey mark work on pond and he goes, uh I don't do that, but ok can I work on

@@ -18,8 +18,9 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
   };
   // The labels a task would carry: its project must be one in use (apps/tasks.ts, `taskProjectRefusal`), and the
   // task so labelled must be one the caller sees.
-  const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>): boolean =>
-    !taskProjectRefusal(db, task.project) && holds(rules.task, viewer, task, sharing);
+  // A new task enters its project, which must be in use. A task edited where it is stands: retired will do.
+  const labels = (task: Pick<TaskRow, 'project' | 'ownerKind' | 'owner'>, entering: 'enter' | 'stand' = 'enter'): boolean =>
+    !taskProjectRefusal(db, task.project, entering) && holds(rules.task, viewer, task, sharing);
   if (command.action === 'create') {
     const input = command.input, person = input.owner;
     // A new task's owner must be in the household now: someone removed owns nothing new.
@@ -43,7 +44,7 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
         && question.source === 'task' && question.waitsOnKind === 'task' && question.waitsOnId === command.id;
     }
     // An edit that names another project is that same move. Any other edit leaves the labels as they are.
-    case 'edit': return command.input.project === undefined || command.input.project === task.project ? labels(task) : mayMove(task, command.input.project);
+    case 'edit': return command.input.project === undefined || command.input.project === task.project ? labels(task, 'stand') : mayMove(task, command.input.project);
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
     case 'move': return command.before === null || !!visibleTask(command.before);
     // The person asked must be able to read the task themselves (policy.ts, `mayBeAskedAbout`); someone removed reads nothing.

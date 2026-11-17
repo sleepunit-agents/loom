@@ -270,9 +270,9 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
 
  // Tasks: the household's work queue, as far as you may see it.
  const taskId=z.string().regex(/^t-[1-9][0-9]*$/);
- type TaskRow={id:string;title:string;type:string;status:string;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
+ type TaskRow={id:string;title:string;type:string;status:string;isShelved?:boolean;priority:number;project:string|null;ownerKind:string;owner:string|null;assigneeKind:string|null;assignee:string|null;goal:string;why:string;doneWhen:string;description:string;ask:string|null;closeReason:string|null;
   taskCommentsByTask?:{seq:number;actor:string;at:string;text:string}[];taskLinksByTask?:{dependsOn:string;type:string}[]};
- const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
+ const taskLine=(task:TaskRow)=>'- '+task.id+' P'+task.priority+' '+task.title+(task.project?' ['+task.project+']':'')+(task.isShelved?' (shelved)':task.status==='open'?'':' ('+task.status+(task.assignee?', '+task.assignee:'')+')');
  tool('task_ready','List the tasks ready to pick up, most urgent first. Pass project to narrow it.',
   z.object({project:z.string().min(1).max(100).optional(),limit:z.number().int().min(1).max(100).optional()}).strict(),
   async input=>{
@@ -283,9 +283,9 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('task','Read one task with its comments and what it depends on.',
   z.object({id:taskId}).strict(),
   async input=>{
-   const data=await read<{tasks:TaskRow[]}>('query($id:String!){tasks(where:{id:{eq:$id}}){id title type status priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason taskCommentsByTask{seq actor at text} taskLinksByTask{dependsOn type}}}',{id:input.id});
+   const data=await read<{tasks:TaskRow[]}>('query($id:String!){tasks(where:{id:{eq:$id}}){id title type status isShelved priority project ownerKind owner assigneeKind assignee goal why doneWhen description ask closeReason taskCommentsByTask{seq actor at text} taskLinksByTask{dependsOn type}}}',{id:input.id});
    const task=data.tasks[0];if(!task)return 'No task '+input.id+' that you may see.';
-   const lines=['# '+task.title,'_'+task.id+' · '+task.type+' · '+task.status+' · P'+task.priority+(task.project?' · '+task.project:'')+' · owner '+(task.owner??task.ownerKind)+(task.assignee?' · held by '+task.assignee:'')+'_','','**Goal:** '+task.goal,'**Why:** '+task.why];
+   const lines=['# '+task.title,'_'+task.id+' · '+task.type+' · '+(task.isShelved?'shelved with its retired project, was '+task.status:task.status)+' · P'+task.priority+(task.project?' · '+task.project:'')+' · owner '+(task.owner??task.ownerKind)+(task.assignee?' · held by '+task.assignee:'')+'_','','**Goal:** '+task.goal,'**Why:** '+task.why];
    if(task.doneWhen)lines.push('**Done when:** '+task.doneWhen);
    if(task.description)lines.push('',task.description);
    if(task.ask)lines.push('','**Question waiting:** '+task.ask);
@@ -301,7 +301,7 @@ export function registerNamedTools(server:McpServer,ports:NamedToolPorts){
  tool('task_edit','Change a task\'s title, goal, reason, done-when, description, priority or project.',
   z.object({id:taskId,title:z.string().min(1).max(300).optional(),goal:z.string().min(1).max(2000).optional(),why:z.string().min(1).max(2000).optional(),doneWhen:z.string().max(2000).optional(),description:z.string().max(20000).optional(),priority:z.number().int().min(0).max(4).optional(),project:z.string().min(1).max(100).nullable().optional()}).strict(),
   async input=>{const {id,...fields}=input;await run('tasks.command',{action:'edit',id,input:fields});return 'Edited '+id;});
- tool('task_move_to_project','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge. To be let onto a project yourself: propose projectJoin.',
+ tool('task_move_to_project','Move tasks to another project, or with project: null out of every project. You must be able to act on each task and be on the project they go to; out of every project a task is its owner\'s alone, so only its owner or a household owner may do that. Every task named moves or none does. Each moved task gets a comment saying from where to where. To split a project: propose the new project, then move the tasks into it. To merge two: propose projectMerge. To be let onto a project yourself: propose projectJoin. A retired project takes no task; tasks may be moved out of one.',
   z.object({ids:z.array(taskId).min(1).max(TASK_MOVE_MAX),project:z.string().min(1).max(100).nullable()}).strict(),
   async input=>{
    const value=await run('tasks.command',{action:'moveToProject',ids:input.ids,project:input.project}) as {moved?:string[]};

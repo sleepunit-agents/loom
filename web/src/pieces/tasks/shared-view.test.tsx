@@ -73,3 +73,22 @@ it('shows current linked pull request state and drops it with the authorized sna
   await act(async () => tree.update(h(SharedTasks,{...p,status:'denied'})));
   expect(tree.root.findAllByType('a')).toHaveLength(0);
 });
+it('shows a shelved task under its project marked as shelved, and in no list or count of open work',async () => {
+  const shelved=task('t-1',{project:'phasecraft',isShelved:true}), held=task('t-2',{project:'phasecraft',status:'in_progress',isShelved:true,assigneeKind:'member',assignee:'jonathan',ask:'Buy it?'}), live=task('t-3',{project:'pond'});
+  await draw(props({tasks:[shelved,held,live],ready:['t-3'],selected:'t-1'}));
+  const split=tree.root.findByType('Split'), titles=()=>rows().map((r:{props:{title:string}})=>r.props.title);
+  const count=(id:string)=>(split.props.folders as {id?:string;count?:number}[]).find(folder=>folder.id===id)?.count;
+  // Counted under Shelved only: not ready, in progress, needing its person, or open.
+  expect(['ready','progress','questions','open','shelved','closed'].map(count)).toEqual([1,0,0,1,2,0]);
+  for (const [folder,expected] of [['ready',['t-3']],['progress',[]],['questions',[]],['open',['t-3']],['shelved',['t-1','t-2']],['project:phasecraft',['t-1','t-2']],['project:pond',['t-3']]] as const) {
+    await act(async () => split.props.onFolder(folder));
+    expect(titles(),folder).toEqual(expected);
+  }
+  // Browsing its project, each row says shelved and what it was; the open one cannot be claimed.
+  await act(async () => split.props.onFolder('project:phasecraft'));
+  expect(rows().map((r:{props:{status:string}})=>r.props.status)).toEqual(['t-1 · P2 · shelved · was open','t-2 · P2 · shelved · was in progress']);
+  expect(visibleText(tree.toJSON())).toContain('shelved with its project · was open');
+  const buttons=tree.root.findAllByType('Button').map((b:{props:{children:string}})=>b.props.children);
+  expect(buttons).not.toContain('Claim');
+  expect(buttons).toEqual(expect.arrayContaining(['Comment','Project','Close']));
+});

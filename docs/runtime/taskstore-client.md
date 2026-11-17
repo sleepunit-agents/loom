@@ -32,6 +32,11 @@ A move is refused (`conflict`) while a task named carries an unanswered question
 for a person who could not read it in the destination: `ask` only takes a person
 who can read the task, and a move may not undo that.
 
+A retired project takes no task: `create` with it, and a move into it, are
+refused. Its unfinished tasks are shelved: `ready` does not list them and `claim`
+is refused, until the project is revived (`household.propose` with
+`change: "projectRevive"`). A task is taken up again by moving it out.
+
 To split a project: make the new project (a household owner, or an agent through
 `household.propose` with `change: "project"`), then `moveToProject` the chosen
 tasks into it. To merge two projects, an agent proposes `change: "projectMerge"`

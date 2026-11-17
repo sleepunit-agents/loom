@@ -237,6 +237,9 @@ alone. Three things change where work is filed.
   2. move the chosen tasks into it (`moveToProject`).
 - **Ask to be let onto a project** (a household change, `projectJoin`): see [projects.md](projects.md),
   "Asking to work on a project".
+- **Retire a project, or revive it** (`projectRetire`, `projectRevive`): see [projects.md](projects.md),
+  "Retiring a project". A retired project takes no task by creation, move or merge; tasks may be moved out
+  of one, and it may be merged into another.
 
 ## What the tests must pin
 
