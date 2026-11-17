@@ -195,7 +195,7 @@ Entries are grouped by the part of the program they belong to.
 - What: the door hands the calling owner a bearer that signs in as the member named. With it the owner is
   that member to every rule, their private threads with agents included. The owner ruled that the owner
   role does not read another member's private thread; no rule lets it, and this door is how an owner who
-  set out to could. It leaves a token row with its label, which the household's token list shows.
+  set out to could. It leaves a token row with its label and the member it names.
 - What the door does not do: bind a token to a job. A bearer for a running job would be a second body in
   that job's conversation, so a job's token is made only where its worker enrols it (`enrolBody`), and a
   new one ends the job's other token.
