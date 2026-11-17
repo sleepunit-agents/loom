@@ -17,6 +17,6 @@ export default function DeviceLink({enabled,member}:{enabled:boolean;member?:str
   }catch{if(current===generation.current)say('The link could not be shown. It was not retried; any unseen link expires within five minutes.');}
   finally{pending.current=false;setBusy(false);}
  }
- return <section aria-label="Sign in another device" className="grid min-w-0 gap-2"><p>One sign-in within five minutes{member?` as ${member}`:''}. Anyone with the link can use it.</p><Button disabled={!enabled||busy} variant="outline" onClick={()=>void make()}>Make sign-in link</Button>
+ return <section aria-label="Sign in another device" className="grid min-w-0 gap-2"><p>One sign-in within five minutes{member?` as ${member}`:''}. Anyone with the link can use it. The other device is signed in for as long as this one, and can add a passkey only within ten minutes of this browser's own sign-in.</p><Button disabled={!enabled||busy} variant="outline" onClick={()=>void make()}>Make sign-in link</Button>
  {enabled&&link&&link.member===member&&<><p role="status" className="break-all" data-signin-link>{new URL(link.path,location.origin).href}</p><Button variant="outline" onClick={()=>setLink(null)}>Hide sign-in link</Button></>}{message&&<p role="status">{message}</p>}</section>;
 }

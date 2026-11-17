@@ -34,8 +34,10 @@ words or absence from the current setup does **not** prove permanent retirement.
 An identity without an explicit committed retirement remains recoverable subject
 to current authentication/policy. Slack reconnects to the same identity recover
 pending work; a replacement identity cannot read it. Discord reset only removes
-the current checkpoint; it retains message tombstones. Existing one-hour raw-word
-expiry remains independent and does not retire either platform's identity.
+the current checkpoint; it retains message tombstones. The expiry of raw words
+(an hour for a message that has a row, a day for an event nothing could read
+yet; see "What is implemented today") remains independent and does not retire
+either platform's identity.
 
 ## What is implemented today
 

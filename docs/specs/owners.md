@@ -78,6 +78,17 @@ shared, and what's one agent's. Owners follow them.
 
 ## Several owners on one agent
 
+- **A body working for a member reaches no further than that member.** When an
+  agent's body runs a job that is for one member (their private thread with
+  the agent), each way the agent reaches a record counts only while that member
+  has the same reach: a project only if the member is in it too or is a
+  household owner, what is labelled with the agent only while the member has the
+  agent on their own list, and nothing once the member has left. The body is
+  still the agent, never the member: it gains nothing that only a member holds.
+  A terminal session, and a job that is for no member, is the agent alone. The
+  rule is stated at `Viewer.workingFor` in `src/policy.ts`; what stays the
+  agent's own whoever it works for is in `docs/accepted-tradeoffs.md`.
+
 - **The first answer wins.** An ask goes to every owner of its agent, and
   the first Allow or Deny decides it (Jonathan: "yes"). The others see it
   answered, and by whom.
