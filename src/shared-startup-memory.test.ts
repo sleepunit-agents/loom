@@ -28,7 +28,7 @@ it('normal startup carries native Memory tools, private Identity and revisions a
    db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
    db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();
   }});
-  const signin=await fetch(p.printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:p.url}});expect(signin.status).toBe(303);
+  const signin=await fetch(p.composition.signinLink(),{method:'POST',redirect:'manual',headers:{origin:p.url}});expect(signin.status).toBe(303);
   const cookie=signin.headers.get('set-cookie')!.split(';',1)[0];
   const opened=await fetch(p.url+'/api/comms/open',{method:'POST',headers:{cookie,origin:p.url,'content-type':'application/json'},body:JSON.stringify({input:{thread:'th:memory-startup',agent:'art'},id:'startup-thread'})});
   expect(opened.status).toBe(200);const {conversation}=z.object({value:z.object({conversation:z.string()})}).parse(await opened.json()).value;

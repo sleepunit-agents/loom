@@ -2,7 +2,8 @@
  * Trusted modules call this service; the HTTP identity door checks ownership.
  * Issuance is deliberately not retryable: a lost response requires a new label.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
+import { activeJobStates, credentialFingerprint, currentToken } from '../data/authentication.js';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../data/database.js';
@@ -19,10 +20,10 @@ export const sharedTokenInput = z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('runner'), box: id }).strict(),
 ]);
 export const sharedTokenOwner = (db: DataDatabase, viewer: Viewer) => viewer.kind === 'member' && db.select().from(members).where(eq(members.id, viewer.id)).get()?.role === 'owner';
+/** A current token that stands for a member: the kind a browser session or a passkey may ride on. */
 export function currentMemberToken(db: DataDatabase, clock: Clock, id: string) {
-  const token=db.select().from(tokens).where(eq(tokens.fingerprint,id)).get();
-  if(!token||token.kind!=='owner'||!token.member||token.revokedAt||(token.expiresAt&&Date.parse(token.expiresAt)<=clock.now())||!db.select().from(members).where(eq(members.id,token.member)).get())return;
-  return token;
+  const found=currentToken(db,id,clock.now());
+  return found?.viewer.kind==='member'?found.token:undefined;
 }
 export function activeMemberToken(db:DataDatabase,clock:Clock,id:string){
  const token=currentMemberToken(db,clock,id);if(!token)throw Error('Sign-in refused');return token;
@@ -40,11 +41,11 @@ export function sharedTokens(db: DataDatabase, clock: Clock) {
           if (!db.select().from(agents).where(eq(agents.id, value.agent)).get()) throw new OperationError('invalid', 'Choose an existing agent');
           if (value.job) {
             const job = db.select().from(jobs).where(eq(jobs.id, value.job)).get();
-            if (!job || job.agent !== value.agent || !job.box || !['starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
+            if (!job || job.agent !== value.agent || !job.box || !activeJobStates.includes(job.state)) throw new OperationError('invalid', 'Choose current work for this agent');
           }
         }
         if (value.kind === 'runner' && !db.select().from(boxes).where(and(eq(boxes.id, value.box), isNull(boxes.revokedAt))).get()) throw new OperationError('invalid', 'Choose an active machine');
-        const token = `loom_${randomBytes(32).toString('base64url')}`, fingerprint = createHash('sha256').update(token).digest('hex');
+        const token = `loom_${randomBytes(32).toString('base64url')}`, fingerprint = credentialFingerprint(token);
         db.insert(tokens).values({ ...value, fingerprint, createdAt: new Date(now).toISOString() }).run();
         return { token, fingerprint };
       });

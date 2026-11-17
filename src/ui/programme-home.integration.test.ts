@@ -19,7 +19,7 @@ it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow 
   // The production holder forks an adjacent .js entry with no loader flags.
   // Use the built backend so this proof exercises that actual child process.
   const {startSharedHome}=await import('../../dist/shared-startup.js');
-  app=await startSharedHome({home,webRoot,host:'127.0.0.1',port:0,stdout:text=>{link=text.trim();},reportError:error=>errors.push(error)});
+  app=await startSharedHome({home,webRoot,host:'127.0.0.1',port:0,stdout:()=>{},reportError:error=>errors.push(error)});link=app.signinLink();
   const current=app,db=current.services.comms!.db.$client,owner=(db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>new URL(route.request().url()).origin===current.url?route.continue():route.abort('blockedbyclient'));

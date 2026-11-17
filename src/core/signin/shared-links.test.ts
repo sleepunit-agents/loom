@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { sharedSigninLinks } from './shared-links.js';
+import { currentMemberToken } from './shared-tokens.js';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { createServer } from 'node:http';
@@ -326,4 +327,21 @@ it.each(['revoke','expire'])('withholds a committed link when publication ends i
  const stop=f.root.writes.observe(()=>{if(ended||!f.db.select().from(signinLinks).get())return;ended=true;f.db.update(tokens).set(change==='revoke'?{revokedAt:new Date(f.clock.now()).toISOString()}:{expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credential))).run();});cleanup.push(stop);
  const response=await f.mint();expect(ended).toBe(true);expect(response.status).toBe(401);expect(await response.json()).toEqual({error:'Member authentication required'});
  expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+});
+it('signs nobody in on a removed member\'s token, by link or by the rule a passkey sign-in uses', async () => {
+  const f = fixture(), path = await f.link(), service = sharedSigninLinks(f.db, f.clock);
+  f.db.update(members).set({ removedAt: new Date(f.clock.now()).toISOString() }).where(eq(members.id, 'sam')).run();
+  expect((await f.redeem(path)).status).toBe(401);
+  expect(() => service.makeLink(hash(credential))).toThrow('Sign-in refused');
+  expect(currentMemberToken(f.db, f.clock, hash(credential))).toBeUndefined();
+  expect(currentMemberToken(f.db, f.clock, hash(other))).toMatchObject({ member: 'other' });
+  expect(f.db.select().from(sessions).all()).toEqual([]);
+});
+it('adds a passkey only for the browser that is itself the presented credential', async () => {
+  const f = fixture('https://loom'), secure = (path: string, headers: Record<string, string>) => f.root.http.request('https://loom' + path, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://loom', ...headers }, body: '{}' });
+  const signedIn = await f.root.http.request('https://loom' + await f.link(), { method: 'POST', headers: { origin: 'https://loom' } });
+  const cookie = signedIn.headers.get('set-cookie')!.split(';', 1)[0];
+  expect((await secure('/passkeys/options', { cookie })).status).toBe(200);
+  // Another member's bearer beside sam's cookie is that other member, not sam's browser.
+  expect((await secure('/passkeys/options', { cookie, authorization: 'Bearer ' + other })).status).toBe(403);
 });

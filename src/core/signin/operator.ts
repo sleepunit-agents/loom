@@ -10,8 +10,9 @@ import { HouseholdRows } from '../household/rows.js';
 import { publishBootstrapContext } from '../household/bootstrap.js';
 import { HouseholdDatabase } from '../household/document.js';
 import { assertHomeReady } from '../home-state.js';
+/** `member` may be left out: the issuer then uses the member it was configured with for local sign-in. */
 export const operatorRequest = z.strictObject({
-  request: z.literal('link'), member: z.string().min(1).max(200),
+  request: z.literal('link'), member: z.string().min(1).max(200).optional(),
   label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(900).default(300),
 });
 const LIMIT = 4096;
@@ -70,12 +71,13 @@ export async function listenOperatorLinks(home: string, url: string, issue: (inp
   return { close };
 }
 function localLink(app: Foundation, input: z.infer<typeof operatorRequest>) {
-  const s = signin(app), os = userInfo();
+  const s = signin(app), os = userInfo(), member = input.member;
+  if (!member) throw new Error('Name a member');
   return app.db.transaction(() => {
-    const path = s.link(input.member, input.label, false, undefined, input.ttl);
+    const path = s.link(member, input.label, false, undefined, input.ttl);
     const link = s.sessions.get('links', hash(path.slice('/login/'.length)))!;
     app.db.prepare('INSERT INTO signin_audit (at, os_uid, os_user, member, label, expires) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(s.now(), os.uid, os.username, input.member, link.label ?? '', link.expires);
+      .run(s.now(), os.uid, os.username, member, link.label ?? '', link.expires);
     return path;
   }).immediate();
 }
