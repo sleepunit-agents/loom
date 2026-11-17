@@ -145,7 +145,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>row(b,'Clock tempo').isVisible()).toBe(true);
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('backup');
     await expect.poll(()=>row(b,'Six voices').count()).toBe(0);expect(await row(b,'Nightly backup').count()).toBe(1);
-    await source.archivePage({slug:'six-voices'});
+    await source.archivePage({slug:'six-voices'});app.changed();
     await expect.poll(()=>a.getByText('This page is no longer available',{exact:true}).count()).toBe(1);
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
@@ -153,7 +153,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     // Age this fictional source record through the same backend notification
     // path as the archive above. Advancing the whole program by a month would
     // replay every Runtime sweep; exact clock boundaries have Node coverage.
-    await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-10-10T12:00:00Z',body:'Set the clock tempo with params.'});
+    await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-10-10T12:00:00Z',body:'Set the clock tempo with params.'});app.changed();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(1);
     await b.getByRole('button',{name:'Add a fact',exact:true}).click();
     await b.getByRole('textbox',{name:'Title',exact:true}).fill('A shared new fact');
