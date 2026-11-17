@@ -41,6 +41,10 @@ export interface TriggerEffects {
 
 /** How late a standing time trigger may still fire. See "Missed times" on TriggerEngine. */
 export const MISSED_GRACE_MS = 5 * 60_000;
+/** How many skipped times of one gap get a log row each; the rest share one row that counts them. */
+export const MISSED_ROWS = 20;
+/** How many skipped times are counted one by one before the count is given as "more than". */
+const MISSED_COUNTED = 5_000;
 
 /** Source adapters report PR changes, answered approvals/questions/secrets and
  * stopped jobs here. Time deadlines are driven by the injected clock.
@@ -49,20 +53,29 @@ export const MISSED_GRACE_MS = 5 * 60_000;
  * running or the clock jumped. What happens then depends on what the trigger is for:
  * - A standing trigger (one that repeats: `until-stopped` or `today`) fires at its time, or up to
  *   MISSED_GRACE_MS after it. A time further behind than that is skipped, not fired late: the log says
- *   `missed`, and the next time is worked out from now. So a 09:00 lane never runs at 14:00 because the
- *   server came back then, and nothing fires twice to catch up.
+ *   `missed`, and the trigger moves to its next listed time. So a 09:00 lane never runs at 14:00 because
+ *   the server came back then, and nothing fires twice to catch up.
+ *   The next listed time is always the one after the time just fired or skipped, never the one after
+ *   now, so every listed time a gap swallowed meets this same rule in turn: with 09:00 and 09:03 listed
+ *   and the server back at 09:04, both fire; back at 09:40, both are logged `missed`.
  * - A once-only trigger is a thing that is meant to happen once. It fires late, however late, as soon as
- *   it can, and is never dropped.
+ *   it can, and is never dropped. Running it by hand is that one firing: its time does not fire after.
+ * Running a standing trigger by hand leaves its times as they are.
  * Two other ways a time passes are not misses. A trigger that is off has no times, so turning it on (or
  * changing its times) starts from now, and a once-only trigger whose time passed while it was off cannot
  * be turned on again. A firing that fails has used its time, is logged `failed` with the stage, and is
  * not tried again.
- * Events (an answer, a job, a pull request) are not times: one seen while held fires on resume. */
+ * Events (an answer, a job, a pull request) are not times: one seen while held fires on resume.
+ *
+ * Listed times are wall times in the household's timezone. When that changes while the program runs,
+ * every standing trigger's next time is worked out again from now in the new zone (logged `rezoned`). */
 export class TriggerEngine {
   private cancel?: () => void;
   private closed = false;
   private ticking = false;
   private again = false;
+  /** The timezone the stored next times were last checked against; unknown until the first scan. */
+  private zoned?: string;
   constructor(private db: DataDatabase, private clock: Clock, private effects: TriggerEffects) {}
   private open() { if (this.closed) throw new Error('Tempo is closed'); }
   private now() { return new Date(this.clock.now()).toISOString(); }
@@ -203,9 +216,25 @@ export class TriggerEngine {
     } finally { this.ticking = false; }
     if (!this.closed) this.effects.changed?.();
   }
+  /** Move every standing wall-time trigger to its next time in the household's present timezone. The
+   * times it had were in the old zone's hours, so none of them is fired or counted as missed. */
+  private rezone(): void {
+    this.db.transaction(() => {
+      for (const t of this.active().filter(t => t.sourceKind === 'time' && t.times && !/^\d{4}-/.test(t.times))) {
+        const next = this.following(t, this.clock.now() - 1);
+        const nextDueAt = next === undefined ? null : new Date(next).toISOString();
+        if (nextDueAt === t.nextDueAt) continue;
+        this.db.update(triggers).set(next === undefined ? { enabled: false, state: 'stopped', nextDueAt, changedAt: this.now() } : { nextDueAt, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+        this.log(t.id, 'rezoned');
+      }
+    });
+  }
   private scan(): void {
     this.cancel?.(); this.cancel = undefined;
     let next: number | undefined;
+    const zone = this.zone();
+    if (this.zoned !== undefined && this.zoned !== zone) this.rezone();
+    this.zoned = zone;
     for (const entry of this.active()) {
       if (this.closed) return;
       // An earlier operation in this scan may have stopped or paused this row.
@@ -223,7 +252,7 @@ export class TriggerEngine {
       if (t.sourceKind === 'time') {
         const late = t.nextDueAt ? this.clock.now() - Date.parse(t.nextDueAt) : -1;
         // The missed-time rule on the class: only a standing trigger's time can be too late to fire.
-        if (late >= 0 && (late <= MISSED_GRACE_MS || t.lifespan === 'once')) this.fire(t, `time:${t.nextDueAt}`);
+        if (late >= 0 && (late <= MISSED_GRACE_MS || t.lifespan === 'once')) this.fire(t, `time:${t.nextDueAt}`, Date.parse(t.nextDueAt!));
         else if (late > MISSED_GRACE_MS) this.miss(t);
       } else {
         const logs = this.db.select().from(triggerLog).where(eq(triggerLog.trigger, t.id)).all();
@@ -236,30 +265,57 @@ export class TriggerEngine {
       }
       if (this.closed) return;
       const current = this.get(t.id);
-      if (current.enabled && current.nextDueAt && current.state !== 'failed') next = Math.min(next ?? Infinity, Date.parse(current.nextDueAt));
+      if (!current.enabled || !current.nextDueAt || current.state === 'failed') continue;
+      // A listed time that passed while an earlier one was fired or skipped is due already: it is judged
+      // by the same rule on another pass, now, not when a timer gets round to it.
+      if (current.sourceKind === 'time' && Date.parse(current.nextDueAt) <= this.clock.now() && !this.paused(current)) this.again = true;
+      else next = Math.min(next ?? Infinity, Date.parse(current.nextDueAt));
     }
     if (!this.closed && next !== undefined) this.cancel = this.clock.at(next, () => this.tick());
   }
   private stopExpired(t: Trigger) {
     this.db.transaction(() => { this.db.update(triggers).set({ enabled: false, state: 'stopped', nextDueAt: null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'stopped', 'today ended'); });
   }
-  /** Where a trigger stands once the time or event it was due for is spent: whether it goes on, and when next. */
-  private rest(t: Trigger): { standing: boolean; nextDueAt: string | null } {
+  /** The listed time of a standing time trigger that follows `after`, or nothing when it has none left
+   * (a `today` trigger's remaining times are tomorrow's). */
+  private following(t: Trigger, after: number): number | undefined {
+    const zone = this.zone(), next = nextTime(t.times!, t.days, after, zone);
+    return Number.isFinite(next) && (t.lifespan !== 'today' || localDate(next, zone) === localDate(this.clock.now(), zone)) ? next : undefined;
+  }
+  /** Where a trigger stands once what it was due for is spent: whether it goes on, and when next. `spent`
+   * is the listed time that was just fired or skipped; null for an event and for a firing made by hand,
+   * which uses up none of a standing trigger's times. */
+  private rest(t: Trigger, spent: number | null): { standing: boolean; nextDueAt: string | null } {
     if (t.lifespan === 'once') return { standing: false, nextDueAt: null };
     if (t.sourceKind !== 'time') return { standing: true, nextDueAt: null };
-    const next = nextTime(t.times!, t.days, this.clock.now(), this.zone());
-    const standing = Number.isFinite(next) && (t.lifespan !== 'today' || localDate(next, this.zone()) === localDate(this.clock.now(), this.zone()));
-    return { standing, nextDueAt: standing ? new Date(next).toISOString() : null };
+    if (spent === null) return { standing: true, nextDueAt: this.get(t.id).nextDueAt };
+    const next = this.following(t, spent);
+    return { standing: next !== undefined, nextDueAt: next === undefined ? null : new Date(next).toISOString() };
   }
-  /** Skip a standing trigger's time that is more than the grace behind: nothing is delivered, and the trigger moves to its next time. */
+  /** Skip every listed time of a standing trigger that is more than the grace behind: nothing is
+   * delivered, and the trigger moves to the first listed time that is not. Each skipped time gets its
+   * own `missed` row up to MISSED_ROWS; a longer gap ends in one row that counts the rest and names the
+   * last, so a year of downtime is neither unrecorded nor a year of rows. */
   private miss(t: Trigger) {
     this.db.transaction(() => {
-      const { standing, nextDueAt } = this.rest(t);
-      this.db.update(triggers).set({ state: standing ? 'standing' : 'stopped', enabled: standing, nextDueAt, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
+      const behind = (at: number) => this.clock.now() - at > MISSED_GRACE_MS;
+      let last = Date.parse(t.nextDueAt!), skipped = 1, next = this.following(t, last);
       this.log(t.id, 'missed', `time:${t.nextDueAt}`);
+      while (next !== undefined && behind(next) && skipped < MISSED_COUNTED) {
+        last = next; skipped++; next = this.following(t, last);
+        if (skipped <= MISSED_ROWS) this.log(t.id, 'missed', `time:${new Date(last).toISOString()}`);
+      }
+      const uncounted = next !== undefined && behind(next);
+      // Past counting one by one: go straight to the first listed time the grace still covers.
+      if (uncounted) next = this.following(t, this.clock.now() - MISSED_GRACE_MS - 1);
+      if (skipped > MISSED_ROWS) this.log(t.id, 'missed', uncounted ? `more than ${skipped - MISSED_ROWS} more`
+        : `${skipped - MISSED_ROWS} more, the last at time:${new Date(last).toISOString()}`);
+      const standing = next !== undefined;
+      this.db.update(triggers).set({ state: standing ? 'standing' : 'stopped', enabled: standing, nextDueAt: standing ? new Date(next!).toISOString() : null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
     });
   }
-  private fire(t: Trigger, eventId: string) {
+  /** `spent` is the listed time this firing uses up, or null for an event and for a firing made by hand. */
+  private fire(t: Trigger, eventId: string, spent: number | null = null) {
     // What the firing was doing, for the log if it fails.
     let stage: 'operation' | 'instructions' | 'inbox' = 'operation';
     try {
@@ -274,7 +330,7 @@ export class TriggerEngine {
           stage = 'inbox';
           this.effects.inbox(t, delivery, words);
         }
-        const rest = this.rest(t), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
+        const rest = this.rest(t, spent), stopped = !this.get(t.id).enabled, standing = !stopped && rest.standing;
         this.db.update(triggers).set({ state: stopped ? 'stopped' : standing ? (this.paused(t) ? 'held' : 'standing') : 'fired', enabled: standing, nextDueAt: standing ? rest.nextDueAt : null, lastFiredAt: this.now(), changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         this.log(t.id, 'fired', eventId);
       });
@@ -282,7 +338,7 @@ export class TriggerEngine {
       // One bad firing must not end a standing trigger: a lane that could not read its
       // instructions tonight still runs tomorrow. Only a once-only trigger ends as failed.
       this.db.transaction(() => {
-        const rest = this.rest(t);
+        const rest = this.rest(t, spent);
         if (this.get(t.id).enabled && rest.standing) this.db.update(triggers).set({ state: this.paused(t) ? 'held' : 'standing', nextDueAt: rest.nextDueAt, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         else this.db.update(triggers).set({ state: 'failed', enabled: false, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
         // The `failed` row keeps the event id, which is what stops a second try. The row after it says
