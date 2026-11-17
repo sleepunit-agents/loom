@@ -1,14 +1,13 @@
 import Database from 'better-sqlite3';
 import { expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import type { Foundation } from '../app.js';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
 import { OperationResults } from '../data/operation-results.js';
 import { agents, members, timingDays, measuringSettings } from '../data/schema.js';
 import { Operations } from '../operations/index.js';
 import { DEFAULT_MEASURING } from './index.js';
-import { installMeasuring } from './install.js';
+import { installMeasuring, type MeasuringHost } from './install.js';
 import { measuringSettingsService } from './settings.js';
 
 const exported=vi.hoisted(()=>[] as unknown[]);
@@ -36,7 +35,7 @@ it('turns measuring on, out and off on the actual operation dispatcher as its se
  const operations = new Operations(client, clock, () => {}, {receipts});
  operations.register({name:'example.read',input:z.object({}),output:z.number(),may:()=>true,run:()=>42});
  const stops: (()=>void)[]=[];
- const app = {db:client,operations,live:{changed(){}},onClose:(stop:()=>void)=>stops.push(stop)} as Foundation;
+ const app = {operations,live:{changed(){}},onClose:(stop:()=>void)=>stops.push(stop)} satisfies MeasuringHost;
  // The root changes Measuring's settings (after a proposal is allowed) and then calls refresh().
  const settingsNow = measuringSettingsService(db);
  const meter = await installMeasuring(app,db);

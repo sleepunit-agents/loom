@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { IOStreams } from './io.js';
-import type { ClientRuntime } from './api-client.js';
+import type { ClientRuntime } from './io.js';
 const reference=z.string().regex(/^[0-9a-f]{64}$/),time=z.string();
 const tokenInfo=z.object({fingerprint:reference,label:z.string(),kind:z.enum(['owner','agent','runner']),expired:z.boolean(),identity:z.string(),createdAt:time,expiresAt:time.nullable(),revokedAt:time.nullable(),lastUsedAt:time.nullable()}).strict();
 const programInfo=z.object({fingerprint:reference,label:z.string(),member:z.string().nullable(),createdAt:time,expiresAt:time.nullable(),revokedAt:time.nullable(),ended:z.boolean(),records:z.array(z.string()),operations:z.array(z.string())}).strict();

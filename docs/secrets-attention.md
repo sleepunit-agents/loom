@@ -1,5 +1,9 @@
 # Secrets grant asks
 
+> **This describes code that is no longer in the tree.** `installSecrets` and `installSecretValues` belonged to the
+> earlier secrets implementation, removed on 2026-11-16. Requests and values now go through
+> `src/pieces/secrets/requests.ts` and `src/pieces/secrets/shared-values.ts`.
+
 `secretGrantAttention(sources, operations)` connects the secrets piece to the
 attention installer’s returned `AttentionSources` role. Compose it once, pass
 it to both `installSecrets(..., attention)` and

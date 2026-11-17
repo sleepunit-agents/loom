@@ -4,6 +4,7 @@ import { asc } from 'drizzle-orm';
 import type { DataDatabase } from './database.js';
 import { browserRef } from '../signin/shared-browser.js';
 import { sessionEnds, tokenLive } from './authentication.js';
+import { COMMS_DAYS_DEFAULT } from './comms-days.js';
 export function readHouseholdSetup(db: DataDatabase, now: string) {
   const members = db.query.members.findMany({ orderBy: f => [asc(f.position), asc(f.id)],
     with: { memberAgentsByMember: { columns: { agent: true }, orderBy: f => asc(f.agent) } },
@@ -21,7 +22,7 @@ export function readHouseholdSetup(db: DataDatabase, now: string) {
       member: token?.member ?? null, tokenLabel: token?.label ?? null };
   });
   return { members, agents, defaultAgent: settings?.defaultAgent ?? null,
-    settings: { timezone: settings?.timezone ?? 'UTC', commsDays: settings?.commsDays ?? 14, githubOwner: settings?.githubOwner ?? '',
+    settings: { timezone: settings?.timezone ?? 'UTC', commsDays: settings?.commsDays ?? COMMS_DAYS_DEFAULT, githubOwner: settings?.githubOwner ?? '',
       secretsDefault: settings?.secretsDefault ?? 'ask', backupTarget: settings?.backupTarget ?? '', backupAt: settings?.backupAt ?? '03:00',
       backupKeep: settings?.backupKeep ?? 7, backupRecipients: recipients },
     tokens: credentials.map(row => ({ ...row, identity: row.member ?? row.agent ?? row.box, expired: !!row.expiresAt && Date.parse(row.expiresAt) <= at })), sessions };

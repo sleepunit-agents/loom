@@ -4,26 +4,30 @@ What the program is today: what starts it, the parts it is built from, and where
 table lives. For the words used here see `CONTEXT.md`; for the household database's
 design see `docs/data-schema.md`.
 
-`src/architecture.contract.test.ts` keeps this page honest in three ways. Every file or
+`src/architecture.contract.test.ts` keeps this page honest in four ways. Every file or
 directory named here in backticks must exist. Every table in `src/core/data/schema.ts`
 must be named here. Every table created anywhere else in `src/` must be named here too.
-The test cannot tell whether a sentence is true, so when you move a part, reread its
-paragraph.
+And a table named here must still be created somewhere, so a removed store cannot linger
+on the page. The test cannot tell whether a sentence is true, so when you move a part,
+reread its paragraph.
 
 ## What starts
 
-`package.json` installs eight executables. Only the first two open a household's data.
+`package.json` installs eight executables. Only `loom serve` opens a household's data.
 
 | Executable | Source | What it does |
 |---|---|---|
 | `loom serve` | `src/index.ts`, then `src/shared-startup.ts` | Runs the household's program: one process, one HTTP listener, one household database. |
+| `loom signin` | `src/index.ts`, then `src/core/signin/operator.ts` | Asks the running program for a one-time sign-in link, over a socket only the data folder's owner can reach. It opens no store. |
 | `loom mcp` | `src/index.ts`, then `src/shared-mcp-stdio.ts` | A stdio MCP session that forwards to a running `loom serve` over HTTP. It opens no store. |
 | `loom-worker` | `src/worker.ts`, then `src/runtime/worker-program.ts` | Runs on a machine that does work. Asks the program for jobs, starts a body for each, reports back. |
 | `loom-body` | `src/body.ts`, then `src/runtime/body-program.ts` | One run of one agent, started only by a worker. Drives a harness (`src/runtime/body-harnesses.ts`). |
 | `loom-household`, `loom-taskstore`, `loom-token`, `loom-account`, `loom-sessions` | `src/household-client.ts`, `src/taskstore-client.ts`, `src/token-client.ts`, `src/account-client.ts`, `src/sessions-client.ts`, all over `src/cli` | Command-line clients of the running program's HTTP door. They open no store. |
 
-`loom` accepts `serve`, `mcp`, `--version` and `--help`, and nothing else. The older
-program (its own stdio server, a subcommand per verb, server-rendered pages) is gone.
+`loom` accepts `serve`, `signin`, `mcp`, `--version` and `--help`, and nothing else. The
+older program (its own stdio server, a subcommand per verb, server-rendered pages) is
+gone, and so are the copies of the household, its tokens, browser sessions and secrets
+that it and an earlier composition kept beside the ones that run.
 
 ## How `loom serve` is put together
 
@@ -59,13 +63,19 @@ client, MCP session, worker or body, comes through one HTTP listener:
 - `/api/:piece/:operation` for every write: a registered operation, checked and given a
   retry receipt by `src/core/operations`, committed through `src/core/data/writes.ts`.
 - `/mcp`: `src/shared-mcp.ts` and `src/shared-mcp-named.ts` map MCP tool names onto those
-  same operations and queries.
+  same operations and queries. It is not a door of its own; a call through it arrives as
+  an HTTP call.
 - Sign-in routes (`src/core/signin`) and the built web app (`src/shared-web.ts`, from `web`).
 
 Who the caller is comes from `src/shared-credentials.ts` and
 `src/core/data/authentication.ts`; what they may do from `src/policy.ts` over the current
 facts in `src/shared-sharing.ts`. Parts call each other directly in process and carry no
 policy of their own; the `src/shared-*.ts` files are where each part meets the door.
+
+A few rules that every part needs are stated once: the slug pattern and its three lengths
+in `src/slug.ts`, how long Comms keeps words in `src/core/data/comms-days.ts`, and the
+size of one request in `src/core/data/http.ts`. `src/single-home.contract.test.ts` fails
+when one is copied again.
 
 ## The parts
 
@@ -167,23 +177,35 @@ touched. The others keep a number in the file header (`PRAGMA user_version`) and
 - `knowledge.db`: 1. A newer number, or a file with tables but no `pages`, is refused.
 - `people.db` and `notes.db`: no number. They are never refused.
 
-## Code that is here but not started
+## Code no program starts
 
-These are compiled and imported for a helper or a type, but `loom serve` never runs them,
-and the tables they define are created by no running program:
+Three things are compiled but reached by no executable. Each is here for a stated reason.
 
-- An earlier composition: `src/core/app.ts`, `src/core/db` (`core_migrations`,
-  `core_export_required`), the receipts in `src/core/operations/index.ts`
-  (`core_operations`) and the older sign-in in `src/core/signin/index.ts` (`signin_audit`).
-- An earlier secrets store: `src/pieces/secrets/index.ts` over
-  `src/pieces/secrets/schema/001.ts` (`secrets_names`, `secrets_grants`, `secrets_requests`,
-  `secrets_meta`, `secrets_changes`, `secrets_uses`, `secrets_write_intents`,
-  `secrets_tickets`, `secrets_pending_tombstones`).
-- The file-based household (`src/household.ts`) and browser sessions (`src/ui/sessions.ts`,
-  `src/ui/session-db.ts`).
+- **The example household.** `src/example-home.ts`, `src/example-home-adapters.ts`,
+  `src/example-runtime.ts` and `src/rebuild` build and check a fictitious home. They are
+  run by `scripts/example-home.mjs` and the acceptance walkthrough
+  (`docs/example-household.md`). The adapters file is loaded by path, from a file the
+  example writes into its home, so no import names it.
+- **Openers the memory tests are built on.** `createBackend` in `src/backends/index.ts`,
+  `remember` in `src/tools/remember.ts`, the store openers that take an agent's folder in
+  `src/backends/people.ts`, `src/backends/projects.ts`, `src/backends/proposals.ts` and
+  `src/backends/salience.ts`, with `src/config.ts`, `src/backends/recall-log.ts` and
+  `src/backends/recorder-health.ts`, are what is left of the older memory program. The
+  running program opens the same stores through `src/shared-memory.ts` instead. They stay
+  because the tests of the live stores still set themselves up through them.
+- **The dispatcher's own receipt table.** `src/core/operations/index.ts` makes
+  `core_operations` when it is given no receipt store, through `migrate` in
+  `src/core/db/index.ts`. The program always gives it one (`operation_results`); only
+  tests do not.
+
+An agent's old conversation tables (above) are the one thing kept for the move of an older
+home's data. `docs/migration-plan.md` and `docs/migration-registry.md` describe that move;
+the commands they name were removed with the older program and are in the repository's
+history.
 
 ## Elsewhere
 
 - `web`: the browser app, built by Vite into `dist/web` and served by the program.
-- `scripts`: build, CI and acceptance scripts; `scripts/generate-data-schema.ts` writes `assets/data/schema.sql`.
+- `scripts`: build, CI and acceptance scripts; `scripts/generate-data-schema.ts` writes `assets/data/schema.sql`. They import the build (`dist`), not `src`.
+- Test fixtures are named `*.fixture.ts` beside the tests that use them, or live in `test/fixtures`; neither is compiled into `dist`.
 - `docs/specs`: the designs each part was built from. Several describe the older program; where one disagrees with this page, the code decides.

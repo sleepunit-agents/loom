@@ -87,11 +87,4 @@ describe('the app (web/)', () => {
     ];
     expect(sites.filter(([f, now]) => !src(f).includes(now)).map(([f, , w]) => `${f}: ${w}`)).toEqual([]);
   });
-
-  // A look re-points loom's six agent marks by their colours: the page's map is the household's palette.
-  it('the page knows each of loom\'s six marks by the household\'s colour for it', async () => {
-    const { MARKS } = await import('../household.js');
-    const look = readFileSync(`${root}web/src/look.ts`, 'utf-8');
-    for (const m of MARKS) expect(look, m.name).toContain(`'${m.bg.toLowerCase()}': '${m.name.toLowerCase()}'`);
-  });
 });

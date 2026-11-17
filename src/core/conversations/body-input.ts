@@ -10,11 +10,12 @@ import type { Authentication } from '../live/index.js';
 import { failure } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 import { guardedResponse } from '../data/guarded-response.js';
-import { household,inbox,inboxRefs,messages,threads } from '../data/schema.js';
+import { inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import { wordsDeadline } from './retention.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
 import type { conversationBodyScope } from './body-scope.js';
+import { commsKeepDays } from '../data/comms-days.js';
 const input=z.object({input:z.object({limit:z.number().int().min(1).max(100).default(50)}).strict()}).strict();
 export function sameMailScope(item:{agent:string|null;member:string|null;project:string|null},cv:{agent:string;member:string|null;project:string|null}):boolean {
  return item.agent===cv.agent&&item.member===cv.member&&item.project===cv.project;
@@ -54,7 +55,7 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   // private output field contributes its deadline before any bytes are released.
   // ConversationMail remains reusable by trusted in-process callers.
   const refs=deliveries.length?db.select().from(inboxRefs).where(inArray(inboxRefs.item,deliveries.map(row=>row.item.id))).all():[];
-  const days=db.select({days:household.commsDays}).from(household).get()?.days??14;
+  const days=commsKeepDays(db);
   let until=Infinity;
   const items=deliveries.map(({item,words,answerContext,history})=>{
    let keepUntil:string|null=null,verdict:string|null=null;

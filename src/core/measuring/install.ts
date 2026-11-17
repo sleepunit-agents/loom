@@ -4,13 +4,14 @@ import { measuringValues } from './change.js';
 /** Root-owned Measuring lifecycle on the household's shared connection. Its settings are
  * changed by a proposal (household.propose, change "measuring"); after an Allow
  * commits, the root calls refresh(). */
-import type { Foundation } from '../app.js';
+import type { Change, Operations } from '../operations/index.js';
 import type { DataDatabase } from '../data/database.js';
 import { measuringRuntime } from './runtime.js';
 import { measuringSettingsService } from './settings.js';
 import { timingStore } from './store.js';
 
-export type MeasuringHost = Pick<Foundation, 'operations' | 'onClose'> & { live: Pick<Foundation['live'], 'changed'> };
+/** What Measuring needs from the root: the dispatcher to time, a way to say its records changed, and a place to stop. */
+export interface MeasuringHost { operations: Operations; live: { changed(changes: Change[]): void }; onClose(stop: () => void): void }
 export async function installMeasuring(app: MeasuringHost, db: DataDatabase) {
   const settings = measuringSettingsService(db);
   let enabled = false;

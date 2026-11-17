@@ -1,20 +1,20 @@
 import { z } from 'zod';
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createFoundation, type Foundation } from './app.js';
+import Database from 'better-sqlite3';
 import { FakeClock } from './clock.js';
+import { createDataSchema } from './data/database.js';
+import { OperationResults } from './data/operation-results.js';
+import { Operations } from './operations/index.js';
 import { mayAct, mayCreate, maySee, type Viewer } from '../policy.js';
 
-const homes: string[] = [], apps: Foundation[] = [];
-afterEach(() => {
-  for (const app of apps.splice(0)) app.close();
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
-});
+const closes: (() => void)[] = [];
+afterEach(() => { for (const close of closes.splice(0)) close(); });
+/** A dispatcher over a fresh household database, as the program builds it. */
 function fixture() {
-  const home = mkdtempSync(join(tmpdir(), 'loom-internal-')); homes.push(home);
-  const app = createFoundation({ home, clock: new FakeClock() }); apps.push(app); return app;
+  const client = new Database(':memory:'), clock = new FakeClock();
+  const operations = new Operations(client, clock, () => {}, { receipts: new OperationResults(createDataSchema(client, () => new Date(clock.now()).toISOString())) });
+  closes.push(() => { operations.close(); client.close(); });
+  return { operations };
 }
 const sharing = { members: {}, projects: {}, services: {} };
 it('lets an installed module call another without permission, including private projections', () => {

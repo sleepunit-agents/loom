@@ -23,7 +23,6 @@ import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveKnowledgeDbPath } from './config.js';
 
 export type Lifespan = 'keep' | 'while' | 'short';
 export const LIFESPANS: ReadonlySet<string> = new Set(['keep', 'while', 'short']);
@@ -262,26 +261,4 @@ function isCited(path: string, refs: Set<string>): boolean {
   if (refs.has(path)) return true;
   for (const r of refs) if (r.startsWith(`${path}/`)) return true;
   return false;
-}
-
-const CITE = /(?:\bnote:|\bnotes\/)[A-Za-z0-9][A-Za-z0-9._\/-]*/g;
-
-/**
- * Every note path an agent's live memories and the knowledge pages cite: what sweep must keep. Read straight from
- * the databases (read-only), so a sweep needs no running server.
- */
-export function citedPaths(contextDir: string): Set<string> {
-  const out = new Set<string>();
-  const scan = (db: string, sql: string) => {
-    if (!existsSync(db)) return;
-    const d = new BetterSqlite3(db, { readonly: true, fileMustExist: true });
-    try {
-      for (const row of d.prepare(sql).raw().iterate() as Iterable<unknown[]>) {
-        for (const v of row) if (typeof v === 'string') for (const m of v.match(CITE) ?? []) out.add(m);
-      }
-    } catch { /* a stack without that table: nothing it cites */ } finally { d.close(); }
-  };
-  scan(join(contextDir, 'memories.db'), 'SELECT title, content FROM memories WHERE archived = 0');
-  scan(resolveKnowledgeDbPath(contextDir), "SELECT title, body FROM pages WHERE status = 'active'");
-  return out;
 }

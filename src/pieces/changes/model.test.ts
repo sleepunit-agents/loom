@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { attribute, citations, repoId, taskLinks, tasksCited, waitsOn, stateLine, type Change } from './model.js';
-import { change } from './fixture.js';
+import { change } from './change.fixture.js';
 describe('old Changes contract',()=>{
  it('accepts literal GitHub selectors only',()=>{
   expect(repoId('Acme/App')).toBe('github:acme/app');

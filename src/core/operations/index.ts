@@ -9,6 +9,7 @@ import { migrate } from '../db/index.js';
 import type { Clock } from '../clock.js';
 import type { Viewer } from '../../policy.js';
 import type { Measuring, TimingTarget } from '../measuring/index.js';
+/** How a call arrived. The /mcp route is not a door of its own: it maps tool names onto 'http' calls (src/shared-mcp.ts). */
 export type Door = 'http' | 'socket' | 'direct';
 /** A transport supplies this capability only after authenticating its session. */
 const signedInWindow = (door: Door, viewer: Viewer, window: boolean) => window && viewer.kind === 'member' && (door === 'socket' || door === 'http');

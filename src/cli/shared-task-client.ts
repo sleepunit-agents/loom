@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {parseRedactedJSON} from '../pieces/changes/redact.js';
 import {readStdin,type IOStreams} from './io.js';
-import type {ClientRuntime} from './api-client.js';
+import type { ClientRuntime } from './io.js';
 
 const query=`query Taskstore {
  tasks(orderBy:{priority:{direction:asc,priority:2},position:{direction:asc,priority:1},id:{direction:asc,priority:0}}){

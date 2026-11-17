@@ -1,14 +1,15 @@
 /** Retained ordinary dialogue, never a second store or a way around delivery volume. */
 import {and,desc,eq,lt} from 'drizzle-orm';
-import {conversations,household,inbox,messages,threads} from '../data/schema.js';
+import {conversations,inbox,messages,threads} from '../data/schema.js';
 import type {CommsMessages} from './messages.js';
 import {wordsDeadline} from './retention.js';
+import { commsKeepDays } from '../data/comms-days.js';
 export type HistoryLine={seq:number;kind:'message'|'reply';sender:string;at:string;words:string;keepUntil:string};
 export async function prepareHistoryContext(comms:CommsMessages,conversation:string,beforeSeq:number):Promise<()=>HistoryLine[]>{
  const {db}=comms,thread=db.select().from(threads).where(eq(threads.conversation,conversation)).get();
  const cv=db.select().from(conversations).where(eq(conversations.id,conversation)).get();
  if(!thread||!cv)return()=>[];
- const days=()=>db.select({days:household.commsDays}).from(household).get()?.days??14;
+ const days=()=>commsKeepDays(db);
  const deadline=(row:typeof messages.$inferSelect)=>{const count=days();return Number.isInteger(count)&&count>=1&&count<=14?wordsDeadline(row,count):NaN;};
  // Questions and answers belong exclusively to the validated answer-context path.
  // Person words may recur only after an earlier body accepted their Full delivery.

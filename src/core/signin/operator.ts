@@ -2,13 +2,7 @@
 import { createServer, createConnection, type Socket } from 'node:net';
 import { chmodSync, lstatSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { userInfo } from 'node:os';
 import { z } from 'zod';
-import type { Foundation } from '../app.js';
-import { signin, hash } from './index.js';
-import { HouseholdRows } from '../household/rows.js';
-import { publishBootstrapContext } from '../household/bootstrap.js';
-import { HouseholdDatabase } from '../household/document.js';
 import { assertHomeReady } from '../home-state.js';
 /** `member` may be left out: the issuer then uses the member it was configured with for local sign-in. */
 export const operatorRequest = z.strictObject({
@@ -29,11 +23,8 @@ export function prepareOperatorHome(home: string) {
   chmodSync(home, 0o700); checkOperatorHome(home);
 }
 function checkSocket(home: string) { checkOperatorHome(home); owned(join(home, 'operator.sock'), 0o600, false); }
-/** The home lifetime lock has already excluded any other daemon before stale cleanup. */
-export async function listenOperator(app: Foundation, home: string, url: string) {
-  return listenOperatorLinks(home, url, input => localLink(app, input));
-}
-/** The OS-owned transport is shared by both compositions; the issuer owns data. */
+/** The OS-owned transport; the issuer owns data. The home lifetime lock has already excluded any other
+ * program on this home, so a socket left at the path is stale and is removed. */
 export async function listenOperatorLinks(home: string, url: string, issue: (input: z.infer<typeof operatorRequest>) => string) {
   const dir = resolve(home), path = join(dir, 'operator.sock');
   checkOperatorHome(dir);
@@ -70,17 +61,6 @@ export async function listenOperatorLinks(home: string, url: string, issue: (inp
   } catch (e) { await close(); throw e; }
   return { close };
 }
-function localLink(app: Foundation, input: z.infer<typeof operatorRequest>) {
-  const s = signin(app), os = userInfo(), member = input.member;
-  if (!member) throw new Error('Name a member');
-  return app.db.transaction(() => {
-    const path = s.link(member, input.label, false, undefined, input.ttl);
-    const link = s.sessions.get('links', hash(path.slice('/login/'.length)))!;
-    app.db.prepare('INSERT INTO signin_audit (at, os_uid, os_user, member, label, expires) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(s.now(), os.uid, os.username, member, link.label ?? '', link.expires);
-    return path;
-  }).immediate();
-}
 /** No retry: an interrupted response may already have made a link. */
 export async function requestLocalLink(home: string, input: unknown): Promise<{ path: string; url: string }> {
   const dir = resolve(home); checkSocket(dir);
@@ -104,30 +84,4 @@ export async function requestLocalLink(home: string, input: unknown): Promise<{ 
       } catch { fail(); }
     });
   });
-}
-/** Persist the print marker with the link, so restarts never print a second bootstrap credential. */
-export function firstSignin(app: Foundation, home: string, url: string, stdout: (text: string) => void) {
-  const settings = new HouseholdRows<boolean>(app.db, 'settings'), s = signin(app);
-  const path = app.db.transaction(() => {
-    if (!s.household()) {
-      const username = userInfo().username;
-      const member = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(username) ? username : 'owner';
-      // An initial registry entry must have a complete portable context. Use the
-      // same exclusive publication/recovery protocol as Setup before committing
-      // any household or credential. Defaults contain no chosen personality.
-      const input = { agent: 'assistant', name: 'Assistant', purpose: 'Help with the work you are given.', voice: 'Use clear, direct language.', rules: '', ask: '' };
-      publishBootstrapContext(home, input, member, {
-        viewer: `local-os-owner:${userInfo().uid}`, id: 'household-first-start-v1', inputHash: hash(JSON.stringify(input)),
-      }, { requireCompleteRecovery: true });
-      new HouseholdDatabase(app.db).replace(home, { v: 1, agents: ['assistant'], owner: member, members: [{ person: member, role: 'owner', agents: '*' }] });
-    }
-    if (!s.tokens.document()) s.tokens.replace({ v: 1, tokens: [] }, {});
-    if (settings.get('signin-first-link-printed')) return;
-    if (Object.keys(s.sessions.read().sessions).length) { settings.put('signin-first-link-printed', true); return; }
-    const member = s.household()!.members.find(m => m.agents === '*')!.person;
-    const path = localLink(app, { request: 'link', member, label: 'First sign-in', ttl: 300 });
-    settings.put('signin-first-link-printed', true);
-    return path;
-  }).immediate();
-  if (path) stdout(new URL(path, url).href + '\n');
 }

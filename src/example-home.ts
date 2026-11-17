@@ -13,6 +13,7 @@ import {FakeClock} from './core/clock.js';
 import {exampleRuntime,exampleModelRoles,exampleBackdateMs} from './example-runtime.js';
 import {CommsMessages} from './core/conversations/messages.js';
 import {loadKey} from './pieces/comms/crypto.js';
+import { COMMS_DAYS_DEFAULT } from './core/data/comms-days.js';
 
 export const exampleRetentionWords='The fictional shed door was checked last fortnight.';
 export async function exampleHome(directory:string, webRoot=resolve('dist/web')) {
@@ -66,7 +67,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   // to the actual final clock so startup never rewinds ahead-of-time jobs.
   // One old, still-retained reply lets the walkthrough cross a real deadline
   // on its fake clock without advancing every runtime timer for a fortnight.
-  const keepDays=(client.prepare('SELECT comms_days FROM household').get() as {comms_days:number}|undefined)?.comms_days??14;
+  const keepDays=(client.prepare('SELECT comms_days FROM household').get() as {comms_days:number}|undefined)?.comms_days??COMMS_DAYS_DEFAULT;
   const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*86400000+1000).toISOString());
   const olderThread=older.threads.open({member:'alex',agent:'moss',title:'Previous shed inspection'});
   const olderReply=await older.send({thread:olderThread.id,sender:'moss',kind:'reply',words:exampleRetentionWords});

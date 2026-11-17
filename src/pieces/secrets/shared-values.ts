@@ -9,7 +9,6 @@ import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { members, secrets, secretChanges, secretWriteJournal, secretGrants, secretRequests, secretRules, secretRuleAgents } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
-import type { AsyncSecretMutations } from './async-values.js';
 import type { HolderWrite } from './holder-store.js';
 import { secretName, secretDescription } from './input.js';
 import { secretHasValue } from './presence.js';
@@ -21,7 +20,13 @@ type Journal = typeof secretWriteJournal.$inferSelect;
 const unavailable = () => new Error('Secret write awaits reconciliation');
 const conflict = () => new Error('Secret write identity already reserved');
 
-export interface RecoverableSecretMutations extends AsyncSecretMutations {
+/** The holder's side of a value write. Each call names the write it belongs to, so a retry can be told from a new one. */
+export interface RecoverableSecretMutations {
+  /** Production transports drain or cancel active IO before daemon shutdown. */
+  close?(): void | Promise<void>;
+  set(who: HolderWrite, name: string, value: Uint8Array, mode: 'add'|'replace'): Promise<void>;
+  remove(who: HolderWrite, name: string): Promise<void>;
+  hasReceipt(who: HolderWrite): Promise<boolean>;
   recover(who: HolderWrite): Promise<'committed' | 'undone'>;
 }
 

@@ -1,6 +1,6 @@
 /** One opt-in hosted browser test, two windows, six screenshots. */
 import {touched} from '../core/touched/index.js';
-import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared.fixture.js';
 import {expect,it} from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
 import {existsSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';

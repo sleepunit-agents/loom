@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, linkSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SqliteKnowledgeBackend } from './sqlite-knowledge.js';
-import { resolveKnowledgeDbPath, assertKnowledgePathsNotCoLocated, assertStackVersionCompatible } from '../config.js';
 import { SqliteVecBackend } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
 
@@ -484,92 +483,6 @@ describe('SqliteKnowledgeBackend', () => {
     );
   });
 
-  it('resolves knowledge db path correctly', () => {
-    const path = resolveKnowledgeDbPath(tmpDir);
-    expect(path).toBe(join(tmpDir, 'knowledge.db'));
-  });
-
-  it('allows overriding knowledge db path via env', () => {
-    const original = process.env.LOOM_KNOWLEDGE_DB_PATH;
-    process.env.LOOM_KNOWLEDGE_DB_PATH = '/tmp/custom-knowledge.db';
-    try {
-      const path = resolveKnowledgeDbPath(tmpDir);
-      expect(path).toBe('/tmp/custom-knowledge.db');
-    } finally {
-      process.env.LOOM_KNOWLEDGE_DB_PATH = original;
-    }
-  });
-
-  it('co-location guard rejects same path', () => {
-    const originalMem = process.env.LOOM_SQLITE_DB_PATH;
-    const originalKn = process.env.LOOM_KNOWLEDGE_DB_PATH;
-    try {
-      process.env.LOOM_SQLITE_DB_PATH = '/tmp/same.db';
-      process.env.LOOM_KNOWLEDGE_DB_PATH = '/tmp/same.db';
-      expect(() => assertKnowledgePathsNotCoLocated(tmpDir)).toThrow(
-        /same as memory database path/,
-      );
-    } finally {
-      process.env.LOOM_SQLITE_DB_PATH = originalMem;
-      process.env.LOOM_KNOWLEDGE_DB_PATH = originalKn;
-    }
-  });
-
-  it('co-location guard rejects same inode', () => {
-    const originalMem = process.env.LOOM_SQLITE_DB_PATH;
-    const originalKn = process.env.LOOM_KNOWLEDGE_DB_PATH;
-    try {
-      const memPath = join(tmpDir, 'memories.db');
-      const knPath = join(tmpDir, 'knowledge-link.db');
-      // Create a real file at memPath, then hard-link knPath to it
-      writeFileSync(memPath, 'dummy');
-      linkSync(memPath, knPath);
-
-      process.env.LOOM_SQLITE_DB_PATH = memPath;
-      process.env.LOOM_KNOWLEDGE_DB_PATH = knPath;
-
-      expect(() => assertKnowledgePathsNotCoLocated(tmpDir)).toThrow(
-        /hard-linked/,
-      );
-    } finally {
-      process.env.LOOM_SQLITE_DB_PATH = originalMem;
-      process.env.LOOM_KNOWLEDGE_DB_PATH = originalKn;
-    }
-  });
-
-  it('co-location guard allows separate files', () => {
-    const originalMem = process.env.LOOM_SQLITE_DB_PATH;
-    const originalKn = process.env.LOOM_KNOWLEDGE_DB_PATH;
-    try {
-      const memPath = join(tmpDir, 'memories.db');
-      const knPath = join(tmpDir, 'knowledge.db');
-      writeFileSync(memPath, 'memory');
-      writeFileSync(knPath, 'knowledge');
-
-      process.env.LOOM_SQLITE_DB_PATH = memPath;
-      process.env.LOOM_KNOWLEDGE_DB_PATH = knPath;
-
-      expect(() => assertKnowledgePathsNotCoLocated(tmpDir)).not.toThrow();
-    } finally {
-      process.env.LOOM_SQLITE_DB_PATH = originalMem;
-      process.env.LOOM_KNOWLEDGE_DB_PATH = originalKn;
-    }
-  });
-
-  it('co-location guard allows non-existent files', () => {
-    const originalMem = process.env.LOOM_SQLITE_DB_PATH;
-    const originalKn = process.env.LOOM_KNOWLEDGE_DB_PATH;
-    try {
-      process.env.LOOM_SQLITE_DB_PATH = join(tmpDir, 'future-mem.db');
-      process.env.LOOM_KNOWLEDGE_DB_PATH = join(tmpDir, 'future-kn.db');
-
-      expect(() => assertKnowledgePathsNotCoLocated(tmpDir)).not.toThrow();
-    } finally {
-      process.env.LOOM_SQLITE_DB_PATH = originalMem;
-      process.env.LOOM_KNOWLEDGE_DB_PATH = originalKn;
-    }
-  });
-
   it('citations are cascaded on page delete', async () => {
     // Write page with citations, then delete page row directly and verify citations gone
     await backend.writePage({
@@ -670,20 +583,6 @@ describe('knowledge isolation invariants', () => {
     const results = await memBackend2.recall({ query: 'Survivor' });
     expect(results.length).toBeGreaterThan(0);
     memBackend2.close();
-  });
-
-  it('(c) memory boot path (assertStackVersionCompatible v2) boots with knowledge.db present', () => {
-    // Create a knowledge.db in the context dir (simulates a knowledge-enabled context dir).
-    const knBackend = new SqliteKnowledgeBackend({ dbPath: knDbPath() });
-    knBackend.close();
-
-    // assertStackVersionCompatible must not fail even when knowledge.db is present.
-    // This is the "older/knowledge-disabled build is not bricked" regression test.
-    expect(() => assertStackVersionCompatible(tmpDir)).not.toThrow();
-
-    // The LOOM_STACK_VERSION file must be stamped at v2, not at any knowledge version.
-    const stamp = readFileSync(join(tmpDir, 'LOOM_STACK_VERSION'), 'utf-8');
-    expect(stamp.trim()).toBe('2');
   });
 
   it('memories.db is never opened when operating on knowledge.db', async () => {

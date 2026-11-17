@@ -107,7 +107,7 @@ it('derives a different actual job agent instead of a caller or default agent',a
 });
 
 it('rejects non-HTTP doors even for an actual authenticated worker proof',async()=>{
- const f=fixture(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!,input={job:'job',fingerprint:hash(f.credential())};expect(f.root.credentials.runnerEnrollment(auth.viewer)).toBeDefined();for(const door of ['mcp','direct'] as const)expect(await f.root.operations.callAsync(door,auth.viewer,'runtime.enrollBody',input,randomUUID())).toMatchObject({ok:false,code:'denied'});expect(f.db.select().from(tokens).where(eq(tokens.job,'job')).all()).toEqual([]);expect((await f.call(input)).status).toBe(200);
+ const f=fixture(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.runner}}))!,input={job:'job',fingerprint:hash(f.credential())};expect(f.root.credentials.runnerEnrollment(auth.viewer)).toBeDefined();for(const door of ['direct'] as const)expect(await f.root.operations.callAsync(door,auth.viewer,'runtime.enrollBody',input,randomUUID())).toMatchObject({ok:false,code:'denied'});expect(f.db.select().from(tokens).where(eq(tokens.job,'job')).all()).toEqual([]);expect((await f.call(input)).status).toBe(200);
 });
 it.each(['conversation','project'] as const)('binds enrollment receipt to the current saved %s',async field=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())},id=randomUUID();expect((await f.call(input,raw.runner,id)).status).toBe(200);

@@ -13,6 +13,7 @@
  */
 import type { Database } from 'better-sqlite3';
 import { pathSegmentError } from '../path-safety.js';
+import { SLUG } from '../slug.js';
 import { retryWrite } from './retry.js';
 
 /** Borrow an already prepared source inside its caller-owned transaction.
@@ -39,7 +40,7 @@ export function fail(message: string): never {
 
 // ─── Validation primitives ───────────────────────────────────────────────────
 
-export const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+export const SLUG_RE = SLUG;
 export const FIELD_RE = /^[a-z0-9_]+$/;
 export const MAX_FIELD_NAME = 32;
 export const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
