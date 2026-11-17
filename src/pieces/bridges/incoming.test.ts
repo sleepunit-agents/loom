@@ -69,6 +69,59 @@ describe('shared-schema bridge ingress', () => {
     expect(dm.state).toBe('delivered');
     expect(f.db.select().from(conversations).where(eq(conversations.id, dm.conversation!)).get()?.member).toBe('jonathan');
   });
+  it('takes an explicit reply to a bot, or a thread under its message, as addressed to that bot, and nothing looser', () => {
+    const f = fixture();
+    // The room is Art's to answer. Both bots see every message; `to` says which agents got it.
+    let n = 0;
+    const to = (message: Partial<IncomingMessage>) => {
+      const id = `m${++n}`;
+      return (['c', 'peer'] as const).filter(connection => f.ingress.receive({ ...f.message, ...message, id, connection }).state === 'delivered').map(connection => connection === 'c' ? 'art' : 'mark');
+    };
+    expect(to({})).toEqual(['art']);
+    // An explicit reply to Mark's message is Mark's, though nobody wrote his mention.
+    expect(to({ repliesTo: 'bot-mark' })).toEqual(['mark']);
+    // A reply to a person's message addresses no bot: it goes to the agent that answers the room.
+    expect(to({ repliesTo: 'someone' })).toEqual(['art']);
+    // Mark posted a message through loom; a thread opened under that message is Mark's.
+    f.ingress.receive({ ...f.message, id: 'asked', connection: 'peer', mentions: ['bot-mark'] });
+    f.db.insert(bridgeSends).values({ id: 'send', incoming: 'bi:["peer","asked"]', connection: 'peer', channel: 'room', thread: null, text: 'Here', state: 'sent', postedId: 'marks-message', createdAt: f.now() }).run();
+    expect(to({ channel: 'marks-message', parent: 'room', thread: 'marks-message' })).toEqual(['mark']);
+    // A thread Mark has only spoken in, under somebody else's message, is not: no continuing conversation is inferred.
+    f.db.insert(bridgeSends).values({ id: 'send2', incoming: 'bi:["peer","asked"]', connection: 'peer', channel: 'room', thread: 'their-thread', text: 'Here', state: 'sent', postedId: 'a-reply-inside', createdAt: f.now() }).run();
+    expect(to({ channel: 'their-thread', parent: 'room', thread: 'their-thread' })).toEqual(['art']);
+  });
+  it('labels every direct message conversation direct, and no other', () => {
+    const f = fixture();
+    const label = (message: Partial<IncomingMessage>) => {
+      const row = f.ingress.receive({ ...f.message, ...message });
+      const cv = f.db.select().from(conversations).where(eq(conversations.id, row.conversation!)).get()!;
+      return { direct: cv.direct, member: cv.member };
+    };
+    expect(label({ id: 'room' })).toEqual({ direct: false, member: null });
+    expect(label({ id: 'linked', channel: 'dm1', isDm: true })).toEqual({ direct: true, member: 'jonathan' });
+    expect(label({ id: 'stranger', channel: 'dm2', isDm: true, user: 'stranger' })).toEqual({ direct: true, member: null });
+    expect(label({ id: 'group', channel: 'dm3', isDm: true, groupDm: true })).toEqual({ direct: true, member: null });
+  });
+  it('tries a held message again from its own row, with everything admission read the first time', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ enabled: false }).run();
+    // Mark is mentioned in Art's room: Mark's connection should get it, Art's should not.
+    const sent = { ...f.message, mentions: ['bot-mark'], repliesTo: 'someone', thread: 't', parent: 'room', channel: 't' };
+    expect(f.ingress.receive(sent).state).toBe('held');
+    expect(f.ingress.receive({ ...sent, connection: 'peer' }).state).toBe('held');
+    // Still held while the reason stands.
+    expect(f.ingress.retry('bi:["c","m"]')?.state).toBe('held');
+    f.db.update(bridgeConnections).set({ enabled: true }).run();
+    expect(f.ingress.retry('bi:["c","m"]')).toMatchObject({ state: 'dropped', reason: 'Another agent or no channel answer' });
+    expect(f.ingress.retry('bi:["peer","m"]')).toMatchObject({ state: 'delivered' });
+    expect(f.db.select().from(inbox).all()).toMatchObject([{ to: 'mark', words: 'Friday?' }]);
+    // A row from before these fields were stored cannot say whom it mentioned: it is left as it is.
+    f.db.update(bridgeConnections).set({ enabled: false }).run();
+    f.ingress.receive({ ...f.message, id: 'old' });
+    f.db.update(bridgeIncoming).set({ mentions: null }).where(eq(bridgeIncoming.id, 'bi:["c","old"]')).run();
+    f.db.update(bridgeConnections).set({ enabled: true }).run();
+    expect(f.ingress.retry('bi:["c","old"]')?.state).toBe('held');
+  });
   it('does not infer a household identity for an unknown outside person', () => {
     const f = fixture();
     expect(f.ingress.receive({ ...f.message, user: 'stranger' })).toMatchObject({ state: 'delivered', member: null });

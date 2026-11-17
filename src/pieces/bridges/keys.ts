@@ -5,6 +5,15 @@
 /** `bridge_incoming.id`, and the ref a delivered Inbox item carries to it. */
 export const incomingId = (connection: string, message: string): string => `bi:${JSON.stringify([connection, message])}`;
 
+/** Reads back the platform message id incomingId wrote for this connection. */
+export function parseIncomingId(id: string, connection: string): string | undefined {
+  try {
+    const fields: unknown = id.startsWith('bi:') ? JSON.parse(id.slice(3)) : null;
+    if (Array.isArray(fields) && fields.length === 2 && fields[0] === connection && typeof fields[1] === 'string' && fields[1]) return fields[1];
+  } catch { /* not an incoming id */ }
+  return undefined;
+}
+
 /** `inbox.source_id` of a delivered bridge message. Workspace and channel are
  * part of it because platform message ids are not unique across them. */
 export const inboxSourceId = (workspace: string, channel: string, message: string): string => JSON.stringify([workspace, channel, message]);

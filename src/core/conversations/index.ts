@@ -12,7 +12,7 @@ import { conversations, conversationPeople, turns, inbox, inboxRefs, inboxReads,
 type Conversation = typeof conversations.$inferSelect;
 type Item = typeof inbox.$inferSelect;
 type Turn = typeof turns.$inferInsert;
-export type ConversationInput = Pick<Conversation, 'agent' | 'venue' | 'place' | 'label'> & Partial<Pick<Conversation, 'project' | 'member'>>;
+export type ConversationInput = Pick<Conversation, 'agent' | 'venue' | 'place' | 'label'> & Partial<Pick<Conversation, 'project' | 'member' | 'direct'>>;
 export type InboxInput = Pick<Item, 'toKind' | 'to' | 'source' | 'fromKind'> & Partial<Pick<Item,
   'sourceId' | 'conversation' | 'fromId' | 'words' | 'project' | 'agent' | 'member' | 'answers' | 'why' | 'ifYes' | 'ifNo' | 'link' | 'waitsOnKind' | 'waitsOnId' | 'thread' | 'messageSeq'>> & { refs?: string[] };
 export type Question = Omit<InboxInput, 'toKind' | 'conversation' | 'source' | 'sourceId' | 'fromKind' | 'fromId'> & { answers: 'yes-no' | 'words'; words: string };

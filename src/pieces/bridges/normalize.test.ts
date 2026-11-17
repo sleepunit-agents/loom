@@ -20,7 +20,20 @@ describe('authenticated Discord message normalisation', () => {
       text: '<@bot> hello <@!bot>', postedAt: '2026-11-14T16:00:00.000Z', mentions: ['bot'], bot: false, webhook: false,
     });
   });
-  it('does not count the reply ping, or an unresolved mention in the text, as a summons', () => {
+  it('says whose message an explicit reply answers, with or without the reply ping', () => {
+    const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
+    const reply = (changes = {}) => normalizeDiscord(discord, dc({ type: 19, content: 'hello', referenced_message: { author: { id: 'bot' } }, ...changes }), channel);
+    // Ping on: Discord also lists the bot among the mentions. Ping off: it does not. Either way the reply answers the bot.
+    expect(reply()).toMatchObject({ repliesTo: 'bot', mentions: [] });
+    expect(reply({ mentions: [] })).toMatchObject({ repliesTo: 'bot', mentions: [] });
+    // The message replied to was deleted, or this is no reply at all: nobody is answered.
+    expect(reply({ referenced_message: null })).not.toHaveProperty('repliesTo');
+    expect(normalizeDiscord(discord, dc({ content: 'hello', referenced_message: { author: { id: 'bot' } } }), channel)).not.toHaveProperty('repliesTo');
+    // Slack's reply is a reply in a thread: it answers whoever wrote the thread's root. The root itself answers nobody.
+    expect(normalizeSlack(slack, sl({ ts: '1794672002.000001', thread_ts: '1794672000.000001', parent_user_id: 'UBOT' }))).toMatchObject({ repliesTo: 'UBOT' });
+    expect(normalizeSlack(slack, sl({ ts: '1794672000.000001', thread_ts: '1794672000.000001', parent_user_id: 'UBOT' }))).not.toHaveProperty('repliesTo');
+  });
+  it('does not count the reply ping, or an unresolved mention in the text, as a written mention', () => {
     const channel = { id: 'channel', guild: 'guild', kind: 'channel' } as const;
     // A reply to the bot's message: Discord lists the bot although nobody wrote its mention.
     expect(normalizeDiscord(discord, dc({ type: 19, content: 'hello' }), channel)?.mentions).toEqual([]);
