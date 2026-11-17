@@ -9,7 +9,7 @@ import { COMMS_DAYS_MAX } from '../core/data/comms-days.js';
 import { BACKUP_KEEP_MAX, householdSettings } from '../core/data/household-settings.js';
 const id = householdId;
 export const memberInput = z.object({
-  id, role: z.enum(['owner', 'member']), fullOwner: z.boolean().default(false),
+  id, role: z.enum(members.role.enumValues), fullOwner: z.boolean().default(false),
   agents: z.array(id).max(1000).transform(values => [...new Set(values)].sort()),
 }).strict().refine(value => !value.fullOwner || value.role === 'owner', 'Only an owner can own every agent');
 export const agentInput = z.object({

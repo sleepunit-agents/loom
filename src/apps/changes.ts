@@ -13,7 +13,7 @@ export type ChangeDetail = ChangeRow & {
 };
 export type MergeRuleReader = (target: string, agent: string) => Rule | undefined;
 export type PullRequestReader = (repository: string, now: number) => Promise<Change[]>;
-const order = ['you', 'agent', 'ci', 'reviewer', 'author', 'done'];
+const order: readonly string[] = changes.waitingOn.enumValues;
 
 export class AttributionConflict extends Error {}
 function agentFor(db:DataDatabase,login:string){
@@ -75,7 +75,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     for (const name of c.checks.failing) checks.set(name, 'failing');
     for (const [name, state] of checks) db.insert(changeChecks).values({ change: id, name, state }).run();
     db.delete(changePeople).where(eq(changePeople.change, id)).run();
-    const roles = ['author', 'reviewer', 'requested', 'assignee', 'commenter'] as const;
+    const roles = changePeople.role.enumValues;
     for (const p of [...c.people, { login: c.author.login, role: 'author' }]) {
       if (!(roles as readonly string[]).includes(p.role)) continue;
       db.insert(changePeople).values({ change: id, login: p.login, role: p.role as typeof roles[number] }).onConflictDoNothing().run();

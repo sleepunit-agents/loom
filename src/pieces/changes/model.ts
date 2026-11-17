@@ -1,6 +1,7 @@
 /** The normalized Change contract, ported from loom-changes. No forge writes. */
 import { z } from 'zod';
 import { TASK_ID, taskId } from '../../slug.js';
+import { changes } from '../../core/data/schema.js';
 export const week = 7 * 86400_000;
 export const repoId = (raw: string): string => {
   const value = raw.startsWith('github:') ? raw.slice(7) : raw;
@@ -10,19 +11,19 @@ export const repoId = (raw: string): string => {
 const stamp = z.string().nullable();
 export const changeSchema = z.object({
   id: z.string(), repo: z.string(), number: z.number().int().positive(), page: z.string(), title: z.string(), url: z.string(),
-  state: z.enum(['open','merged','closed']), draft: z.boolean(), author: z.object({ login: z.string(), name: z.string().optional() }),
+  state: z.enum(changes.state.enumValues), draft: z.boolean(), author: z.object({ login: z.string(), name: z.string().optional() }),
   created: stamp, updated: stamp, closed: stamp,
   head: z.object({ ref: z.string(), id: z.string() }), base: z.object({ ref: z.string() }), body: z.string(),
-  checks: z.object({ state: z.enum(['passing','failing','running','none']), failing: z.array(z.string()), running: z.array(z.string()), total: z.number().int().nonnegative() }),
-  review: z.object({ state: z.enum(['approved','changes_requested','required','not_required']), by: z.array(z.string()) }),
-  mergeable: z.enum(['yes','no','unknown']), conflicts: z.boolean(),
+  checks: z.object({ state: z.enum(changes.checks.enumValues), failing: z.array(z.string()), running: z.array(z.string()), total: z.number().int().nonnegative() }),
+  review: z.object({ state: z.enum(changes.review.enumValues), by: z.array(z.string()) }),
+  mergeable: z.enum(changes.mergeable.enumValues), conflicts: z.boolean(),
   people: z.array(z.object({ login: z.string(), name: z.string().optional(), role: z.string() })),
 });
 export type Change = z.infer<typeof changeSchema> & { project?: string; agent?: string; mine?: boolean; syncError?: string };
 export interface Project { slug: string; name: string; repos: string[] }
 export interface Attribution { agents: Record<string, { logins: string[]; branches: string[] }>; ownerLogins: string[]; taskOwner?: string }
 export interface Rule { tier: 'do'|'tell'|'ask'; approval?: { state: string }; for?: { slug: string; name: string; state: string } }
-export const groups = ['you','agent','ci','reviewer','author','done'] as const;
+export const groups = changes.waitingOn.enumValues;
 export function attribute(c: Change, settings: Attribution) {
   const mine = settings.ownerLogins.some(login=>login.toLowerCase()===c.author.login.toLowerCase());
   const agent = Object.entries(settings.agents).find(([, how]) => how.logins.some(login=>login.toLowerCase()===c.author.login.toLowerCase()) || (mine && how.branches.some(p => p && c.head.ref.startsWith(p))))?.[0];

@@ -7,7 +7,7 @@ import { and, eq, getTableColumns, sql } from 'drizzle-orm';
 import { Operations, OperationError, operation, type Context } from '../operations/index.js';
 import { rules, type Viewer } from '../../policy.js';
 import { sqlRule } from '../../policy-sql.js';
-import { actionResults, deletedThreads, threads, type conversations, type inbox } from '../data/schema.js';
+import { actionResults, deletedThreads, inbox, threads, type conversations } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { MESSAGE_WORDS_MAX } from './words.js';
 
@@ -28,7 +28,7 @@ export interface ConversationOperationOptions {
 
 const target = z.object({ thread: z.string().min(1) }).strict();
 const acknowledgement = z.object({ saved: z.literal(true) }).strict();
-const answerInput = z.object({ item: z.string().min(1), answer: z.enum(['yes', 'no', 'words', 'replied', 'done', 'dismiss']), words: z.string().max(MESSAGE_WORDS_MAX).optional() }).strict();
+const answerInput = z.object({ item: z.string().min(1), answer: z.enum(inbox.answer.enumValues), words: z.string().max(MESSAGE_WORDS_MAX).optional() }).strict();
 const changeInput = z.discriminatedUnion('change', [
   target.extend({ change: z.literal('rename'), title: threadTitle }),
   target.extend({ change: z.literal('pin'), pinned: z.boolean() }),

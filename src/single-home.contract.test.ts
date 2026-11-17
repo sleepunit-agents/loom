@@ -42,6 +42,9 @@ import { dangerousHouseholdChanges, householdChanges } from './shared-household-
 import { householdMemorySources } from './shared-memory.js';
 import { householdSettings } from './core/data/household-settings.js';
 import { secretRules } from './core/data/schema.js';
+import * as householdSchema from './core/data/schema.js';
+import { getTableColumns, is } from 'drizzle-orm';
+import { SQLiteTable } from 'drizzle-orm/sqlite-core';
 import { accountSignins, bridgeConnections, inbox, messages as messageRows, secretChanges } from './core/data/schema.js';
 import { SECRET_VALUE_BYTES, SECRET_WRITE_MODES, secretValueSize, secretWriteMode } from './pieces/secrets/input.js';
 import { secretSetInput } from './pieces/secrets/shared-values.js';
@@ -618,4 +621,35 @@ it('asks policy.ts which agents Home shows', () => {
   expect(home).toContain("mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work')");
   // It reads no list of who has an agent itself.
   expect(home).not.toMatch(/memberAgents|member_agents/);
+});
+
+it('writes out no list of three or more choices that a column already has', () => {
+  // The general guard for choices. Every column of the household schema that lists its values is read
+  // here, and every list of quoted words written in the program is compared with each, in any order. A
+  // list that is a column's is taken from the column (`table.column.enumValues`); a file that writes one
+  // out fails this until it does, or is named below with why it must. Lists of two are left to the tests
+  // above: `yes, no` and `member, agent` are written for too many unrelated things to mean a copy.
+  const columns = new Map<string, string>();
+  for (const [name, table] of Object.entries(householdSchema)) if (is(table, SQLiteTable))
+    for (const [key, column] of Object.entries(getTableColumns(table))) {
+      const values = (column as { enumValues?: readonly string[] }).enumValues;
+      if (values && values.length >= 3) columns.set([...values].sort().join(','), `${name}.${key}`);
+    }
+  expect(columns.size).toBeGreaterThan(20);
+  const allowed: Record<string, string> = {
+    // Another program, which states the shape of the answer it expects and does not load the household
+    // schema (docs/accepted-tradeoffs.md, "A client states the shape of the answer it expects").
+    'src/cli/access-client.ts': 'the command line reading a token\'s kind',
+    'src/runtime/body-program-tools.ts': 'a body reading an agent\'s status',
+    'src/runtime/conversation-client.ts': 'a body reading its mail and a secret request\'s state',
+    // Measuring is handed its store and reads no household table; these are the kinds of thing it times.
+    'src/core/measuring/index.ts': 'the kinds of timing Measuring accepts',
+    // A copy still: the file was being changed elsewhere when the others were rolled up.
+    'src/shared-secret-agent-commands.ts': 'a copy of secretUses.state, to be read from the column',
+  };
+  const list = /\[\s*((?:['"][\w-]+['"]\s*,\s*)+['"][\w-]+['"])\s*,?\s*\]/g;
+  const copies = sources('src').filter(file => file !== 'src/core/data/schema.ts').flatMap(file => [...text(file).matchAll(list)]
+    .map(found => columns.get([...found[1].matchAll(/['"]([\w-]+)['"]/g)].map(word => word[1]).sort().join(',')))
+    .filter(column => column !== undefined).map(column => `${file}: ${column}`));
+  expect([...new Set(copies.map(copy => copy.split(':')[0]))].sort()).toEqual(Object.keys(allowed).sort());
 });

@@ -6,9 +6,9 @@ import { memberPreferences } from './core/data/schema.js';
 import { currentMember } from './shared-sharing.js';
 import { type Operations, OperationError } from './core/operations/index.js';
 const choices = z.object({
-  look: z.enum(['neon', 'lowlight', 'daylight']), ground: z.enum(['depth', 'contours', 'wash']),
+  look: z.enum(memberPreferences.look.enumValues), ground: z.enum(memberPreferences.ground.enumValues),
   sound: z.boolean(), pixel: z.boolean(), icons: z.boolean(), haptics: z.boolean(),
-  oneWindow: z.boolean(), zoom: z.boolean(), motion: z.enum(['follow', 'on', 'off']), contrast: z.enum(['follow', 'on', 'off']),
+  oneWindow: z.boolean(), zoom: z.boolean(), motion: z.enum(memberPreferences.motion.enumValues), contrast: z.enum(memberPreferences.contrast.enumValues),
 });
 const defaults: z.infer<typeof choices> = { look: 'neon', ground: 'depth', sound: false, pixel: true, icons: false,
   haptics: true, oneWindow: false, zoom: false, motion: 'follow', contrast: 'follow' };

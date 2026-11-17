@@ -11,11 +11,11 @@ import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
 export const triggerInput = z.object({
-  id: text.optional(), ownerKind: z.enum(['member', 'agent', 'household']), owner: text.nullable().optional(),
+  id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
-  targetKind: z.enum(['operation', 'inbox']), target: text.nullable().optional(),
-  toKind: z.enum(['person', 'agent']).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
+  targetKind: z.enum(triggers.targetKind.enumValues), target: text.nullable().optional(),
+  toKind: z.enum(triggers.toKind.enumValues).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text,
   /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
   wantsModel: text.max(200).nullable().optional(),
