@@ -1,6 +1,7 @@
 /** Installed bridge credentials, without internal service grants. Every use
  * proves one holder/config lifetime. Only domain-separated digests survive a
  * use; mutable credential bytes are erased before the platform callback runs. */
+import {isHolderGeneration} from '../secrets/role.js';
 import { createHash } from 'node:crypto';
 import { TextDecoder } from 'node:util';
 import type { Clock } from '../../core/clock.js';
@@ -15,7 +16,7 @@ export function sharedBridgeSecretUse(options:{
  accept(generation:string):boolean;
  current():boolean;invalidate():void;
 }):SecretUse&{close():void}{
- const valid=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+ const valid=isHolderGeneration;
  if(!valid(options.generation()))throw unavailable();
  const same=async()=>{const live=await options.source.generation();return valid(live)&&(live===options.generation()||options.accept(live));};
  const owned=new Set<Uint8Array>(),hashes=new Map<string,string>(),names=new Set(options.names);let closed=false;

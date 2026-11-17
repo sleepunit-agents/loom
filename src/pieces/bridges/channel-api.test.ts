@@ -172,3 +172,11 @@ it.each([
   expect(await api.channel(f.id), phase).toBeUndefined();
   expect(f.request).toHaveBeenCalledTimes(1);
 });
+
+it('asks Discord about no channel whose id authentication would refuse', async () => {
+  const f = fixture('discord');
+  // A leading zero, and one past the largest id Discord can make: the same rule as discord-id.ts.
+  for (const id of ['0123', '18446744073709551616', '', '12a']) expect(await f.api.channel(id)).toBeUndefined();
+  expect(f.request).not.toHaveBeenCalled();
+  expect(await f.api.channel(f.id)).toEqual(f.raw);
+});

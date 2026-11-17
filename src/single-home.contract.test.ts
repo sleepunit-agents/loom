@@ -17,6 +17,9 @@ import { DEFAULT_STALE_DAYS, fieldState, freshUntil } from './backends/cards.js'
 import { MAX_SLUG } from './backends/people.js';
 import { MAX_PROJECT_SLUG } from './backends/projects.js';
 import { secretAgent } from './pieces/secrets/input.js';
+import { isHolderGeneration } from './pieces/secrets/role.js';
+import { isDiscordId } from './pieces/bridges/discord-id.js';
+import { HH_MM } from './core/tempo/calendar.js';
 import { SECRET_USE_ID, secretUseId } from './pieces/secrets/use-id.js';
 import { BUILD_DEADLINE_MAX_MS, ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './runtime/worker-limits.js';
 import { HOUSEHOLD_ID_MAX, PERSON_CARD_SLUG_MAX, PROJECT_CARD_SLUG_MAX, SLUG, householdId, slug } from './slug.js';
@@ -219,4 +222,25 @@ it('makes a private secret use\'s id and checks its shape in one place', () => {
   expect(secretUseId('art', 'job-1', 'attempt-2')).not.toBe(id);
   const copies = sources('src').filter(file => file !== 'src/pieces/secrets/use-id.ts' && /use-input-/.test(text(file)));
   expect(copies).toEqual([]);
+});
+
+it('writes each of these small patterns once', () => {
+  const once = (pattern: RegExp, home: string[], within = 'src') =>
+    expect(sources(within).filter(file => pattern.test(text(file))), String(pattern)).toEqual(home);
+  // An identity page's name, a scoped memory id.
+  once(/\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\{0,99\}\$\/;/, ['src/slug.ts']);
+  once(/\[\^:\]\+:\[a-f0-9-\]\{36\}\$\//, ['src/slug.ts']);
+  // A body tool's name, a Discord id, a holder's generation, a time of day.
+  once(/\[a-zA-Z\]\[a-zA-Z0-9_-\]\{0,63\}/, ['src/runtime/body-model-tools.ts']);
+  once(/\\d\{1,20\}/, [], 'src/pieces/bridges');
+  once(/4\[0-9a-f\]\{3\}-\[89ab\]/, ['src/pieces/secrets/role.ts']);
+  once(/2\[0-3\]\):\[0-5\]\\d/, ['src/core/tempo/calendar.ts']);
+  expect(isDiscordId('18446744073709551615')).toBe(true);
+  for (const bad of ['0123', '18446744073709551616', '', 123]) expect(isDiscordId(bad), String(bad)).toBe(false);
+  expect(isHolderGeneration('3f2b8c1e-9d4a-4b6f-8a1c-0e5d7f9b2a34')).toBe(true);
+  expect(isHolderGeneration('3f2b8c1e-9d4a-1b6f-8a1c-0e5d7f9b2a34')).toBe(false);
+  expect(['00:00', '23:59'].every(time => HH_MM.test(time))).toBe(true);
+  expect(['24:00', '7:30', '12:60'].some(time => HH_MM.test(time))).toBe(false);
+  // The address the program listens on when none is given is the listener's, and nobody else's.
+  expect(sources('src').filter(file => /\?\?\s*'127\.0\.0\.1'/.test(text(file)))).toEqual(['src/shared-serve.ts']);
 });

@@ -1,5 +1,6 @@
 /** Native commands use the authenticated body's declared private source.
  * Content stays there: shared retry results contain opaque IDs, never titles, paths or words. */
+import {SCOPED_MEMORY_ID} from '../../slug.js';
 import Database from 'better-sqlite3';
 import {existsSync} from 'node:fs';
 import {z} from 'zod';
@@ -82,7 +83,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  };
  const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit:reserve,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};
- const scopedId=z.string().regex(/^[^:]+:[a-f0-9-]{36}$/);
+ const scopedId=z.string().regex(SCOPED_MEMORY_ID);
  const proposalId=z.string().regex(/^[^:]+:proposal:[a-f0-9-]{36}$/);
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
  operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(input))).ref)]}))});

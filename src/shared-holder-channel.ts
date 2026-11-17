@@ -1,4 +1,5 @@
 /** Private inherited IPC. No socket, public operation, credential or executable selection. */
+import {isHolderGeneration} from './pieces/secrets/role.js';
 import {z} from 'zod';
 import type {Clock} from './core/clock.js';
 import type {HolderStore} from './pieces/secrets/holder-store.js';
@@ -15,7 +16,7 @@ export interface HolderChannel {
 const failed=()=>new Error('Shared secret holder unavailable');
 const bytes=z.instanceof(Uint8Array).refine(value=>value.byteLength>0&&value.byteLength<=65536);
 const who=z.object({member:z.string().min(1).max(256),writeId:z.uuid()}).strict();
-const generation=z.uuid().refine(value=>value[14]==='4','Invalid holder generation');
+const generation=z.string().refine(isHolderGeneration,'Invalid holder generation');
 const base={seq:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)};
 const request=z.discriminatedUnion('op',[
  z.object({...base,op:z.literal('read'),name:secretName}).strict(),

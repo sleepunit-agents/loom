@@ -2,7 +2,7 @@
  * each a thin mapping onto one registered command or one query on the same door.
  * No tool here reads a store directly: what works here works in the data layer. */
 import {z} from 'zod';
-import {slug as slugOf,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX} from './slug.js';
+import {slug as slugOf,PAGE_NAME,PERSON_CARD_SLUG_MAX,PROJECT_CARD_SLUG_MAX,SCOPED_MEMORY_ID} from './slug.js';
 import {randomUUID} from 'node:crypto';
 import type {McpServer} from '@modelcontextprotocol/server';
 
@@ -20,9 +20,9 @@ const say=(text:string):Result=>({content:[{type:'text',text}]});
 const refuse=(text:string):Result=>({isError:true,content:[{type:'text',text}]});
 
 const category=z.enum(['user','project','self','feedback','reference','pursuit','episode']);
-const memoryId=z.string().regex(/^[^:]+:[a-f0-9-]{36}$/);
+const memoryId=z.string().regex(SCOPED_MEMORY_ID);
 const notePath=z.string().min(1).max(300);
-const pageName=/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const pageName=PAGE_NAME;
 type Section='creed'|'preferences'|'top-of-mind'|'self-model'|'last-24h'|'harness'|'model'|'all';
 
 interface Memory{id:string;title:string;content:string;category:string;updated:string}

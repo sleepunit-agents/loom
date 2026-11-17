@@ -8,3 +8,7 @@ export interface SecretValueSource { read(name: string): Promise<Uint8Array> }
 export interface SecretUse {
   withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T>;
 }
+
+/** A holder's generation is a version-4 UUID. Everything that is handed one checks it here. */
+export const isHolderGeneration = (value: unknown): value is string => typeof value === 'string'
+  && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);

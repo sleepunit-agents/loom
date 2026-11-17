@@ -53,9 +53,10 @@ export async function serve(args: string[], io: ServeIo = processIo): Promise<nu
     } }));
   } catch (error) { io.stderr(`${error instanceof Error ? error.message : 'Bad arguments'}\n${USAGE}`); return 2; }
   const home = homeOf(values.home);
-  const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
+  // Left unset, the listener's own default applies (shared-serve.ts): this machine only.
+  const host = values.host ?? process.env.LOOM_HTTP_HOST;
   const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
-  if (host.includes(',') || !Number.isInteger(port) || port < 0 || port > 65535) { io.stderr('Choose one --host and a valid --port\n'); return 2; }
+  if (host?.includes(',') || !Number.isInteger(port) || port < 0 || port > 65535) { io.stderr('Choose one --host and a valid --port\n'); return 2; }
   const { startSharedHome } = await import('./shared-startup.js');
   let handle: Awaited<ReturnType<typeof startSharedHome>>;
   try {
