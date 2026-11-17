@@ -26,10 +26,11 @@ function browserDevice(ua: string): { device: string; isAgent: boolean } {
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
   const token = (id: string) => activeMemberToken(db,clock,id);
   return {
-    makeLink(id: string) {
+    /** A link lasts five minutes at most; a trusted issuer may ask for less, and name what it is for. */
+    makeLink(id: string, options: { label?: string; ttlMs?: number } = {}) {
       const current = token(id), code = secret();
-      const expiresAt = new Date(Math.min(clock.now() + LINK_MS, current.expiresAt ? Date.parse(current.expiresAt) : Infinity)).toISOString();
-      db.insert(signinLinks).values({ id: fingerprint(code), token: id, label: current.label, expiresAt }).run();
+      const expiresAt = new Date(Math.min(clock.now() + Math.min(LINK_MS, options.ttlMs ?? LINK_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity)).toISOString();
+      db.insert(signinLinks).values({ id: fingerprint(code), token: id, label: options.label ?? current.label, expiresAt }).run();
       return { path: `/login/${code}`, expiresAt };
     },
     redeem(code: string, userAgent: string, isAgent = false) {

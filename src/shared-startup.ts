@@ -5,17 +5,19 @@ import { notificationKey } from './core/signin/notification-key.js';
  * No importer, discovery, schema upgrade, or legacy database fallback. */
 import Database from 'better-sqlite3';
 import {initializeSharedHome} from './shared-initialize.js';
-import {createHash,randomBytes,randomUUID} from 'node:crypto';
+import {createHash} from 'node:crypto';
 import {dirname,isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {constants,openSync,closeSync,fsyncSync,realpathSync} from 'node:fs';
-import {eq} from 'drizzle-orm';
+import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
 import {createDataSchema,dataDatabase, upgradeDataSchema,type DataDatabase} from './core/data/database.js';
-import {members,tokens,signinLinks} from './core/data/schema.js';
+import {members,tokens} from './core/data/schema.js';
+import {tokenLive} from './core/data/authentication.js';
+import {sharedTokens} from './core/signin/shared-tokens.js';
 import {ownHome} from './core/daemon-home.js';
-import {prepareOperatorHome,listenOperatorLinks} from './core/signin/operator.js';
+import {prepareOperatorHome,listenOperatorLinks,type operatorRequest} from './core/signin/operator.js';
 import {sameOrigin,relyingParty} from './core/signin/index.js';
 import {sharedSigninLinks} from './core/signin/shared-links.js';
 import {privateBytes} from './pieces/secrets/local-holder.js';
@@ -37,7 +39,6 @@ type RootOptions=Parameters<typeof sharedRoot>[0];
  * or database row chooses code, credentials, checking agent, or source paths. */
 export type SharedStartupAdapters=Pick<RootOptions,'changes'|'tempo'|'secretWrites'|'secretInputs'|'bridges'|'modelRoles'|'runtimeJobEnded'|'approvedOperations'|'memoryEmbedding'>&{close?():void|Promise<void>};
 export type SharedStartupFactory=(context:{db:DataDatabase;clock:Clock;home:string})=>SharedStartupAdapters|Promise<SharedStartupAdapters>;
-const fingerprint=(value:string)=>createHash('sha256').update(value).digest('hex');
 /** The shape that matters: every table with its columns, and every index, trigger and view as written.
  * A table's own SQL text is not compared, because a column added to an existing household by an upgrade
  * is written differently from the same column in a fresh database. */
@@ -91,7 +92,9 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   upgradeDataSchema(client,()=>new Date(clock.now()).toISOString());
   checkDatabase(client);
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
-  if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
+  // The member a local sign-in is for when the operator names nobody: a current owner of the household.
+  const localOwner=()=>{const row=db.select().from(members).where(eq(members.id,program.signinMember)).get();return row?.role==='owner'&&!row.removedAt;};
+  if(!localOwner())throw Error('Configure an existing household owner for local sign-in');
   if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
   if(program.secretHolder){
    if(adapters.secretWrites||adapters.secretInputs)throw Error('Shared Secret holder ports already configured');
@@ -119,20 +122,28 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,memoryEmbedding:adapters.memoryEmbedding,
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
-  const signin=sharedSigninLinks(db,clock);
-  const issue=({member,label,ttl,ownerOnly=false}:{member:string;label:string;ttl:number;ownerOnly?:boolean})=>app!.writes.run(()=>{
-   const current=db.select().from(members).where(eq(members.id,member)).get();
-   if(!current||ownerOnly&&current.role!=='owner')throw Error('Local sign-in member is no longer allowed');
-   const id=fingerprint(randomBytes(32).toString('hex'));
-   // Token labels are globally unique while active. Separate local issuances
-   // must not collide or reuse another person's similarly labelled token.
-   db.insert(tokens).values({fingerprint:id,label:`${label.slice(0,150)} [local ${randomUUID()}]`,kind:'owner',member,createdAt:new Date(clock.now()).toISOString()}).run();
-   const link=signin.makeLink(id);
-   if(ttl<300)db.update(signinLinks).set({expiresAt:new Date(clock.now()+ttl*1000).toISOString()}).where(eq(signinLinks.id,fingerprint(link.path.slice('/login/'.length)))).run();
-   return link.path;
+  const signin=sharedSigninLinks(db,clock),issuer=sharedTokens(db,clock);
+  // Adapters ran since the first check and may have changed the household.
+  if(!localOwner())throw Error('Local sign-in member is no longer allowed');
+  // Every local sign-in of one member rides on one token row, made by the same service as any other token
+  // so its rules hold here too. Nobody is ever given that row's bearer: it only anchors the browsers and
+  // passkeys that came in through a local link, and revoking it in Setup ends them all.
+  const localToken=(member:string)=>{
+   const label='Local sign-in: '+(member.length<=100?member:`${member.slice(0,60)} ${createHash('sha256').update(member).digest('hex').slice(0,16)}`);
+   const found=db.select().from(tokens).where(and(eq(tokens.label,label),eq(tokens.kind,'owner'),eq(tokens.member,member))).all().find(row=>tokenLive(row,clock.now()));
+   return found?.fingerprint??issuer.issue({kind:'owner',member,label}).fingerprint;
+  };
+  /** A sign-in link for whoever can reach the operator socket: the OS user who owns this home. */
+  const issue=({member,label,ttl}:z.infer<typeof operatorRequest>)=>app!.writes.run(()=>{
+   if(member===undefined&&!localOwner())throw Error('Local sign-in member is no longer allowed');
+   return signin.makeLink(localToken(member??program.signinMember),{label,ttlMs:ttl*1000}).path;
   }).value;
   operator=await listenOperatorLinks(home,publicOrigin??app.url,issue);
-  (options.stdout??(text=>{process.stdout.write(text);}))(`${publicOrigin??app.url}${issue({member:program.signinMember,label:'Local startup sign-in',ttl:300,ownerOnly:true})}\n`);
-  return {...app,close};
+  // No link is made or printed at start: under a service manager this output is the log. The operator asks
+  // for one when they want it.
+  (options.stdout??(text=>{process.stdout.write(text);}))(`To sign in from this machine: loom signin --home ${home}\n`);
+  /** For the code that started this program in its own process: the link the operator socket would give. */
+  const signinLink=(member?:string)=>`${publicOrigin??app!.url}${issue({request:'link',label:'Local sign-in',ttl:300,...(member?{member}:{})})}`;
+  return {...app,close,signinLink};
  }catch(error){await close();throw error;}
 }

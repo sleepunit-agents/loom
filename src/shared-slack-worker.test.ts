@@ -37,7 +37,7 @@ it('runs Slack input through the actual worker/body and returns one reply to its
   throw Error('Unexpected outside request');
  }));
  wire.slack.mockImplementation(options=>{options.state?.('connected');return{close:async()=>{}};});
- const app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());
  // Drain the example household's two existing jobs before this single-job proof.
  const base={app,example,clock,home};expect((await nativeProtocolSmoke(base)).runs).toHaveLength(2);
  const signin=await fetch(link,{method:'POST',redirect:'manual'});expect(signin.status).toBe(303);const cookie=signin.headers.get('set-cookie')!.split(';')[0];

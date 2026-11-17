@@ -61,7 +61,7 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
   throw Error('Unexpected platform endpoint');
  });
  vi.stubGlobal('fetch',platform);
- const app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());
  const program=JSON.parse(readFileSync(join(home,'program.json'),'utf8'));
  expect(program.adapters).toBeUndefined();expect(app.services.bridges.daemon).toBeDefined();
  const daemon=app.services.bridges.daemon!,db=app.services.comms!.db,owner=wire.owners[0],command=await commands(app,link);
@@ -159,7 +159,7 @@ it('delivers Discord through normal startup and records confirmed, uncertain and
   }
   throw Error('Unexpected platform endpoint');
  }));
- const app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());
  expect(JSON.parse(readFileSync(join(home,'program.json'),'utf8')).adapters).toBeUndefined();
  const command=await commands(app,link),daemon=app.services.bridges.daemon!,owner=wire.owners[0],db=app.services.comms!.db,program=JSON.parse(readFileSync(join(home,'program.json'),'utf8'));
  await command('secrets/set',{id:randomUUID(),name:'TOKEN',value:'FICTITIOUS_DISCORD_TOKEN',mode:'add'});

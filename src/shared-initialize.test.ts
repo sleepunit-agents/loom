@@ -29,7 +29,7 @@ afterEach(async()=>{vi.restoreAllMocks();const real=await vi.importActual<typeof
 function fixture(){const root=mkdtempSync(join(tmpdir(),'empty-shared-')),home=join(root,'home');mkdirSync(home);clean.push(()=>rmSync(root,{recursive:true,force:true}));return home;}
 it('first install publishes a private prepared inventory and the ordinary startup link admits HTTP and GraphQL',async()=>{
  const home=fixture(),webRoot=fixture(),clock=new FakeClock();writeFileSync(join(webRoot,'next.html'),'Shared app');let link='';
- const app=await startSharedHome({home,webRoot,port:0,clock,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ const app=await startSharedHome({home,webRoot,port:0,clock,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());
  const program=JSON.parse(readFileSync(join(home,'program.json'),'utf8'));
  for(const name of ['program.json','comms.key','loom.db'])expect(statSync(join(home,name)).mode&0o777).toBe(0o600);
  expect(program.memory.sources.agents[0].agent).toBe('assistant');
@@ -140,7 +140,7 @@ it.each([false,true])('keeps explicit adapter Secret ports and refuses a competi
  globals[Symbol.for(key)]=()=>({secretWrites:{holder:selected.holder,fingerprintKey:selected.fingerprintKey},secretInputs:{source:selected.source},close:()=>selected.close()});
  clean.push(()=>{delete globals[Symbol.for(key)];});program.adapters=join(home,'adapters.mjs');writeFileSync(program.adapters,`export default globalThis[Symbol.for(${JSON.stringify(key)})];`,{mode:0o600});writeFileSync(file,JSON.stringify(program),{mode:0o600});
  if(competing){await expect(startSharedHome({home,webRoot,port:0,clock,stdout:()=>{}})).rejects.toThrow('ports already configured');expect(selected.fingerprintKey.every(byte=>byte===0)).toBe(true);return;}
- let link='';const app=await startSharedHome({home,webRoot,port:0,clock,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());const admitted=await fetch(link,{method:'POST',redirect:'manual'}),cookie=admitted.headers.get('set-cookie')!.split(';')[0];
+ let link='';const app=await startSharedHome({home,webRoot,port:0,clock,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());const admitted=await fetch(link,{method:'POST',redirect:'manual'}),cookie=admitted.headers.get('set-cookie')!.split(';')[0];
  const value='fictional-explicit-adapter-value';const saved=await fetch(app.url+'/api/secrets/set',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:randomUUID(),name:'EXAMPLE',mode:'add',value}})});expect(saved.status).toBe(200);await receiveGrantedValue(app,program,clock,cookie,value);
  await app.close();expect(selected.fingerprintKey.every(byte=>byte===0)).toBe(true);
 });

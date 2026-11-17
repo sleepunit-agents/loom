@@ -20,7 +20,7 @@ it('normal startup carries a private conversation through the one Inbox and actu
  try{
   expect(await(await fetch(p.url+'/p/comms-preview')).text()).toContain('FICTIONAL SHARED PROGRAM');
   expect(await(await fetch(p.url+'/auth/session')).json()).toEqual({viewer:null});
-  const signin=await fetch(p.printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:p.url}});expect(signin.status).toBe(303);
+  const signin=await fetch(p.composition.signinLink(),{method:'POST',redirect:'manual',headers:{origin:p.url}});expect(signin.status).toBe(303);
   const signedCookie=signin.headers.get('set-cookie')!.split(';',1)[0];
   expect(await(await fetch(p.url+'/auth/session',{headers:{cookie:signedCookie}})).json()).toMatchObject({viewer:{kind:'member',id:'alice'}});
   const now=()=>new Date(clock.now()).toISOString();

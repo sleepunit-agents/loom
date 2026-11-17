@@ -16,7 +16,7 @@ import {requestLocalLink} from './core/signin/operator.js';
 import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 import * as startup from './shared-startup.js';
-import {serve as run} from './index.js';
+import {serve as run,signin} from './index.js';
 import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
@@ -53,9 +53,12 @@ it('normal serve --http installs public assets, current sign-in, Memory, Comms a
  expect(await (await fetch(url+'/p/knowledge-preview')).text()).toBe('<main>SHARED FICTIONAL ENTRY</main>');
  expect(await (await fetch(url+'/auth/session')).json()).toEqual({viewer:null});
  expect((await fetch(url+'/app/key.js')).status).toBe(404);
- expect(printed).toHaveLength(1);
+ // Startup says how to sign in and prints no credential; the operator's command gets the link.
+ expect(printed).toEqual([`To sign in from this machine: loom signin --home ${f.home}\n`]);
+ const asked:string[]=[];expect(await signin(['--home',f.home],{stdout:text=>asked.push(text),stderr:()=>{}})).toBe(0);
+ expect(asked).toHaveLength(1);expect(asked[0]).toMatch(new RegExp('^'+url+'/login/[0-9a-f]{64}\n$'));
  const pushKey=JSON.parse(readFileSync(join(f.home,'push-vapid.json'),'utf8'));expect(pushKey.publicKey).toEqual(expect.any(String));expect(pushKey.privateKey).toEqual(expect.any(String));
- const bootstrap=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});expect(bootstrap.status).toBe(303);
+ const bootstrap=await fetch(asked[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});expect(bootstrap.status).toBe(303);
  const cookie=bootstrap.headers.get('set-cookie')!.split(';',1)[0];
  expect(await (await fetch(url+'/auth/session',{headers:{cookie}})).json()).toMatchObject({viewer:{kind:'member',id:'owner'}});
  const query=async(cookie:string)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({query:'{ deskTime { timezone } homeComms { agents } memoryKnowledge { pages { title } } memoryPeople { id } memoryProjects { id } memoryActivity { entries { title } } triggers { id } }'})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
@@ -149,7 +152,7 @@ it('runs file triggers, pauses, notices and recipient volume through the normal 
  });
  cleanups.push(async()=>{process.emit('SIGTERM');expect(await pending).toBe(0);});
  const url=await Promise.race([started,pending.then(code=>{throw Error(`CLI stopped (${code}): ${errors.join('')}`);})]);
- const login=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});
+ const login=await fetch(url+(await requestLocalLink(f.home,{request:'link'})).path,{method:'POST',redirect:'manual',headers:{origin:url}});
  expect(login.status).toBe(303);const cookie=login.headers.get('set-cookie')!.split(';',1)[0];
  const headers={cookie,origin:url,'content-type':'application/json'};
  const command=async(name:string,input:unknown,id:string)=>{
@@ -208,4 +211,44 @@ it('persists a narrow outside-program token and an empty grant marker through no
  await app.close();app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});expect((await read()).errors).toBeDefined();expect((await call('/api/tasks/command',command,headers)).status).toBe(403);cookie=await signedIn(f.home,app.url);
  const metadata=await(await call('/graphql',{query:'{ programSetup { tokens { fingerprint records operations } } }'},{cookie})).json();expect(metadata.data.programSetup.tokens).toContainEqual({fingerprint:value.fingerprint,records:[],operations:[]});
  expect((await call('/api/token/revoke',{id:'revoke-persistent-program',input:{fingerprint:value.fingerprint}},{cookie})).status).toBe(200);expect((await call('/graphql',{query:'{ tasks { id } }'},headers)).status).toBe(403);
+});
+it('makes no credential at start, and keeps one token row per member for every local sign-in the operator asks for',async()=>{
+ const f=await fixture(),printed:string[]=[];
+ const rows=()=>{const client=new Database(f.program.database,{readonly:true});try{return {tokens:client.prepare('SELECT label,kind,member,expires_at AS expiresAt,revoked_at AS revokedAt FROM tokens ORDER BY label').all(),links:(client.prepare('SELECT count(*) AS n FROM signin_links').get() as {n:number}).n,sessions:(client.prepare('SELECT count(*) AS n FROM sessions').get() as {n:number}).n};}finally{client.close();}};
+ let app=await startSharedHome({home:f.home,port:0,stdout:text=>printed.push(text)});cleanups.push(()=>app.close());
+ await app.close();app=await startSharedHome({home:f.home,port:0,stdout:text=>printed.push(text)});
+ // Two starts: two hints, no link, no token row.
+ expect(printed.join('')).not.toContain('/login/');expect(printed).toHaveLength(2);expect(rows()).toEqual({tokens:[],links:0,sessions:0});
+ // The operator asks, three times for the configured owner and once for another member.
+ const first=await requestLocalLink(f.home,{request:'link'});expect(first.url).toBe(app.url);
+ await requestLocalLink(f.home,{request:'link',label:'Second'});await signedIn(f.home,app.url);
+ const cookie=await signedIn(f.home,app.url,'peer');
+ expect(await(await fetch(app.url+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'peer'}});
+ expect(rows()).toEqual({links:2,sessions:2,tokens:[
+  {label:'Local sign-in: owner',kind:'owner',member:'owner',expiresAt:null,revokedAt:null},
+  {label:'Local sign-in: peer',kind:'owner',member:'peer',expiresAt:null,revokedAt:null}]});
+ // A link asked for less than five minutes lasts that long; one asked for more lasts five minutes.
+ const writable=()=>{const client=new Database(f.program.database);client.function('loom_now',()=>new Date().toISOString());return client;};
+ const client=writable();
+ try{
+  const ends=(client.prepare('SELECT expires_at AS at FROM signin_links ORDER BY expires_at').all() as {at:string}[]).map(row=>Date.parse(row.at)-Date.now());
+  for(const left of ends){expect(left).toBeGreaterThan(290_000);expect(left).toBeLessThanOrEqual(300_000);}
+  // Revoking the row ends what rode on it; the next local sign-in gets a new one.
+  client.prepare("UPDATE tokens SET revoked_at=? WHERE label='Local sign-in: peer'").run(new Date().toISOString());
+ }finally{client.close();}
+ expect(await(await fetch(app.url+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:null});
+ await signedIn(f.home,app.url,'peer');
+ expect(rows().tokens.filter(row=>(row as {member:string}).member==='peer')).toHaveLength(2);
+ // Nobody the household does not have, and no default once the configured owner is no longer one.
+ await expect(requestLocalLink(f.home,{request:'link',member:'nobody'})).rejects.toThrow('Local sign-in refused');
+ const demote=writable();demote.prepare("UPDATE members SET role='member' WHERE id='owner'").run();demote.close();
+ await expect(requestLocalLink(f.home,{request:'link'})).rejects.toThrow('Local sign-in refused');
+ await signedIn(f.home,app.url,'owner');
+});
+it('tells the operator plainly when there is no running program to ask for a sign-in link',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'loom-nothing-running-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));chmodSync(home,0o700);
+ const out:string[]=[],errors:string[]=[];
+ expect(await signin(['--home',home],{stdout:text=>out.push(text),stderr:text=>errors.push(text)})).toBe(1);
+ expect(out).toEqual([]);expect(errors.join('')).toContain('No sign-in link');
+ expect(await signin(['--bogus'],{stdout:text=>out.push(text),stderr:text=>errors.push(text)})).toBe(2);
 });

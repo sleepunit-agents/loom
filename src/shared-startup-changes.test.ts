@@ -23,7 +23,7 @@ async function command(app:Awaited<ReturnType<typeof startSharedHome>>,cookie:st
 const raw=JSON.parse(readFileSync(new URL('./pieces/changes/github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
 it('reads Owner-written credentials on normal restart, rotates tokens, retains cache on failure and joins shutdown',async()=>{
  const {home,webRoot,clock}=files();let link='';
- let app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());let cookie=await signin(link);
+ let app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();clean.push(()=>app.close());let cookie=await signin(link);
  expect(app.refreshChanges).toBeUndefined();
  expect(await command(app,cookie,'secrets/set',{id:randomUUID(),name:'FORGE',value:'FICTITIOUS_GITHUB_TOKEN',mode:'add'})).toMatchObject({ok:true});
  const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
@@ -39,7 +39,7 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
   const states=JSON.parse(String(init?.body)).variables.states;
   return Response.json({data:{repository:{pullRequests:{nodes:states.includes('OPEN')?[raw]:[],pageInfo:{hasNextPage:false,endCursor:null}}}}});
  });vi.stubGlobal('fetch',requests);
- app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});cookie=await signin(link);
+ app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});link=app.signinLink();cookie=await signin(link);
  const socket=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:app.url}});clean.push(()=>socket.terminate());await once(socket,'open');
  let next=once(socket,'message');socket.send(JSON.stringify({type:'connection_init'}));await next;
  next=once(socket,'message');socket.send(JSON.stringify({type:'subscribe',id:'changes',payload:{query:'subscription { observe(query:"{ changes { id title project } }") { revision patches { path value removed } } }'}}));await next;

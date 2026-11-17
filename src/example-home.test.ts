@@ -56,7 +56,7 @@ it('builds fictitious data through services, then normal startup signs in and qu
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
   const clock=new FakeClock(Date.now());
-  let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:()=>{}});link=app.signinLink();
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const post=async(path:string,input:unknown)=>{const response=await fetch(app!.url+path,{method:'POST',redirect:'error',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify(input)});expect(response.status).toBe(200);return response.json();};
@@ -114,7 +114,7 @@ it('executes guarded prepared operations and exact allowance deadlines in normal
  let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
  try{
   const manifest=await exampleHome(home);prepareAcceptanceHome(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
-  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:()=>{}});link=app.signinLink();
   expect(holderValueAbsent(home,'no-such-fictitious-secret')).toBe(true);
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const watched=app.writes.run(()=>app!.services.approvals.request({kind:'command',target:'example:watched',agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Watched example',why:'Prove answer delivery.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes:1})).value;
