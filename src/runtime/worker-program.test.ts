@@ -266,18 +266,32 @@ for (const patch of [{ container: { socket: '/s', runtime: 'kata' } }, { contain
     expect(f.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(containerExecutor).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
 it('stops before any work is claimed when a mounted directory cannot be used, with its own line and code and no path in it', async () => {
-  const line = 'Worker stopped: a directory the configuration mounts into containers cannot be used: each must be an existing directory of this user, named by an absolute path with no symbolic link in it, and none may overlap another\n';
+  const line = 'Worker stopped: a path the configuration mounts into containers cannot be used: a source that is not an existing directory of this user, a nested socket that is not an existing socket, a source or target not written as a plain absolute path with no symbolic link in it, or two that overlap\n';
+  const { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } = await import('node:fs'), { tmpdir } = await import('node:os'), { join } = await import('node:path');
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'loom-private-')), real = join(root, 'real'), other = join(root, 'other'), link = join(root, 'link');
+  mkdirSync(real); mkdirSync(other); symlinkSync(real, link);
+  try {
   // The real container executor, so the real checks: nothing here needs an engine, and the checks come
   // before the state directory is taken.
   for (const patch of [{ accountLogins: { subscription: { claude: { source: '/loom-test/private-missing-login', target: '/home/agent/.claude' } } } },
     { container: { socket: '/fake/docker.sock', mounts: [{ source: 'private-relative', target: '/house/x' }] } },
-    { container: { socket: '/fake/docker.sock', mounts: [{ source: '/loom-test/private-missing-mount', target: '/var/run/docker.sock' }] } }]) {
+    { container: { socket: '/fake/docker.sock', mounts: [{ source: '/loom-test/private-missing-mount', target: '/var/run/docker.sock' }] } },
+    // A symbolic link to a directory that is itself fine.
+    { container: { socket: '/fake/docker.sock', mounts: [{ source: link, target: '/house/x' }] } },
+    { accountLogins: { subscription: { claude: { source: link, target: '/home/agent/.claude' } } } },
+    // Directories that exist and are fine, at places that collide: with each other, with a sign-in, with the socket.
+    { container: { socket: '/fake/docker.sock', mounts: [{ source: real, target: '/house/x' }, { source: other, target: '/house/x/inner' }] } },
+    { accountLogins: { subscription: { claude: { source: real, target: '/home/agent/.claude' } } }, container: { socket: '/fake/docker.sock', mounts: [{ source: other, target: '/home/agent/.claude' }] } },
+    { container: { socket: '/fake/docker.sock', mounts: [{ source: real, target: '/var/run/docker.sock' }] } },
+    // A nested socket that is a directory.
+    { container: { socket: '/fake/docker.sock', nestedSocket: real } }]) {
     const f = fixture();
     f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, container: { socket: '/fake/docker.sock' }, ...patch }) : 'private-token');
     expect(await workerProgram(f)).toBe(52);
     expect(f.error).toHaveBeenCalledExactlyOnceWith(line);
     expect(f.run).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
   }
+  } finally { rmSync(root, { recursive: true, force: true }); }
   expect(WORKER_STOP.mounts).toEqual([52, line.slice('Worker stopped: '.length, -1)]);
   expect(line).not.toMatch(/private|loom-test/);
 });

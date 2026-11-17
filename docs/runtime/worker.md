@@ -179,7 +179,7 @@ which could hold a credential. 0 means it was asked to stop.
 | 49 | a body it started could not be ended, so it takes no more work |
 | 50 | the account command did not complete (`--account-usage`) |
 | 51 | `--account-signin` was removed; the line says what to use instead (see "Signing in from anywhere" in [`accounts.md`](accounts.md)) |
-| 52 | a directory the configuration mounts into containers cannot be used: each must be an existing directory of this user, named by an absolute path with no symbolic link in it, and none may overlap another (see "Mounted directories" under "Container bodies") |
+| 52 | a path the configuration mounts into containers cannot be used: a source that is not an existing directory of this user, a nested socket that is not an existing socket, a source or target not written as a plain absolute path with no symbolic link in it, or two that overlap (see "Mounted directories" under "Container bodies") |
 
 A worker that stops cannot report its own end, so loom records the job it held
 only as lost ("its worker stopped reporting"). Which stage stopped the worker
@@ -269,9 +269,16 @@ the bounded in-memory log tail. A failed capability request fails the launch;
 there is no fallback to a host runner or a container with broader settings.
 
 Nested containers additionally require a local `container.nestedSocket` path.
-Only assignments with `run.nestedContainers` receive that socket at
-`/var/run/docker.sock`. This is broad authority over that configured engine;
-the local operator must deliberately opt in. No socket is otherwise mounted, and
+It must name an existing Unix socket by its real path: not a directory, not a
+symbolic link, and not at, above or inside any directory the configuration
+mounts (exit code 52 otherwise; see "Mounted directories"). Only assignments
+with `run.nestedContainers` receive that socket at `/var/run/docker.sock`. This
+is broad authority over that configured engine; the local operator must
+deliberately opt in. A job given the engine can ask it to mount anything the
+engine's user can reach on this machine, every account's sign-in directory
+included: what the sections below say about which container sees which
+directory holds for every job that is not given the engine, and for no job
+that is. No socket is otherwise mounted, and
 no host directory except those the configuration names (next section). The
 worker never discovers a socket or credentials from HOME or the ambient
 environment.
@@ -311,6 +318,9 @@ directories of `accountLogins`.
   two sign-in entries name directories that are the same or inside one another.
   Otherwise a body could be handed another account's sign-in under another
   name.
+- `container.nestedSocket` is an existing Unix socket named by its real path. It
+  need not belong to the worker's user. It is not a mounted directory or a
+  sign-in directory, does not hold one and is not inside one.
 
 The paths are fixed when the worker starts; a later change to the file changes
 nothing until the worker is started again. The directory itself is looked at
@@ -320,11 +330,16 @@ answer for.
 After creating a container and before starting it, the worker reads the
 container's mounts back from the engine. They must be exactly the ones it asked
 for: each a bind mount of the same source at the same target, writable or
-read-only as asked, and no others. Anything else, an image's declared volume
+read-only as asked (the nested socket writable), and no others. Anything else, an image's declared volume
 included, removes the container unstarted and fails the launch (exit code 23).
 
-The paths are this machine's own. They are in no log line, no error and nothing
-sent to loom.
+The paths are this machine's own. The worker puts no mount path, credential or
+file content in anything it prints or reports of its own: not in the line it
+stops with, a failed start's report, the startup envelope, a container's labels
+or its environment. What a body prints is the body's and is not filtered: its
+output is passed to loom as the job's log tail as before, and a runner that
+prints a path it was given, or a file from it, has put that in the tail. loom
+keeps or drops a job's log tail by the conversation's privacy.
 
 `container.setupTimeoutMs` and `container.cleanupTimeoutMs` each default to
 30,000 and accept integers from 1 through 300,000. Setup bounds create, attach
@@ -343,7 +358,10 @@ configured local Unix socket and unversioned routes; it does not start or instal
 an engine.
 
 Another engine that serves the same routes on a Unix socket is used the same
-way. Rootless podman 5.4.2 was checked: it takes these requests, reports a
+way. `scripts/check-container-engine.mjs` runs the built worker against a socket
+you name (one body's whole life, then the raw answers to a few requests) and
+prints what the engine took and what it refused. Run against rootless podman
+5.4.2 on 2026-11-17, it showed: podman takes these requests, reports a
 container's mounts in the same form, and honours the `none` log driver. It
 ignores the runtime's name and runs the runtime it is itself configured with,
 whichever of the two the worker asks for. It also creates a bind mount's source
@@ -412,7 +430,10 @@ bodies, `accountLogins` names that directory for each account, keyed like
 
 A job placed on an account, for a harness, gets exactly that one directory in
 its container, mounted read-write so the program can renew. No other account's
-directory, and no other harness's, is ever mounted into that container. Two
+directory, and no other harness's, is ever mounted into that container. A job
+with `run.nestedContainers` is the exception to what that is worth: it holds the
+engine, and can have the engine mount any of these directories into a container
+it starts itself (see "Container bodies"). Two
 accounts may use the same `target`, since only one of them is in any container.
 
 When this map is present, every job needs an exact account/harness entry. A job

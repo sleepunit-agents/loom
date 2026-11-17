@@ -29,7 +29,7 @@ export const WORKER_STOP = {
    * is the relay (account-signin-relay.ts). */
   signin: [51, '--account-signin was removed; sign the account in from loom (runtime.accountSignIn), which runs the provider\'s program listed under accountSignIn.programs in this worker\'s configuration'],
   /** A path under `accountLogins` or `container.mounts` (worker-mounts.ts). The line names no path. */
-  mounts: [52, 'a directory the configuration mounts into containers cannot be used: each must be an existing directory of this user, named by an absolute path with no symbolic link in it, and none may overlap another'],
+  mounts: [52, 'a path the configuration mounts into containers cannot be used: a source that is not an existing directory of this user, a nested socket that is not an existing socket, a source or target not written as a plain absolute path with no symbolic link in it, or two that overlap'],
 } as const satisfies Record<string, readonly [code: number, line: string]>;
 export type WorkerStopStage = keyof typeof WORKER_STOP;
 /** A failure that names its own stage, for the ones the worker program cannot tell apart by where it was. */

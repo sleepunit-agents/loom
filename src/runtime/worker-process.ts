@@ -17,7 +17,7 @@ import { logTail } from './log-tail.js';
 import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
-import { NoRunnerError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
+import { UnservedJobError, type WorkerAssignment, type WorkerBody, type WorkerExecutor } from './worker.js';
 import { WORKER_EXIT } from './job-exit.js';
 export interface WorkerCommand {
   /** This configured child understands the private bootstrap stdin envelope. */
@@ -72,10 +72,10 @@ export function workerRunner(config: WorkerRunnerConfig) {
     : new Map(Object.entries(config.accountRunners).map(([account, values]) => [account, plans(values)]));
   return (job: Pick<WorkerAssignment, 'account' | 'harness' | 'accountChoices'>) => {
     const selected = accounts ? accounts.get(job.account)?.get(job.harness) : shared.get(job.harness);
-    if (!selected) throw new NoRunnerError('Worker has no configured runner for account');
+    if (!selected) throw new UnservedJobError('Worker has no configured runner for account');
     // One command cannot be on two accounts. Running the job anyway would spend an account loom did not
     // pick, perhaps one with no room, so the job fails here and says so (WORKER_EXIT.runner).
-    if (!accounts && !selected.selectsAccount && (job.accountChoices ?? 1) > 1) throw new NoRunnerError('Several accounts need a runner each');
+    if (!accounts && !selected.selectsAccount && (job.accountChoices ?? 1) > 1) throw new UnservedJobError('Several accounts need a runner each');
     return selected;
   };
 }

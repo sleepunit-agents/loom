@@ -86,9 +86,9 @@ const schedule: WorkerSchedule = {
   every(ms, callback) { const timer = setInterval(callback, ms); return () => clearInterval(timer); },
 };
 export type WorkerResult = 'idle' | 'finished' | 'abandoned';
-/** Thrown by an executor for a job this worker has no command for: no runner for its harness, or none it
- * can hold to the placed account. Reported as WORKER_EXIT.runner, apart from a build that failed. */
-export class NoRunnerError extends Error {}
+/** Thrown by an executor for a job this worker is not configured to serve, for the reasons WORKER_EXIT.runner
+ * lists (job-exit.ts). Reported as that code, apart from a build that failed. */
+export class UnservedJobError extends Error {}
 
 /** One assignment per invocation, never a local launch retry. The server owns
  * start retries, terminal states and placement. Transport uncertainty aborts the
@@ -162,7 +162,7 @@ export async function workOnce(input: {
       }
     } catch (error) {
       if (abort.signal.aborted) return 'abandoned';
-      if (error instanceof NoRunnerError) stage = 'runner';
+      if (error instanceof UnservedJobError) stage = 'runner';
       // Reap a partly launched process before allowing the server's start retry.
       if (body) await body.stop();
       reporting = true;

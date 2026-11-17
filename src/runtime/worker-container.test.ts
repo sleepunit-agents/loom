@@ -1,4 +1,5 @@
-import { afterAll, afterEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { createServer, type Server } from 'node:net';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,14 +60,14 @@ it('runs the fixed in-image command with no ambient authority, releasing input o
 it('applies only approved GPU, TCP listeners and explicitly configured nested socket', async () => {
   const f = fixture();
   const original = f.engine.json.getMockImplementation()!;
-  f.engine.json.mockImplementation((method, path, body, signal) => path.endsWith('/json') ? Promise.resolve({ Mounts: [{ Type: 'bind', Source: '/allowed/nested.sock', Destination: '/var/run/docker.sock' }] }) : original(method, path, body, signal));
-  const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, nestedSocket: '/allowed/nested.sock' } }, { engine: f.engine, builder: f.builder, name: () => 'capabilities' });
+  f.engine.json.mockImplementation((method, path, body, signal) => path.endsWith('/json') ? Promise.resolve({ Mounts: [{ Type: 'bind', Source: nestedSock, Destination: '/var/run/docker.sock', RW: true }] }) : original(method, path, body, signal));
+  const executor = containerWorkerExecutor({ ...f.config, container: { ...f.config.container, nestedSocket: nestedSock } }, { engine: f.engine, builder: f.builder, name: () => 'capabilities' });
   const body = executor.start({ ...job, run: { gpu: true, nestedContainers: true, ports: [{ address: '127.0.0.1', port: 8080 }, { address: '::1', port: 8080 }] } }, 'image', f.abort.signal);
   await body.spawned;
   expect(f.engine.json.mock.calls[0][2]).toMatchObject({ ExposedPorts: { '8080/tcp': {} }, HostConfig: {
     DeviceRequests: [{ Driver: '', Count: -1, Capabilities: [['gpu']] }],
     PortBindings: { '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '8080' }, { HostIp: '::1', HostPort: '8080' }] },
-    Mounts: [{ Type: 'bind', Source: '/allowed/nested.sock', Target: '/var/run/docker.sock' }] } });
+    Mounts: [{ Type: 'bind', Source: nestedSock, Target: '/var/run/docker.sock' }] } });
   await body.stop();
 });
 for (const run of [ { gpu: false, nestedContainers: true, ports: [] },
@@ -315,6 +316,11 @@ const houseRoot = mkdtempSync(join(realpathSync(tmpdir()), 'loom-house-'));
 afterAll(() => rmSync(houseRoot, { recursive: true, force: true }));
 const houseDirectory = (name: string) => { const path = join(houseRoot, name); mkdirSync(path, { recursive: true }); return path; };
 const loginA = houseDirectory('logins/a'), loginB = houseDirectory('logins/b'), stamps = houseDirectory('stamps'), mirror = houseDirectory('mirror');
+// The engine's socket for nested containers must be a real socket (worker-mounts.ts).
+const nestedSock = join(houseDirectory('engine'), 'nested.sock');
+let nestedServer: Server;
+beforeAll(async () => { await new Promise<void>(done => { nestedServer = createServer().listen(nestedSock, done); }); });
+afterAll(() => { nestedServer.close(); });
 const accountLogins = { account: { harness: { source: loginA, target: '/home/agent/.claude' } }, other: { harness: { source: loginB, target: '/home/agent/.claude' } } };
 const houseMounts = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
 /** What an engine reports of a bind mount it made. */
@@ -353,10 +359,10 @@ it('mounts the job\'s own sign-in directory read-write and the fixed mounts, and
   expect(JSON.stringify(other.engine.json.mock.calls)).not.toContain(loginA); await second.stop();
 });
 it('gives every body the fixed mounts when no sign-in map is configured, beside the nested socket', async () => {
-  const f = house([reported('/allowed/nested.sock', '/var/run/docker.sock', true), ...expectedReport.slice(1)], { mounts: houseMounts, nestedSocket: '/allowed/nested.sock' }, null);
+  const f = house([reported(nestedSock, '/var/run/docker.sock', true), ...expectedReport.slice(1)], { mounts: houseMounts, nestedSocket: nestedSock }, null);
   const body = f.executor.start({ ...job, account: 'anyone', run: { gpu: false, nestedContainers: true, ports: [] } }, 'image', f.abort.signal); await body.spawned;
   expect((f.engine.json.mock.calls[0][2] as Spec).HostConfig.Mounts).toEqual([
-    { Type: 'bind', Source: '/allowed/nested.sock', Target: '/var/run/docker.sock' },
+    { Type: 'bind', Source: nestedSock, Target: '/var/run/docker.sock', ReadOnly: false },
     { Type: 'bind', Source: stamps, Target: '/house/stamps', ReadOnly: false },
     { Type: 'bind', Source: mirror, Target: '/house/mirror', ReadOnly: true }]);
   await body.stop();
@@ -376,6 +382,12 @@ it('with a sign-in map, fails a job that has no exact entry before the builder, 
   expect(await workOnce({ box: 'box', control, executor: original, signal: f.abort.signal, schedule: { every: () => () => {} } })).toBe('finished');
   expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 27, 'Worker could not start the body: runner failed', 'worker');
   expect(control.started).not.toHaveBeenCalled(); expect(f.builder.build).not.toHaveBeenCalled(); expect(f.engine.json).not.toHaveBeenCalled();
+  // The same for an account that has entries, none of them for this job's harness.
+  const unlisted = { ...job, harness: 'unlisted' };
+  const other = { next: vi.fn(async () => unlisted), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
+  expect(await workOnce({ box: 'box', control: other, executor: f.executor, signal: f.abort.signal, schedule: { every: () => () => {} } })).toBe('finished');
+  expect(other.finish).toHaveBeenCalledExactlyOnceWith('job', 27, 'Worker could not start the body: runner failed', 'worker');
+  expect(other.started).not.toHaveBeenCalled(); expect(f.builder.build).not.toHaveBeenCalled(); expect(f.engine.json).not.toHaveBeenCalled();
 });
 it.each([
   ['one more mount than it asked for', [...expectedReport, reported('/host', '/work', true)]],
@@ -397,11 +409,35 @@ it.each([
   expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
   expect(f.engine.json).toHaveBeenLastCalledWith('DELETE', `/containers/${id}?force=1&v=1`, undefined, expect.any(AbortSignal));
 });
+const nestedReport = () => [reported(nestedSock, '/var/run/docker.sock', true), ...expectedReport];
+it.each([
+  ['the socket missing', () => expectedReport],
+  ['another socket in its place', () => [reported('/run/other.sock', '/var/run/docker.sock', true), ...expectedReport]],
+  ['the socket at another place', () => [reported(nestedSock, '/run/docker.sock', true), ...expectedReport]],
+  ['the socket read-only', () => [reported(nestedSock, '/var/run/docker.sock', false), ...expectedReport]],
+  ['the socket without saying whether it is writable', () => [{ Type: 'bind', Source: nestedSock, Destination: '/var/run/docker.sock' }, ...expectedReport]],
+  ['a volume at the socket\'s place', () => [{ ...reported(nestedSock, '/var/run/docker.sock', true), Type: 'volume' }, ...expectedReport]],
+  ['one mount more than the socket and its own', () => [...nestedReport(), reported('/host', '/work', true)]],
+])('removes a nested job\'s container without starting it when the engine reports %s', async (_what, inspected) => {
+  const nestedJob = { ...job, run: { gpu: false, nestedContainers: true, ports: [] } };
+  const good = house(nestedReport(), { mounts: houseMounts, nestedSocket: nestedSock }), fine = good.executor.start(nestedJob, 'image', good.abort.signal);
+  await fine.spawned; await fine.stop();
+  const f = house(inspected(), { mounts: houseMounts, nestedSocket: nestedSock }), body = f.executor.start(nestedJob, 'image', f.abort.signal);
+  await expect(body.spawned).rejects.toThrow('Unexpected container storage'); await body.stop();
+  expect(f.engine.attach).not.toHaveBeenCalled(); expect(f.engine.json.mock.calls.some(call => call[1].endsWith('/start'))).toBe(false);
+});
+it('does not make a worker whose nested socket is not a socket, or is a way into a mounted directory', () => {
+  const f = fixture();
+  for (const container of [{ nestedSocket: '/loom-test/no.sock' }, { nestedSocket: join(houseRoot, 'logins') }, { nestedSocket: loginA },
+    { nestedSocket: nestedSock, mounts: [{ source: join(houseRoot, 'engine'), target: '/house/engine' }] }])
+    expect(() => containerWorkerExecutor({ ...f.config, accountLogins, container: { ...f.config.container, ...container } }, { engine: f.engine, builder: f.builder })).toThrow(new WorkerStop('mounts'));
+  expect(f.engine.json).not.toHaveBeenCalled();
+});
 it('accepts the mounts it asked for in whatever order the engine lists them', async () => {
   const f = house([...expectedReport].reverse()), body = f.executor.start(job, 'image', f.abort.signal);
   await body.spawned; expect(f.engine.attach).toHaveBeenCalledOnce(); await body.stop();
 });
-it('tells loom nothing of the mounts: not a path in a failed start\'s report, and none in a finished job\'s', async () => {
+it('puts no mount path in what the worker itself says: a failed start\'s report, a finished job\'s report, the envelope, the labels, the environment', async () => {
   const paths = [houseRoot, '/home/agent/.claude', '/house/stamps', '/house/mirror'];
   const said = (control: { finish: ReturnType<typeof vi.fn>; started: ReturnType<typeof vi.fn> }) => JSON.stringify([control.finish.mock.calls, control.started.mock.calls]);
   // A start the worker refused because the engine's mounts were not its own.
@@ -414,6 +450,8 @@ it('tells loom nothing of the mounts: not a path in a failed start\'s report, an
   const ran = house(), finished = { next: vi.fn(async () => job), started: vi.fn(async () => {}), heartbeat: vi.fn(async () => true), finish: vi.fn(async () => {}) };
   const run = workOnce({ box: 'box', control: finished, executor: ran.executor, signal: ran.abort.signal, schedule: { every: () => () => {} } });
   await flush(); ran.socket.push(frame('done')); ran.socket.push(null); ran.wait.resolve({ StatusCode: 0 });
+  // The log tail is the body's own output, passed on as it is: this body printed no path, and one that did
+  // would have it passed on (docs/runtime/worker.md, "Mounted directories").
   expect(await run).toBe('finished'); expect(finished.finish).toHaveBeenCalledExactlyOnceWith('job', 0, 'done', 'runner');
   for (const path of paths) { expect(said(finished)).not.toContain(path); expect(ran.writes.join('')).not.toContain(path); }
   // Nor do the labels or the environment the engine keeps.

@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, expect, it } from 'vitest';
+import { createServer, type Server } from 'node:net';
+import { afterAll, beforeAll, expect, it } from 'vitest';
 import { bodyMounts, NESTED_SOCKET_TARGET, type AccountLogins, type FixedMount } from './worker-mounts.js';
-import { NoRunnerError } from './worker.js';
+import { UnservedJobError } from './worker.js';
 import { WORKER_STOP, WorkerStop } from './worker-stop.js';
 
 // Real directories: the checks are about what is on the disk. The temporary directory is resolved first,
@@ -16,6 +17,15 @@ const stamps = directory('house/stamps'), mirror = directory('house/mirror');
 const file = join(root, 'plain-file'); writeFileSync(file, 'x');
 const link = join(root, 'link'); symlinkSync(stamps, link);
 const through = join(link, 'inner'); mkdirSync(join(stamps, 'inner'));
+// Real Unix sockets, as an engine's is: one beside everything else, one inside a sign-in directory, one
+// inside a fixed mount's source.
+const engineDirectory = directory('engine'), socket = join(engineDirectory, 'engine.sock');
+const socketInLogin = join(a, 'engine.sock'), socketInMount = join(mirror, 'engine.sock');
+const socketLink = join(root, 'socket-link'); symlinkSync(socket, socketLink);
+const engineLink = join(root, 'engine-link'); symlinkSync(engineDirectory, engineLink);
+const servers: Server[] = [];
+beforeAll(async () => { for (const path of [socket, socketInLogin, socketInMount]) await new Promise<void>(done => servers.push(createServer().listen(path, done))); });
+afterAll(() => { for (const server of servers) server.close(); });
 const home = '/home/agent/.claude';
 const logins: AccountLogins = { a: { claude: { source: a, target: home }, codex: { source: codex, target: '/home/agent/.codex' } }, b: { claude: { source: b, target: home } } };
 const fixed: FixedMount[] = [{ source: stamps, target: '/house/stamps', readOnly: false }, { source: mirror, target: '/house/mirror' }];
@@ -39,11 +49,11 @@ it('refuses a job with no exact sign-in entry once the map is present, the way a
   for (const [account, harness] of [['c', 'claude'], ['b', 'codex'], ['a', 'agy'], ['constructor', 'claude'], ['a', 'toString']]) {
     let thrown: unknown;
     try { mounts(job(account, harness)); } catch (error) { thrown = error; }
-    expect(thrown).toBeInstanceOf(NoRunnerError);
+    expect(thrown).toBeInstanceOf(UnservedJobError);
     expect((thrown as Error).message).not.toContain(root);
   }
   // An empty map is still a map: nothing runs.
-  expect(() => bodyMounts({ accountLogins: {} })(job('a', 'claude'))).toThrow(NoRunnerError);
+  expect(() => bodyMounts({ accountLogins: {} })(job('a', 'claude'))).toThrow(UnservedJobError);
 });
 it('mounts nothing when nothing is configured, and only the fixed mounts when no sign-in map is', () => {
   expect(bodyMounts({})(job('a', 'claude'))).toEqual([]);
@@ -93,6 +103,19 @@ it.each([
   ['a mount whose source is inside a sign-in directory', { ...login(stamps), mounts: [{ source: join(stamps, 'inner'), target: '/house/x' }] }],
   ['two accounts on one sign-in directory', { accountLogins: { a: { claude: { source: a, target: home } }, b: { claude: { source: a, target: home } } } }],
   ['one account\'s sign-in directory inside another\'s', { accountLogins: { a: { claude: { source: stamps, target: home } }, b: { claude: { source: join(stamps, 'inner'), target: home } } } }],
+  // The nested engine socket is a source like the others: a real socket, and apart from every directory.
+  ['a nested socket that is missing', { nestedSocket: join(root, 'no.sock') }],
+  ['a nested socket that is a directory', { nestedSocket: engineDirectory }],
+  ['a nested socket that is a plain file', { nestedSocket: file }],
+  ['a nested socket that is a symbolic link', { nestedSocket: socketLink }],
+  ['a nested socket reached through a symbolic link', { nestedSocket: join(engineLink, 'engine.sock') }],
+  ['a relative nested socket', { nestedSocket: 'engine/engine.sock' }],
+  ['a nested socket that is not written plainly', { nestedSocket: `${engineDirectory}/../engine/engine.sock` }],
+  ['a nested socket that is a directory holding the sign-in directories', { ...login(a), nestedSocket: join(root, 'logins') }],
+  ['a nested socket that is a sign-in directory', { ...login(a), nestedSocket: a }],
+  ['a nested socket inside a sign-in directory', { ...login(a), nestedSocket: socketInLogin }],
+  ['a nested socket inside a fixed mount\'s source', { ...mount(mirror), nestedSocket: socketInMount }],
+  ['a fixed mount of the directory that holds the nested socket', { ...mount(engineDirectory), nestedSocket: socket }],
 ])('stops the worker at start over %s', (_what, config) => {
   const error = stopped(config);
   expect(error).toEqual(new WorkerStop('mounts'));
@@ -106,6 +129,17 @@ it('stops the worker over a directory that belongs to another user, or where the
   expect(stopped(login(a), { uid: () => mine + 1 })).toEqual(new WorkerStop('mounts'));
   expect(stopped(mount(mirror), { uid: () => mine + 1 })).toEqual(new WorkerStop('mounts'));
   expect(stopped(mount(mirror), { uid: () => undefined })).toEqual(new WorkerStop('mounts'));
+});
+it('takes a nested socket that is a real socket apart from every mounted directory', () => {
+  expect(stopped({ accountLogins: logins, mounts: fixed, nestedSocket: socket })).toBeUndefined();
+  // A socket is the engine's, often root's: it need not belong to the worker's user.
+  expect(stopped({ nestedSocket: socket }, { uid: () => process.getuid!() + 1 })).toBeUndefined();
+  // The mounts a job gets from here do not include it: the worker adds it only for a job allowed nested containers.
+  expect(bodyMounts({ mounts: fixed, nestedSocket: socket })(job('a', 'claude')).map(found => found.source)).toEqual([stamps, mirror]);
+});
+it('reads anything but an exact false as read-only', () => {
+  const made = bodyMounts({ mounts: [{ source: stamps, target: '/a', readOnly: 'no' as unknown as boolean }, { source: mirror, target: '/b', readOnly: 0 as unknown as boolean }] })(job('a', 'claude'));
+  expect(made.map(found => found.readOnly)).toEqual([true, true]);
 });
 it('lets several accounts use one path inside their own containers', () => {
   // Only one sign-in directory is ever in a container, so the same target twice is not a collision.

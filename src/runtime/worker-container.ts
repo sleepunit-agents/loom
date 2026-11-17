@@ -37,10 +37,10 @@ function deadline(value: number | undefined, fallback: number) {
 }
 /** The mounts of one job's container, as the engine is asked for them and as it must report them. */
 function jobMounts(job: WorkerAssignment, config: ContainerConfig, body: readonly BodyMount[]) {
-  const asked: { Type: string; Source: string; Target: string; ReadOnly?: boolean }[] = [];
+  const asked: { Type: string; Source: string; Target: string; ReadOnly: boolean }[] = [];
   if (job.run?.nestedContainers) {
     if (!config.nestedSocket?.startsWith('/') || config.nestedSocket.includes('\0')) throw new Error('Nested containers unavailable');
-    asked.push({ Type: 'bind', Source: config.nestedSocket, Target: NESTED_SOCKET_TARGET });
+    asked.push({ Type: 'bind', Source: config.nestedSocket, Target: NESTED_SOCKET_TARGET, ReadOnly: false });
   }
   for (const mount of body) asked.push({ Type: 'bind', Source: mount.source, Target: mount.target, ReadOnly: mount.readOnly });
   return asked;
@@ -55,8 +55,7 @@ function ownMounts(inspect: unknown, asked: ReturnType<typeof jobMounts>): boole
     if (!found || typeof found !== 'object' || !('Destination' in found) || typeof found.Destination !== 'string') return false;
     const mount = left.get(found.Destination);
     if (!mount || !('Type' in found) || found.Type !== 'bind' || !('Source' in found) || found.Source !== mount.Source) return false;
-    // The nested socket is asked for without saying; a directory says whether it may be written to.
-    if (mount.ReadOnly !== undefined && (!('RW' in found) || found.RW !== !mount.ReadOnly)) return false;
+    if (!('RW' in found) || found.RW !== !mount.ReadOnly) return false;
     left.delete(found.Destination);
   }
   return left.size === 0;
@@ -143,7 +142,7 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
   if (fixed.container.runtime !== undefined && !CONTAINER_RUNTIMES.includes(fixed.container.runtime)) throw new Error('Invalid container runtime');
   // Checked and fixed here, before the builder takes the state directory or anything asks the engine: a
   // worker whose mounts cannot be used is not made (WorkerStop 'mounts').
-  const mountsFor = bodyMounts({ accountLogins: fixed.accountLogins, mounts: fixed.container.mounts });
+  const mountsFor = bodyMounts({ accountLogins: fixed.accountLogins, mounts: fixed.container.mounts, nestedSocket: fixed.container.nestedSocket });
   const engine = dependencies.engine ?? dockerEngine(fixed.container.socket);
   const builder = dependencies.builder ?? commandWorkerExecutor(fixed);
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
