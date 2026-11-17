@@ -28,13 +28,13 @@ import { Conversations } from './core/conversations/index.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { accountBoxes } from './runtime/account-boxes.js';
 import { signInReason } from './runtime/account-signin-reasons.js';
+import { SIGNIN_MS } from './runtime/account-signin-time.js';
+import { lineName as name } from './core/line-name.js';
 
-/** A request nobody finished is over after this long: the provider's own page and code have lapsed by then. */
-export const SIGNIN_MS = 20 * 60_000;
-const name = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\0\r\n]/.test(value));
 const id = z.object({ id: name }).strict();
 const saved = z.object({ saved: z.literal(true) }).strict();
-const open = ['asked', 'started', 'waiting'] as const;
+/** The states of a request that has not ended; the column's other two are how one ends. */
+const open = ['asked', 'started', 'waiting'] as const satisfies readonly (typeof accountSignins.$inferSelect.state)[];
 /** What a pasted sign-in code may look like; anything else is not handed to the worker. */
 export const signInCode = /^[A-Za-z0-9#_.\-/]{8,2048}$/;
 
@@ -101,7 +101,7 @@ export function registerSharedAccountSignIn(operations: Operations, db: DataData
       ctx.changed('accountSignin', key); return { id: key };
     } });
   operations.register({ doors: [...people.doors], name: 'runtime.accountSignInStatus', input: id,
-    output: z.object({ state: z.enum(['asked', 'started', 'waiting', 'done', 'failed']), why: z.string().nullable(), item: z.string().nullable() }).strict(),
+    output: z.object({ state: z.enum(accountSignins.state.enumValues), why: z.string().nullable(), item: z.string().nullable() }).strict(),
     may: (viewer, input) => { const row = request(input.id); return !!row && mayAsk(viewer, row); },
     run(_ctx, input) { const row = request(input.id)!, at = now(); return { state: open.includes(row.state as never) && lapsed(row, at) ? 'failed' as const : row.state, why: row.why, item: row.item }; } });
 

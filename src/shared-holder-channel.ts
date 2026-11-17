@@ -4,7 +4,7 @@ import {z} from 'zod';
 import type {Clock} from './core/clock.js';
 import type {HolderStore} from './pieces/secrets/holder-store.js';
 import type {RecoverableSecretMutations} from './pieces/secrets/shared-values.js';
-import {secretName} from './pieces/secrets/input.js';
+import {secretName,secretValueSize,secretWriteMode} from './pieces/secrets/input.js';
 export interface HolderChannel {
  readonly connected:boolean;
  /** Node advanced IPC snapshots synchronously; callback reports later IO. */
@@ -14,14 +14,14 @@ export interface HolderChannel {
  disconnect():void;
 }
 const failed=()=>new Error('Shared secret holder unavailable');
-const bytes=z.instanceof(Uint8Array).refine(value=>value.byteLength>0&&value.byteLength<=65536);
+const bytes=z.instanceof(Uint8Array).refine(value=>secretValueSize(value.byteLength));
 const who=z.object({member:z.string().min(1).max(256),writeId:z.uuid()}).strict();
 const generation=z.string().refine(isHolderGeneration,'Invalid holder generation');
 const base={seq:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)};
 const request=z.discriminatedUnion('op',[
  z.object({...base,op:z.literal('read'),name:secretName}).strict(),
  z.object({...base,op:z.literal('generation')}).strict(),
- z.object({...base,op:z.literal('set'),who,name:secretName,value:bytes,mode:z.enum(['add','replace'])}).strict(),
+ z.object({...base,op:z.literal('set'),who,name:secretName,value:bytes,mode:secretWriteMode}).strict(),
  z.object({...base,op:z.literal('remove'),who,name:secretName}).strict(),
  z.object({...base,op:z.literal('receipt'),who}).strict(),
  z.object({...base,op:z.literal('recover'),who}).strict(),

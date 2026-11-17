@@ -101,3 +101,17 @@ it('requires an explicit lending grant for a foreign agent even when an old non-
  expect((await f.settings({agents:[{agent:'art',lent:false}]})).status).toBe(400);
  expect((await f.settings({agents:[{agent:'art',lent:true}]})).status).toBe(200);expect(await f.control.next()).toMatchObject({id:queued.id,box:'worker'});
 });
+
+it('holds a renamed machine to the name rule enrolment has, and lets a name stored before the rule be replaced',async()=>{
+ const f=fixture(),stored=()=>f.db.select({name:boxes.name}).from(boxes).where(eq(boxes.id,'worker')).get()!.name;
+ // What runtime.boxCreate refuses (shared-machine-registry.test.ts), a rename refuses too: nothing is trimmed for the caller.
+ for(const name of['',' padded','padded ','bad\nname','bad\tname','bad'+String.fromCharCode(0x1b)+'name','bad'+String.fromCharCode(0x2028)+'name','x'.repeat(201)])
+  expect((await f.settings({name})).status,JSON.stringify(name)).toBe(400);
+ expect(stored()).toBe('worker');
+ // A name an earlier build stored is still there to read; saving it again is refused, and a good name replaces it.
+ f.root.writes.run(()=>f.db.update(boxes).set({name:'old\tname'}).where(eq(boxes.id,'worker')).run());
+ expect((await f.settings({name:'old\tname'})).status).toBe(400);
+ expect(stored()).toBe('old\tname');
+ expect((await f.settings({name:'Renamed'})).status).toBe(200);
+ expect(stored()).toBe('Renamed');
+});

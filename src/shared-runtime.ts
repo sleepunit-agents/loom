@@ -14,6 +14,7 @@ import { liveWorker } from './shared-worker.js';
 import { machineFacts } from './runtime/machine-facts.js';
 import { workerAssignment } from './runtime/worker-http.js';
 import { claimedJobStates } from './core/data/job-states.js';
+import { LOG_TAIL_MAX } from './runtime/log-tail.js';
 
 const jobInput = z.object({ job: z.string().min(1) });
 const ack = z.object({ ok: z.literal(true) }).strict();
@@ -76,7 +77,7 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     after(input){if(stopped.delete(input))options.jobEnded(input.job);},
   });
   operations.register({ name: 'runtime.finish', write: true, recheckPolicy: true, doors: ['http'],
-    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(16_384) }).strict(), output: ack,
+    input: jobInput.extend({ exitCode: z.number().int(), logTail: z.string().max(LOG_TAIL_MAX) }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();

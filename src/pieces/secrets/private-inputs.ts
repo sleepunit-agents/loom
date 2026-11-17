@@ -8,7 +8,7 @@ import type {DataDatabase} from '../../core/data/database.js';
 import {jobs,secretUses,secretWriteJournal,agentHouseSecrets,secretRequests} from '../../core/data/schema.js';
 import type {SecretValueSource} from './role.js';
 import {SecretRequests,startupRequestId} from './requests.js';
-import {secretName,isHouseSecretAlias} from './input.js';
+import {secretName,isHouseSecretAlias,secretValueSize} from './input.js';
 export class PrivateInputError extends Error {
  constructor(readonly code:'denied'|'conflict'|'unavailable'){super('Private secret input unavailable');}
 }
@@ -73,7 +73,7 @@ export class SecretPrivateInputs {
   });
   try{
    const value=await Promise.race([read,deadline]);
-   if(this.clock.now()>=deadlineAt||!permitted()||value.byteLength<1||value.byteLength>65536)throw failed('denied');
+   if(this.clock.now()>=deadlineAt||!permitted()||!secretValueSize(value.byteLength))throw failed('denied');
    // capture is synchronous and private: Response copies bytes before this
    // borrowed buffer is erased. No common operation result carries a value.
    const result=capture(id,value);if(result&&typeof (result as {then?:unknown}).then==='function')throw failed();

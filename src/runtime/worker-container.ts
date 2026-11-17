@@ -1,4 +1,5 @@
 import { ENV_NAME, STEP_DEADLINE_MAX_MS, validDeadline } from './worker-limits.js';
+import { logTail } from './log-tail.js';
 import { bodyInput } from './body-bootstrap.js';
 /** Docker bodies run only in the separate worker. Builds retain their bounded
  * configured worker command; its artifact must be an already-built image. */
@@ -61,7 +62,7 @@ function output(socket: Duplex, signal: AbortSignal) {
   let privateOutput = false;
   let tail = '', header = Buffer.alloc(0), remaining = 0, stream = 0;
   const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8'), new StringDecoder('utf8')];
-  const append = (text: string) => { if (!privateOutput) tail = (tail + text).slice(-16_384); };
+  const append = (text: string) => { if (!privateOutput) tail = logTail(tail + text); };
   const done = new Promise<void>((resolve, reject) => {
     const fail = () => { socket.destroy(); reject(new Error('Container output unavailable')); };
     const data = (chunk: Buffer) => {

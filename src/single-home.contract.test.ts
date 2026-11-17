@@ -42,12 +42,33 @@ import { dangerousHouseholdChanges, householdChanges } from './shared-household-
 import { householdMemorySources } from './shared-memory.js';
 import { householdSettings } from './core/data/household-settings.js';
 import { secretRules } from './core/data/schema.js';
+import * as householdSchema from './core/data/schema.js';
+import { getTableColumns, is } from 'drizzle-orm';
+import { SQLiteTable } from 'drizzle-orm/sqlite-core';
+import { accountSignins, bridgeConnections, inbox, messages as messageRows, secretChanges } from './core/data/schema.js';
+import { SECRET_VALUE_BYTES, SECRET_WRITE_MODES, secretValueSize, secretWriteMode } from './pieces/secrets/input.js';
+import { secretSetInput } from './pieces/secrets/shared-values.js';
+import { MEMORY_CONTENT_MAX } from './backends/types.js';
+import { MAX_PAGE_BODY_LENGTH } from './backends/knowledge-verification.js';
+import { LOG_TAIL_MAX, logTail } from './runtime/log-tail.js';
+import { MESSAGE_WORDS_MAX } from './core/conversations/words.js';
+import { LINE_NAME_MAX, hasControlCharacter, lineName, machineName } from './core/line-name.js';
+import { boxSettingsInput } from './shared-box-settings.js';
+import { AGING_DAYS, CHECK_DAYS, RECENT_DAYS } from './pieces/mind/knowledge.js';
+import { RAW_EVENT_LIFETIME, UNREAD_EVENT_LIFETIME } from './pieces/bridges/events.js';
+import { HELD_LIFETIME } from './pieces/bridges/receiver.js';
+import { RELAY_MS, SIGNIN_MS } from './runtime/account-signin-time.js';
+import { bridgeReview, bridgeSetting } from './pieces/bridges/settings.js';
 
 const root = new URL('../', import.meta.url).pathname;
 const sources = (directory: string): string[] => readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry =>
   entry.isDirectory() ? sources(join(directory, entry.name))
     : /\.ts$/.test(entry.name) && !/\.(test|fixture)\.ts$/.test(entry.name) ? [join(directory, entry.name)] : []);
 const text = (file: string) => readFileSync(join(root, file), 'utf8');
+/** Every file under a directory whose name matches, tests and fixtures left out: for the app, which has .tsx too. */
+const sourcesOf = (directory: string, name: RegExp): string[] => readdirSync(join(root, directory), { withFileTypes: true }).flatMap(entry =>
+  entry.isDirectory() ? sourcesOf(join(directory, entry.name), name)
+    : name.test(entry.name) && !/\.(test|fixture)\.tsx?$/.test(entry.name) ? [join(directory, entry.name)] : []);
 
 it('writes the slug pattern once, and keeps each length with its name', () => {
   // Either spelling of the group; the program's own sources only (the app's forms are checked below).
@@ -436,4 +457,199 @@ it('holds a house secret\'s alias to one rule at the door that stores it and in 
   // No other file spells the shape of an alias.
   const copies = sources('src').filter(file => file !== 'src/pieces/secrets/input.ts' && /\[A-Za-z_\]\[A-Za-z0-9_[^\]]*\]\{0,199\}|alias:\s*z\.string\(\)/.test(text(file)));
   expect(copies).toEqual([]);
+});
+
+/** Every numeric literal in a file, as a number: `65_536` and `65536` are the same one. */
+const numbersIn = (file: string) => new Set([...text(file).matchAll(/(?<![\w.])\d[\d_]*(?![\w.])/g)].map(found => Number(found[0].replaceAll('_', ''))));
+
+it('writes the number of a named limit in that limit\'s home and nowhere else', () => {
+  // The general guard. A limit that has a name is a number written once; a second file that writes the
+  // same number is either a copy of the limit (import the name instead) or a different thing that happens
+  // to be as large, and then it is listed here with what it is. Either way a new one fails this test and
+  // somebody decides. It reads every literal, in a schema or not, in the program and in the app.
+  // What it cannot see: a copy written as a sum (`64 * 1024`, checked for the two sizes below), and a
+  // limit whose number is too ordinary to scan for (200, 30, 7); those have their own tests in this file.
+  const limits: { value: number; homes: Record<string, string>; others: Record<string, string> }[] = [
+    { value: SECRET_VALUE_BYTES, homes: { 'src/pieces/secrets/input.ts': 'SECRET_VALUE_BYTES', 'src/backends/types.ts': 'MEMORY_CONTENT_MAX' }, others: {
+      'src/runtime/agy-body.ts': 'how much of a harness\'s first output is searched for its session id',
+      'src/runtime/claude-body.ts': 'the size of the tools configuration handed to the harness',
+      'src/runtime/docker-engine.ts': 'the size of one answer from the container engine',
+      'src/runtime/worker-process.ts': 'how much a usage reader may print' } },
+    { value: LOG_TAIL_MAX, homes: { 'src/runtime/log-tail.ts': 'LOG_TAIL_MAX' }, others: {
+      'src/pieces/secrets/holder-store.ts': 'the longest header of a stored, encrypted value',
+      'src/pieces/bridges/slack-socket.ts': 'the size of one answer from Slack when a socket is opened' } },
+    { value: MESSAGE_WORDS_MAX, homes: { 'src/core/conversations/words.ts': 'MESSAGE_WORDS_MAX' }, others: {
+      // A copy still: the file was being changed elsewhere when the others were rolled up. It is to import the name.
+      'src/core/conversations/handoff.ts': 'a copy of MESSAGE_WORDS_MAX, to be replaced by the name',
+      'src/runtime/claude-body.ts': 'how many tokens one tool answer may have, a setting of the harness',
+      'web/src/pieces/comms-view/index.tsx': 'the message box\'s hint, held to MESSAGE_WORDS_MAX below',
+      'web/src/pieces/attention/home-composer.tsx': 'the message box\'s hint, held to MESSAGE_WORDS_MAX below',
+      'web/src/components/ui/code-block.tsx': 'the longest code the app colours',
+      'web/src/lib/cojeev-motion/use-morph.ts': 'arithmetic in a hash' } },
+    { value: GRANT_MINUTES_MAX, homes: { 'src/pieces/secrets/input.ts': 'GRANT_MINUTES_MAX' }, others: {
+      'web/src/pieces/settings/controls.tsx': 'the form\'s hint, held to GRANT_MINUTES_MAX above' } },
+  ];
+  expect([SECRET_VALUE_BYTES, MEMORY_CONTENT_MAX, LOG_TAIL_MAX, MESSAGE_WORDS_MAX, GRANT_MINUTES_MAX]).toEqual([65536, 65536, 16384, 100000, 525600]);
+  const files = [...sources('src'), ...sourcesOf('web/src', /\.tsx?$/)].map(file => [file, numbersIn(file)] as const);
+  for (const { value, homes, others } of limits) {
+    const holders = files.filter(([, numbers]) => numbers.has(value)).map(([file]) => file).sort();
+    expect(holders, `files that write ${value}`).toEqual([...Object.keys(homes), ...Object.keys(others)].sort());
+    for (const [home, name] of Object.entries(homes)) expect(text(home), home).toMatch(new RegExp(`export const ${name} = [\\d_]+;`));
+  }
+  // The same two sizes written as a sum: a Knowledge page's body, and a private key file read whole.
+  expect(sources('src').filter(file => /\b(64|16) \* 1024\b/.test(text(file)))).toEqual(['src/backends/knowledge-verification.ts', 'src/pieces/secrets/local-holder.ts']);
+  expect(MAX_PAGE_BODY_LENGTH).toBe(65536);
+  // The app's two message boxes show the program's number.
+  for (const file of ['web/src/pieces/comms-view/index.tsx', 'web/src/pieces/attention/home-composer.tsx'])
+    expect([...text(file).matchAll(/<Textarea[^>]*? maxLength=\{(\d+)\}/g)].map(found => Number(found[1])), file).toEqual([MESSAGE_WORDS_MAX]);
+});
+
+it('holds a secret\'s value to one size and one shape of write, from the door to the key holder', () => {
+  expect([secretValueSize(1), secretValueSize(SECRET_VALUE_BYTES), secretValueSize(0), secretValueSize(SECRET_VALUE_BYTES + 1)]).toEqual([true, true, false, false]);
+  const write = { id: '3f2b8c1e-9d4a-4b6f-8a1c-0e5d7f9b2a34', member: 'owner', name: 'TOKEN', mode: 'add' };
+  // Bytes, not characters: a two-byte letter counts twice.
+  expect(secretSetInput.safeParse({ ...write, value: 'x'.repeat(SECRET_VALUE_BYTES) }).success).toBe(true);
+  expect(secretSetInput.safeParse({ ...write, value: 'x'.repeat(SECRET_VALUE_BYTES + 1) }).success).toBe(false);
+  expect(secretSetInput.safeParse({ ...write, value: 'é'.repeat(SECRET_VALUE_BYTES / 2 + 1) }).success).toBe(false);
+  expect(secretSetInput.safeParse({ ...write, value: '' }).success).toBe(false);
+  // `secrets.set` is that shape without the member, and nothing else measures a value in text.
+  expect(text('src/shared-secret-commands.ts')).toContain('secretSetInput.omit({member:true}).strict()');
+  expect(sources('src').filter(file => /Buffer\.byteLength\(value\)\s*(<=?|>)\s*\d/.test(text(file)))).toEqual([]);
+  // Each hop asks the one check; none compares a length with a number of its own.
+  for (const file of ['src/shared-holder-channel.ts', 'src/pieces/secrets/holder-store.ts', 'src/pieces/secrets/private-inputs.ts', 'src/pieces/bridges/shared-secret-use.ts', 'src/shared-changes-reader.ts'])
+    expect(text(file), file).toContain('secretValueSize(');
+  expect(text('src/pieces/secrets/private-client.ts')).toContain('SECRET_VALUE_BYTES');
+  // How a value is written is one list, and each way is an action the column records.
+  expect(secretWriteMode.options).toEqual([...SECRET_WRITE_MODES]);
+  for (const mode of SECRET_WRITE_MODES) expect(secretChanges.action.enumValues, mode).toContain(mode);
+  expect(sources('src').filter(file => /'add',\s*'replace'/.test(text(file)) && file !== 'src/core/data/schema.ts')).toEqual(['src/pieces/secrets/input.ts']);
+});
+
+it('cuts a job\'s log to one length at the worker, the door and the store', () => {
+  expect(logTail('x'.repeat(LOG_TAIL_MAX + 5)).length).toBe(LOG_TAIL_MAX);
+  expect(logTail('abc')).toBe('abc');
+  // The worker's three cuts call the one function; the door and the store take the number by name.
+  for (const file of ['src/runtime/worker.ts', 'src/runtime/worker-process.ts', 'src/runtime/worker-container.ts']) expect(text(file), file).toContain('logTail(');
+  expect(text('src/shared-runtime.ts')).toContain('logTail: z.string().max(LOG_TAIL_MAX)');
+  expect(text('src/runtime/jobs.ts')).toContain('logTail.slice(-LOG_TAIL_MAX)');
+  // No other cut of a tail or of a log by a number.
+  expect(sources('src').filter(file => /([tT]ail|\blog)[^\n]{0,40}\.slice\(-\d|logTail:\s*z\.string\(\)\.max\(\d/.test(text(file)))).toEqual([]);
+});
+
+it('caps the words of a message once, for every door that takes them', () => {
+  // A field named for words, a message, text or instructions is capped by the name, never by a number.
+  const own = /\b(words|text|instructions|why|ifYes|ifNo|details):\s*z\.string\(\)(\.trim\(\))?(\.min\(1\))?\.max\(1[\d_]{5,6}\)/;
+  expect(sources('src').filter(file => own.test(text(file)))).toEqual(['src/core/conversations/handoff.ts']);
+  for (const file of ['src/core/conversations/body-output.ts', 'src/core/conversations/operations.ts', 'src/core/conversations/body-operations.ts', 'src/shared-bridge-reply.ts', 'src/core/tempo/triggers.ts', 'src/shared-work-body.ts'])
+    expect(text(file), file).toContain('.max(MESSAGE_WORDS_MAX)');
+});
+
+it('states the rule for a one-line name, and for a machine\'s name, once', () => {
+  expect(['Workshop', 'a b', 'x'.repeat(LINE_NAME_MAX)].every(name => lineName.safeParse(name).success)).toBe(true);
+  for (const bad of ['', ' a', 'a ', 'a\nb', 'a\rb', 'a\0b', 'x'.repeat(LINE_NAME_MAX + 1)]) expect(lineName.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+  // A machine's name is that, and has no control character of any kind. Enrolment and a rename take the same rule.
+  const controls = ['\t', String.fromCharCode(0x1b), String.fromCharCode(0x7f), String.fromCharCode(0x85), String.fromCharCode(0x2028), String.fromCharCode(0x2029)];
+  for (const control of controls) {
+    expect(hasControlCharacter('a' + control + 'b'), JSON.stringify(control)).toBe(true);
+    expect(machineName.safeParse('a' + control + 'b').success, JSON.stringify(control)).toBe(false);
+  }
+  expect([machineName.safeParse('Workshop 2').success, machineName.safeParse(' Workshop').success, hasControlCharacter('Workshop 2')]).toEqual([true, false, false]);
+  expect(boxSettingsInput.shape.name).toBe(machineName);
+  expect(text('src/shared-machine-registry.ts')).toContain('input:z.object({name:machineName,');
+  // Nobody else spells either rule: the trimmed-and-one-line test, or the list of control characters.
+  expect(sources('src').filter(file => /value\s*===\s*value\.trim\(\)\s*&&\s*!\/\[\\0\\r\\n\]/.test(text(file)))).toEqual(['src/core/line-name.ts']);
+  expect(sources('src').filter(file => /\\u007f-\\u009f/.test(text(file)))).toEqual(['src/core/line-name.ts']);
+  for (const file of ['src/runtime/model-catalog.ts', 'src/shared-account-signin.ts', 'src/shared-model-account-admin.ts']) expect(text(file), file).toContain("from './core/line-name.js'".replace('./core', file.startsWith('src/runtime/') ? '../core' : './core'));
+});
+
+it('works out when a Knowledge page changes state from the days that decide the state', () => {
+  expect([CHECK_DAYS, AGING_DAYS, RECENT_DAYS]).toEqual([30, 20, 7]);
+  expect(AGING_DAYS).toBeLessThan(CHECK_DAYS);
+  // The view decides fresh, aging and due; whatever times a refresh reads the same three names. No file
+  // of Memory's multiplies a number of days of its own for them.
+  expect(sources('src/pieces/mind').filter(file => /\b(20|30|7)\s*\*\s*86_?400_?000/.test(text(file)))).toEqual([]);
+  expect(text('src/pieces/mind/knowledge-query.ts')).toMatch(/anchor\+AGING_DAYS\*[^,]+,anchor\+CHECK_DAYS\*[^,]+,[^;]*RECENT_DAYS\*/);
+  expect(sources('src').filter(file => /\b(CHECK|AGING|RECENT)_DAYS\s*=\s*[\d(]/.test(text(file)))).toEqual(['src/pieces/mind/knowledge.ts']);
+});
+
+it('makes two times that must agree one time, or works one out from the other', () => {
+  // A held message is retried for exactly as long as an unread frame is kept: one number.
+  expect(HELD_LIFETIME).toBe(UNREAD_EVENT_LIFETIME);
+  expect(RAW_EVENT_LIFETIME).toBeLessThan(UNREAD_EVENT_LIFETIME);
+  expect(text('src/pieces/bridges/receiver.ts')).toContain('export const HELD_LIFETIME = UNREAD_EVENT_LIFETIME;');
+  expect(sources('src/pieces/bridges').filter(file => /_LIFETIME\s*=\s*\d/.test(text(file)))).toEqual(['src/pieces/bridges/events.ts']);
+  // The worker gives up on a sign-in before loom closes the request, and its configuration cannot ask for longer.
+  expect(RELAY_MS).toBeLessThan(SIGNIN_MS);
+  expect(RELAY_MS).toBeGreaterThan(0);
+  expect(text('src/runtime/account-signin-time.ts')).toMatch(/export const RELAY_MS = SIGNIN_MS - /);
+  expect(sources('src').filter(file => /\b(RELAY_MS|SIGNIN_MS)\s*=/.test(text(file)))).toEqual(['src/runtime/account-signin-time.ts']);
+  expect(text('src/runtime/worker-program.ts')).toMatch(/timeoutMs: z\.number\(\)\.int\(\)\.min\(10_000\)\.max\(RELAY_MS\)/);
+  expect(sources('src').filter(file => /\b(900_?000|1_?200_?000|(15|20) \* 60_?000)\b/.test(text(file)))).toEqual(['src/runtime/account-signin-time.ts']);
+});
+
+it('takes these choices from the columns that check them too', () => {
+  const holders = (list: RegExp) => sources('src').filter(file => file !== 'src/core/data/schema.ts' && list.test(text(file)));
+  // How loudly an inbox item arrives; a bridge's platform; a card's state; a sign-in request's state.
+  expect(holders(/'full',\s*'dim',\s*'mute'/)).toEqual([]);
+  expect(holders(/\[\s*'discord',\s*'slack'\s*\]/)).toEqual([]);
+  expect(holders(/\[\s*'running',\s*'done',\s*'failed'\s*\]/)).toEqual([]);
+  expect(holders(/\[\s*'asked',\s*'started',\s*'waiting',\s*'done'/)).toEqual([]);
+  expect(text('src/core/tempo/operations.ts')).toContain('z.enum(inbox.volume.enumValues)');
+  expect(text('src/core/conversations/body-output.ts').split('z.enum(messages.cardState.enumValues)').length).toBe(3);
+  expect(text('src/shared-account-signin.ts')).toContain('z.enum(accountSignins.state.enumValues)');
+  for (const file of ['src/pieces/bridges/settings.ts', 'src/pieces/bridges/model.ts', 'src/pieces/bridges/channels.ts', 'src/shared-agent-body-policy.ts'])
+    expect(text(file), file).toContain('z.enum(bridgeConnections.platform.enumValues)');
+  expect([inbox.volume.enumValues, inbox.takenVolume.enumValues, bridgeConnections.platform.enumValues, messageRows.cardState.enumValues, accountSignins.state.enumValues])
+    .toEqual([['full', 'dim', 'mute'], ['full', 'dim', 'mute'], ['discord', 'slack'], ['running', 'done', 'failed'], ['asked', 'started', 'waiting', 'done', 'failed']]);
+  // When a secret is handed over is still written out beside its column: that file was being changed
+  // elsewhere when the others were rolled up. It is to read `secretRuleAgents.when.enumValues`.
+  expect(holders(/'on_request',\s*'at_start'/)).toEqual(['src/pieces/secrets/requests.ts']);
+  // The app does not import the program; its volume buttons are the column's choices, in the column's order.
+  expect(/\(\[([^\]]*)\] as const\)\.map\(value => <Button/.exec(text('web/src/pieces/inbox-view/index.tsx'))?.[1].replaceAll("'", '').split(', ')).toEqual([...inbox.volume.enumValues]);
+});
+
+it('reads a review of a held reply with one shape at the door and in the service', () => {
+  expect(sources('src').filter(file => /z\.literal\('review'\)/.test(text(file)))).toEqual(['src/pieces/bridges/settings.ts']);
+  expect(text('src/shared-bridge-commands.ts')).toContain("name:'bridges.command',input:bridgeReview,");
+  expect(bridgeSetting.options).toContain(bridgeReview);
+  // The id is the reply's own: taken as sent, so the reply the door asked about is the one the service changes.
+  expect(bridgeReview.parse({ action: 'review', id: ' held ', decision: 'release' }).id).toBe(' held ');
+});
+
+it('asks policy.ts which agents Home shows', () => {
+  const home = text('src/core/data/comms-home.ts');
+  expect(home).toContain("mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work')");
+  // It reads no list of who has an agent itself.
+  expect(home).not.toMatch(/memberAgents|member_agents/);
+});
+
+it('writes out no list of three or more choices that a column already has', () => {
+  // The general guard for choices. Every column of the household schema that lists its values is read
+  // here, and every list of quoted words written in the program is compared with each, in any order. A
+  // list that is a column's is taken from the column (`table.column.enumValues`); a file that writes one
+  // out fails this until it does, or is named below with why it must. Lists of two are left to the tests
+  // above: `yes, no` and `member, agent` are written for too many unrelated things to mean a copy.
+  const columns = new Map<string, string>();
+  for (const [name, table] of Object.entries(householdSchema)) if (is(table, SQLiteTable))
+    for (const [key, column] of Object.entries(getTableColumns(table))) {
+      const values = (column as { enumValues?: readonly string[] }).enumValues;
+      if (values && values.length >= 3) columns.set([...values].sort().join(','), `${name}.${key}`);
+    }
+  expect(columns.size).toBeGreaterThan(20);
+  const allowed: Record<string, string> = {
+    // Another program, which states the shape of the answer it expects and does not load the household
+    // schema (docs/accepted-tradeoffs.md, "A client states the shape of the answer it expects").
+    'src/cli/access-client.ts': 'the command line reading a token\'s kind',
+    'src/runtime/body-program-tools.ts': 'a body reading an agent\'s status',
+    'src/runtime/conversation-client.ts': 'a body reading its mail and a secret request\'s state',
+    // Measuring is handed its store and reads no household table; these are the kinds of thing it times.
+    'src/core/measuring/index.ts': 'the kinds of timing Measuring accepts',
+    // A copy still: the file was being changed elsewhere when the others were rolled up.
+    'src/shared-secret-agent-commands.ts': 'a copy of secretUses.state, to be read from the column',
+  };
+  const list = /\[\s*((?:['"][\w-]+['"]\s*,\s*)+['"][\w-]+['"])\s*,?\s*\]/g;
+  const copies = sources('src').filter(file => file !== 'src/core/data/schema.ts').flatMap(file => [...text(file).matchAll(list)]
+    .map(found => columns.get([...found[1].matchAll(/['"]([\w-]+)['"]/g)].map(word => word[1]).sort().join(',')))
+    .filter(column => column !== undefined).map(column => `${file}: ${column}`));
+  expect([...new Set(copies.map(copy => copy.split(':')[0]))].sort()).toEqual(Object.keys(allowed).sort());
 });

@@ -1,6 +1,7 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT } from './job-exit.js';
 import { REPORT_MS, SILENCE_MS } from './silence.js';
+import { logTail } from './log-tail.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
 export interface WorkerRunPolicy {
@@ -207,7 +208,7 @@ export async function workOnce(input: {
     await heartbeat;
     if (abort.signal.aborted) return 'abandoned';
     // A private body's output is never reported; the worker's own words about a failure are not the body's.
-    return await report(result.exitCode, bootstrap && !failed ? '' : result.logTail.slice(-16_384));
+    return await report(result.exitCode, bootstrap && !failed ? '' : logTail(result.logTail));
   } finally {
     eraseBootstrap(bootstrap);
     dispose();

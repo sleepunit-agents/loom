@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { SIGNIN_PROGRAM_REASONS, type SignInReason } from './account-signin-reasons.js';
+import { RELAY_MS } from './account-signin-time.js';
 
 export interface SignInRequest { id: string; account: string; owner: string; provider: string }
 export interface SignInRemote {
@@ -33,8 +34,6 @@ export interface SignInRemote {
   done(input: { id: string; signedIn: boolean; why?: SignInReason }): Promise<void>;
 }
 export interface SignInProgram { command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>> }
-/** Longer than the provider's page and code last, shorter than loom keeps the request open. */
-export const RELAY_MS = 15 * 60_000;
 const first = (path: string, max: number) => { try { return readFileSync(path, 'utf8').split(/\r?\n/)[0].trim().slice(0, max); } catch { return ''; } };
 
 export async function relaySignIn(program: SignInProgram, request: SignInRequest, remote: SignInRemote, options: {

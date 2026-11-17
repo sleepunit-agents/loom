@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { logTail } from './log-tail.js';
 import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
@@ -81,7 +82,7 @@ export function workerRunner(config: WorkerRunnerConfig) {
 /** One retained-output boundary shared by command execution and private bodies. */
 export function commandOutput() {
   let tail = '', stdout = '', bytes = 0, overflow = false, discarded = false;
-  const append = (text: string) => { if (!discarded) tail = (tail + text).slice(-16_384); };
+  const append = (text: string) => { if (!discarded) tail = logTail(tail + text); };
   return {
     stdout(text: string, count: number) {
       if (discarded) return;

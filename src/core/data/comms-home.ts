@@ -1,20 +1,23 @@
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
-import { rules, type Viewer } from '../../policy.js';
-import { sqlHolds } from '../../policy-sql.js';
+import { holds, mayAct, rules, type Viewer } from '../../policy.js';
+import { sharedSharing } from '../../shared-sharing.js';
 import type { DataDatabase } from './database.js';
-import { conversations, messages, threads } from './schema.js';
+import { agents, conversations, messages, threads } from './schema.js';
 
-/** Home's small display projection. Generated table reads load the member,
- * owned agents and visible threads in three statements, independent of rows.
- * The caller supplies its existing conversation predicate; no new policy.
+/** Home's small display projection: the member's own threads with the agents they may give work to.
+ * Which agents those are is policy.ts's answer about the member's own thread with each (mayAct,
+ * 'give-work'), the one sending in Comms is held to, so Home never offers an agent the member cannot
+ * write to; nothing here reads who has an agent. The caller supplies its existing conversation
+ * predicate. The number of statements does not grow with the rows: the household's sharing, the
+ * agents, and the visible threads.
  */
 export function readCommsHome(db: DataDatabase, viewer: Viewer, allowed: SQL) {
-  if (viewer.kind !== 'member' || !sqlHolds(db, rules.currentMember, viewer)) return null;
-  const owned = db.query.memberAgents.findMany({
-    columns:{agent:true},where:(f,{eq})=>eq(f.member,viewer.id),
-    with:{agentRow:{columns:{id:true}}},orderBy:(f,{asc})=>asc(f.agent),
-  }).sync().filter(row=>row.agentRow!==null).map(row=>row.agent);
-  // Keep the three statements even for an empty list; the constant-false
+  if (viewer.kind !== 'member') return null;
+  const sharing = sharedSharing(db);
+  if ( !holds(rules.currentMember, viewer, {}, sharing)) return null;
+  const owned = db.select({ id: agents.id }).from(agents).orderBy(asc(agents.id)).all()
+    .map(row => row.id).filter(agent => mayAct(viewer, { type: 'conversation', agent, member: viewer.id }, sharing, 'give-work'));
+  // Read the threads even for an empty list; the constant-false
   // predicate produces no rows without generating an invalid IN ().
   const rows = db.query.threads.findMany({
     columns:{id:true,title:true,lastAt:true},

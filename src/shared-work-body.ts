@@ -12,6 +12,7 @@ import type {approvalService} from './apps/approvals.js';
 import {approvalRuleKind,approvalTier,type approvalRulesService} from './apps/approval-rules.js';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import type {Viewer} from './policy.js';
+import {MESSAGE_WORDS_MAX} from './core/conversations/words.js';
 
 export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string){
  const requireCurrent=requireBodyScope(current),common={...bodyOperationDefaults(current,hash,'body-work'),inputHash:(input:string,identity:Readonly<{actor:Viewer}>)=>{const bound=current(identity.actor);return hash(JSON.stringify(['body-work',bound?.job.id,bound?.cv.id,bound?.cv.agent,bound?.cv.project,bound?.cv.member,input]));}};
@@ -31,7 +32,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  };
  const belongs=(viewer:Viewer,id:string,checkHead=false)=>{try{if(!current(viewer))return false;const row=card(viewer,id);if(checkHead)merge(viewer,row.kind,row.target);return true;}catch{return false;}};
  operations.register(operation({...common,name:'approvals.request',
-  input:target.extend({kind:z.enum(['merge','command']),what:boundedText,why:boundedText,ask:boundedText,ifYes:boundedText,ifNo:boundedText,minutes:z.number().int().min(1).max(1440).optional(),details:z.string().max(100000).optional()}).strict(),
+  input:target.extend({kind:z.enum(['merge','command']),what:boundedText,why:boundedText,ask:boundedText,ifYes:boundedText,ifNo:boundedText,minutes:z.number().int().min(1).max(1440).optional(),details:z.string().max(MESSAGE_WORDS_MAX).optional()}).strict(),
   output:z.object({id:z.string(),state:z.string()}).strict(),
   may(viewer,input){try{if(!current(viewer))return false;merge(viewer,input.kind,input.target,true);return true;}catch{return false;}},
   run(ctx,input){

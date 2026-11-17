@@ -7,6 +7,7 @@ import { operation, OperationError, type Operations } from '../operations/index.
 import { agentStatus, messages,threads,turns } from '../data/schema.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
+import { MESSAGE_WORDS_MAX } from './words.js';
 import { ConversationMail } from './mail.js';
 const privateWork={working:'Working privately',waiting:'Waiting privately',idle:'',offline:''}as const;
 export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean):void {
@@ -21,8 +22,8 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
  const details={model:z.string().min(1).max(200).optional(),outcome:z.enum(turns.outcome.enumValues).optional(),latencyMs:z.number().int().nonnegative().optional()};
  operations.register(operation({...common,name:'conversation.message',
   input:z.discriminatedUnion('kind',[
-   z.object({kind:z.literal('reply'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(100_000),...details}).strict(),
-   z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(100_000),tool:z.string().min(1).max(200),cardState:z.enum(['running','done','failed']),...details}).strict(),
+   z.object({kind:z.literal('reply'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),...details}).strict(),
+   z.object({kind:z.literal('card'),clientId:z.string().min(1).max(200),words:z.string().min(1).max(MESSAGE_WORDS_MAX),tool:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues),...details}).strict(),
   ]),
   output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   async prepare(input,ctx){
@@ -46,7 +47,7 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
   run(ctx,input){const found=threadFor(ctx.viewer),updated=service.threads.rename(found.thread.id,input.title,'agent');ctx.changed('threads',found.thread.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,renamed:updated.title!==found.thread.title};},
  }));
  operations.register(operation({...common,name:'conversation.cardState',
-  input:z.object({clientId:z.string().min(1).max(200),cardState:z.enum(['running','done','failed'])}).strict(),output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
+  input:z.object({clientId:z.string().min(1).max(200),cardState:z.enum(messages.cardState.enumValues)}).strict(),output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
   run(ctx,input){
    const found=threadFor(ctx.viewer),card=db.select({seq:messages.seq}).from(messages).where(and(eq(messages.thread,found.thread.id),eq(messages.sender,found.cv.agent),eq(messages.run,found.job.id),eq(messages.clientId,found.job.id+':'+input.clientId),eq(messages.kind,'card'))).get();
    if(!card)throw new OperationError('not-found','Current run card not found');

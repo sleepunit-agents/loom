@@ -4,6 +4,7 @@
  * No network, credentials, database writes or household admission live here.
  */
 import { z } from 'zod';
+import { bridgeConnections } from '../../core/data/schema.js';
 import type { BridgeChannelCache } from './receiver.js';
 import type { DiscordChannel, SlackChannel } from './normalize.js';
 
@@ -23,7 +24,7 @@ export class BridgeChannels implements BridgeChannelCache {
    */
   bind(connection: string, binding: Binding) {
     id.parse(connection);
-    const source = z.object({ platform: z.enum(['discord', 'slack']), workspace: id }).parse(binding);
+    const source = z.object({ platform: z.enum(bridgeConnections.platform.enumValues), workspace: id }).parse(binding);
     const life: Lifetime = { ...source, channels: new Map() };
     this.connections.set(connection, life);
     const current = () => this.connections.get(connection) === life;

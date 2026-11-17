@@ -5,10 +5,10 @@ import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
 import { secrets, agents, agentRunSettings, agentHouseSecrets } from './core/data/schema.js';
 import { OperationError, type Operations } from './core/operations/index.js';
-import { secretName, secretAgent, secretDescription, houseSecretAlias } from './pieces/secrets/input.js';
+import { secretName, secretAgent, houseSecretAlias } from './pieces/secrets/input.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { householdOwner } from './shared-sharing.js';
-import type { SecretValues } from './pieces/secrets/shared-values.js';
+import { secretSetInput, type SecretValues } from './pieces/secrets/shared-values.js';
 const id = z.string().min(1).max(200);
 export const houseSecretsInput=z.object({agent:secretAgent,repository:secretName.nullable(),
   secrets:z.array(z.object({alias:houseSecretAlias,secret:secretName}).strict()).max(128)
@@ -18,7 +18,7 @@ const command = z.discriminatedUnion('action', [
   z.object({action:z.literal('cancel'),id}).strict(),
   z.object({action:z.literal('revoke'),id}).strict(),
 ]);
-const setInput=z.object({id:z.uuid(),name:secretName,mode:z.enum(['add','replace']),description:secretDescription.optional(),value:z.string().refine(value=>Buffer.byteLength(value)>0&&Buffer.byteLength(value)<=65536)}).strict();
+const setInput=secretSetInput.omit({member:true}).strict();
 const removeInput=z.object({id:z.uuid(),name:secretName}).strict();
 const acknowledgement=z.object({saved:z.literal(true)}).strict();
 /** A service's own refusal, in its own words. Storage faults and anything unexpected stay behind one fixed line. */

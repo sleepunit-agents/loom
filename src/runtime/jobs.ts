@@ -14,6 +14,7 @@ import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT, LOOM_EXIT } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
 import { SILENCE_MS } from './silence.js';
+import { LOG_TAIL_MAX } from './log-tail.js';
 
 export type Job = typeof jobs.$inferSelect;
 /** Join condition: this job is the one working in the conversation row, that is, its one job that has not ended. */
@@ -249,7 +250,7 @@ export class Jobs {
       // Work someone asked to stop is not run again because its body died before noticing.
       if (failed || unsettled) { const asked = this.endIfStopAsked(before, { exitCode }); if (asked) return { job: asked }; }
       const job = this.end(before, failed ? 'failed' : 'done',
-        { exitCode, logTail: this.keepText(before) ? logTail.slice(-16_384) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
+        { exitCode, logTail: this.keepText(before) ? logTail.slice(-LOG_TAIL_MAX) : null, endedAt: at, ...(unsettled ? { endedNote: UNSETTLED_NOTE } : {}) });
       if (progressed) { this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run(); return { job }; }
       const retry = this.retry(before, at);
       // Out of attempts: what this body left was not delivered, and says so like a failure's.

@@ -68,7 +68,7 @@ export function registerTempoOperations(operations: Operations, db: DataDatabase
     },
   }));
   operations.register(operation({ ...mailbox, name: 'inbox.volume',
-    input: z.object({ item: z.string().min(1), volume: z.enum(['full', 'dim', 'mute']), until: z.string().optional() }).strict(), output: saved,
+    input: z.object({ item: z.string().min(1), volume: z.enum(inbox.volume.enumValues), until: z.string().optional() }).strict(), output: saved,
     may(viewer, input) {
       const item = db.select().from(inbox).where(eq(inbox.id, input.item)).get();
       return !!item && options.authorize(viewer, { action: 'volume', item });

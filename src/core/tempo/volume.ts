@@ -40,7 +40,7 @@ export class InboxVolume {
   }
 
   set(who: Recipient, item: string, volume: Volume, until?: string): void {
-    if (!['full', 'dim', 'mute'].includes(volume)) throw new Error('Invalid volume');
+    if (!inbox.volume.enumValues.includes(volume)) throw new Error('Invalid volume');
     const now = this.clock.now();
     const settings = this.timings(who);
     const end = volume === 'full' ? null : new Date(until === undefined ? now + (volume === 'dim' ? settings.dimDays : settings.muteDays) * day : until);

@@ -11,8 +11,9 @@ import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
-import { turns } from '../data/schema.js';
+import { digestItems, turns } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
+import { MESSAGE_WORDS_MAX } from './words.js';
 export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent:string;member:string|null;project:string|null}>,question:Readonly<{to:string;waitsOnKind?:'task'|'approval';waitsOnId?:string}>)=>boolean;
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
@@ -48,9 +49,9 @@ export function registerConversationBodyOperations(operations:Operations, servic
  operations.register(operation({...common,...mailReport,name:'conversation.confirm',
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items){mail.confirm(cv.id,job.id,id);ctx.changed('inbox',id);}ctx.changed('messages',cv.id);return {saved:true as const};},
  }));
- const question=z.object({to:z.string().min(1),answers:z.enum(['yes-no','words']),words:z.string().min(1).max(100_000),why:z.string().max(100_000).optional(),ifYes:z.string().max(100_000).optional(),ifNo:z.string().max(100_000).optional(),link:z.string().max(2000).optional(),waitsOnKind:z.enum(['approval','task']).optional(),waitsOnId:z.string().min(1).optional(),refs:z.array(z.string().min(1)).max(100).optional()}).strict().refine(q=>!!q.waitsOnKind===!!q.waitsOnId,'Use both wait-on kind and id');
+ const question=z.object({to:z.string().min(1),answers:z.enum(['yes-no','words']),words:z.string().min(1).max(MESSAGE_WORDS_MAX),why:z.string().max(MESSAGE_WORDS_MAX).optional(),ifYes:z.string().max(MESSAGE_WORDS_MAX).optional(),ifNo:z.string().max(MESSAGE_WORDS_MAX).optional(),link:z.string().max(2000).optional(),waitsOnKind:z.enum(['approval','task']).optional(),waitsOnId:z.string().min(1).optional(),refs:z.array(z.string().min(1)).max(100).optional()}).strict().refine(q=>!!q.waitsOnKind===!!q.waitsOnId,'Use both wait-on kind and id');
  operations.register(operation({...common,name:'conversation.digest',
-  input:z.object({summary:z.string().max(600),ifAbsent:z.boolean().optional(),items:z.array(z.object({kind:z.enum(['decision','ask','task','project']),text:z.string().min(1).max(2000)}).strict()).max(100).optional(),question:question.optional()}).strict(),
+  input:z.object({summary:z.string().max(600),ifAbsent:z.boolean().optional(),items:z.array(z.object({kind:z.enum(digestItems.kind.enumValues),text:z.string().min(1).max(2000)}).strict()).max(100).optional(),question:question.optional()}).strict(),
   output:z.object({saved:z.literal(true),digest:z.string(),revision:z.number().int(),item:z.string().nullable()}).strict(),
   may(viewer,input){const found=current(viewer);return !!found&&(!input.question||(!found.cv.member||input.question.to===found.cv.member)&&questionAllowed?.(viewer,found.cv,input.question)===true);},
   async prepare(input,ctx){const {job,cv}=requireCurrent(ctx.viewer);return service.prepareDigest({conversation:cv.id,run:job.id,...input});},

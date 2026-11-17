@@ -7,7 +7,8 @@ import { membersWithAgent } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { OperationError, type Operations } from './core/operations/index.js';
 import { machineFacts } from './runtime/machine-facts.js';
-export const boxSettingsInput=z.object({box:z.string().min(1).max(200),name:z.string().trim().min(1).max(200).refine(value=>!/[\0\r\n]/.test(value)),hostsAny:z.boolean(),reportOnly:z.boolean(),alwaysOn:z.boolean(),
+import { machineName } from './core/line-name.js';
+export const boxSettingsInput=z.object({box:z.string().min(1).max(200),name:machineName,hostsAny:z.boolean(),reportOnly:z.boolean(),alwaysOn:z.boolean(),
    agents:z.array(z.object({agent:z.string().min(1).max(200),lent:z.boolean()}).strict()).max(128).refine(values=>new Set(values.map(value=>value.agent)).size===values.length),facts:machineFacts}).strict();
 
 /** Trusted setting application; callers authorize against the current machine. */

@@ -7,11 +7,12 @@ import {sharedSharing} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
 import {boxes} from './core/data/schema.js';
 import {OperationError,type Operations} from './core/operations/index.js';
+import {machineName} from './core/line-name.js';
 export function registerMachineRegistry(operations:Operations,db:DataDatabase,options:{now():string;changed():void}){
  const fresh=new WeakSet<object>();
  const after=(input:object)=>{if(fresh.delete(input))options.changed();};
  operations.register({name:'runtime.boxCreate',write:true,recheckPolicy:true,doors:['http'],
-  input:z.object({name:z.string().min(1).max(200).refine(value=>value===value.trim()&&!/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)),sameMachineAsLoom:z.boolean()}).strict(),
+  input:z.object({name:machineName,sameMachineAsLoom:z.boolean()}).strict(),
   output:z.object({id:z.string()}).strict(),
   may:viewer=>viewer.kind==='member'&&mayCreate(viewer,{type:'runtime.box',member:viewer.id},sharedSharing(db)),
   run(ctx,input){

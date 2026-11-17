@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople } from '../../core/data/schema.js';
 import { reviewReply } from './sends.js';
-const text=z.string().trim().min(1).max(200), platform=z.enum(['discord','slack']);
+const text=z.string().trim().min(1).max(200), platform=z.enum(bridgeConnections.platform.enumValues);
 const address={platform,workspace:text};
 export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('connection'),id:text,platform,agent:text,workspace:text,botUser:text,tokenSecret:text,appSecret:text.nullable(),enabled:z.boolean(),only:z.array(text).max(200),ignore:z.array(text).max(200)}).strict(),
@@ -15,9 +15,11 @@ export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('person'),...address,user:text,member:text}).strict(),
  z.object({action:z.literal('removePerson'),...address,user:text}).strict(),
 ]);
-export const bridgeSetting=z.discriminatedUnion('action',[...bridgeConfiguration.options,
- z.object({action:z.literal('review'),id:text,decision:z.enum(['release','dismiss'])}).strict(),
-]);
+/** A person's answer about one held reply. The one shape of it: the door (shared-bridge-commands.ts) takes
+ * this and hands it on unchanged, so who may answer and what is changed are decided about the same id.
+ * The id is the reply's own, taken as it was sent; unlike the names above it is never trimmed. */
+export const bridgeReview=z.object({action:z.literal('review'),id:z.string().min(1).max(200),decision:z.enum(['release','dismiss'])}).strict();
+export const bridgeSetting=z.discriminatedUnion('action',[...bridgeConfiguration.options,bridgeReview]);
 export class BridgeSettings {
  constructor(private db:DataDatabase,private now:()=>string,private commit:<T>(write:()=>T)=>T){}
  /** What a configuration change would replace, or null when there is nothing there yet. */
