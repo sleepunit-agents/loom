@@ -4,6 +4,18 @@ import { z } from 'zod';
 import { TASK_ID, taskId } from '../../slug.js';
 import { changes } from '../../core/data/schema.js';
 export const week = 7 * DAY_MS;
+/** One repository, one identity. GitHub reads `Acme/App`, `acme/app` and `acme/app.git` as the same
+ * repository, so loom must too, or another spelling of a repository it reads would pass for one it does not.
+ *  - `repositoryKey` is what two spellings are compared by: lower case, without a leading `github:` and
+ *    without one trailing `.git`. It is for what is already stored or was given by GitHub.
+ *  - `canonicalRepository` says whether a name is already in the one spelling loom writes: `owner/repo`, lower
+ *    case, no trailing `.git`, neither part `.` or `..`. A name a caller types (a merge target, a project's
+ *    repository) is refused unless it is canonical; nothing guesses what was meant.
+ * A repository that was renamed on GitHub still answers to its old name there. loom cannot know that from the
+ * words: it knows the names it reads, and the old name of one of them is to loom a repository it does not read. */
+export const repositoryKey = (raw: string): string => (raw.startsWith('github:') ? raw.slice(7) : raw).toLowerCase().replace(/\.git$/, '');
+export const canonicalRepository = (name: string): boolean =>
+  /^[a-z0-9._-]+\/[a-z0-9._-]+$/.test(name) && name === repositoryKey(name) && !name.split('/').some(part => part === '.' || part === '..');
 export const repoId = (raw: string): string => {
   const value = raw.startsWith('github:') ? raw.slice(7) : raw;
   if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(value)) throw new Error('A GitHub repository must be owner/repo');

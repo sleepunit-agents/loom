@@ -40,7 +40,7 @@ import {and,asc,eq,isNull,like} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import {householdId} from './slug.js';
-import {holds,rules as policyRules,type Viewer} from './policy.js';
+import {holds,householdChangePrincipal,rules as policyRules,type Viewer} from './policy.js';
 import {householdOwner,householdOwners,sharedSharing} from './shared-sharing.js';
 import {tokenLive} from './core/data/authentication.js';
 import type {DataDatabase} from './core/data/database.js';
@@ -61,7 +61,7 @@ import type {MeasuringSettings} from './core/measuring/index.js';
 import {endBrowser} from './core/signin/shared-browser.js';
 import type {conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
-import type {approvalService,Approval} from './apps/approvals.js';
+import {ASKED_FROM_TERMINAL,type approvalService,type Approval} from './apps/approvals.js';
 import {householdService,HouseholdError,memberInput,agentInput,settingsInput,removable,GITHUB_LOGIN} from './apps/household.js';
 import {householdSettings} from './core/data/household-settings.js';
 import {alreadyOnProject,projectInput,projectJoinInput,projectMergeInput,projectStateInput,type sharedProjects} from './shared-projects.js';
@@ -332,7 +332,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   const nonce=randomBytes(16).toString('hex');
   const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),seal:{nonce,digest:seal(value,nonce,before(value))}}),changeSummary:said(value),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
-   askedFrom:where?.conversation??(owner?'household owner':'terminal'),actingFor:where?.member??owner??'unknown',what:said(value),why:raw.why,...cardWords(value)});
+   askedFrom:where?.conversation??(owner?'household owner':ASKED_FROM_TERMINAL),actingFor:householdChangePrincipal(where?.member,owner),what:said(value),why:raw.why,...cardWords(value)});
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
   // acting for, on a matching target, unless the last answer to this same thing was a deny. A card with no
   // known person behind it always asks. Some kinds always ask, whatever rule there is: `alwaysAsks`.

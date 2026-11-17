@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import { expect, it } from 'vitest';
 import { refsIn } from './pieces/mind/activity-model.js';
 import { refsIn as conversationRefs } from './core/conversations/refs.js';
-import { tasksCited } from './pieces/changes/model.js';
+import { canonicalRepository, repositoryKey, tasksCited } from './pieces/changes/model.js';
 import { agentInput, settingsInput } from './apps/household.js';
 import { COMMIT, mergeTargetFor, parseMergeTarget } from './apps/merge-target.js';
 import { COMMS_DAYS_MAX, commsKeepDays } from './core/data/comms-days.js';
@@ -239,8 +239,18 @@ it('takes Tempo\'s unset timings from the columns, and reads a row or the defaul
 });
 
 it('makes and reads a merge approval\'s target in one place', () => {
-  const head = 'a1'.repeat(20), change = 'github:Sleep-Unit/loom.web#42';
-  expect(parseMergeTarget(mergeTargetFor(change, head))).toEqual({ change, repository: 'Sleep-Unit/loom.web', head });
+  const head = 'a1'.repeat(20), change = 'github:sleep-unit/loom.web#42';
+  expect(parseMergeTarget(mergeTargetFor(change, head))).toEqual({ change, repository: 'sleep-unit/loom.web', head });
+  // A repository has one spelling in a target: lower case, as loom stores a change's id, and no trailing
+  // .git. Another spelling of the same repository is not a target, so it can never pass for a different one.
+  for (const alias of ['github:Sleep-Unit/loom.web#42', 'github:sleep-unit/loom.web.git#42', 'github:sleep-unit/loom.web.GIT#42', 'github:sleep-unit/.#42', 'github:../loom.web#42', 'github:sleep-unit/..#42'])
+    expect(parseMergeTarget(`${alias}@${head}`), alias).toBeUndefined();
+  expect([canonicalRepository('acme/app'), canonicalRepository('Acme/app'), canonicalRepository('acme/app.git'), canonicalRepository('acme/a.git.b'), canonicalRepository('acme')]).toEqual([true, false, false, true, false]);
+  expect([repositoryKey('github:Acme/App.git'), repositoryKey('acme/app'), repositoryKey('ACME/APP.GIT')]).toEqual(['acme/app', 'acme/app', 'acme/app']);
+  // That identity is stated in one file; the target parser and the question "does loom read it" both ask it.
+  expect(sources('src').filter(file => /\.git\b/.test(text(file)) && /repositor/i.test(text(file)) && /function (canonicalRepository|repositoryKey)|const (canonicalRepository|repositoryKey)/.test(text(file)))).toEqual(['src/pieces/changes/model.ts']);
+  expect(text('src/apps/merge-target.ts')).toContain('canonicalRepository(');
+  expect(text('src/apps/changes.ts').split('repositoryKey(').length).toBeGreaterThanOrEqual(4);
   for (const bad of [change, `${change}@${head.slice(1)}`, `${change}@${head.toUpperCase()}`, `github:loom#42@${head}`, `github:a/b#0@${head}`, `${change}@${head} `])
     expect(parseMergeTarget(bad), bad).toBeUndefined();
   expect(COMMIT.test(head)).toBe(true);
@@ -738,6 +748,41 @@ it('reads whether a project is retired, and whether a task is shelved, in one pl
   // The app is told; it does not look at a project to decide.
   for (const file of sourcesOf('web/src', /\.tsx?$/)) expect(text(file), file).not.toMatch(/retiredAt|retired_at/);
   expect(text('web/src/pieces/tasks/query.ts')).toContain('isReady isShelved');
+});
+
+it('decides whose standing rules answer for a piece of work in policy.ts and nowhere else', () => {
+  // The rule service asks policy for the person, and keeps no reading of its own of who is a household owner for it.
+  const service = text('src/apps/approval-rules.ts');
+  expect(service).toContain('rulesPerson(actingFor,kind,sharedSharing(db))');
+  expect(service).not.toMatch(/\.owner\?''/);
+  // The door that files a card names the principal by policy's function; nobody else spells the agent's own.
+  expect(text('src/shared-work-body.ts').split('workPrincipal(').length).toBe(3);
+  expect(sources('src').filter(file => /'agent:'/.test(text(file)))).toEqual(['src/policy.ts']);
+  // A household change's principal is policy's statement too: a member or nobody, never the agent's own
+  // account. (This case used to pin that the proposals file did not call policy at all, to keep it from
+  // taking the agent's own account; the guarantee is now in the function it calls.)
+  expect(text('src/shared-household-proposals.ts')).toContain('actingFor:householdChangePrincipal(where?.member,owner)');
+  expect(text('src/shared-household-proposals.ts')).not.toMatch(/workPrincipal|OWN_WORK/);
+  // Nobody's name is spelled once, and the kinds the agent's own work reads are stated once.
+  expect(sources('src').filter(file => /NOBODY\s*=\s*'unknown'/.test(text(file)))).toEqual(['src/policy.ts']);
+  for (const file of ['src/apps/approval-rules.ts', 'src/shared-work-always.ts', 'src/shared-household-proposals.ts', 'src/shared-work-body.ts', 'src/apps/approval-request.ts']) expect(text(file), file).not.toContain("'unknown'");
+  for (const file of ['src/apps/approval-rules.ts', 'src/shared-work-always.ts']) expect(text(file), file).toContain('isNobody(');
+  expect(text('src/shared-work-body.ts')).not.toMatch(/kind!=='merge'&&input\.kind!=='command'/);
+});
+
+it('states the limits of a notice an agent raises once, and takes who raises it from policy.ts', () => {
+  const notices = text('src/shared-notices.ts');
+  expect(sources('src').filter(file => /NOTICE_(KEY|TITLE|DETAIL|WHY|KEYS)_MAX\s*=|NOTICE_PUSH_AGAIN_MS\s*=/.test(text(file)))).toEqual(['src/shared-notices.ts']);
+  expect(notices).toContain('holds(rules.agentItself,viewer,{agent:found.agent},sharedSharing(db))');
+  // Who it is for is policy's one reading of an agent's people, which loom's own notice about that agent asks too.
+  expect(notices).toContain('agentsPeople(name,sharedSharing(db))');
+  expect(text('src/runtime/jobs.ts')).toContain('agentsPeople(agent, sharedSharing(this.db))');
+  expect(sources('src').filter(file => /function agentsPeople\b/.test(text(file)))).toEqual(['src/policy.ts']);
+  for (const file of ['src/shared-notices.ts', 'src/runtime/jobs.ts']) expect(text(file), file).not.toMatch(/membersWithAgent|householdOwners/);
+  // What is never pushed is said in one file, and asked by the one place that queues a push.
+  expect(sources('src').filter(file => /'quiet-notice:'/.test(text(file)))).toEqual(['src/core/data/inbox-push.ts']);
+  expect(text('src/core/signin/shared-notifications.ts')).toContain('sql`not ${neverPushed(inbox)}`');
+  expect(notices).not.toMatch(/\.(insert|update|delete)\(/);
 });
 
 it('asks policy.ts which agents Home shows', () => {

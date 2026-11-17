@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
 import { lastApprovalAnswer } from './approval-answer.js';
-import { changeSchema, repoId, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
+import { changeSchema, repoId, repositoryKey, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
 
 export type ChangeRow = typeof changes.$inferSelect;
 export type ChangeDetail = ChangeRow & {
@@ -118,6 +118,16 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
       }
     },
   };
+}
+
+/** Does loom read this repository: is it one of a project's, or is a change of it held here? For a
+ * repository loom reads, a merge card is held to the change loom holds. For one it does not, loom has no
+ * facts about the pull request, and the card's own words (one exact commit) are all there is. */
+export function readsRepository(db: DataDatabase, repository: string): boolean {
+  // Compared by the repository's one identity, so a stored `Acme/App.git` is the repository `acme/app`.
+  const wanted = repositoryKey(repository);
+  return db.select({ repository: projectRepositories.repository }).from(projectRepositories).all().some(row => repositoryKey(row.repository) === wanted)
+    || db.select({ repository: changes.repository }).from(changes).all().some(row => repositoryKey(row.repository) === wanted);
 }
 
 /** Trusted repository-label refresh. The caller owns the enclosing DataWrites

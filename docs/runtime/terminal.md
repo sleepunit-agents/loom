@@ -73,6 +73,28 @@ Knowledge uses `mind.knowledgeAdd` and the existing Knowledge queries. Tasks use
 queries for reads. `task_move_to_project` moves tasks to another project, all of them or
 none; `propose` with `projectMerge` asks a household owner to merge two projects, and
 with `projectJoin` asks for the agent itself to be let onto a project.
+An agent's own credential, a terminal session included, also has the approval operations and two for
+notices, through `loom_command` or the command door (`POST /api/<piece>/<operation>`):
+
+- `approvals.rule {kind, target}` answers `{tier, scope, person}`: `do`, `tell` or `ask`, with the scope and
+  person of the rule that matched, or `ask` with both null. For the agent's own work (a terminal, or a
+  lane for no member) the kinds are `merge` and `command`; any other kind answers `ask`. The repository in
+  a merge target is written lower case with no `.git`; another spelling is refused. A merge target in a repository loom reads that is not the
+  agent's own open change at that commit is refused (`conflict`), as a card for it would be.
+- `approvals.request {kind: "merge"|"command", target, what, why, ask, ifYes, ifNo, minutes?, details?}`
+  answers `{id, state}`; `approvals.use {id, kind, target}` answers `{id, used}`;
+  `approvals.report {id, what}` answers `{id, reported: true}` for a card a tell rule allowed;
+  `approvals.withdraw {id}` answers `{id, state: "withdrawn"}`. A card's state is read with the `approvals`
+  tool or query.
+- `notices.raise {key, title, detail?, quiet?}` answers `{item, raised, pushed}`: the key, whether the
+  notice was news to the people who have the agent, and whether any push was queued. Nothing is pushed for
+  `quiet`, for a key settled within the last ten minutes, or to a person who already has the notice
+  waiting; a person who has gained the agent since is told. A 51st waiting key is refused (`conflict`).
+  `notices.clear {key, why}` answers `{cleared}`.
+
+Whose rules answer, what a merge target is held to and who a notice reaches are in
+`docs/specs/owners.md`, "An agent's own work, and what it may raise".
+
 Splitting a project is two steps: propose the new project, then move the
 tasks into it (`docs/specs/owners.md`, "Moving a task, and merging or splitting projects"). The terminal receives no current-worker authority: job and
 conversation controls still require their existing bound credentials.
