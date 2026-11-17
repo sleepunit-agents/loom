@@ -11,6 +11,7 @@ import {eq} from 'drizzle-orm';
 import type {Clock} from './core/clock.js';
 import type {Operations} from './core/operations/index.js';
 import {household,agents as agentRows} from './core/data/schema.js';
+import {householdTimezone} from './core/data/household-settings.js';
 import {installTouched} from './core/touched/index.js';
 import {mindTouchSources,mindTouchResolver} from './pieces/mind/binding.js';
 import type {MindSources} from './pieces/mind/sources.js';
@@ -67,7 +68,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  validateSharedMemoryOptions(db,options);
  const closers:Array<()=>void>=[];let closed=false;
  const close=()=>{if(closed)return;closed=true;const errors:unknown[]=[];for(const stop of closers.splice(0).reverse())try{stop();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory teardown failed');};
- const timezone=()=>db.select().from(household).get()?.timezone??'UTC';
+ const timezone=()=>householdTimezone(db);
  const sharing=()=>sharedSharing(db),sources=options?.sources,agents=sources?.agents??[];
  const settings=db.select().from(household).get();
  const conversationHref=(id:string)=>'/p/comms-preview/conversation/'+encodeURIComponent(id);
@@ -76,7 +77,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const people=peopleReader({directory:sources?.commons.people,agents,sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
   const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
   const activity=createActivityReader(clock,{agents,sharing,timezone,github:settings?.githubOwner,conversations:sharedActivityConversations(db,{conversationHref})});closers.push(activity.close);
-  const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),timezone,projects,activity,conversationHref,projectHref});closers.push(queries.close);
+  const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
   const touches=mindTouchSources(sources);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,

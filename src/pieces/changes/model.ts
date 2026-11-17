@@ -69,13 +69,4 @@ export function citations(text: string): string[] {
   for (const m of text.matchAll(/https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)/g)) refs.add(`${repoId(m[1])}#${m[2]}`);
   return [...refs];
 }
-export interface CitingTask { id: string; title: string; description?: string; source?: string; comments?: { actor: string; text: string }[] }
-/** Caller passes only tasks visible through the Tasks role. Forge text never vouches for a conversation. */
-export function taskLinks(c: Change, tasks: CitingTask[], trusted: string[]) {
-  const named = new Set(tasksCited(c));
-  const citing = tasks.filter(t => named.has(t.id) || citations([t.description,...(t.comments ?? []).map(x=>x.text)].join('\n')).includes(c.id));
-  const made = tasks.filter(t => citations([t.description,...(t.comments ?? []).filter(x=>trusted.includes(x.actor)).map(x=>x.text)].join('\n')).includes(c.id));
-  const conversation = made.map(t => /^conversation:(cv-[0-9a-f]{12})$/.exec(t.source ?? '')?.[1]).find(Boolean);
-  return { tasks: citing.map(t => ({ id:t.id,title:t.title })), ...(conversation ? { conversation } : {}) };
-}
 export const active = (c: Change, now: number) => c.state === 'open' || (!!c.closed && Date.parse(c.closed) + week > now);

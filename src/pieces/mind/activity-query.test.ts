@@ -20,7 +20,7 @@ const now=Date.parse('2026-11-14T18:00:00Z');
 function fixture(path:string,conversations?:ActivityConversations){
  let sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},guest:{owner:false,agents:[]}},projects:{pond:{members:['guest'],agents:[]}},services:{}};
  const clock=new FakeClock(now);
- const reader=createActivityReader(clock,{agents:[{agent:'fiction',memories:path}],sharing:()=>sharing,conversations});closes.push(()=>reader.close());
+ const reader=createActivityReader(clock,{agents:[{agent:'fiction',memories:path}],sharing:()=>sharing,conversations,timezone:'America/Chicago'});closes.push(()=>reader.close());
  const client=new Database(':memory:');closes.push(()=>client.close());createDataSchema(client);
  const generated=dataQueries(client,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...activityQueryFields(reader)}})});

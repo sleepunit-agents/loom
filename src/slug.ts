@@ -7,6 +7,8 @@
 import { z } from 'zod';
 
 export const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** The same rule for use inside a longer pattern: no anchors and no capture. */
+export const SLUG_WITHIN = '[a-z0-9]+(?:-[a-z0-9]+)*';
 
 /** A member, an agent or a household project: a key in the household database and a segment of the app's
  * addresses. The cap only bounds what a form or a command may send. */

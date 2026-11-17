@@ -45,7 +45,7 @@ export interface TapeOptions {
   tokenBudget?: number;
   /** Rough chars-per-token for the budget estimate. */
   charsPerToken?: number;
-  /** IANA zone for the timestamps (default: TZ env, else America/Chicago). */
+  /** IANA zone for the timestamps: the household's. Needed to assemble the tape, not to read episodes. */
   timeZone?: string;
   /** "now" override for tests. */
   nowMs?: number;
@@ -55,10 +55,6 @@ export const DEFAULT_HOURS = 24;
 const DEFAULT_TOKEN_BUDGET = 1500;
 const DEFAULT_CHARS_PER_TOKEN = 4;
 export const HOUR_MS = 3_600_000;
-
-function zone(opts: TapeOptions): string {
-  return opts.timeZone ?? process.env.LOOM_TIMEZONE ?? process.env.TZ ?? 'America/Chicago';
-}
 
 /** "Mon 17:05" in the configured zone — the tape reads as a clock, not ISO. */
 export function tapeClock(iso: string, timeZone: string): string {
@@ -110,9 +106,9 @@ export function digestLine(d: TapeDigest, timeZone: string): string {
  * Episodes and conversation digests interleave by time. Pure selection +
  * ordering. Returns null when there are neither.
  */
-export function assembleTape(rows: EpisodeRow[], opts: TapeOptions = {}, digests: TapeDigest[] = []): string | null {
+export function assembleTape(rows: EpisodeRow[], opts: TapeOptions & { timeZone: string }, digests: TapeDigest[] = []): string | null {
   if (rows.length === 0 && digests.length === 0) return null;
-  const tz = zone(opts);
+  const tz = opts.timeZone;
   const budgetChars = (opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET) * (opts.charsPerToken ?? DEFAULT_CHARS_PER_TOKEN);
   const entries = [
     ...rows.map((r) => ({ t: Date.parse(r.created), line: () => episodeLine(r, tz) })),
