@@ -11,12 +11,6 @@ const link=z.object({label:z.string(),href:z.string().optional()}).strict();
 const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional(),project:z.string().optional()}).strict();
 const runSchema=z.object({kind:z.enum(['digest','conversation']),key:z.string().min(1).max(300),at:z.string().datetime({offset:true}),conversation:conversationSchema,summary:z.string().optional(),turns:z.number().int().nonnegative().optional(),replies:z.number().int().nonnegative().optional(),asked:z.array(z.string()),decided:z.array(z.string()),tasks:z.array(z.string()),references:z.array(z.string()).optional(),links:z.array(link),steps:z.array(z.object({label:z.string(),state:z.string(),tool:z.string()}).strict()).optional(),needs:z.string().optional(),needsHref:z.string().optional(),needsForMember:z.string().optional(),expires:z.number().finite().optional(),more:z.array(z.object({id:z.string(),at:z.string(),title:z.string()}).strict())}).strict();
 export interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
-export interface ActivityReader {
- access(viewer:Viewer):{id:string;allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[];expires:number};
- nextDeadline():number|undefined;
- window(scope:string,viewer:Viewer):ActivityWindow|undefined;
- read(id:string,viewer:Viewer):ActivityOpen|ActivityFailure|undefined;
-}
 interface Episode {ref:string;title:string;content:string;created:string;project:string|null;metadata:string|null;expires_at:string|null}
 const active="category='episode' AND archived=0 AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))";
 const has=(db:Database)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").get();
