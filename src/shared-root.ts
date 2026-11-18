@@ -152,7 +152,7 @@ export function sharedRoot(options: {
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const householdSettings = householdService(db, now), projectSettings = sharedProjects(db, now), ruleSettings = approvalRulesService(db, now), tokenSettings = sharedTokens(db, clock);
   // Parts built further down, once the program is assembled; a proposal only reaches them when one is filed or allowed.
-  const late: { revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume']; schedule?: ReturnType<typeof installSharedTempo>['placeSchedule'] } = {};
+  const late: { triggerWords?: ReturnType<typeof installSharedTempo>['triggers']['resolvedWords']; revokeMachine?: (id: string) => void; requests?: SecretRequests; bridges?: () => BridgeSettings; tempo?: () => ReturnType<typeof installSharedTempo>['volume']; schedule?: ReturnType<typeof installSharedTempo>['placeSchedule'] } = {};
   // The household's own key when it has one. Without one (a program run with no Comms) the key lasts as long
   // as the program, so a card left waiting over a restart is refused as changed and has to be asked for again.
   const proposalKey = options.commsKey ? undefined : randomBytes(32);
@@ -165,6 +165,7 @@ export function sharedRoot(options: {
       bridges: { read: value => late.bridges!().read(value), change: value => late.bridges!().change(value) },
       tempo: () => late.tempo!(),
       schedule: ask => late.schedule!(ask),
+      triggerWords: trigger => late.triggerWords!(trigger),
       measuring: { ...measuringSettingsService(db), changed: () => queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); }) },
       digest: proposalDigest, note: line => { try { options.startupNote?.(line); } catch { /* the rows are already changed */ } } });
   const approvedOperations = new Map([...(options.approvedOperations ?? []), householdProposals.operation]);
@@ -249,6 +250,7 @@ export function sharedRoot(options: {
   registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);
+  late.triggerWords = trigger => tempo.triggers.resolvedWords(trigger);
   late.requests = requests; late.bridges = () => services.bridges.settings; late.tempo = () => tempo.volume; late.schedule = ask => tempo.placeSchedule(ask);
   const secretCommit = <T>(write: () => T): T => {
     const result = data.writes.run(write);

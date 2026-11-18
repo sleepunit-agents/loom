@@ -35,12 +35,13 @@
  *
  * A standing approval rule may answer a card as it is filed, except the kinds
  * in `alwaysAsks`, which wait for an owner's own answer every time. */
+import {openMachineReview,sealMachineReview} from './core/tempo/machine-review.js';
 import {randomBytes} from 'node:crypto';
 import {and,asc,eq,isNull,like} from 'drizzle-orm';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import {z} from 'zod';
 import {householdId} from './slug.js';
-import {holds,householdChangePrincipal,rules as policyRules,type Viewer} from './policy.js';
+import {machineMayHost,maySetTrigger,triggerWorksFor,holds,householdChangePrincipal,rules as policyRules,type Viewer} from './policy.js';
 import {householdOwner,householdOwners,sharedSharing} from './shared-sharing.js';
 import {tokenLive} from './core/data/authentication.js';
 import type {DataDatabase} from './core/data/database.js';
@@ -71,6 +72,7 @@ import {placeScheduleAsk,placeScheduleCard,placeScheduleRefusal,placeScheduleWor
 import {triggers as triggerRows} from './core/data/schema.js';
 const operation='household.change';
 const kinds={project:projectInput,
+ triggerMachine:z.object({trigger:z.string().min(1).max(200),machine:z.string().min(1).max(200)}).strict(),
  // One project emptied into another and removed. Its records cannot be told apart again afterwards.
  projectMerge:projectMergeInput,
  // A project set aside whole, and brought back. Either can be undone by the other, so each is a setting.
@@ -133,13 +135,13 @@ const proposal=all({}),asked=all({why:z.string().trim().min(1).max(500)},househo
 type Proposal=z.infer<typeof proposal>;
 const changeName=z.enum(everyChange);
 // What a card keeps: the change asked for, and a keyed digest of what it would replace (see the file header).
-const details=z.object({change:changeName,after:z.json(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
+const details=z.object({change:changeName,after:z.json(),machineReview:z.string().optional(),seal:z.object({nonce:z.string(),digest:z.string()}).strict()}).strict();
 // A card from before the digest kept the replaced value itself; those are rewritten once, at start.
 const olderDetails=z.object({change:changeName,before:z.json(),after:z.json()}).strict();
 const sorted=(value:Record<string,unknown>)=>Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0));
 // Rule scopes are matched lower-case for merges; name the card the same way the rule is stored.
 const ruleScope=(input:{kind:string;scope:string})=>input.kind==='merge'&&!input.scope.startsWith('project:')?input.scope.toLowerCase():input.scope;
-const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?[value.input.kind,ruleScope(value.input),value.input.person].join(' ').trim()
+const name=(value:Proposal)=>value.change==='triggerMachine'?value.input.trigger:value.change==='settings'?'':value.change==='rule'?[value.input.kind,ruleScope(value.input),value.input.person].join(' ').trim()
  :value.change==='bodyPolicy'?value.input.agent:value.change==='remove'||value.change==='restore'?value.input.of+' '+value.input.id:value.change==='order'?value.input.of:value.change==='secretRule'||value.change==='secretDescription'?value.input.secret:value.change==='secretDefault'||value.change==='measuring'?'':value.change==='houseSecrets'?value.input.agent
  :value.change==='bridge'?[value.input.action,...('id' in value.input?[value.input.id]:'channel' in value.input?[value.input.platform,value.input.workspace,value.input.channel]:[value.input.platform,value.input.workspace,value.input.user])].join(' ')
  :value.change==='tempoTimings'?value.input.who.kind+' '+value.input.who.id
@@ -147,7 +149,7 @@ const name=(value:Proposal)=>value.change==='settings'?'':value.change==='rule'?
  :value.change==='tokenRevoke'?value.input.label:value.change==='boxRevoke'?value.input.name:value.change==='browserSignOut'?value.input.device+' of '+value.input.member
  :value.change==='projectMerge'?value.input.from+' into '+value.input.into:value.change==='projectJoin'?value.input.agent+' onto project '+value.input.project
  :value.change==='projectRetire'||value.change==='projectRevive'?value.input.project:value.change==='placeSchedule'?(value.input.action==='set'?value.input.trigger.id:value.input.id):value.input.id;
-const label=(value:Proposal)=>value.change==='placeSchedule'?'a repeating schedule in conversation '+value.input.conversation:value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
+const label=(value:Proposal)=>value.change==='triggerMachine'?'machine request for schedule '+value.input.trigger:value.change==='placeSchedule'?'a repeating schedule in conversation '+value.input.conversation:value.change==='remove'||value.change==='restore'?name(value):value.change==='projectMerge'?'project '+name(value):value.change==='order'?'the order of '+name(value):value.change==='secretDescription'?'what secret '+name(value)+' is for':value.change==='secretRule'?'who may use secret '+name(value):value.change==='secretDefault'?'the default answer for secrets':value.change==='houseSecrets'?'secrets handed to '+name(value)+' at start'
  :value.change==='bridge'?'bridge '+name(value):value.change==='tempoTimings'?'Tempo timings for '+name(value):value.change==='measuring'?'Measuring'
  :value.change==='boxSettings'?'settings of machine '+value.input.name:value.change==='runSettings'?'how '+name(value)+' runs'+(value.input.houseFile===''?', in the core house with no Housefile of its own':''):value.change==='models'?'models for '+name(value):value.change==='agentAccounts'?'outside accounts of '+name(value)
  :value.change==='tokenRevoke'?'token '+name(value):value.change==='boxRevoke'?'machine '+name(value):value.change==='browserSignOut'?'browser '+name(value):value.change==='settings'?'Household settings':value.change==='rule'?'approval rule '+name(value):value.change==='bodyPolicy'?'how '+name(value)+' treats outside people and tools':value.change+' '+name(value);
@@ -163,7 +165,7 @@ const said=(value:Proposal)=>value.change==='placeSchedule'?placeScheduleWords(v
 // The same with what it would replace, for a household owner.
 const summary=(value:Proposal,before:unknown)=>value.change==='placeSchedule'?placeScheduleWords(value.input)+(value.input.action==='edit'?' As it stands: '+JSON.stringify(before):''):isState(value)?stateWords(value)+' As it stands: '+JSON.stringify(before):value.change==='projectMerge'?mergeWords(value)+' As they stand: '+JSON.stringify(before):value.change==='projectJoin'?joinWords(value)+'. As it stands: '+JSON.stringify(before):value.change==='remove'?'Remove '+label(value)+'. Its history stays.':value.change==='restore'?'Restore '+label(value):dangerOf(value)?dangerOf(value)!.verb+' '+label(value)+': '+JSON.stringify(before)+' → '+dangerOf(value)!.done
  :label(value)+': '+JSON.stringify(before)+' → '+JSON.stringify(sorted(value.input));
-const cardWords=(value:Proposal)=>value.change==='placeSchedule'?placeScheduleCard(value.input):dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
+const cardWords=(value:Proposal)=>value.change==='triggerMachine'?{ask:'Review the machine request for schedule '+value.input.trigger+'?',ifYes:'The worker must report that it accepts this work before an owner can allow it.',ifNo:'The trigger does not fire.'}:value.change==='placeSchedule'?placeScheduleCard(value.input):dangerOf(value)?{ask:dangerOf(value)!.verb+' '+label(value)+'?',ifYes:dangerOf(value)!.yes,ifNo:dangerOf(value)!.no}
  :value.change==='projectRetire'?{ask:'Retire project '+name(value)+'?',ifYes:'Nothing is deleted or closed, and who reads it does not change. Its unfinished tasks are shelved: not ready, not counted as open work, and none can be claimed; one already held keeps who holds it. No new task is filed under it. Reviving it brings everything back as it was.',ifNo:'It stays in use.'}
  :value.change==='projectRevive'?{ask:'Revive project '+name(value)+'?',ifYes:'Its shelved tasks are work again, each as it was left.',ifNo:'It stays retired.'}
  :value.change==='projectJoin'?{ask:joinWords(value)+'?',ifYes:value.input.agent+' is added to project '+value.input.project+' and sees what is filed under it. Nothing else about the project changes.',ifNo:value.input.agent+' stays off the project.'}
@@ -181,13 +183,14 @@ const cardWords=(value:Proposal)=>value.change==='placeSchedule'?placeScheduleCa
  *  - `placeSchedule`: a repeating schedule somebody who is not an owner asked for in a shared place. The owner
  *    ruled that such a request is asked of an owner; a rule for settings is not an owner reading this
  *    person's words and times. */
-export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule']);
+export const alwaysAsks:ReadonlySet<string>=new Set<keyof typeof kinds>(['rule','projectJoin','projectMerge','placeSchedule','triggerMachine']);
 const kindOf=(value:Proposal)=>dangerOf(value)?'dangerous' as const:'setting' as const;
 export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<typeof householdService>,projects:ReturnType<typeof sharedProjects>,rules:ReturnType<typeof approvalRulesService>,revokeToken:(fingerprint:string)=>unknown,now:()=>string,
  runtime:{roles():readonly ModelRole[];setAccounts(input:{agent:string;github:string[]}):unknown},
  parts:{secrets:Pick<SecretRequests,'setRule'>;machines:{revoke(id:string):void};bridges:Pick<BridgeSettings,'read'|'change'>;
   /** Carry out an allowed `placeSchedule` card: set the trigger, or change it, on the asker's word (shared-tempo.ts). */
   schedule(ask:PlaceScheduleAsk):unknown;
+  triggerWords?(trigger:typeof triggerRows.$inferSelect):string;
   tempo():{timings(who:{kind:'person'|'agent';id:string}):{settleSeconds:number;dimDays:number;muteDays:number};setTimings(who:{kind:'person'|'agent';id:string},patch:{settleSeconds?:number;dimDays?:number;muteDays?:number}):unknown};
   measuring:{read():MeasuringSettings;write(after:MeasuringSettings):void;changed():void};
   /** A keyed digest only this program can make or check. */
@@ -199,8 +202,33 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  const browsers=(input:{member:string;device:string})=>db.select({id:sessions.id}).from(sessions).innerJoin(tokens,eq(sessions.token,tokens.fingerprint)).where(and(eq(tokens.member,input.member),eq(sessions.device,input.device))).all();
  const liveToken=(label:string)=>db.select().from(tokens).where(eq(tokens.label,label)).all().find(row=>tokenLive(row,Date.parse(now())));
  const appliedCards=new Set<string>();
+ const getTrigger=(id:string)=>db.select().from(triggerRows).where(eq(triggerRows.id,id)).get();
+ const canRequestMachine=(viewer:Viewer,id:string)=>{
+  const row=getTrigger(id),sharing=sharedSharing(db);
+  if(viewer.kind==='agent'&&viewer.workingFor!==undefined)return false;
+  if(!row||row.member||row.targetKind!=='inbox'||row.toKind!=='agent'||!row.to||row.conversation||triggerWorksFor(row,sharing))return false;
+  const own=row.ownerKind==='agent'&&row.owner===row.to;
+  const byOwner=row.ownerKind==='household'||row.ownerKind==='member'&&!!row.owner&&householdOwner(db,{kind:'member',id:row.owner});
+  return (own||byOwner)&&maySetTrigger(viewer,row,sharing)&&(viewer.kind==='agent'?viewer.id===row.to:householdOwner(db,viewer));
+ };
+ const machineReview=(input:{trigger:string;machine:string})=>{
+  const row=getTrigger(input.trigger),box=db.select().from(boxes).where(eq(boxes.id,input.machine)).get();
+  let words:string|null=null;
+  if(row)try{words=parts.triggerWords?.(row)??null;}catch{/* An unreadable file must never authorize a firing. */}
+  const listed=row?.to&&box?db.select().from(boxAgents).where(and(eq(boxAgents.box,box.id),eq(boxAgents.agent,row.to))).get():undefined;
+  const problem=!row||!box||box.revokedAt?'The requested trigger or machine is unavailable'
+   :!row.to||!machineMayHost(box,listed||undefined,row.to,sharedSharing(db))?'The machine may not host this agent'
+   :words===null?'The trigger words are unavailable':'The worker has not reported support for machine bodies';
+  return {row,box,words,problem};
+ };
  // What the change would replace, in the same shape as the input, or null when it would be new.
- const before=(value:Proposal):unknown=>{
+ const reviewText=(review:ReturnType<typeof machineReview>)=>[review.row?.to,review.box?.name,'Worker user and working directory unreported',review.row?.note,
+  [review.row?.days,review.row?.times??review.row?.watches].filter(Boolean).join(' '),review.row?.file,review.words??'Trigger words unavailable'].filter(part=>part!=null).join('\n');
+ const before=(value:Proposal,review?:ReturnType<typeof machineReview>):unknown=>{
+  if(value.change==='triggerMachine'){
+   const {row,words}=review??machineReview(value.input);
+   return {agent:row?.to,machine:row?.machine,words,owner:row?.owner,ownerKind:row?.ownerKind,conversation:row?.conversation};
+  }
   if(value.change==='project'){const row=projects.read().projects.find(row=>row.id===value.input.id);return row?sorted({id:row.id,name:row.name,members:[...row.members].sort(),agents:[...row.agents].sort(),repositories:[...row.repositories].sort()}):null;}
   if(value.change==='projectMerge')return sorted({from:projects.describe(value.input.from),into:projects.describe(value.input.into)});
   if(isState(value)){const project=projects.describe(value.input.project);return sorted({project:project&&{id:project.id,removed:project.removed,retired:project.retired}});}
@@ -254,7 +282,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Make the change. `by` is the owner on whose word it is made.
  const change=(value:Proposal,by:string)=>{
   try{
-   if(value.change==='project')projects.save(value.input);
+   if(value.change==='triggerMachine')throw new OperationError('unavailable','The worker has not reported support for machine bodies');
+   else if(value.change==='project')projects.save(value.input);
    else if(value.change==='projectMerge')projects.merge(value.input);
    else if(value.change==='projectJoin')projects.join(value.input);
    else if(isState(value))projects.setRetired(value.input,value.change==='projectRetire');
@@ -293,7 +322,8 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
  // Why the change cannot be made on what is there now, in the words of the rule it breaks; nothing when it can.
  // These depend on what the asker may not read, so they are an owner's to hear: never the asker's.
  const refusal=(value:Proposal,was:unknown)=>
-  value.change==='projectMerge'?projects.mergeRefusal(value.input)
+  value.change==='triggerMachine'?new OperationError('invalid',machineReview(value.input).problem)
+  :value.change==='projectMerge'?projects.mergeRefusal(value.input)
   :value.change==='projectJoin'?projects.joinRefusal(value.input)
   :isState(value)?projects.stateRefusal(value.input,value.change==='projectRetire')
   :value.change==='placeSchedule'?(value.input.action==='set'&&was!==null?new OperationError('conflict','A schedule with that id is already there')
@@ -346,13 +376,25 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
 
  /** File the card. Installed code may call this directly; from outside it is household.propose.
   * Nothing here answers differently for what is in the household now: see the file header. */
- const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string)=>{
+ const file=(service:Pick<ReturnType<typeof approvalService>,'request'|'allow'>,agent:string,raw:{change:string;input:unknown;why:string},where?:{conversation:string;member:string|null;project:string|null},owner?:string)=>db.transaction(()=>{
   const value=proposal.parse({change:raw.change,input:raw.input});
+  if(value.change==='triggerMachine'){
+   const viewer:Viewer=owner?{kind:'member',id:owner}:{kind:'agent',id:agent,workingFor:where?.member??undefined};
+   if(!canRequestMachine(viewer,value.input.trigger))throw new OperationError('denied','This trigger cannot request machine work');
+   // Both assignment tables expose the machine id to the agent. A guessed private id and a missing one answer alike.
+   if(viewer.kind==='agent'&&!db.select({box:boxAgents.box}).from(boxAgents).where(and(eq(boxAgents.box,value.input.machine),eq(boxAgents.agent,agent))).get()
+    &&!db.select({box:agentBoxes.box}).from(agentBoxes).where(and(eq(agentBoxes.box,value.input.machine),eq(agentBoxes.agent,agent))).get())
+    throw new OperationError('invalid','The named machine is unavailable');
+   if(!db.select({id:boxes.id}).from(boxes).where(eq(boxes.id,value.input.machine)).get())throw new OperationError('invalid','The named machine is unavailable');
+  }
   // The asker's own waiting card for the same thing; another agent's card is not the asker's to know of.
   if(db.select({id:approvals.id}).from(approvals).where(and(eq(approvals.operation,operation),eq(approvals.agent,agent),eq(approvals.target,target(value)),eq(approvals.state,'pending'))).get())throw new OperationError('conflict','A card for this is already waiting for an answer');
   if(!householdOwners(db).length)throw new OperationError('conflict','No household owner can allow this');
+  if(value.change==='triggerMachine')db.update(triggerRows).set({machine:value.input.machine,machineWords:null,machineApproval:null,changedAt:now()}).where(eq(triggerRows.id,value.input.trigger)).run();
   const nonce=randomBytes(16).toString('hex');
-  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),seal:{nonce,digest:seal(value,nonce,before(value))}}),changeSummary:said(value),
+  const review=value.change==='triggerMachine'?machineReview(value.input):undefined;
+  const snapshot=review?{machineReview:sealMachineReview(reviewText(review),parts.digest,target(value),nonce)}:{};
+  const card=service.request({kind:kindOf(value),operation,target:target(value),details:JSON.stringify({change:value.change,after:sorted(value.input),...snapshot,seal:{nonce,digest:seal(value,nonce,before(value,review))}}),changeSummary:said(value),
    agent,member:where?.member??null,project:where?.project??null,conversation:where?.conversation??null,
    askedFrom:where?.conversation??(owner?'household owner':ASKED_FROM_TERMINAL),actingFor:householdChangePrincipal(where?.member,owner),what:said(value),why:raw.why,...cardWords(value)});
   // Standing rules answer these cards as they answer merges and commands: for the person the agent is
@@ -367,7 +409,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   // all), the rule has answered nothing: the card waits for an owner, who is told why.
   try{return service.allow(card.id,rule.setBy,`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`);}
   catch(error){if(error instanceof OperationError)return card;throw error;}
- };
+ });
  return{
   operation:[operation,apply] as const,
   file,
@@ -379,7 +421,7 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
    // An agent in the household now may propose for itself. Proposing changes nothing: see the file header.
    // One change may also be asked for by a household owner, and by an agent only about itself: letting an
    // agent onto a project (policy.ts, rule `asksToJoin`).
-   const agent=(viewer:Viewer,input:z.infer<typeof asked>)=>input.change==='projectJoin'
+   const agent=(viewer:Viewer,input:z.infer<typeof asked>)=>input.change==='triggerMachine'?canRequestMachine(viewer,input.input.trigger):input.change==='projectJoin'
     ?holds(policyRules.asksToJoin,viewer,{agent:input.input.agent},sharedSharing(db))
     :holds(policyRules.agentItself,viewer,{agent:viewer.id},sharedSharing(db));
    operations.register({name:'household.propose',write:true,recheckPolicy:true,doors:['http'],
@@ -397,8 +439,10 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const found=current?.(ctx.viewer);
      // Provenance is set here from the authenticated caller, never taken from input. A card an owner files
      // is about the agent it names, and is recorded as asked by that owner.
-     const card=ctx.viewer.kind==='member'&&raw.change==='projectJoin'?file(service,raw.input.agent,raw,undefined,ctx.viewer.id)
+     const card=ctx.viewer.kind==='member'&&raw.change==='triggerMachine'?file(service,getTrigger(raw.input.trigger)!.to!,raw,undefined,ctx.viewer.id)
+      :ctx.viewer.kind==='member'&&raw.change==='projectJoin'?file(service,raw.input.agent,raw,undefined,ctx.viewer.id)
       :file(service,ctx.viewer.id,raw,found?{conversation:found.cv.id,member:found.cv.member,project:found.cv.project}:undefined);
+     if(raw.change==='triggerMachine')ctx.changed('triggers',raw.input.trigger);
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id,state:card.state};
     },
    });
@@ -416,6 +460,12 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
      const {kept,value}=read(card);
      let problem:string|null=null;
      try{check(value,kept);}catch(error){if(!(error instanceof OperationError))throw error;problem=error.message;}
+     if(value.change==='triggerMachine'){
+      try{
+       if(kept.machineReview)return {summary:openMachineReview(kept.machineReview,parts.digest,target(value),kept.seal.nonce),problem};
+      }catch{/* A program without a persistent household key cannot open a snapshot made before restart. */}
+      return {summary:'The original machine review is unavailable. Ask for a fresh card.',problem:'This review cannot be opened'};
+     }
      return{summary:summary(value,before(value)),problem};
     },
    });

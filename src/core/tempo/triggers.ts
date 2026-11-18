@@ -365,7 +365,7 @@ export class TriggerEngine {
       this.db.update(triggers).set({ state: standing ? 'standing' : 'stopped', enabled: standing, nextDueAt: standing ? new Date(next!).toISOString() : null, changedAt: this.now() }).where(eq(triggers.id, t.id)).run();
     });
   }
-  private resolvedWords(t: Trigger): string {
+  resolvedWords(t: Trigger): string {
     const words = t.file ? this.effects.instructions?.(t.file) : t.instructions ?? '';
     if (words === undefined) throw new Error('No repository instructions reader');
     return words;

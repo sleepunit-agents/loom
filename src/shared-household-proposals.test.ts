@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
+import { agents, agentAccounts, agentBoxes, agentHouseSecrets, conversations, bridgeConnections, bridgeChannels, bridgePeople, household, measuringSettings, secretRuleAgents, secretRules, secrets, agentPeople, agentDeniedTools, agentRunSettings, approvals, approvalRecord, boxAgents, boxes, memberAgents, members, sessions, tokens, projects, triggers, projectMembers, projectAgents, projectRepositories, tasks, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -752,4 +752,44 @@ it('lets a standing rule for settings answer a retire and a revive: each is undo
   expect(f.root.services.projects.describe('phasecraft')).toMatchObject({ retired: true });
   expect(ask('projectRevive')).toMatchObject({ state: 'used', kind: 'setting' });
   expect(f.root.services.projects.describe('phasecraft')).toMatchObject({ retired: false });
+});
+
+it('holds an agent-owned trigger on its named machine and shows its complete words only in owner review', async () => {
+  const f = fixture(), words = 'Review the report.\r\n' + 'é'.repeat(2500) + '\n';
+  f.db.insert(memberAgents).values({member:'sam',agent:'art'}).onConflictDoNothing().run();
+  f.db.insert(boxes).values({id:'remote',name:'Second machine',owner:'sam',sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:new Date(f.clock.now()).toISOString()}).run();
+  f.db.insert(boxAgents).values({box:'remote',agent:'art',lent:false}).run();
+  const set = {id:'tr-machine',ownerKind:'agent',owner:'art',sourceKind:'time',times:'23:45',lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',instructions:words,note:'Night report'};
+  expect((await f.call('tempo/set',set,'art')).body.ok).toBe(true);
+  const raw = {change:'triggerMachine',input:{trigger:set.id,machine:'remote'},why:'Review the machine report'};
+  expect((await f.call('household/propose',raw,'lee')).status).toBe(403);
+  const filed = await f.call('household/propose',raw,'art');
+  expect(filed.body).toMatchObject({ok:true,value:{state:'pending'}});
+  const id = filed.body.value!.id;
+  expect(f.db.select().from(triggers).where(eq(triggers.id,set.id)).get()).toMatchObject({machine:'remote',machineApproval:null,machineWords:null});
+  expect(JSON.stringify(f.db.select().from(approvals).where(eq(approvals.id,id)).get())).not.toContain('Review the report.');
+  const view = await look(f,id);
+  expect(view.summary).toContain('Second machine');
+  expect(view.summary).toContain(words);
+  expect(view.problem).toMatch(/worker/i);
+  expect((await f.call('approvals/answer',{id,answer:'allow'},'sam')).body).toMatchObject({ok:false});
+  expect((await f.call('tempo/runNow',{id:set.id},'art')).body.value).toMatchObject({saved:false,failed:true});
+  expect((await f.call('tempo/edit',{id:set.id,instructions:'Changed report'},'art')).body.ok).toBe(true);
+  const changed = await look(f,id);
+  expect(changed.problem).toContain('changed');
+  expect(changed.summary.endsWith(words)).toBe(true);
+  expect((await f.call('approvals/answer',{id,answer:'deny'},'sam')).body.ok).toBe(true);
+  expect(f.db.select().from(triggers).where(eq(triggers.id,set.id)).get()?.machine).toBe('remote');
+});
+
+it('refuses a hidden machine exactly like an unknown one to an agent', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(boxes).values({id:'hidden',name:'Private machine',owner:'lee',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:at}).run();
+  const set={id:'my-lane',ownerKind:'agent',owner:'art',sourceKind:'time',times:'23:45',lifespan:'until-stopped',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Run.',note:'Lane'};
+  expect((await f.call('tempo/set',set,'art')).body.ok).toBe(true);
+  const ask = (machine:string)=>f.call('household/propose',{change:'triggerMachine',input:{trigger:set.id,machine},why:'Review'},'art');
+  const absent=await ask('nonexistent'),hidden=await ask('hidden');
+  expect(hidden).toEqual(absent);
+  expect(hidden.body.ok).toBe(false);
+  expect(f.db.select().from(approvals).all()).toEqual([]);
 });
