@@ -451,6 +451,10 @@ CREATE TABLE `inbox` (
 	`answered_at` text,
 	`resolution` text,
 	`changed_at` text NOT NULL,
+	`on_word_kind` text,
+	`on_word` text,
+	`chain` text,
+	`chain_started_at` text,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
@@ -459,6 +463,10 @@ CREATE TABLE `inbox` (
 	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`answered_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`thread`,`message_seq`) REFERENCES `messages`(`thread`,`seq`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "inbox_chain_started_at_utc" CHECK("inbox"."chain_started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."chain_started_at") = "inbox"."chain_started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."chain_started_at") = "inbox"."chain_started_at", 0)),
+	CONSTRAINT "inbox_on_word_kind_choice" CHECK("inbox"."on_word_kind" in ('member', 'outside')),
+	CONSTRAINT "inbox_on_word_pair" CHECK(("inbox"."on_word_kind" is null) = ("inbox"."on_word" is null)),
+	CONSTRAINT "inbox_chain_pair" CHECK(("inbox"."chain" is null) = ("inbox"."chain_started_at" is null) and ("inbox"."chain" is null or json_valid("inbox"."chain"))),
 	CONSTRAINT "inbox_at_utc" CHECK("inbox"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."at") = "inbox"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."at") = "inbox"."at", 0)),
 	CONSTRAINT "inbox_quiet_until_utc" CHECK("inbox"."quiet_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."quiet_until") = "inbox"."quiet_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."quiet_until") = "inbox"."quiet_until", 0)),
 	CONSTRAINT "inbox_taken_at_utc" CHECK("inbox"."taken_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."taken_at") = "inbox"."taken_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."taken_at") = "inbox"."taken_at", 0)),
@@ -686,8 +694,15 @@ CREATE TABLE `triggers` (
 	`changed_at` text NOT NULL,
 	`wants_model` text,
 	`member` text,
+	`conversation` text,
+	`asked_by_kind` text,
+	`asked_by` text,
+	`asked_at` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "triggers_asked_at_utc" CHECK("triggers"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."asked_at") = "triggers"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."asked_at") = "triggers"."asked_at", 0)),
+	CONSTRAINT "triggers_asked_by_kind_choice" CHECK("triggers"."asked_by_kind" in ('member', 'outside', 'agent')),
+	CONSTRAINT "triggers_asker_with_conversation" CHECK(("triggers"."conversation" is null) = ("triggers"."asked_by_kind" is null) and ("triggers"."asked_by_kind" is null) = ("triggers"."asked_by" is null) and ("triggers"."asked_by_kind" is null) = ("triggers"."asked_at" is null)),
 	CONSTRAINT "triggers_next_due_at_utc" CHECK("triggers"."next_due_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."next_due_at") = "triggers"."next_due_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."next_due_at") = "triggers"."next_due_at", 0)),
 	CONSTRAINT "triggers_last_fired_at_utc" CHECK("triggers"."last_fired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."last_fired_at") = "triggers"."last_fired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."last_fired_at") = "triggers"."last_fired_at", 0)),
 	CONSTRAINT "triggers_created_at_utc" CHECK("triggers"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."created_at") = "triggers"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."created_at") = "triggers"."created_at", 0)),
@@ -1082,6 +1097,7 @@ CREATE TABLE `bridge_channels` (
 	`answers` text NOT NULL,
 	`bots_may_talk` integer NOT NULL,
 	`brief` text,
+	`reports_to` text,
 	PRIMARY KEY(`platform`, `workspace`, `channel`),
 	FOREIGN KEY (`answers`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_channels_bots_may_talk_boolean" CHECK("bridge_channels"."bots_may_talk" in (0, 1))
@@ -1132,17 +1148,19 @@ CREATE TABLE `bridge_incoming` (
 
 CREATE TABLE `bridge_sends` (
 	`id` text PRIMARY KEY NOT NULL,
-	`incoming` text NOT NULL,
+	`incoming` text,
 	`connection` text NOT NULL,
 	`channel` text NOT NULL,
 	`thread` text,
+	`conversation` text,
 	`text` text NOT NULL,
 	`state` text NOT NULL,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "bridge_sends_created_at_utc" CHECK("bridge_sends"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_sends"."created_at") = "bridge_sends"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_sends"."created_at") = "bridge_sends"."created_at", 0)),
-	CONSTRAINT "bridge_sends_state_choice" CHECK("bridge_sends"."state" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed'))
+	CONSTRAINT "bridge_sends_state_choice" CHECK("bridge_sends"."state" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')),
+	CONSTRAINT "bridge_sends_answers_or_placed" CHECK(coalesce("bridge_sends"."incoming", "bridge_sends"."conversation") is not null)
 );
 
 CREATE TABLE `bridge_files` (

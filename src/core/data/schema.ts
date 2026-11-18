@@ -496,7 +496,21 @@ export const inbox = sqliteTable('inbox', {
   answeredAt: text('answered_at'),
   resolution: text('resolution'),
   changedAt: text('changed_at').notNull(),
+  /** The person on whose word this mail was sent, when that is not who sent it: the asker of a trigger's
+   * firing, and the person a body was working for when it handed a note on. A member's id or an outside
+   * account's key. The job this mail starts counts them as in the room (runtime/body-policy.ts). */
+  onWordKind: text('on_word_kind', { enum: ["member", "outside"] }),
+  onWord: text('on_word'),
+  /** For a note one body of an agent hands to another: the conversations the chain of hand-offs has run
+   * through, oldest first, as a JSON list of ids ending with the one this note came from; and when the
+   * first note of the chain was sent. Its length is json_array_length(chain). */
+  chain: text('chain'),
+  chainStartedAt: text('chain_started_at'),
 }, t => [
+  check('inbox_chain_started_at_utc', utc(t.chainStartedAt)),
+  check('inbox_on_word_kind_choice', sql`${t.onWordKind} in ('member', 'outside')`),
+  check('inbox_on_word_pair', sql`(${t.onWordKind} is null) = (${t.onWord} is null)`),
+  check('inbox_chain_pair', sql`(${t.chain} is null) = (${t.chainStartedAt} is null) and (${t.chain} is null or json_valid(${t.chain}))`),
   check('inbox_at_utc', utc(t.at)),
   check('inbox_quiet_until_utc', utc(t.quietUntil)),
   check('inbox_taken_at_utc', utc(t.takenAt)),
@@ -732,7 +746,18 @@ export const triggers = sqliteTable('triggers', {
   /** The member whose work a firing is, when the trigger puts an agent to work: apart from who set it
    * (owner). Absent for the agent's own. */
   member: text('member').references((): AnySQLiteColumn => members.id),
+  /** The bridge conversation a firing is mail in, instead of a wake of its own (core/tempo/room-triggers.ts).
+   * Not a reference: a conversation that is gone stops the trigger at its next firing. */
+  conversation: text('conversation'),
+  /** Who asked for it, for a trigger that names a conversation: the person on whose word a firing's job
+   * runs. A member's id, an outside account's key, or the agent itself. */
+  askedByKind: text('asked_by_kind', { enum: ["member", "outside", "agent"] }),
+  askedBy: text('asked_by'),
+  askedAt: text('asked_at'),
 }, t => [
+  check('triggers_asked_at_utc', utc(t.askedAt)),
+  check('triggers_asked_by_kind_choice', sql`${t.askedByKind} in ('member', 'outside', 'agent')`),
+  check('triggers_asker_with_conversation', sql`(${t.conversation} is null) = (${t.askedByKind} is null) and (${t.askedByKind} is null) = (${t.askedBy} is null) and (${t.askedByKind} is null) = (${t.askedAt} is null)`),
   check('triggers_next_due_at_utc', utc(t.nextDueAt)),
   check('triggers_last_fired_at_utc', utc(t.lastFiredAt)),
   check('triggers_created_at_utc', utc(t.createdAt)),
@@ -1151,6 +1176,9 @@ export const bridgeChannels = sqliteTable('bridge_channels', {
   /** The name of a role page of the answering agent, given to the body of every conversation in this
    * channel beside the venue's own. Empty: the channel has no brief of its own. */
   brief: text('brief'),
+  /** Where a body working here for somebody who is neither an owner nor has the agent may hand a note:
+   * one channel on any of the agent's bridges, as bridgePlaceKey writes a place. Empty: nowhere. */
+  reportsTo: text('reports_to'),
 }, t => [
   primaryKey({ columns: [t.platform, t.workspace, t.channel] }),
   check('bridge_channels_bots_may_talk_boolean', sql`${t.botsMayTalk} in (0, 1)`),
@@ -1202,16 +1230,22 @@ export const bridgeIncoming = sqliteTable('bridge_incoming', {
 /** Replies sent out to Discord and Slack. */
 export const bridgeSends = sqliteTable('bridge_sends', {
   id: text('id').primaryKey().notNull(),
-  incoming: text('incoming').notNull().references((): AnySQLiteColumn => bridgeIncoming.id),
+  /** The message this post answers. Absent for a post that answers none: a firing's or a note's reply,
+   * and an agent's own work posting to a channel; `conversation` then says where it belongs. */
+  incoming: text('incoming').references((): AnySQLiteColumn => bridgeIncoming.id),
   connection: text('connection').notNull().references((): AnySQLiteColumn => bridgeConnections.id),
   channel: text('channel').notNull(),
   thread: text('thread'),
+  /** The conversation a post that answers no message was made in. Not a reference: the post's record
+   * outlives its conversation. */
+  conversation: text('conversation'),
   text: text('text').notNull(),
   state: text('state', { enum: ["pending", "held", "sending", "sent", "uncertain", "dismissed"] }).notNull(),
   createdAt: text('created_at').notNull(),
 }, t => [
   check('bridge_sends_created_at_utc', utc(t.createdAt)),
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),
+  check('bridge_sends_answers_or_placed', sql`coalesce(${t.incoming}, ${t.conversation}) is not null`),
 ]);
 
 /** Attachments fetched from Slack and Discord, kept for 14 days. Which messages carried one is bridge_file_messages. */
