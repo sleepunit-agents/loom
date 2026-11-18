@@ -404,7 +404,7 @@ export class Jobs {
    * Silence is read from this server's clock, so the caller must not sweep across a jump of that clock
    * (createRuntime waits one interval after one); a stamp left later than now by a clock set back is
    * counted from now here. */
-  sweep(silenceMs = SILENCE_MS, queueMs = QUEUE_DEADLINE_MS): Job[] {
+  sweep(silenceMs = SILENCE_MS, queueMs = QUEUE_DEADLINE_MS, listeningSince = -Infinity): Job[] {
     if (!Number.isFinite(silenceMs) || silenceMs <= 0 || !Number.isFinite(queueMs) || queueMs <= 0) throw new Error('Invalid silence interval');
     return this.db.transaction(() => {
       const at = this.now(), now = Date.parse(at);
@@ -412,11 +412,13 @@ export class Jobs {
       // unknown; counting from now delays noticing a dead job by one interval and never loses a live one.
       this.db.update(jobs).set({ heardAt: at }).where(and(ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates), gt(jobs.heardAt, at))).run();
       const lost = this.db.select().from(jobs).where(and(ne(jobs.startedByKind, 'terminal'), inArray(jobs.state, claimedJobStates))).all()
-        .filter(job => now - Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt) > silenceMs)
+        .filter(job => now - Math.max(listeningSince, Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt)) > silenceMs)
         .map(job => {
-          const asked = this.endIfStopAsked(job, { endedNote: `Lost while ${job.state}: its worker stopped reporting` });
+          const seconds = Math.floor((now - Math.max(listeningSince, Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt))) / 1000);
+          const endedNote = `Lost while ${job.state}: no worker report for ${seconds}s while loom was listening`;
+          const asked = this.endIfStopAsked(job, { endedNote });
           if (asked) return asked;
-          const ended = this.end(job, 'lost', { endedAt: at, endedNote: `Lost while ${job.state}: its worker stopped reporting` });
+          const ended = this.end(job, 'lost', { endedAt: at, endedNote });
           this.retry(job, at);
           return ended;
         });

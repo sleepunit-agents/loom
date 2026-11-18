@@ -160,7 +160,7 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   f.runtime.claim(job.id, 'worker');
   f.tick(120_001); expect(f.runtime.sweep().map(row => row.id)).toEqual([job.id]);
   // loom's own line on the ending is not in the column that holds a runner's output.
-  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', endedNote: 'Lost while starting: its worker stopped reporting', logTail: null });
+  expect(f.runtime.get(job.id)).toMatchObject({ state: 'lost', endedNote: 'Lost while starting: no worker report for 120s while loom was listening', logTail: null });
   const retry = f.db.select().from(jobs).where(eq(jobs.retryOf, job.id)).get()!;
   expect(retry).toMatchObject({ state: 'queued', box: null });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
