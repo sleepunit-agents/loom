@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agentPeople, agents, members, secrets, bridgeConnections, bridgePeople, bridgeChannels, bridgeChannelFilters, bridgeIncoming, conversations, turns, inbox } from '../../core/data/schema.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { BridgeIncoming, BOT_NOT_ADMITTED, STOP_WORD, STOP_WORD_LATE, UNKNOWN_SENDER, isStopWord, type IncomingMessage } from './incoming.js';
+import { BridgeIncoming, BOT_NOT_ADMITTED, STOP_WORD, STOP_WORD_FRESH_MS, STOP_WORD_LATE, UNKNOWN_SENDER, isStopWord, type IncomingMessage } from './incoming.js';
 import { Jobs } from '../../runtime/jobs.js';
 import { jobs, memberAgents } from '../../core/data/schema.js';
 import { outsidePersonKey } from './keys.js';
@@ -621,6 +621,30 @@ describe('the stop word', () => {
     const words = f.ingress.receive({ ...f.message, id: 'late-words', text: 'stop the pump at noon' });
     f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
     expect(f.ingress.retry(words.id)).toMatchObject({ state: 'delivered', text: 'stop the pump at noon' });
+  });
+  it('never acts on a stop word first taken in more than two minutes after it was said, held or not, from a person or a bot', () => {
+    const f = working();
+    const said = (ago: number) => new Date(Date.parse(f.now()) - ago).toISOString();
+    // Its frame waited in the spool (loom was down, or the channel could not be read yet): there was no held row.
+    expect(f.ingress.receive({ ...f.message, id: 'spooled', text: 'stop', postedAt: said(STOP_WORD_FRESH_MS + 1) }, true)).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE, text: '' });
+    expect(f.state().state).toBe('running'); expect(f.ingress.takeStopped()).toEqual([]);
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    // Within the two minutes it still stops.
+    expect(STOP_WORD_FRESH_MS).toBe(120_000);
+    expect(f.ingress.receive({ ...f.message, id: 'fresh', text: 'stop', postedAt: said(STOP_WORD_FRESH_MS) })).toMatchObject({ state: 'dropped', reason: STOP_WORD });
+    expect(f.state().state).toBe('stopped');
+    // A bot that may talk here and wrote the agent's mention: its fresh "stop" is a message like any other
+    // of its messages, and a late or held one is spent like anybody's.
+    f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
+    const bot = { ...f.message, user: 'bot-mark', bot: true, mentions: ['bot-art'], text: '<@bot-art> stop' };
+    expect(f.ingress.receive({ ...bot, id: 'bot-fresh' })).toMatchObject({ state: 'delivered' });
+    expect(f.ingress.receive({ ...bot, id: 'bot-late', postedAt: said(STOP_WORD_FRESH_MS + 1) })).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE });
+    f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
+    const held = f.ingress.receive({ ...bot, id: 'bot-held' });
+    f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
+    expect(f.ingress.retry(held.id)).toMatchObject({ state: 'dropped', reason: STOP_WORD_LATE });
+    // Late words that are not the stop word are delivered, however late.
+    expect(f.ingress.receive({ ...f.message, id: 'late-words', text: 'stop the pump at noon', postedAt: said(3_600_000) })).toMatchObject({ state: 'delivered' });
   });
   it('without the runtime\'s Stop to call, takes the words as a message', () => {
     const f = working();

@@ -802,10 +802,12 @@ Entries are grouped by the part of the program they belong to.
 - Where: `receive` and `isStopWord` in `src/pieces/bridges/incoming.ts`; the job is ended by `Jobs.stop`
   (`src/runtime/jobs.ts`), handed in by `src/shared-root.ts`.
 - Why: a person watching an agent go wrong in a channel needs to stop it from there. The stop is acted on
-  only as the message is first taken in, and names the one job that is unended in that place then. A stop
-  word that had to wait (its connection was off, or it was held for any other reason) is spent: when its
-  hold ends it is dropped with the reason `Stop word, held too long to stop anything`, stops no job that
-  started since, and is not delivered as a message either. So a "stop" that loom first acts on hours late
+  only as the message is first taken in, and only while it is fresh. A stop word that loom comes to late is
+  spent: one that was held (its connection was off, or any other reason) and is tried again, and one first
+  taken in more than two minutes after it was said (`STOP_WORD_FRESH_MS`: its frame waited in the spool,
+  or loom was down). It is dropped with the reason `Stop word, too late to stop anything`, stops no job
+  that started since, and is not delivered as a message either, whoever said it. So a "stop" that loom
+  first acts on more than two minutes late
   stops nothing. A job records the member who ended it, so an outside account with only a tier cannot
   stop one. The job is ended, not asked to stop: a bridge conversation has no Comms thread to carry a Stop
   a body would notice, and work that was stopped needs fresh mail to start again.
