@@ -1,3 +1,4 @@
+import { machineFacts } from '../../runtime/machine-facts.js';
 import type { Asker } from '../../policy.js';
 import { randomUUID } from 'node:crypto';
 import { laneFile } from './lane-file.js';
@@ -12,6 +13,7 @@ import { MESSAGE_WORDS_MAX } from '../conversations/words.js';
 
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
+const placement = { needs: machineFacts.optional(), prefers: machineFacts.optional() };
 export const triggerInput = z.object({
   id: text.optional(), ownerKind: z.enum(triggers.ownerKind.enumValues), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
@@ -21,6 +23,7 @@ export const triggerInput = z.object({
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX),
   /** The kind of model the work should run on: a tag such as best, normal or low, or one model by name. */
   wantsModel: text.max(200).nullable().optional(),
+  ...placement,
   /** The Discord or Slack conversation a firing is mail in, instead of a wake of its own. */
   conversation: text.nullable().optional(),
 });
@@ -28,6 +31,7 @@ export type NewTrigger = z.input<typeof triggerInput>;
 /** The parts of a standing trigger that can change after it is set. Who it is for, what it
  * watches and what it does cannot: stop it and set another. */
 export const triggerEdit = z.object({
+  ...placement,
   instructions: z.string().max(MESSAGE_WORDS_MAX).nullable().optional(), file: text.nullable().optional(),
   times: text.optional(), days: text.nullable().optional(), note: text.max(MESSAGE_WORDS_MAX).optional(), wantsModel: text.max(200).nullable().optional(),
 }).strict();
@@ -185,15 +189,18 @@ export class TriggerEngine {
       if (c.file && c.instructions) throw new Error('Give instructions or a file');
       if (c.file && !laneFile(c.file)) throw new Error('Instructions must be a relative repository file');
       if ((c.times !== undefined || c.days !== undefined) && t.sourceKind !== 'time') throw new Error('Only a time trigger has times');
-      const before: Record<string, string | null> = {};
+      const before: Record<string, string | string[] | null> = {};
       for (const key of ['instructions', 'file', 'times', 'days', 'note', 'wantsModel'] as const) if (c[key] !== undefined && c[key] !== t[key]) before[key] = t[key];
+      for (const key of ['needs', 'prefers'] as const) {
+        if (c[key] !== undefined && JSON.stringify(c[key]) !== JSON.stringify(t[key])) before[key] = t[key];
+      }
       if (!Object.keys(before).length) return;
       // The asker follows the words, and only words that are different now: asked here, where what changed is known,
       // so no door can re-stamp a trigger whose words it sent back unchanged.
       if (asked && t.conversation && ('instructions' in before || 'file' in before || 'note' in before)) this.db.update(triggers).set({ askedByKind: asked.kind, askedBy: asked.id, askedAt: this.now() }).where(eq(triggers.id, id)).run();
       const next = { ...t, ...c };
       const due = t.enabled && ('times' in before || 'days' in before) ? this.due(t.sourceKind, next.times, next.days, t.lifespan) : t.nextDueAt;
-      this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
+      this.db.update(triggers).set({ instructions: next.instructions, file: next.file, times: next.times, days: next.days, note: next.note, wantsModel: next.wantsModel, needs: next.needs, prefers: next.prefers, nextDueAt: due, changedAt: this.now() }).where(eq(triggers.id, id)).run();
       const seq = (this.db.select({ seq: max(triggerEdits.seq) }).from(triggerEdits).get()?.seq ?? 0) + 1;
       this.db.insert(triggerEdits).values({ seq, trigger: id, at: this.now(), byKind: by.kind, by: by.id, before: JSON.stringify(before) }).run();
       this.log(id, 'edited', Object.keys(before).join(', '));

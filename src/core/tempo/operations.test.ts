@@ -136,3 +136,17 @@ it('stops and starts one trigger and edits it as the caller, checking authority 
   expect(f.call('tempo.edit', { id: 'tr', instructions: 'Not mine' }, 'edit-denied')).toMatchObject({ ok: false });
   expect(f.db.select().from(triggerEdits).all()).toHaveLength(1);
 });
+
+it('sets and edits machine facts, keeping each previous list in the trigger history', () => {
+  const f = fixture();
+  const input = { ...f.trigger, times: '09:00', lifespan: 'until-stopped', needs: [' gpu '], prefers: ['local'] };
+  const row = () => f.db.select().from(triggers).get();
+  expect(f.call('tempo.set', { ...input, needs: ['gpu', ' gpu '] }, 'duplicate').ok).toBe(false);
+  expect(f.call('tempo.set', input, 'set').ok).toBe(true);
+  expect(row()).toMatchObject({ needs: ['gpu'], prefers: ['local'] });
+  expect(f.call('tempo.edit', { id: 'tr', prefers: [''] }, 'invalid').ok).toBe(false);
+  expect(f.call('tempo.edit', { id: 'tr', needs: ['gpu'] }, 'unchanged').ok).toBe(true);
+  expect(f.call('tempo.edit', { id: 'tr', prefers: [] }, 'clear').ok).toBe(true);
+  expect(row()).toMatchObject({ needs: ['gpu'], prefers: [] });
+  expect(f.db.select().from(triggerEdits).all().map(edit => JSON.parse(edit.before))).toEqual([{ prefers: ['local'] }]);
+});

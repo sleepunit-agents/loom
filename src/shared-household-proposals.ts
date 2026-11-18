@@ -247,7 +247,9 @@ export function sharedHouseholdProposals(db:DataDatabase,household:ReturnType<ty
   if(value.change==='browserSignOut'){const rows=browsers(value.input);return rows.length?sorted({member:value.input.member,device:value.input.device,browsers:rows.length}):null;}
   // A new schedule replaces nothing. A change is sealed on what the schedule says now and whose it is.
   if(value.change==='placeSchedule'){const id=value.input.action==='set'?value.input.trigger.id:value.input.id,row=db.select().from(triggerRows).where(eq(triggerRows.id,id)).get();
-   return row?sorted({id:row.id,times:row.times,days:row.days,lifespan:row.lifespan,note:row.note,instructions:row.instructions,wantsModel:row.wantsModel,on:row.enabled,askedByKind:row.askedByKind,askedBy:row.askedBy}):null;}
+   return row?sorted({id:row.id,times:row.times,days:row.days,lifespan:row.lifespan,note:row.note,instructions:row.instructions,wantsModel:row.wantsModel,
+    ...(row.needs == null ? {} : {needs:row.needs}),...(row.prefers == null ? {} : {prefers:row.prefers}),
+    on:row.enabled,askedByKind:row.askedByKind,askedBy:row.askedBy}):null;}
   const current=household.settings() as Record<string,unknown>;
   return sorted(Object.fromEntries(Object.keys(value.input).map(key=>[key,current[key]])));
  };
