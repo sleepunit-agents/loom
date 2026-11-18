@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {and,eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -230,7 +230,8 @@ it('takes a file on bridges.say as a name and bytes, and refuses it for Slack wi
  expect((await f.call('bridges','say',{id:randomUUID(),text:'x',files:Array(5).fill({name:'a',contents})})).status).toBe(400);
 });
 it('keeps a conversation\'s harness session sealed, for the body of its job alone, and hands on only one that is current',async()=>{
- const f=fixture(()=>true,true);const incoming=await f.receive();
+ // The account that writes is the owner's own: the job works on owners' word. A job on anybody else's has neither door (below).
+ const f=fixture(()=>true,true);f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'}).run();const incoming=await f.receive();
  f.root.writes.run(()=>{f.db.update(jobs).set({conversation:incoming.conversation,harness:'claude',model:'claude-opus-5-5'}).where(eq(jobs.id,'body')).run();f.db.update(jobs).set({harness:'claude',model:'claude-opus-5-5'}).where(eq(jobs.id,'other')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
  const files=Buffer.from('THE MODEL\'S OWN RECORD OF THE CONVERSATION').toString('base64'),session='0f0e0d0c-1111-4222-8333-444455556666';
  const take=async(credential=token.body)=>f.call('conversation','session',{},credential),save=(input:unknown,credential=token.body)=>f.call('conversation','sessionSave',input,credential);
@@ -285,6 +286,45 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  expect((await save({session,files})).status).toBe(200);
  f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
  expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
+});
+it('gives a job on anybody else\'s word neither session door, and leaves the owners\' session for the owners\' next job',async()=>{
+ const f=fixture(()=>true,true);
+ f.db.insert(bridgePeople).values({platform:'slack',workspace:'TWORK',user:'UOWNER',member:'owner'}).run();
+ await f.root.services.bridges.daemon!.ready();await f.root.services.bridges.daemon!.idle();
+ let events=0;
+ /** A message in the one Slack thread of the room, from the owner's account or from the guest's. */
+ const hear=async(user:'UOWNER'|'UUSER',text:string)=>{const n=++events;
+  await f.transports.at(-1)!.receive({},Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack'+n,payload:{type:'event_callback',event_id:'event'+n,team_id:'TWORK',event:{type:'message',channel:'CROOM',user,text,ts:`179443200${n}.000001`,...(n>1?{thread_ts:'1794432001.000001'}:{})}}})));
+  f.clock.advance(0);await f.root.services.bridges.daemon!.idle();return f.db.select().from(bridgeIncoming).all().find(row=>row.text===text)!;};
+ /** One job at a time works in the conversation: this one now, with the mail that waits there. */
+ const work=(id:'body'|'other',conversation:string)=>f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).run();f.db.update(jobs).set({conversation,harness:'claude',model:'claude-opus-5-5',state:'running'}).where(eq(jobs.id,id)).run();
+  f.db.update(inbox).set({job:id}).where(and(eq(inbox.conversation,conversation),eq(inbox.state,'waiting'))).run();f.root.services.conversations.take(conversation,id);});
+ const take=async(credential:string)=>f.call('conversation','session',{},credential),save=(input:unknown,credential:string)=>f.call('conversation','sessionSave',input,credential);
+ const answer=(incoming:string,credential:string)=>f.call('bridges','reply',{id:randomUUID(),incoming,text:'Answered',model:'observed',outcome:'progressed'},credential);
+ const files=Buffer.from('WHAT THE OWNERS\' JOB READ AND USED').toString('base64'),session='0f0e0d0c-1111-4222-8333-444455556666';
+ // An owners' job answers and saves its session.
+ const first=await hear('UOWNER','Use the deploy key'),cv=first.conversation!;work('body',cv);
+ expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('owners');
+ expect((await answer(first.id,token.body)).status).toBe(200);f.clock.advance(1000);
+ expect(await save({session,files},token.body)).toMatchObject({status:200,body:{value:{saved:true}}});
+ const kept=f.db.select().from(conversationSessions).all();expect(kept).toMatchObject([{conversation:cv,session}]);
+ // A guest writes in the same conversation. That job is on anybody else's word: it is refused the session at the door, and starts fresh.
+ f.clock.advance(1000);const second=await hear('UUSER','What did you just do?');expect(second.conversation).toBe(cv);work('other',cv);
+ expect(jobWord(f.db,{id:'other',agent:'art',conversation:cv}).woke).toBe('others');
+ expect((await take(token.other)).status).toBe(403);
+ // Nor does it save one of its own, or say that none is kept: what the owners' job left stays as it was.
+ expect((await save({session:'1f0e0d0c-1111-4222-8333-444455556666',files},token.other)).status).toBe(403);
+ expect((await save({session:null},token.other)).status).toBe(403);
+ expect(f.db.select().from(conversationSessions).all()).toEqual(kept);
+ // It answers all the same (what it is told of the conversation is its kept history: shared-bridge-resume.test.ts).
+ expect((await answer(second.id,token.other)).status).toBe(200);
+ // The owner writes again. That job resumes the session the first one left: the guest's job in between took nothing from it and put nothing in.
+ f.clock.advance(1000);const third=await hear('UOWNER','Go on');expect(third.conversation).toBe(cv);work('body',cv);
+ expect(jobWord(f.db,{id:'body',agent:'art',conversation:cv}).woke).toBe('owners');
+ expect(await take(token.body)).toMatchObject({status:200,body:{value:{session:{session,files}}}});
+ // An answer by an owners' job after the save still leaves the session behind, as before.
+ expect((await answer(third.id,token.body)).status).toBe(200);
+ expect(await take(token.body)).toMatchObject({status:200,body:{value:{session:null}}});
 });
 // What a body may schedule depends on whose word its job works on (policy.ts, maySchedule). A guest's body would be
 // setting words that later run as the agent's own wake, outside the conversation and its limits: every trigger

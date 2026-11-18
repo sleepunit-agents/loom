@@ -121,11 +121,14 @@ export async function bodyProgram(input: {
     // A bridge conversation's body continues the session the last one left, when loom hands one over
     // (body-session.ts). It is then told the new mail alone: the session already holds what came before.
     // With none, it starts fresh and is told the conversation's kept history with its mail.
-    if(bridge){
+    // Not on anybody else's word: a kept session is the record of what an owners' body read and used. Such a
+    // body asks for none and leaves none, and starts fresh with the kept history. loom's doors refuse it both
+    // on loom's own reading of the word (shared-conversation-sessions.ts), so one that asked would get nothing.
+    if(bridge&&!hasGuest(job.run?.policy)){
       sessionClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal:input.signal,fetch:input.fetch,clock:input.clock});
       keeper=input.sessions??(input.native?undefined:bodySessions(sessionClient,job.harness,input.env));
     }
-    const resume=await keeper?.take();
+    let resume=await keeper?.take();
     if(signal.aborted)throw new Error();
     const continued:string[]=[];let oldestErased:string|undefined,fresh=!resume;
     // loom read who is in the room when it claimed the job. The body takes everything waiting, so mail from
