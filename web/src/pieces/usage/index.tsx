@@ -47,16 +47,25 @@ function Conversations({range}:{range:Range}) {
       {open===g.key&&<tr><td colSpan={4}><Jobs conversation={g.key} range={range}/></td></tr>}
     </Fragment>)}</tbody></table>;
 }
-const day=(date:Date)=>date.toISOString().slice(0,10);
+function localDay(offset:number) {
+  const date=new Date();
+  date.setDate(date.getDate()+offset);
+  return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');
+}
+function midnight(day:string,offset=0) {
+  const date=new Date(day+'T00:00:00');
+  date.setDate(date.getDate()+offset);
+  return date;
+}
 export default function Usage() {
-  const [last,setLast]=useState(()=>day(new Date()));
-  const [first,setFirst]=useState(()=>day(new Date(Date.now()-6*86400000)));
+  const [last,setLast]=useState(()=>localDay(0));
+  const [first,setFirst]=useState(()=>localDay(-6));
   const valid=first&&last&&first<=last&&Number.isFinite(Date.parse(first))&&Number.isFinite(Date.parse(last));
   return <main style={{padding:'1rem',overflow:'auto'}}><h1>Job usage</h1>
-    <fieldset><legend>Date range (UTC)</legend>
+    <fieldset><legend>Date range ({Intl.DateTimeFormat().resolvedOptions().timeZone})</legend>
       <label>From <input type="date" value={first} max={last} onChange={e=>setFirst(e.target.value)}/></label>
       <label> Through <input type="date" value={last} min={first} onChange={e=>setLast(e.target.value)}/></label>
     </fieldset>
-    {valid?<Conversations range={{from:new Date(first).toISOString(),to:new Date(Date.parse(last)+86400000).toISOString()}}/>:<p>Choose a valid date range.</p>}
+    {valid?<Conversations range={{from:midnight(first).toISOString(),to:midnight(last,1).toISOString()}}/>:<p>Choose a valid date range.</p>}
   </main>;
 }
