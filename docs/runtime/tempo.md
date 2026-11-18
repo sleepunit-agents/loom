@@ -76,11 +76,19 @@ those of every trigger. The rules are in `src/shared-place-triggers.ts`.
   owners get one notice saying why. **A channel rule that was removed does not
   by itself stop a firing: a mention there would still wake the agent.**
 - **A trigger keeps to its asker.** From a shared place, a body working for
-  anybody but owners or members who have the agent may reword, stop, start
-  and run only a trigger the same person asked for; a body working for those
-  may touch any trigger naming its conversation. Whoever changes a trigger's
-  words, file or times becomes its asker, so a firing never runs one person's
-  words on another's word.
+  anybody but owners or members who have the agent may reword, stop and start
+  only a trigger the same person asked for; a body working for those may touch
+  any trigger naming its conversation. Whoever changes a trigger's words
+  becomes its asker; a change of times alone leaves both as they were. So a
+  firing's words and its asker always come from the same person.
+- **By whose word, not where.** A body working for anybody but owners fires no
+  trigger by hand (`tempo.runNow`): it is awake and does the work now. No job
+  fires or starts again the trigger whose firing woke it. A job with somebody
+  outside the household behind it schedules only into its own bridge
+  conversation, wherever it is working. One member's private conversation is
+  named only on that member's word, or by the agent's own work. How often a
+  trigger repeats is asked when it is set and when its times change, never to
+  stop, start, run or reword one.
 - **Words only.** From a shared place a trigger carries its own words: naming
   a `file` of the household's repository is refused on `tempo.set` and
   `tempo.edit`.

@@ -13,6 +13,7 @@ import type { HandoffToSelf } from './core/conversations/handoff.js';
 import { conversationPlace } from './pieces/bridges/place.js';
 import { workerPolicy } from './runtime/body-policy.js';
 
+export const PRIVATE_PLACE_REFUSAL = 'That is one member\'s private conversation: only on that member\'s word, or as the agent\'s own work, is anything sent or scheduled there.';
 /** The most triggers that may stand at once naming one conversation. */
 export const PLACE_TRIGGERS_MAX = 10;
 /** The least time between two firings of a repeating trigger set from a shared place. */
@@ -82,10 +83,10 @@ export function jobWord(db: DataDatabase, job: { id: string; agent: string; conv
   const unspoken = mail.length > 0 && db.select({ id: inbox.id }).from(inbox).where(and(inArray(inbox.id, mail), eq(inbox.fromKind, 'agent'), isNull(inbox.onWord))).all().length > 0;
   if (unspoken) return { woke: 'others' };
   if (!people.length) return { woke: 'own' };
-  const rank = (p: typeof people[number]) => p.kind === 'unknown' || p.person === null ? 0 : p.kind === 'outside' ? (p.tier === 3 ? 2 : 1)
+  const rank = (p: typeof people[number]) => p.kind === 'unknown' || p.person === null ? 0 : p.kind === 'outside' ? (p.tier === null ? 0 : p.tier === 3 ? 2 : 1)
     : isHouseholdOwner({ kind: 'member', id: p.person }, sharing) ? 5 : have.has(p.person) ? 4 : 3;
   const least = [...people].sort((a, b) => rank(a) - rank(b))[0], lowest = rank(least);
-  // Somebody nobody can name is behind it: nothing is done on such a word.
+  // Somebody nobody can name, or an outside account with no tier (a stranger), is behind it: nothing is done on such a word.
   if (lowest === 0 || least.person === null) return { woke: 'others' };
   return { woke: lowest >= 4 ? 'owners' : 'others', person: { kind: least.kind === 'person' ? 'member' : 'outside', id: least.person } };
 }
@@ -127,6 +128,9 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
         const cv = db.select().from(conversations).where(eq(conversations.id, to.conversation)).get(), at = cv && cv.agent === agent ? placeAddress(db, cv) : undefined;
         if (!cv || !at || cv.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another Discord or Slack conversation of this agent');
         const closed = placeClosed(db, cv); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+        // One member's private conversation is handed to only on that member's word, or by the agent's own work.
+        const on = jobWord(db, work.job);
+        if (cv.member !== null && !(on.woke === 'own' || (on.person?.kind === 'member' && on.person.id === cv.member))) throw new OperationError('denied', PRIVATE_PLACE_REFUSAL);
         conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = `${cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}`;
       } else {
         // A channel the agent has a rule for; the conversation there is found, or opened.

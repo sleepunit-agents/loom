@@ -14,7 +14,7 @@ import {bodyConversationClient,bodyMailContext} from './runtime/conversation-cli
 import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
 import {CHAIN_NOTICE_EVERY,PLACE_TRIGGERS_MAX} from './shared-place-mail.js';
-import {SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
+import {RUN_NOW_REFUSAL,SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
 import {mayReviewReply} from './shared-bridge-commands.js';
 import {jobWord,reportsTo,placeClosed} from './shared-place-mail.js';
 import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
@@ -344,7 +344,7 @@ it('lets a room\'s body set a trigger that names its own conversation, records w
  expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the room'})).status).toBe(200);
  // It stops, starts and runs its own conversation's triggers, and still no other of its agent's.
  const outside=once({conversation:undefined});expect((await f.call('tempo','set',outside,token.other)).status).toBe(200);
- for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});}
+ for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(action==='runNow'?403:200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});}
  // The owner, and the agent outside the conversation, set one naming a conversation the agent has: the asker is then that owner, or the agent.
  const owners=once(),own=once();
  owners.ownerKind='member';owners.owner='owner';f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
@@ -353,7 +353,7 @@ it('lets a room\'s body set a trigger that names its own conversation, records w
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({askedByKind:'agent',askedBy:'art'});
  // A trigger keeps to its asker. The guest's body may not reword, stop, start or run what the owner or the agent asked for there.
  for(const [action,input] of [['edit',{id:own.id,instructions:'The guest\'s words on the agent\'s word'}],['stop',{id:own.id}],['start',{id:own.id}],['runNow',{id:own.id}]] as const)
-  expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:SHARED_PLACE_ASKER_REFUSAL}});
+  expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:action==='runNow'?RUN_NOW_REFUSAL:SHARED_PLACE_ASKER_REFUSAL}});
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({instructions:'Post the numbers',state:'standing',lastFiredAt:null});
  // Whoever changes its words becomes its asker: the owner rewording the guest's trigger makes it the owner's.
  expect((await f.call('tempo','edit',{id:hourly.id,instructions:'The owner\'s words'},token.owner)).status).toBe(200);
@@ -379,7 +379,7 @@ it('fires such a trigger as mail from the schedule in its conversation, on its a
  const {f,cv,once}=await room(()=>false);
  const mine=once();expect((await f.call('tempo','set',mine)).status).toBe(200);
  const before=f.db.select().from(conversations).all().length;
- expect((await f.call('tempo','runNow',{id:mine.id})).status).toBe(200);
+ expect((await f.call('tempo','runNow',{id:mine.id},token.other)).status).toBe(200);
  // Mail in the room, and no wake of its own.
  expect(f.db.select().from(conversations).all()).toHaveLength(before);
  const fired=f.db.select().from(inbox).where(eq(inbox.source,'trigger')).get()!;
@@ -413,17 +413,17 @@ it('stops such a trigger, with one notice, when its asker is no longer known or 
  for(const trigger of [asked,closed])expect((await f.call('tempo','set',trigger)).status).toBe(200);
  // A removed channel rule alone stops nothing: a mention there would still wake the agent.
  f.root.writes.run(()=>f.db.delete(bridgeChannels).run());
- expect((await f.call('tempo','runNow',{id:asked.id})).status).toBe(200);
+ expect((await f.call('tempo','runNow',{id:asked.id},token.other)).status).toBe(200);
  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
  // The owner takes the guest's tier away: the firing does nothing, the trigger is stopped, the owner is told once.
  f.root.writes.run(()=>f.db.delete(agentPeople).run());
- expect((await f.call('tempo','runNow',{id:asked.id})).status).toBe(200);
+ expect((await f.call('tempo','runNow',{id:asked.id},token.other)).status).toBe(200);
  expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toHaveLength(1);
  expect(f.db.select().from(triggers).where(eq(triggers.id,asked.id)).get()).toMatchObject({enabled:false,state:'stopped'});
  expect(notices()).toMatchObject([{toKind:'person',to:'owner',words:expect.stringContaining('who asked for it, is no longer known to art')}]);
  // The connection is turned off: the same, for the conversation.
  f.root.writes.run(()=>{f.db.insert(agentPeople).values({agent:'art',person:GUEST,tier:2}).run();f.db.update(bridgeConnections).set({enabled:false}).run();});
- expect((await f.call('tempo','runNow',{id:closed.id})).status).toBe(200);
+ expect((await f.call('tempo','runNow',{id:closed.id},token.other)).status).toBe(200);
  expect(f.db.select().from(triggers).where(eq(triggers.id,closed.id)).get()).toMatchObject({enabled:false,state:'stopped'});
  expect(notices().map(item=>item.words)).toContainEqual(expect.stringContaining("its conversation's connection is not in use"));
  // Turned back on and stopped the same way again, the owner is told again.
@@ -578,4 +578,47 @@ it('lets only an agent\'s own work post a text straight to a channel it has a ru
  for(let n=1;n<20;n++)expect((await f.call('bridges','post',post(croom),token.other)).status,String(n)).toBe(200);
  expect((await f.call('bridges','post',post(croom),token.other)).status).toBe(409);
  expect(f.request.mock.calls.some(([url])=>String(url).endsWith('chat.postMessage'))).toBe(false);
+});
+
+it('keys what a body may do with a trigger or a note on whose word it works, not on where it is',async()=>{
+ const {f,cv,once,work}=await room();
+ const stamp=new Date(f.clock.now()).toISOString();
+ f.root.writes.run(()=>{f.db.insert(members).values({id:'kim',role:'member',joinedAt:stamp}).run();f.db.insert(memberAgents).values([{member:'kim',agent:'art'},{member:'owner',agent:'art'}]).run();
+  f.db.insert(bridgeChannels).values({platform:'slack',workspace:'TWORK',channel:'CPOND',answers:'art',botsMayTalk:false}).run();f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CPOND'])}).where(eq(bridgeChannels.channel,'CROOM')).run();});
+ const note=(to:unknown)=>({to,clientId:randomUUID(),label:'Note',words:'Words'}),pond={platform:'slack',workspace:'TWORK',channel:'CPOND'};
+ // The guest's body sets its own trigger. It is awake and can do the work now: it fires nothing by hand.
+ const guests=once();expect((await f.call('tempo','set',guests)).status).toBe(200);
+ expect((await f.call('tempo','runNow',{id:guests.id})).status).toBe(403);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'trigger')).all()).toEqual([]);
+ // A times-only edit by somebody else keeps the asker: the words are still the guest's.
+ f.root.writes.run(()=>f.db.update(triggers).set({times:'09:00',lifespan:'until-stopped'}).where(eq(triggers.id,guests.id)).run());
+ expect((await f.call('tempo','edit',{id:guests.id,times:'10:00'},token.owner)).status).toBe(200);
+ expect(f.db.select().from(triggers).where(eq(triggers.id,guests.id)).get()).toMatchObject({askedByKind:'outside',askedBy:GUEST,times:'10:00'});
+ // An outside account whose tier the owner took away is a stranger: its body hands nowhere, the report target included.
+ f.root.writes.run(()=>f.db.delete(agentPeople).run());
+ expect((await f.call('conversation','handoff',note(pond))).status).toBe(403);
+ f.root.writes.run(()=>f.db.insert(agentPeople).values({agent:'art',person:GUEST,tier:2}).run());
+ // The agent, outside the place, sets a half-hourly trigger and one that watches an event for this conversation.
+ const half=once({lifespan:'until-stopped',times:'09:00,09:30'});expect((await f.call('tempo','set',half,token.other)).status).toBe(200);
+ // The owner speaks in the place: the body there now works on the owner's word, and may stop and reword what
+ // stands for its conversation however often it repeats. Only setting, and changing times, ask about that.
+ f.root.writes.run(()=>{f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run();});
+ expect((await f.call('tempo','edit',{id:half.id,instructions:'Reworded by the owner\'s body'})).status).toBe(200);
+ expect(await f.call('tempo','edit',{id:half.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
+ expect((await f.call('tempo','stop',{id:half.id})).status).toBe(200);expect((await f.call('tempo','start',{id:half.id})).status).toBe(200);
+ // No job fires again the trigger whose firing woke it, whoever it works for.
+ expect((await f.call('tempo','runNow',{id:half.id})).status).toBe(200);
+ const fired=f.db.select().from(inbox).where(eq(inbox.source,'trigger')).get()!;
+ f.root.writes.run(()=>f.db.update(inbox).set({job:'body',state:'taken'}).where(eq(inbox.id,fired.id)).run());
+ for(const action of ['runNow','start'])expect((await f.call('tempo',action,{id:half.id})).status,action).toBe(403);
+ // One member's private conversation is named only on that member's word, or by the agent's own work.
+ const kims=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','DKIM',null,['member','kim']]),label:'kim',member:'kim',direct:true}).id;
+ const owners=once({conversation:kims,ownerKind:'member',owner:'owner'});
+ expect((await f.call('tempo','set',owners,token.owner)).status).toBe(403);
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;
+ work(lane,[{kind:'person',id:'owner'}]);expect((await f.call('conversation','handoff',note({conversation:kims}),token.other)).status).toBe(403);
+ work(lane,[{kind:'person',id:'kim'}]);expect((await f.call('conversation','handoff',note({conversation:kims}),token.other)).status).toBe(200);
+ work(lane,[]);expect((await f.call('conversation','handoff',note({conversation:kims}),token.other)).status).toBe(200);
+ expect((await f.call('tempo','set',once({conversation:kims}),token.other)).status).toBe(200);
+ void cv;
 });

@@ -68,10 +68,11 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
       recorded: (viewer, trigger) => { const recorded = recordedTrigger(db, viewer, trigger);
         return trigger.conversation ? { trigger: recorded.trigger, asked: placeTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember),
-      placeRefusal: (viewer, trigger, change) => { const work = options.bodyWork?.(viewer); return work && !maySchedule(work.cv, trigger) ? SHARED_PLACE_SCHEDULE_REFUSAL : sharedPlaceRefusal(db, work, trigger, change); },
+      placeRefusal: (viewer, action, trigger, change) => { const work = options.bodyWork?.(viewer); return work && !maySchedule(work.cv, trigger) ? SHARED_PLACE_SCHEDULE_REFUSAL : sharedPlaceRefusal(db, work, action, trigger, change); },
       standRefusal: trigger => trigger.conversation ? placeFull(db, trigger.conversation) : undefined,
-      // Changed words, file or times are the changer's: the trigger then runs on their word.
-      reasked: (viewer, trigger, change) => { if (!trigger.conversation || (change.instructions === undefined && change.file === undefined && change.times === undefined)) return undefined;
+      // Changed words are the changer's: the trigger then runs on their word. A change of times alone leaves
+      // both as they were, so a firing's words and its asker always come from the same person.
+      reasked: (viewer, trigger, change) => { if (!trigger.conversation || (change.instructions === undefined && change.file === undefined)) return undefined;
         const agent = db.select({ agent: conversationRows.agent }).from(conversationRows).where(eq(conversationRows.id, trigger.conversation)).get()?.agent;
         return agent ? asking(db, viewer, agent, options.bodyWork?.(viewer)) : undefined; } },
   });
