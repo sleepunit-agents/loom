@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { setupCall } from '../test/fixtures/setup-call.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {createHash,randomUUID} from 'node:crypto';
-import {eq} from 'drizzle-orm';
+import {and,eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
 import {agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
@@ -13,7 +13,7 @@ import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
 import {Jobs} from './runtime/jobs.js';
 import {workerPolicy} from './runtime/body-policy.js';
-import {CHAIN_NOTICE_EVERY,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
+import {CHAIN_NOTICE_EVERY,NOTES_PER_JOB,PLACE_TRIGGERS_MAX,PRIVATE_PLACE_REFUSAL,WORD_REPEAT_MIN_MS} from './shared-place-mail.js';
 import {triggerLog} from './core/data/schema.js';
 import {WOKEN_BY_MAIL_REFUSAL} from './shared-place-triggers.js';
 import {RUN_NOW_REFUSAL,SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
@@ -530,7 +530,7 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  const {f,cv,incoming}=await sharedPlace();
  const send=(fromKind:'agent'|'schedule'|'person',source:'handoff'|'trigger'|'notice')=>{let id='';f.root.writes.run(()=>{id=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source,sourceId:randomUUID(),fromKind,fromId:fromKind==='person'?'owner':'art',words:source==='handoff'?null as never:'Words'}).id;});return id;};
  const note=send('agent','handoff'),firing=send('schedule','trigger'),said=send('person','notice');
- const all=new Jobs(f.db,()=>new Date(f.clock.now()).toISOString());
+ const all=runnable(f);
  // Today's Stop by hand for another reason leaves them as they are.
  expect(f.db.select().from(inbox).all().filter(item=>[note,firing,said].includes(item.id)).map(item=>item.job)).toEqual([null,null,null]);
  f.root.writes.run(()=>all.stop('body','owner','stop'));
@@ -550,7 +550,13 @@ it('gives a stopped job the notes and firings waiting in its conversation, so th
  heard('bi:bot',true);expect(all.admission(cv)).toEqual({});
  // A person speaks there, here the guest: work starts (or loom says why it cannot), and it is for everything waiting.
  heard('bi:guest',false);
- expect(Object.keys(all.admission(cv))).not.toEqual([]);
+ const released=all.admission(cv);expect(released).toMatchObject({started:true,job:{conversation:cv}});
+ // The parked note and firing, and the ones that came while it was stopped, are the new job's now, not the stopped one's.
+ expect([note,firing,later,next].map(id=>job(id))).toMatchObject(Array.from({length:4},()=>({job:released.job!.id,state:'waiting'})));
+ // Outside a bridge a stop parks nothing: a lane's waiting mail is as it was, for the lane's next job.
+ const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;
+ let waits='';f.root.writes.run(()=>{f.db.update(jobs).set({conversation:lane}).where(eq(jobs.id,'other')).run();waits=f.root.services.conversations.send({conversation:lane,toKind:'agent',to:'art',source:'trigger',sourceId:'lane-firing',fromKind:'schedule',words:'Next'}).id;});
+ f.root.writes.run(()=>all.stop('other','owner','stop'));expect(job(waits)).toMatchObject({job:null,state:'waiting'});
 });
 it('leaves a note, a firing and another agent\'s mail that arrive after a job was admitted for the next job, and reads a thread\'s rules by its parent channel',async()=>{
  const {f,cv,work}=await sharedPlace();
@@ -780,9 +786,9 @@ it('tells the body a note reaches how to answer only when a note back would be t
  // On an owner's word the body there may hand to any conversation of the agent.
  f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run());
  expect(told('body',cv,pond)).toContain(back);expect(told('body',cv,pond)).not.toContain(none);
- // On a guest's word again, into a channel that reports back here: the answer is that one hand-off.
+ // On a guest's word again, into a channel that reports back here: still none. A guest's word goes one hop, and the body a note woke hands nowhere.
  f.root.writes.run(()=>{f.db.update(inbox).set({fromKind:'unknown',fromId:null}).where(eq(inbox.job,'body')).run();f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CROOM'])}).where(eq(bridgeChannels.channel,'CPOND')).run();});
- expect(told('body',cv,pond)).toContain(back);
+ expect(told('body',cv,pond)).toContain(none);
  // The agent's own work in a wake: a wake is never a note's target, and a note on nobody's word hands nowhere.
  const lane=f.root.services.conversations.open({agent:'art',venue:'wake',place:'standup',label:'Standup'}).id;work(lane,[]);
  expect(told('other',lane,pond)).toContain(none);expect(told('other',lane,pond)).not.toContain('To answer that body');
@@ -943,4 +949,40 @@ it('ends a loop of firings on a guest\'s word: a job a firing or a note woke sch
  f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
  const owners=once({ownerKind:'member',owner:'owner'});expect((await f.call('tempo','set',owners,token.owner)).status).toBe(200);
  expect((await f.call('tempo','runNow',{id:owners.id},token.owner)).status).toBe(200);expect(fired()).toHaveLength(3);
+});
+
+it('lets a guest\'s word go one hop and five notes, and reads a report target only from a rule of the agent\'s own',async()=>{
+ const {f,cv,work}=await sharedPlace(()=>false);
+ const key=(channel:string)=>JSON.stringify(['slack','TWORK',channel]),pond={platform:'slack',workspace:'TWORK',channel:'CPOND'};
+ f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  f.db.insert(bridgeChannels).values([{...pond,answers:'art',botsMayTalk:false,reportsTo:key('CTHIRD')},{platform:'slack',workspace:'TWORK',channel:'CTHIRD',answers:'art',botsMayTalk:false}]).run();
+  f.db.update(bridgeChannels).set({reportsTo:key('CPOND')}).where(eq(bridgeChannels.channel,'CROOM')).run();});
+ const note=(to:unknown,credential=token.body)=>f.call('conversation','handoff',{to,clientId:randomUUID(),label:'Note',words:'Words'},credential);
+ // One hop: the guest's body hands to its channel's report target.
+ const first=await note(pond);expect(first.status).toBe(200);const there=made(first.body);
+ // The body that note woke is on the guest's word too. Its own channel names a report target, and it hands nothing there: a note started it.
+ f.root.writes.run(()=>{f.db.update(jobs).set({conversation:there}).where(eq(jobs.id,'other')).run();f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.conversation,there)).run();});
+ expect(reportsTo(f.db,f.db.select().from(conversations).where(eq(conversations.id,there)).get()!)).toBe(key('CTHIRD'));
+ expect(jobWord(f.db,{id:'other',agent:'art',conversation:there})).toEqual({woke:'others',person:{kind:'outside',id:GUEST}});
+ expect((await note({platform:'slack',workspace:'TWORK',channel:'CTHIRD'},token.other)).status).toBe(403);
+ // A job on a guest's word hands at most five notes, wherever each would go; the same note sent again is the same note.
+ expect(NOTES_PER_JOB).toBe(5);
+ const again={to:{...pond,thread:'1794432000.000002'},clientId:'fifth',label:'Note',words:'Words'};
+ for(let n=2;n<NOTES_PER_JOB;n++)expect((await note({...pond,thread:`179443200${n}.000001`})).status,String(n)).toBe(200);
+ expect((await f.call('conversation','handoff',again)).status).toBe(200);
+ expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(409);expect((await f.call('conversation','handoff',again)).status).toBe(200);
+ expect(f.db.select().from(inbox).where(eq(inbox.source,'handoff')).all()).toHaveLength(NOTES_PER_JOB);
+ // A job working for owners is not counted.
+ f.root.writes.run(()=>{f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run();f.db.update(inbox).set({fromKind:'person',fromId:'owner'}).where(eq(inbox.job,'body')).run();});
+ expect((await note({...pond,thread:'1794432009.000001'})).status).toBe(200);
+ f.root.writes.run(()=>f.db.update(inbox).set({fromKind:'unknown',fromId:null}).where(and(eq(inbox.job,'body'),eq(inbox.source,'slack'))).run());
+ // A report target is read from the rule of the agent that answers there. In a channel mark answers, art's body, woken by a guest's mention, reports nowhere.
+ f.root.writes.run(()=>f.db.update(bridgeChannels).set({answers:'mark'}).where(eq(bridgeChannels.channel,'CROOM')).run());
+ expect(reportsTo(f.db,f.db.select().from(conversations).where(eq(conversations.id,cv)).get()!)).toBeNull();
+ // The card names a report target only on one of the answering agent's bridges.
+ const card=(reports:unknown)=>f.call('bridges','command',{action:'channel',platform:'slack',workspace:'TWORK',channel:'CROOM',answers:'art',botsMayTalk:false,reportsTo:reports},token.owner);
+ expect((await card({platform:'discord',workspace:'100000000000000001',channel:'100000000000000002'})).status).not.toBe(200);
+ expect((await card({platform:'slack',workspace:'TELSE',channel:'CPOND'})).status).not.toBe(200);
+ expect((await card(pond)).status).toBe(200);
+ void work;
 });

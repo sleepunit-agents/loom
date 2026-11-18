@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
 import { UNPOSTABLE_REFUSAL,isBridgeVenue,jobWord,placeAddress,placeClosed,ruleChannel,ruled,targetPostable } from './shared-place-mail.js';
 import { conversationPlace } from './pieces/bridges/place.js';
-import { channelTarget } from './core/conversations/handoff.js';
+import { channelTarget } from './core/conversations/channel-target.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';

@@ -1,7 +1,7 @@
 /** Trusted shared configuration service. External permissions belong at the
  * operation door; installed modules use this service directly. */
-import { channelTarget } from '../../core/conversations/handoff.js';
-import { and, eq, ne } from 'drizzle-orm';
+import { channelTarget } from '../../core/conversations/channel-target.js';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople } from '../../core/data/schema.js';
@@ -76,6 +76,9 @@ export class BridgeSettings {
      if(!this.db.update(bridgeConnections).set({enabled:false,state:'disconnected',stateAt:this.now()}).where(eq(bridgeConnections.id,input.id)).run().changes)throw Error('Unknown connection');break;
     }
     case 'channel':{
+     // Where its guests' bodies report is a channel on one of the answering agent's own bridges (schema.ts, reportsTo).
+     if(input.reportsTo&&!this.db.select({id:bridgeConnections.id}).from(bridgeConnections).where(and(eq(bridgeConnections.platform,input.reportsTo.platform),eq(bridgeConnections.workspace,input.reportsTo.workspace),eq(bridgeConnections.agent,input.answers),isNull(bridgeConnections.removedAt))).get())
+      throw Error('A report target is a channel on one of the answering agent\'s bridges');
      const {action:_action,brief,reportsTo,...rest}=input,row={...rest,brief:brief??null,reportsTo:reportsTo?JSON.stringify([reportsTo.platform,reportsTo.workspace,reportsTo.channel]):null};this.db.insert(bridgeChannels).values(row).onConflictDoUpdate({target:[bridgeChannels.platform,bridgeChannels.workspace,bridgeChannels.channel],set:row}).run();break;
     }
     case 'removeChannel':this.db.delete(bridgeChannels).where(and(eq(bridgeChannels.platform,input.platform),eq(bridgeChannels.workspace,input.workspace),eq(bridgeChannels.channel,input.channel))).run();break;

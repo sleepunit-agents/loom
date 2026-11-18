@@ -26,6 +26,10 @@ export const PLACE_TRIGGERS_MAX = 10;
  * anybody but owners (the door's check, shared-place-triggers.ts), and the least time between two firings on
  * such a word into one conversation, whatever the trigger rows say (the firing's own check, placeFiring). */
 export const WORD_REPEAT_MIN_MS = 3_600_000;
+/** The most notes one job on the word of anybody but owners hands. A flood guard on one job, like the bound
+ * on its posts (BRIDGE_POSTS_PER_JOB): each note may open a conversation and start a job. It is no limit on
+ * an exchange, which no rule cuts short; a job working for owners, and the agent's own work, is not counted. */
+export const NOTES_PER_JOB = 5;
 /** A chain of hand-offs this long, and each further one this long, is told to the household's owners. It refuses nothing. */
 export const CHAIN_NOTICE_EVERY = 25;
 
@@ -122,12 +126,14 @@ export function jobChain(db: DataDatabase, job: { id: string; conversation: stri
     .map(item => ({ job: item.job, chain: JSON.parse(item.chain!) as string[], startedAt: item.startedAt! }));
   return notes.find(note => note.job === job.id) ?? (target !== undefined && notes[0]?.chain.includes(target) ? notes[0] : undefined);
 }
-/** The channel a body working in this conversation for a guest may hand a note to (the channel rule's `reportsTo`), if any. */
+/** The channel a body working in this conversation for a guest may hand a note to, if any: the `reportsTo` of
+ * the channel's rule, when that rule says this agent answers there. Another agent's rule names where that
+ * agent's bodies report, not this one's. */
 export function reportsTo(db: DataDatabase, cv: Place): string | null {
   const at = placeAddress(db, cv);
   if (!at || at.direct || !isBridgeVenue(cv.venue)) return null;
   return db.select({ reportsTo: bridgeChannels.reportsTo }).from(bridgeChannels)
-    .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, ruleChannel(db, cv, at.channel)))).get()?.reportsTo ?? null;
+    .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, ruleChannel(db, cv, at.channel)), eq(bridgeChannels.answers, cv.agent))).get()?.reportsTo ?? null;
 }
 /** A person as a body is told of them: by what kind they are and the id loom knows them by. */
 export const named = (who: { kind: string; id: string }): string => who.kind === 'member' ? `the member ${who.id}` : who.kind === 'agent' ? 'yourself' : `the outside account ${who.id}`;
@@ -172,16 +178,26 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       const word = jobWord(db, work.job);
       if (!mayHandTo(word.woke, key, reportsTo(db, work.cv)) || (word.woke === 'others' && !word.person))
         throw new OperationError('denied', 'This body may hand a note only to the channel its own channel reports to, and its channel names none or another');
+      // A guest's word goes one hop: a job on anybody else's word that a note started hands nowhere.
+      if (word.woke === 'others' && db.select({ id: inbox.id }).from(inbox).where(and(eq(inbox.job, work.job.id), eq(inbox.source, 'handoff'))).get())
+        throw new OperationError('denied', 'A note started this job, and it is not working for the agent\'s owners: it hands no note on. Say what there is to say here.');
       const before = jobChain(db, work.job, conversation), chain = before?.chain ?? [], from = placeAddress(db, work.cv);
       // Whether the body this reaches could hand a note back, as far as can be known now: it will work on this
-      // note's word at most, so the same questions are asked of the way back. Told so it does not try in vain.
-      const answerable = !!from && !!word.person && (work.cv.member === null || (word.person.kind === 'member' && word.person.id === work.cv.member)) && !placeClosed(db, work.cv)
+      // note's word at most, so the same questions are asked of the way back; and on anybody else's word a job a
+      // note started hands nowhere. Told so it does not try in vain.
+      const answerable = word.woke === 'owners' && !!from && !!word.person && (work.cv.member === null || (word.person.kind === 'member' && word.person.id === work.cv.member)) && !placeClosed(db, work.cv)
         && mayHandTo(word.woke, channelKey(work.cv.venue, from.workspace, ruleChannel(db, work.cv, from.channel)), reportsTo(db, there));
       const origin = from ? `${work.cv.venue} ${from.direct ? 'direct conversation' : `channel ${from.channel}`}` : `its own work (${work.cv.venue})`;
       return { conversation, open, chain, startedAt: before?.startedAt ?? now(), ...(word.person ? { onWord: word.person } : {}),
         told: `[A note from another body of yours, not a person speaking. It was working in ${origin} (conversation ${work.cv.id})${word.person ? `, for ${named(word.person)}` : ', on your own work'}. `
           + `Saying what needs saying here, in ${where}, in your own words, is your job. ${answerable ? `To answer that body, hand a note back to conversation ${work.cv.id}.` : 'A note back to that body would be refused from here.'} `
           + `Hand-offs before this one in this exchange: ${chain.length}${chain.length ? ` (through conversations ${chain.join(', ')})` : ''}. If this exchange is no longer making progress, stop and say so to a person instead of handing on.]` };
+    },
+    full(work) {
+      if (jobWord(db, work.job).woke !== 'others') return undefined;
+      const mine = JSON.stringify([work.job.id]).slice(0, -1) + ',';
+      const sent = db.select({ sourceId: inbox.sourceId }).from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, work.job.agent), eq(inbox.source, 'handoff'), eq(inbox.fromKind, 'agent'))).all().filter(item => item.sourceId?.startsWith(mine));
+      return sent.length >= NOTES_PER_JOB ? `A job that is not working for the agent's owners hands at most ${NOTES_PER_JOB} notes` : undefined;
     },
     sent(note) {
       // Loud, not a stop: the household's owners are told once each time a chain grows by CHAIN_NOTICE_EVERY.

@@ -5,15 +5,14 @@ import {MESSAGE_WORDS_MAX} from './words.js';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {OnWord} from '../../policy.js';
-import {bridgeConnections,inbox} from '../data/schema.js';
+import {inbox} from '../data/schema.js';
+import {channelTarget} from './channel-target.js';
 import {operation,OperationError,type Operations} from '../operations/index.js';
 import {bodyOperationDefaults,conversationBodyScope,requireBodyScope,type BodyProof} from './body-scope.js';
 import type {CommsMessages} from './messages.js';
 import {sealHandoff} from './handoff-words.js';
 import {threadTitle} from './title.js';
 import { commsKeepDays } from '../data/comms-days.js';
-/** A channel on a bridge, and a thread in it: the one way a caller names a place nothing has been said in yet. */
-export const channelTarget=z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict();
 /** Where a note to the agent's own body goes: a conversation it has, or a channel (and thread) it has a rule for. */
 const toSelf=z.union([z.object({conversation:z.string().min(1).max(200)}).strict(),
  channelTarget]);
@@ -27,6 +26,8 @@ export interface HandoffToSelf{
  /** The person the sending job is working on the word of, if one can be named: a brief to another agent
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
  word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
+ /** Why this job may hand no further note, or nothing: asked as a new note is about to be written, never of one sent again. */
+ full(work:{job:{id:string;agent:string;conversation:string|null}}):string|undefined;
  /** Told after a note is written, for the notice a long chain raises. */
  sent(note:{chain:string[];startedAt:string;to:string;agent:string}):void;
 }
@@ -59,6 +60,7 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
     if(!self)throw new OperationError('denied','This program hands no note to an agent\'s own body');
     const before=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
     if(before?.conversation)return {conversation:before.conversation,item:before.id};
+    const full=self.full({job});if(full)throw new OperationError('conflict',full);
     // Resolved once, when the words were sealed. It is judged again here, and must still be the same: what the
     // receiving body is told and what the row says cannot disagree.
     const {sealed,resolved:how}=prepared as {sealed:string;resolved:ReturnType<HandoffToSelf['target']>},again=self.target({job,cv},input.to);

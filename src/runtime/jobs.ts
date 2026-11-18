@@ -332,7 +332,9 @@ export class Jobs {
       // body, a trigger's firing) and that no job has taken would start the next job as if nobody had: it is
       // given to the stopped job, which is what "waits for fresh mail" means for the mail that job took
       // (end, above). It is not lost: the next thing a person says there brings it along.
-      if (reason === 'stop' && job.conversation) this.db.update(inbox).set({ job: job.id })
+      // Only in a bridge's place, where admission waits for a person to speak; elsewhere mail is left as it was.
+      const venue = job.conversation ? this.db.select({ venue: conversations.venue }).from(conversations).where(eq(conversations.id, job.conversation)).get()?.venue : undefined;
+      if (reason === 'stop' && job.conversation && (venue === 'discord' || venue === 'slack')) this.db.update(inbox).set({ job: job.id })
         .where(and(eq(inbox.conversation, job.conversation), eq(inbox.toKind, 'agent'), eq(inbox.state, 'waiting'), isNull(inbox.job), inArray(inbox.fromKind, ['agent', 'schedule']))).run();
       return ended;
     });
