@@ -1,6 +1,6 @@
 import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { WORKER_EXIT, type WorkerExitBy } from './job-exit.js';
-import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS } from './silence.js';
+import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS, WORKER_FAILURE_OBSERVATION_MS, WORKER_REQUEST_MAX_MS } from './silence.js';
 import { logTail } from './log-tail.js';
 import { turnsOf, type WorkerTurns } from './worker-turns.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
@@ -266,7 +266,15 @@ export async function workOnce(input: {
     // The HTTP control retries this report with one receipt. If it cannot establish that
     // the job is running, reap the body without releasing the brief or reporting a failed start.
     const startedAt = now();
-    try { await control.started(assignment.id, build, abort.signal); if (expired()) return 'abandoned'; lastDispatch = startedAt; unreachableSince = undefined; arm(); }
+    try {
+      await control.started(assignment.id, build, abort.signal);
+      if (abort.signal.aborted) return 'abandoned';
+      // A replay acknowledges the current claim. Its final request was sent no
+      // earlier than one request timeout before this reply, even after earlier retries.
+      lastDispatch = Math.max(startedAt, now() - WORKER_REQUEST_MAX_MS);
+      unreachableSince = undefined;
+      arm();
+    }
     catch { abandon(); return 'abandoned'; }
     // Shutdown can arrive while the acknowledgement is in flight. A successful
     // reply does not restore this worker's authority to release the body.

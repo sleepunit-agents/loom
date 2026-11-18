@@ -96,7 +96,10 @@ it('refuses stale claim/heartbeat replay while report receipts remain atomic and
   expect(await (await f.call('heartbeat', beat, 'beat')).json()).toEqual({ ok: true, value: { active: true } });
   expect((await f.call('heartbeat', beat, 'beat')).status).toBe(409);
   const start = { job: queued.id, build: 'image' };
-  expect((await f.call('started', start, 'start')).status).toBe(200); expect((await f.call('started', start, 'start')).status).toBe(200);
+  expect((await f.call('started', start, 'start')).status).toBe(200);
+  f.clock.advance(119_000);
+  expect((await f.call('started', start, 'start')).status).toBe(200);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({state:'running', heardAt:f.now()});
   const finish = { job: queued.id, exitCode: 0, logTail: 'one-private-output' };
   expect((await f.call('finish', finish, 'finish')).status).toBe(200);
   // Private output is intentionally discarded, so changing only those words

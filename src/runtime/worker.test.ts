@@ -145,6 +145,20 @@ describe('worker work plane', () => {
       f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
     } finally { vi.useRealTimers(); }
   });
+  it('counts a second outage from a refreshed start acknowledgement', async () => {
+    const f = fixture(), start = deferred<void>();
+    vi.mocked(f.control.started).mockReturnValueOnce(start.promise);
+    const run = f.run(); await flush();
+    f.built.resolve('image'); f.spawned.resolve(); await flush();
+    f.clock.ms = 119_000; start.resolve(); await flush();
+    const delayed = deferred<boolean>();
+    vi.mocked(f.control.heartbeat).mockReturnValueOnce(delayed.promise);
+    f.clock.ms = 134_000; f.pulse(); await flush();
+    f.clock.ms = 194_000; delayed.reject(Error('offline')); await flush();
+    f.clock.ms = 284_000; f.pulse(); await flush();
+    expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+    f.exited.resolve({ exitCode: 0, logTail: 'done' }); expect(await run).toBe('finished');
+  });
   it('survives a 119-second outage that begins during an in-flight heartbeat', async () => {
     const f = fixture(), run = f.run(); await flush();
     const pending = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValueOnce(pending.promise);

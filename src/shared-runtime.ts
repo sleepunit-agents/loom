@@ -66,6 +66,12 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
   operations.register({ name: 'runtime.started', write: true, recheckPolicy: true, doors: ['http'],
     input: jobInput.extend({ build: z.string().trim().min(1) }).strict(), output: ack,
     may: (viewer, input) => assigned(viewer, input.job, claimedJobStates),
+    validateReplay(viewer, input) {
+      // A start acknowledgement can arrive after a long outage. Renew the
+      // existing claim without starting another body or changing its build.
+      if (!dispatcher.heartbeat(runner(viewer), input.job, 'running').active)
+        throw new OperationError('denied', 'Job has ended');
+    },
     run(ctx, input) {
       const result = dispatcher.started(runner(ctx.viewer), input.job, input.build);
       ctx.changed('job', input.job); ctx.changed('box', ctx.viewer.id); return result;
