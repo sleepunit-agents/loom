@@ -69,7 +69,7 @@ it('reads the guild\'s roles once when it connects, so a ping of the bot\'s own 
   // No channel rule: only a message addressed to Art is delivered.
   expect(await f.say({ content: 'anyone?' })).toMatchObject({ state: 'dropped' });
   expect(await f.say({ content: `<@&${artRole}> are you there`, mention_roles: [artRole] })).toMatchObject({ state: 'delivered', mentions: JSON.stringify([bot]) });
-  // Mark's role is Mark's: in a room Art answers, a ping of it is not for Art.
+  // Mark's role is Mark's: in a shared place Art answers, a ping of it is not for Art.
   f.db.insert(bridgeChannels).values({ platform: 'discord', workspace: guild, channel: room, answers: 'art', botsMayTalk: false }).run();
   f.db.insert(agents).values({ id: 'mark', about: '', markBg: '', markFg: '', faceShape: 'pebble', faceEyes: 'dot' }).run();
   f.db.insert(bridgeConnections).values({ id: 'marks', platform: 'discord', workspace: guild, botUser: mark, agent: 'mark', tokenSecret: 'TOKEN', enabled: true, state: 'connected', stateAt: new Date(f.clock.now()).toISOString() }).run();

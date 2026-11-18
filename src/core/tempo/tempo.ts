@@ -1,3 +1,4 @@
+import type { OnWord } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
 import { SettledInbox, type AdmitInbox } from './settle.js';
@@ -11,7 +12,7 @@ export interface TempoConversations {
   open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null; member?: string }): { id: string; member?: string | null };
   send(input: { toKind: 'person' | 'agent'; to: string; conversation?: string; source: 'trigger' | 'notice'; sourceId: string;
     fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; member?: string; refs?: string[];
-    onWordKind?: 'member' | 'outside'; onWord?: string }): unknown;
+    onWordKind?: OnWord['kind']; onWord?: string }): unknown;
 }
 export interface TempoOptions {
   conversations: TempoConversations;
@@ -28,7 +29,7 @@ export interface TempoOptions {
   /** For a trigger that names a conversation, asked as it fires: either why it can no longer fire (its
    * asker is no longer known, or the conversation is gone or cannot be posted to) and whom to tell, or how
    * its mail is sent: the words it is told under and the person on whose word. Without it such a trigger fails. */
-  roomFiring?(trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: { kind: 'member' | 'outside'; id: string } };
+  placeFiring?(trigger: Trigger): { stop: string; tell: string[] } | { told: string; onWord?: OnWord };
   /** Read Changes' persisted occurrence revision during source recovery. */
   changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
@@ -54,10 +55,10 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
       // A trigger that names a conversation is mail there, on its asker's word, and opens no wake. One that
       // can no longer fire is stopped here, in the firing's transaction, and its agent's owners are told once.
       if (t.conversation) {
-        if (!options.roomFiring) throw new Error('This program cannot fire a trigger into a conversation');
-        const how = options.roomFiring(t);
+        if (!options.placeFiring) throw new Error('This program cannot fire a trigger into a conversation');
+        const how = options.placeFiring(t);
         if ('stop' in how) {
-          for (const member of how.tell) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `room-trigger-stopped:${occurrence}`, fromKind: 'schedule',
+          for (const member of how.tell) options.conversations.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `place-trigger-stopped:${occurrence}`, fromKind: 'schedule',
             words: `The schedule ${JSON.stringify(t.note)} was stopped and did not fire: ${how.stop}.`, refs: [t.id] });
           return 'stop';
         }

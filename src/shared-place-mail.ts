@@ -14,19 +14,19 @@ import { conversationPlace } from './pieces/bridges/place.js';
 import { workerPolicy } from './runtime/body-policy.js';
 
 /** The most triggers that may stand at once naming one conversation. */
-export const ROOM_TRIGGERS_MAX = 10;
-/** The least time between two firings of a repeating trigger set from a room. */
-export const ROOM_REPEAT_MIN_MS = 3_600_000;
+export const PLACE_TRIGGERS_MAX = 10;
+/** The least time between two firings of a repeating trigger set from a shared place. */
+export const SHARED_PLACE_REPEAT_MIN_MS = 3_600_000;
 /** A chain of hand-offs this long, and each further one this long, is told to the household's owners. It refuses nothing. */
 export const CHAIN_NOTICE_EVERY = 25;
 
-type Room = { id: string; agent: string; venue: string; place: string };
+type Place = { id: string; agent: string; venue: string; place: string };
 export type { OnWord };
 export const isBridgeVenue = (venue: string): venue is 'discord' | 'slack' => venue === 'discord' || venue === 'slack';
 
 /** Where a post in this conversation goes: read from its place (pieces/bridges/place.ts), on the agent's
  * connection to that workspace. Nothing for a conversation that is not a bridge's or has no connection. */
-export function roomAddress(db: DataDatabase, cv: Room): { connection: string; workspace: string; channel: string; thread: string | null; direct: boolean } | undefined {
+export function placeAddress(db: DataDatabase, cv: Place): { connection: string; workspace: string; channel: string; thread: string | null; direct: boolean } | undefined {
   if (!isBridgeVenue(cv.venue)) return undefined;
   let place: unknown; try { place = JSON.parse(cv.place); } catch { return undefined; }
   if (!Array.isArray(place) || typeof place[0] !== 'string' || typeof place[1] !== 'string' || (place[2] !== null && typeof place[2] !== 'string')) return undefined;
@@ -37,8 +37,8 @@ export function roomAddress(db: DataDatabase, cv: Room): { connection: string; w
 /** Why nothing can be posted to this conversation now, by the rules a message arriving there is admitted
  * by (pieces/bridges/incoming.ts): its connection is gone or not in use, or its channel is filtered out. A
  * channel rule that was removed closes nothing: a mention there would still wake the agent. */
-export function roomClosed(db: DataDatabase, cv: Room): string | undefined {
-  const found = roomAddress(db, cv), at = found && { ...found, channel: ruleChannel(db, cv, found.channel) };
+export function placeClosed(db: DataDatabase, cv: Place): string | undefined {
+  const found = placeAddress(db, cv), at = found && { ...found, channel: ruleChannel(db, cv, found.channel) };
   if (!at) return 'its connection is gone';
   if (!db.select({ enabled: bridgeConnections.enabled }).from(bridgeConnections).where(eq(bridgeConnections.id, at.connection)).get()?.enabled) return 'its connection is not in use';
   const filters = db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, at.connection)).all();
@@ -49,7 +49,7 @@ export function roomClosed(db: DataDatabase, cv: Room): string | undefined {
  * a channel, and a Discord thread is under one. Admission reads the parent from the arriving message
  * (pieces/bridges/incoming.ts, `parent ?? channel`); a conversation's own messages say the same, so the
  * latest one is asked, and a conversation nobody has spoken in is its place's channel. The one lookup
- * for every rule about a place: roomClosed, reportsTo and a note's target. */
+ * for every rule about a place: placeClosed, reportsTo and a note's target. */
 export function ruleChannel(db: DataDatabase, cv: { id: string }, placeChannel: string): string {
   const said = cv.id ? db.select({ channel: bridgeIncoming.channel, parent: bridgeIncoming.parent }).from(bridgeIncoming).where(eq(bridgeIncoming.conversation, cv.id)).orderBy(desc(bridgeIncoming.receivedAt)).get() : undefined;
   return said ? said.parent ?? said.channel : placeChannel;
@@ -100,8 +100,8 @@ export function jobChain(db: DataDatabase, job: { id: string; conversation: stri
   return notes.find(note => note.job === job.id) ?? (target !== undefined && notes[0]?.chain.includes(target) ? notes[0] : undefined);
 }
 /** The channel a body working in this conversation for a guest may hand a note to (the channel rule's `reportsTo`), if any. */
-export function reportsTo(db: DataDatabase, cv: Room): string | null {
-  const at = roomAddress(db, cv);
+export function reportsTo(db: DataDatabase, cv: Place): string | null {
+  const at = placeAddress(db, cv);
   if (!at || at.direct || !isBridgeVenue(cv.venue)) return null;
   return db.select({ reportsTo: bridgeChannels.reportsTo }).from(bridgeChannels)
     .where(and(eq(bridgeChannels.platform, cv.venue), eq(bridgeChannels.workspace, at.workspace), eq(bridgeChannels.channel, ruleChannel(db, cv, at.channel)))).get()?.reportsTo ?? null;
@@ -124,9 +124,9 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       const agent = work.cv.agent;
       let conversation: string | undefined, open: { venue: 'discord' | 'slack'; place: string; label: string } | undefined, key: string, where: string;
       if ('conversation' in to) {
-        const cv = db.select().from(conversations).where(eq(conversations.id, to.conversation)).get(), at = cv && cv.agent === agent ? roomAddress(db, cv) : undefined;
+        const cv = db.select().from(conversations).where(eq(conversations.id, to.conversation)).get(), at = cv && cv.agent === agent ? placeAddress(db, cv) : undefined;
         if (!cv || !at || cv.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another Discord or Slack conversation of this agent');
-        const closed = roomClosed(db, cv); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+        const closed = placeClosed(db, cv); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
         conversation = cv.id; key = channelKey(cv.venue, at.workspace, ruleChannel(db, cv, at.channel)); where = `${cv.venue} ${at.direct ? 'direct conversation' : `channel ${at.channel}`}`;
       } else {
         // A channel the agent has a rule for; the conversation there is found, or opened.
@@ -135,7 +135,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
           throw new OperationError('invalid', 'A note goes to a channel this agent has a rule for');
         const place = conversationPlace(to.workspace, { channel: to.channel, thread: to.thread ?? null, isDm: false }, null);
         const cv = db.select().from(conversations).where(and(eq(conversations.agent, agent), eq(conversations.venue, to.platform), eq(conversations.place, place))).get();
-        const closed = roomClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
+        const closed = placeClosed(db, cv ?? { id: '', agent, venue: to.platform, place }); if (closed) throw new OperationError('invalid', `Nothing can be posted there: ${closed}`);
         if (cv?.id === work.cv.id) throw new OperationError('invalid', 'A note goes to another conversation');
         conversation = cv?.id; if (!cv) open = { venue: to.platform, place, label: to.thread ?? to.channel };
         key = channelKey(to.platform, to.workspace, to.channel); where = `${to.platform} channel ${to.channel}`;
@@ -143,7 +143,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       const word = jobWord(db, work.job);
       if (!mayHandTo(word.woke, key, reportsTo(db, work.cv)) || (word.woke === 'others' && !word.person))
         throw new OperationError('denied', 'This body may hand a note only to the channel its own channel reports to, and its channel names none or another');
-      const before = jobChain(db, work.job, conversation), chain = before?.chain ?? [], from = roomAddress(db, work.cv);
+      const before = jobChain(db, work.job, conversation), chain = before?.chain ?? [], from = placeAddress(db, work.cv);
       const origin = from ? `${work.cv.venue} ${from.direct ? 'direct conversation' : `channel ${from.channel}`}` : `its own work (${work.cv.venue})`;
       return { conversation, open, chain, startedAt: before?.startedAt ?? now(), ...(word.person ? { onWord: word.person } : {}),
         told: `[A note from another body of yours, not a person speaking. It was working in ${origin} (conversation ${work.cv.id})${word.person ? `, for ${named(word.person)}` : ', on your own work'}. `
@@ -155,7 +155,7 @@ export function selfHandoff(db: DataDatabase, mail: { send(input: { toKind: 'per
       if (note.chain.length % CHAIN_NOTICE_EVERY !== 0) return;
       const between = [...new Set([...note.chain, note.to])];
       for (const member of householdOwners(db)) mail.send({ toKind: 'person', to: member, member, source: 'notice', sourceId: `handoff-chain:${JSON.stringify([note.chain[0], note.startedAt, note.chain.length])}`, fromKind: 'unknown',
-        words: `Bodies of ${note.agent} have handed ${note.chain.length} notes to each other in one exchange since ${note.startedAt}, between conversations ${between.join(', ')}. Nothing was stopped: say stop in either room if it should end.`, refs: [note.agent] });
+        words: `Bodies of ${note.agent} have handed ${note.chain.length} notes to each other in one exchange since ${note.startedAt}, between conversations ${between.join(', ')}. Nothing was stopped: say stop in either place if it should end.`, refs: [note.agent] });
     },
   };
 }

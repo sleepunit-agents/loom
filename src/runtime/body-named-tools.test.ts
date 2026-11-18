@@ -135,7 +135,7 @@ it('reads a stored denial as the entries a harness would take it for, in one pla
  expect(deniedTools(undefined)).toEqual([]);
 });
 
-it('denies every named tool in a room that is denied a generic tool, however the denial was written',()=>{
+it('denies every named tool in a shared place that is denied a generic tool, however the denial was written',()=>{
  const named=bodyNamedToolNames().map(name=>harnessToolPrefix+name);
  const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
  expect(harnessToolPrefix).toBe('mcp__loom__');

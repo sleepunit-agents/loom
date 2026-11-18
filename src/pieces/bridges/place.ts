@@ -9,7 +9,7 @@
  * slackThread for Slack); intake turns that address into a place (conversationPlace). A reply goes to
  * the channel and thread of the message it answers (sends.ts copies them from the message's row). */
 
-/** The thread a Slack message sits in: the one it was posted to, or, in a room, the one it starts. */
+/** The thread a Slack message sits in: the one it was posted to, or, in a shared place, the one it starts. */
 export function slackThread(kind: 'channel' | 'group' | 'im' | 'mpim', ts: string, threadTs: string | undefined): string | undefined {
   return threadTs ?? (kind === 'channel' || kind === 'group' ? ts : undefined);
 }

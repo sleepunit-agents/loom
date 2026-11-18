@@ -39,7 +39,7 @@ export function workerPolicy(db: DataDatabase, job: { id: string; agent: string;
   };
   const sharing = sharedSharing(db);
   for (const item of items) {
-    // Mail sent on somebody's word (a trigger's firing in a room, a note from another body) brings that
+    // Mail sent on somebody's word (a trigger's firing in a shared place, a note from another body) brings that
     // person into the room as they stand now: a member while in the household, an outside account at the
     // tier it has now, and otherwise somebody nobody vouches for.
     if (item.onWordKind && item.onWord) {

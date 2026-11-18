@@ -191,6 +191,12 @@ schedule, an agent pair. The venue defines its places; core treats a place as
 an opaque string.
 _Avoid_: room (that's the people a turn is addressed by), channel
 
+**Shared place**:
+A Discord or Slack place that is not one member's own: a channel, a thread, a group
+direct message, or a direct message from somebody who is no member. Its body works with
+whoever is in the room, and schedules only into its own conversation.
+_Avoid_: room (that's the people), public channel (a direct message from a non-member is one too)
+
 **Turn**:
 One message or action in a conversation, as metadata: who, when, how long the
 reply took, which model and harness. Never its text.

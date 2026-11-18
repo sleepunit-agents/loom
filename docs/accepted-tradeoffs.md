@@ -722,7 +722,7 @@ Entries are grouped by the part of the program they belong to.
 ### A stranger wakes nothing, and a tier is what admits an outsider
 - What: a person's message is taken only from an account linked to a member who is in the household now
   (`bridge_people`), or one the answering agent's owner has given a tier (`agent_people`). Anybody else is
-  dropped with the reason `Unknown sender`, in a room and in a direct message, and keeps no words. There is
+  dropped with the reason `Unknown sender`, in a shared place and in a direct message, and keeps no words. There is
   no setting that lets everyone in a channel or on a connection talk to an agent.
 - Where: `receive` in `src/pieces/bridges/incoming.ts` (`hasTier`). What a guest's body is not given is
   `src/runtime/harness-traits.ts` (`hasGuest`, `deniedTools`): a sender who is no member and is not at tier 3
@@ -931,7 +931,7 @@ Entries are grouped by the part of the program they belong to.
   conversation's own words given to the conversation's own job, so nothing is read that the mail does not
   already show.
 - Would change it: handing it to a continued session too, if sessions prove to miss things said by others
-  in a room while no body was running. Today a continued session is told only its own new mail.
+  in a shared place while no body was running. Today a continued session is told only its own new mail.
 
 ### A channel's brief is a page of the agent's, and a missing one is told, not fatal
 - What: a channel's rule may name a brief (`bridge_channels.brief`): the name of a role page of the
@@ -947,18 +947,18 @@ Entries are grouped by the part of the program they belong to.
   an owner's card decides which room gets which page. A wrong name must not stop an agent answering.
 - Would change it: wanting briefs the agent cannot edit. Then the words are the household's, kept on the rule.
 
-### A room's body schedules only into its own conversation
-- What: the body of a job in a room (a Discord or Slack conversation that is not one member's own) may
+### A shared place's body schedules only into its own conversation
+- What: the body of a job in a shared place (a Discord or Slack conversation that is not one member's own) may
   set, reword, stop, start and run only a trigger naming its own conversation. Every other Tempo write
-  from a room is refused with "A body working in a room cannot schedule work: ask in your own thread, or
+  from a shared place is refused with "A body working in a shared place cannot schedule work: ask in your own thread, or
   have an owner schedule it." Such a trigger fires as mail in that conversation, on its asker's word.
-- Where: `isRoom`, `maySchedule` and `ROOM_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-room-triggers.ts`;
+- Where: `isSharedPlace`, `maySchedule` and `SHARED_PLACE_SCHEDULE_REFUSAL` in `src/policy.ts`; `src/shared-place-triggers.ts`;
   `docs/runtime/tempo.md`.
-- Why: a room's body works under the room's limits. A trigger it set for its agent's own wake would run
+- Why: a shared place's body works under the room's limits. A trigger it set for its agent's own wake would run
   words chosen in the room without them. One that comes back into the room runs under them.
-- **Open: a room's body still reads all of its agent's triggers.** Reads go through the query door, which
+- **Open: a shared place's body still reads all of its agent's triggers.** Reads go through the query door, which
   judges a body by its agent and the member it works for, and does not know what conversation its job is
-  in. So a room's body can see its agent's other schedules (their notes, times and instructions) though
+  in. So a shared place's body can see its agent's other schedules (their notes, times and instructions) though
   it can change none. The fix is to carry the caller's conversation on `Viewer`, set where the body's
   credential is resolved, and add a clause to the `trigger` read rule. It was left out of this round
   because `Viewer` is the type every rule takes.
@@ -972,7 +972,7 @@ Entries are grouped by the part of the program they belong to.
   may hand only to the channel its own channel's rule names (`reportsTo`), and nowhere with none named.
   A mixed batch of mail counts as anybody else's: least reach wins. The one direct post is the agent's
   own work, with no person behind it, to a ruled channel (`bridges.post`).
-- Where: `mayHandTo` in `src/policy.ts`; `src/shared-room-mail.ts`; `src/core/conversations/handoff.ts`.
+- Where: `mayHandTo` in `src/policy.ts`; `src/shared-place-mail.ts`; `src/core/conversations/handoff.ts`.
 - Why: each body has the context of its own venue, and a note crosses with only what the sender chose to
   say. Reach follows the person who woke the body, not the venue.
 - Accepted with it: no chain of notes is refused for its length. Each note shows its chain to the body that

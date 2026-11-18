@@ -466,7 +466,7 @@ CREATE TABLE `inbox` (
 	CONSTRAINT "inbox_chain_started_at_utc" CHECK("inbox"."chain_started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."chain_started_at") = "inbox"."chain_started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."chain_started_at") = "inbox"."chain_started_at", 0)),
 	CONSTRAINT "inbox_on_word_kind_choice" CHECK("inbox"."on_word_kind" in ('member', 'outside')),
 	CONSTRAINT "inbox_on_word_pair" CHECK(("inbox"."on_word_kind" is null) = ("inbox"."on_word" is null)),
-	CONSTRAINT "inbox_chain_pair" CHECK(("inbox"."chain" is null) = ("inbox"."chain_started_at" is null) and ("inbox"."chain" is null or json_valid("inbox"."chain"))),
+	CONSTRAINT "inbox_chain_pair" CHECK(("inbox"."chain" is null) = ("inbox"."chain_started_at" is null) and ("inbox"."chain" is null or (json_valid("inbox"."chain") and json_type("inbox"."chain") = 'array'))),
 	CONSTRAINT "inbox_at_utc" CHECK("inbox"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."at") = "inbox"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."at") = "inbox"."at", 0)),
 	CONSTRAINT "inbox_quiet_until_utc" CHECK("inbox"."quiet_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."quiet_until") = "inbox"."quiet_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."quiet_until") = "inbox"."quiet_until", 0)),
 	CONSTRAINT "inbox_taken_at_utc" CHECK("inbox"."taken_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."taken_at") = "inbox"."taken_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."taken_at") = "inbox"."taken_at", 0)),

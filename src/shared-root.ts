@@ -82,7 +82,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { selfHandoff } from './shared-room-mail.js';
+import { selfHandoff } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';

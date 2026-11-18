@@ -45,20 +45,20 @@ connection received, delivered and held in the last day.
    - the connection is off: **held**, and tried again for a day;
    - the room is ignored, or outside an `only` filter: dropped;
    - it is the bot's own post: dropped;
-   - **a bot or webhook** is delivered only in a room whose rule lets bots talk, and only if it writes this
+   - **a bot or webhook** is delivered only in a shared place whose rule lets bots talk, and only if it writes this
      agent's mention. It is never delivered in a direct message;
    - **a person** is delivered only if their account is linked to a member who is in the household now, or
-     the agent's owner has given the account a tier. A stranger is dropped, in a room and in a direct
+     the agent's owner has given the account a tier. A stranger is dropped, in a shared place and in a direct
      message;
    - **the stop word** ("stop" or "cancel" alone) from a linked member who may end the agent's jobs, where
      a job of the agent's is working, ends that job and is not delivered;
-   - in a room, a person's message is the agent's when it addresses the agent, or addresses nobody and the
+   - in a shared place, a person's message is the agent's when it addresses the agent, or addresses nobody and the
      room's rule names the agent.
 3. **Addressed** means: a written mention of the bot; on Discord a written ping of the role Discord manages
    for the bot; a reply to one of the bot's messages; a message in a thread that hangs under one of the
    bot's messages. Nothing looser: a bot that has only spoken in a thread, or spoke last, is not addressed.
 4. A delivered message joins a **conversation** (`place.ts`): one per Discord channel, one per Discord
-   thread, one per Slack thread in a room, one per direct conversation. A one-to-one direct conversation
+   thread, one per Slack thread in a shared place, one per direct conversation. A one-to-one direct conversation
    with a linked member is private to that member.
 5. The message becomes mail in the agent's inbox, and the runtime starts a job for the conversation if it
    has none. A Discord message's attachments are listed in its words with Discord's link. The files of a
@@ -97,7 +97,8 @@ channel (`presence.ts`). Both are best effort.
   another body of the agent) answers by a post in the conversation itself, addressed from the
   conversation's place (`bridge_sends.conversation`, with no `incoming`).
 - Where a stop word stopped a job the bot says "Stopped here.". Notes and firings waiting in that
-  conversation are given to the stopped job and start no work until a person speaks there.
+  conversation are given to the stopped job, and neither they nor one that arrives later start any work
+  until a person speaks there.
 
 ## Between conversations
 
@@ -113,6 +114,18 @@ channel (`presence.ts`). Both are best effort.
 - A chain's start, length and conversations are stored on each note: `inbox.chain_started_at` and
   `inbox.chain` (a JSON list of conversation ids, oldest first; its length is the count), with the
   conversation the note came from in `inbox_refs` and the one it went to in `inbox.conversation`.
+- What counts as the agent's own work is said once (`jobWord` in `src/shared-place-mail.ts`): a job with
+  nobody behind any of its mail, which is a lane's own start and a firing the agent itself asked for.
+  Mail from an agent is never that. A brief between agents carries the sending job's word, and agent
+  mail on nobody's word, or a household agent's bot writing in a channel, counts as anybody else's.
+- Mail on somebody's word that arrives after a job was admitted is left for the next job, so a job never
+  runs a guest's note under the policy it was claimed with for an owner.
+- A job whose mail is no bridge message may also post during its run with `bridges.say`; it goes where
+  its answer will.
+- A post that answers no message is seen and reviewed by whoever sees its conversation, and in a direct
+  conversation is erased at the keep time with the conversation's other words.
+- A thread's rules (its channel rule, filters and report target) are its parent channel's, read by one
+  function (`ruleChannel`), as admission reads them.
 - The agent's own work, with no person behind any of its mail, may post a text straight to a ruled channel
   with `bridges.post`, through the same queue.
 - Every post goes through one queue (`sends.ts`): split at the platform's limit, each part recorded when
@@ -123,7 +136,7 @@ channel (`presence.ts`). Both are best effort.
 
 ## Not built
 
-- A setting that lets everyone in a room talk to an agent as a guest (a column on the channel's rule).
+- A setting that lets everyone in a shared place talk to an agent as a guest (a column on the channel's rule).
 - A link from an outside account to a People card (a column on the person link).
 - Rooms where a bot's every post wakes an agent without a mention: a bot wakes an agent only by writing
   its mention.

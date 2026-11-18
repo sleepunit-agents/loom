@@ -11,6 +11,14 @@ import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
 import {SESSION_BYTES} from './core/conversations/session-limit.js';
 import {bodyConversationClient,bodyMailContext} from './runtime/conversation-client.js';
+import {Jobs} from './runtime/jobs.js';
+import {workerPolicy} from './runtime/body-policy.js';
+import {CHAIN_NOTICE_EVERY,PLACE_TRIGGERS_MAX} from './shared-place-mail.js';
+import {SHARED_PLACE_ASKER_REFUSAL,SHARED_PLACE_FILE_REFUSAL,SHARED_PLACE_REPEAT_REFUSAL,repeatsTooOften} from './shared-place-triggers.js';
+import {mayReviewReply} from './shared-bridge-commands.js';
+import {jobWord,reportsTo,placeClosed} from './shared-place-mail.js';
+import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
+import {bridgeChannelFilters} from './core/data/schema.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const token={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64)};
 function fixture(effectsAllowed:()=>boolean=()=>true,comms=false){
@@ -257,23 +265,23 @@ it('keeps a conversation\'s harness session sealed, for the body of its job alon
  f.root.writes.run(()=>{f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();});
  expect((await take()).status).not.toBe(200);expect((await save({session,files})).status).not.toBe(200);
 });
-// What a body may schedule depends on where its job is (policy.ts, maySchedule). A room's body would be
-// setting words that later run as the agent's own wake, outside the room and its limits; Tempo cannot yet
-// address a firing to a conversation, so every trigger from a room's body is refused.
+// What a body may schedule depends on where its job is (policy.ts, maySchedule). A shared place's body would be
+// setting words that later run as the agent's own wake, outside the conversation and its limits; Tempo cannot yet
+// address a firing to a conversation, so every trigger from a shared place's body is refused.
 it('refuses every trigger a room\'s body sets, rewords, stops, starts or runs, with a line that says what to do instead',async()=>{
  const f=fixture();const incoming=await f.receive();
  f.root.writes.run(()=>{f.db.insert(agents).values({id:'mark',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run();f.root.services.conversations.take(incoming.conversation!,'body');});
  // A Slack channel, and its sender an outside account: a room, with a guest in it.
  expect(f.db.select().from(conversations).get()).toMatchObject({venue:'slack',member:null});expect(f.db.select().from(inbox).get()).toMatchObject({fromKind:'unknown'});
- const trigger=(more:Record<string,unknown>)=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3_600_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Words chosen in the room',note:'Set from a room',...more});
- const line='A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
+ const trigger=(more:Record<string,unknown>)=>({id:randomUUID(),ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3_600_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Words chosen in the room',note:'Set from a shared place',...more});
+ const line='A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';
  // The agent's own wake: who the caller is would allow it; where its job is does not.
  expect(await f.call('tempo','set',trigger({}))).toMatchObject({status:403,body:{ok:false,code:'denied',message:line}});
  // Another agent's work, and a message to a person, were never the caller's to set.
  for(const other of [{owner:'mark',to:'mark'},{to:'mark'},{toKind:'person',to:'owner'}])expect((await f.call('tempo','set',trigger(other))).status).toBe(403);
  expect(f.db.select().from(triggers).all()).toEqual([]);
  // Nor may it reword a trigger of its agent's that is already set: the words would run the same way.
- // A body of the same agent whose job is not in a room is judged as before, by who it is: the other job here
+ // A body of the same agent whose job is not in a shared place is judged as before, by who it is: the other job here
  // has no conversation at all.
  const owned=trigger({instructions:'Set outside any room'});
  expect((await f.call('tempo','set',owned,token.other)).status).toBe(200);
@@ -302,17 +310,9 @@ it('attaches the earlier words of a bridge conversation to one piece of mail in 
  expect(batch[1].history).toBeUndefined();
 });
 
-import {Jobs} from './runtime/jobs.js';
-import {workerPolicy} from './runtime/body-policy.js';
-import {CHAIN_NOTICE_EVERY,ROOM_TRIGGERS_MAX} from './shared-room-mail.js';
-import {ROOM_ASKER_REFUSAL,ROOM_FILE_REFUSAL,ROOM_REPEAT_REFUSAL,repeatsTooOften} from './shared-room-triggers.js';
-import {mayReviewReply} from './shared-bridge-commands.js';
-import {jobWord,reportsTo,roomClosed} from './shared-room-mail.js';
-import {expirePrivateBridgeWords} from './core/conversations/private-bridge-words.js';
-import {bridgeChannelFilters} from './core/data/schema.js';
 /** The conversation a call's answer names, wherever the door puts its output. */
 const made=(body:unknown):string=>{const found=JSON.stringify(body).match(/"conversation":"([^"]+)"/);if(!found)throw new Error('No conversation in '+JSON.stringify(body));return found[1];};
-const GUEST=JSON.stringify(['slack','TWORK','UUSER']),ROOM_LINE='A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
+const GUEST=JSON.stringify(['slack','TWORK','UUSER']),SHARED_PLACE_LINE='A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';
 /** A room with a guest's message in it and the body's job working there. */
 async function room(effects:()=>boolean=()=>true){
  let received=false;const f=fixture(()=>!received||effects(),true),incoming=await f.receive(),cv=incoming.conversation!;received=true;
@@ -333,19 +333,19 @@ it('lets a room\'s body set a trigger that names its own conversation, records w
  expect(f.db.select().from(triggers).get()!.askedAt).toBe(new Date(f.clock.now()).toISOString());
  // Anything that does not name this conversation keeps the refusal: no conversation, and another one.
  const elsewhere=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','COTHER',null]),label:'other'}).id;
- for(const other of [{conversation:undefined},{conversation:elsewhere}])expect(await f.call('tempo','set',once(other))).toMatchObject({status:403,body:{message:ROOM_LINE}});
+ for(const other of [{conversation:undefined},{conversation:elsewhere}])expect(await f.call('tempo','set',once(other))).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});
  // What is named must be a bridge conversation of the agent the trigger puts to work.
  expect((await f.call('tempo','set',once({conversation:'cv-none'}),token.other)).status).toBe(400);
- // From a room a repeating one comes no more often than hourly, at listed times; a rewording is held to the same.
- expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00,09:30'}))).toMatchObject({status:403,body:{message:ROOM_REPEAT_REFUSAL}});
- expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:ROOM_REPEAT_REFUSAL}});
+ // From a shared place a repeating one comes no more often than hourly, at listed times; a rewording is held to the same.
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'09:00,09:30'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','set',once({lifespan:'until-stopped',times:'23:30,00:15'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
  const hourly=once({lifespan:'until-stopped',times:'09:00,10:00'});expect((await f.call('tempo','set',hourly)).status).toBe(200);
- expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:ROOM_REPEAT_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:hourly.id,times:'09:00,09:10'})).toMatchObject({status:403,body:{message:SHARED_PLACE_REPEAT_REFUSAL}});
  expect((await f.call('tempo','edit',{id:hourly.id,times:'09:00,11:00',instructions:'Reworded in the room'})).status).toBe(200);
  // It stops, starts and runs its own conversation's triggers, and still no other of its agent's.
  const outside=once({conversation:undefined});expect((await f.call('tempo','set',outside,token.other)).status).toBe(200);
- for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:ROOM_LINE}});}
- // The owner, and the agent outside the room, set one naming a conversation the agent has: the asker is then that owner, or the agent.
+ for(const action of ['stop','start','runNow']){expect((await f.call('tempo',action,{id:hourly.id})).status,action).toBe(200);expect(await f.call('tempo',action,{id:outside.id}),action).toMatchObject({status:403,body:{message:SHARED_PLACE_LINE}});}
+ // The owner, and the agent outside the conversation, set one naming a conversation the agent has: the asker is then that owner, or the agent.
  const owners=once(),own=once();
  owners.ownerKind='member';owners.owner='owner';f.root.writes.run(()=>f.db.insert(memberAgents).values({member:'owner',agent:'art'}).run());
  expect((await f.call('tempo','set',owners,token.owner)).status).toBe(200);expect((await f.call('tempo','set',own,token.other)).status).toBe(200);
@@ -353,24 +353,24 @@ it('lets a room\'s body set a trigger that names its own conversation, records w
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({askedByKind:'agent',askedBy:'art'});
  // A trigger keeps to its asker. The guest's body may not reword, stop, start or run what the owner or the agent asked for there.
  for(const [action,input] of [['edit',{id:own.id,instructions:'The guest\'s words on the agent\'s word'}],['stop',{id:own.id}],['start',{id:own.id}],['runNow',{id:own.id}]] as const)
-  expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:ROOM_ASKER_REFUSAL}});
+  expect(await f.call('tempo',action,input),action).toMatchObject({status:403,body:{message:SHARED_PLACE_ASKER_REFUSAL}});
  expect(f.db.select().from(triggers).where(eq(triggers.id,own.id)).get()).toMatchObject({instructions:'Post the numbers',state:'standing',lastFiredAt:null});
  // Whoever changes its words becomes its asker: the owner rewording the guest's trigger makes it the owner's.
  expect((await f.call('tempo','edit',{id:hourly.id,instructions:'The owner\'s words'},token.owner)).status).toBe(200);
  expect(f.db.select().from(triggers).where(eq(triggers.id,hourly.id)).get()).toMatchObject({askedByKind:'member',askedBy:'owner'});
- expect(await f.call('tempo','stop',{id:hourly.id})).toMatchObject({status:403,body:{message:ROOM_ASKER_REFUSAL}});
- // From a room a trigger carries words, never a file of the household's repository, and watches no event.
- expect(await f.call('tempo','set',once({instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:ROOM_FILE_REFUSAL}});
- expect(await f.call('tempo','edit',{id:mine.id,file:'lanes/secret.md'})).toMatchObject({status:403,body:{message:ROOM_FILE_REFUSAL}});
+ expect(await f.call('tempo','stop',{id:hourly.id})).toMatchObject({status:403,body:{message:SHARED_PLACE_ASKER_REFUSAL}});
+ // From a shared place a trigger carries words, never a file of the household's repository, and watches no event.
+ expect(await f.call('tempo','set',once({instructions:undefined,file:'lanes/secret.md'}))).toMatchObject({status:403,body:{message:SHARED_PLACE_FILE_REFUSAL}});
+ expect(await f.call('tempo','edit',{id:mine.id,file:'lanes/secret.md'})).toMatchObject({status:403,body:{message:SHARED_PLACE_FILE_REFUSAL}});
  expect(repeatsTooOften({sourceKind:'job',times:null,lifespan:'until-stopped'})).toBe(true);expect(repeatsTooOften({sourceKind:'time',times:'09:00',lifespan:'until-stopped'})).toBe(false);
- // At most ROOM_TRIGGERS_MAX stand at once for one conversation, whoever sets them.
- expect(ROOM_TRIGGERS_MAX).toBe(10);
+ // At most PLACE_TRIGGERS_MAX stand at once for one conversation, whoever sets them.
+ expect(PLACE_TRIGGERS_MAX).toBe(10);
  const standing=()=>f.db.select().from(triggers).all().filter(row=>row.conversation===cv&&row.enabled).length;
- while(standing()<ROOM_TRIGGERS_MAX)expect((await f.call('tempo','set',once())).status).toBe(200);
+ while(standing()<PLACE_TRIGGERS_MAX)expect((await f.call('tempo','set',once())).status).toBe(200);
  for(const credential of [token.body,token.owner])expect((await f.call('tempo','set',once(),credential)).status).toBe(409);
  expect((await f.call('tempo','stop',{id:mine.id})).status).toBe(200);expect((await f.call('tempo','set',once())).status).toBe(200);
  // The same bound holds for turning one back on: the stopped one cannot be an eleventh.
- expect((await f.call('tempo','start',{id:mine.id})).status).toBe(409);expect(standing()).toBe(ROOM_TRIGGERS_MAX);
+ expect((await f.call('tempo','start',{id:mine.id})).status).toBe(409);expect(standing()).toBe(PLACE_TRIGGERS_MAX);
  // Nobody loom can name is ever the asker: with the sender of the job's mail unknowable, the body sets nothing.
  f.root.writes.run(()=>{f.db.update(triggers).set({enabled:false,state:'stopped'}).where(eq(triggers.id,own.id)).run();f.db.delete(inboxRefs).run();});
  expect(await f.call('tempo','set',once())).toMatchObject({status:403,body:{message:'Nobody loom knows asked for this'}});
@@ -408,7 +408,7 @@ it('fires such a trigger as mail from the schedule in its conversation, on its a
 });
 it('stops such a trigger, with one notice, when its asker is no longer known or its conversation cannot be posted to',async()=>{
  const {f,once}=await room();
- const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('room-trigger-stopped:'));
+ const notices=()=>f.db.select().from(inbox).where(eq(inbox.source,'notice')).all().filter(item=>item.sourceId?.startsWith('place-trigger-stopped:'));
  const asked=once({lifespan:'until-stopped',times:'09:00'}),closed=once({lifespan:'until-stopped',times:'10:00'});
  for(const trigger of [asked,closed])expect((await f.call('tempo','set',trigger)).status).toBe(200);
  // A removed channel rule alone stops nothing: a mention there would still wake the agent.
@@ -497,6 +497,8 @@ it('refuses no note for the length of its chain, and tells the owners each time 
  // At each further twenty-five the owners are told again.
  f.root.writes.run(()=>f.db.update(inbox).set({chain:JSON.stringify([...chain,...chain,pond])}).where(eq(inbox.sourceId,'earlier')).run());
  expect((await hand()).status).toBe(200);expect(told()).toHaveLength(2);expect(told()[1].words).toContain(`handed ${2*CHAIN_NOTICE_EVERY} notes`);
+ // A chain is stored as a list and as nothing else.
+ expect(()=>f.root.writes.run(()=>f.db.update(inbox).set({chain:'{}'}).where(eq(inbox.sourceId,'earlier')).run())).toThrow('CHECK');
 });
 it('gives a stopped job the notes and firings waiting in its conversation, so they start no work until a person speaks there',async()=>{
  const {f,cv}=await room();
@@ -538,9 +540,9 @@ it('leaves a note that arrives after a job was claimed for the next job, and rea
  const thread=f.root.services.conversations.open({agent:'art',venue:'slack',place:JSON.stringify(['TWORK','CTHREAD',null]),label:'thread'}),first=f.db.select().from(bridgeIncoming).get()!;
  f.root.writes.run(()=>{f.db.insert(bridgeIncoming).values({...first,id:'bi:thread',channel:'CTHREAD',parent:'CROOM',conversation:thread.id}).run();
   f.db.update(bridgeChannels).set({reportsTo:JSON.stringify(['slack','TWORK','CPOND'])}).run();f.db.insert(bridgeChannelFilters).values({connection:'connection',rule:'only',channel:'CROOM'}).run();});
- expect(roomClosed(f.db,thread)).toBeUndefined();expect(reportsTo(f.db,thread)).toBe(JSON.stringify(['slack','TWORK','CPOND']));
+ expect(placeClosed(f.db,thread)).toBeUndefined();expect(reportsTo(f.db,thread)).toBe(JSON.stringify(['slack','TWORK','CPOND']));
  f.root.writes.run(()=>{f.db.delete(bridgeChannelFilters).run();f.db.insert(bridgeChannelFilters).values({connection:'connection',rule:'ignore',channel:'CROOM'}).run();});
- expect(roomClosed(f.db,thread)).toBe('its channel is filtered out');
+ expect(placeClosed(f.db,thread)).toBe('its channel is filtered out');
  // A direct conversation's post that answers no message is erased at the keep time like its other words.
  f.root.writes.run(()=>{f.db.update(conversations).set({direct:true}).where(eq(conversations.id,pond)).run();
   f.db.insert(bridgeSends).values({id:'direct-answer',incoming:null,conversation:pond,connection:'connection',channel:'CPOND',text:'Private words',state:'sent',createdAt:at(0)}).run();});

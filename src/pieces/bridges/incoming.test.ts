@@ -138,7 +138,7 @@ describe('shared-schema bridge ingress', () => {
     f.db.update(bridgeConnections).set({ enabled: true }).run();
     expect(f.ingress.retry('bi:["c","old"]')?.state).toBe('held');
   });
-  it('takes nothing from a stranger, in a room or a direct message, mentioned or not', () => {
+  it('takes nothing from a stranger, in a shared place or a direct message, mentioned or not', () => {
     const f = fixture();
     for (const [id, more] of [['room', {}], ['mention', { mentions: ['bot-art'] }], ['reply', { repliesTo: 'bot-art' }], ['dm', { channel: 'direct', isDm: true }], ['group', { channel: 'group', isDm: true, groupDm: true }]] as const)
       expect(f.ingress.receive({ ...f.message, ...more, id, user: 'stranger', text: 'Let me in' }), id).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER, member: null, conversation: null, text: '' });
@@ -487,7 +487,7 @@ it('takes a retired connection\'s bot for no agent: not a peer that was addresse
   expect(f.ingress.receive({ ...f.message, id: 'bot', user: 'bot-mark', bot: true, mentions: ['bot-art'] })).toMatchObject({ state: 'delivered', member: null });
   expect(f.db.select().from(inbox).all().map(row => row.fromKind)).toEqual(['person', 'unknown']);
 });
-it('records a removed member\'s linked account as nobody, in a room and in a direct message', () => {
+it('records a removed member\'s linked account as nobody, in a shared place and in a direct message', () => {
   const f = fixture();
   f.db.insert(members).values({ id: 'guest', role: 'member', joinedAt: f.now() }).run();
   f.db.insert(bridgePeople).values({ platform: 'discord', workspace: 'w', user: 'guest-account', member: 'guest' }).run();
@@ -586,7 +586,7 @@ describe('the stop word', () => {
     expect(f.ingress.receive({ ...f.message, id: 'stranger', user: 'stranger', text: 'stop' })).toMatchObject({ state: 'dropped', reason: UNKNOWN_SENDER });
     expect(f.state('again').state).toBe('running');
   });
-  it('stops the job where the agent was called by a mention, in a room it does not answer', () => {
+  it('stops the job where the agent was called by a mention, in a shared place it does not answer', () => {
     const f = working();
     f.db.update(bridgeChannels).set({ answers: 'mark' }).run();
     expect(f.ingress.receive({ ...f.message, id: 'plain-stop', text: 'stop' })).toMatchObject({ state: 'dropped', reason: STOP_WORD });

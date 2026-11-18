@@ -237,7 +237,7 @@ it('takes the labels of mail filed under a task’s own labels with the task, an
   tasks.answer(sourced.id, 'yes', '', actor);
   const back = db.select().from(inbox).where(eq(inbox.sourceId, inRoom.id)).get()!;
   expect([labelsOf(inRoom.id), labelsOf(back.id)]).toEqual([{ project: 'shed', agent: 'art', member: null, conversation: room.id }, { project: 'pond', agent: 'art', member: null, conversation: room.id }]);
-  // Something else in the same room that only mentions the task is not the task's mail.
+  // Something else in the same conversation that only mentions the task is not the task's mail.
   const mention = mail.send({ toKind: 'agent', to: 'art', conversation: room.id, source: 'answer', sourceId: 'in-elsewhere', fromKind: 'person', fromId: actor.id, words: `See ${sourced.id}`, refs: [sourced.id] });
   tasks.moveToProject([sourced.id], null, actor);
   // The question keeps its room's labels. The answer to the agent took its project from the task, so it follows.

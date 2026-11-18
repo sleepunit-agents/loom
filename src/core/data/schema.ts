@@ -510,7 +510,7 @@ export const inbox = sqliteTable('inbox', {
   check('inbox_chain_started_at_utc', utc(t.chainStartedAt)),
   check('inbox_on_word_kind_choice', sql`${t.onWordKind} in ('member', 'outside')`),
   check('inbox_on_word_pair', sql`(${t.onWordKind} is null) = (${t.onWord} is null)`),
-  check('inbox_chain_pair', sql`(${t.chain} is null) = (${t.chainStartedAt} is null) and (${t.chain} is null or json_valid(${t.chain}))`),
+  check('inbox_chain_pair', sql`(${t.chain} is null) = (${t.chainStartedAt} is null) and (${t.chain} is null or (json_valid(${t.chain}) and json_type(${t.chain}) = 'array'))`),
   check('inbox_at_utc', utc(t.at)),
   check('inbox_quiet_until_utc', utc(t.quietUntil)),
   check('inbox_taken_at_utc', utc(t.takenAt)),
@@ -746,7 +746,7 @@ export const triggers = sqliteTable('triggers', {
   /** The member whose work a firing is, when the trigger puts an agent to work: apart from who set it
    * (owner). Absent for the agent's own. */
   member: text('member').references((): AnySQLiteColumn => members.id),
-  /** The bridge conversation a firing is mail in, instead of a wake of its own (core/tempo/room-triggers.ts).
+  /** The bridge conversation a firing is mail in, instead of a wake of its own (src/shared-place-triggers.ts).
    * Not a reference: a conversation that is gone stops the trigger at its next firing. */
   conversation: text('conversation'),
   /** Who asked for it, for a trigger that names a conversation: the person on whose word a firing's job

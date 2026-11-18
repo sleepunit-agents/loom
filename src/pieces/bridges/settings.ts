@@ -1,5 +1,6 @@
 /** Trusted shared configuration service. External permissions belong at the
  * operation door; installed modules use this service directly. */
+import { channelTarget } from '../../core/conversations/handoff.js';
 import { and, eq, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
@@ -15,7 +16,7 @@ export const bridgeConfiguration=z.discriminatedUnion('action',[
  // every conversation in the channel beside the venue's own page. Left out or null: the channel has none.
  z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean(),brief:z.string().regex(PAGE_NAME).nullable().optional(),
   // Where a body working in this channel for a guest may hand a note: one channel on any of the answering agent's bridges.
-  reportsTo:z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:text,channel:text}).strict().nullable().optional()}).strict(),
+  reportsTo:channelTarget.omit({thread:true}).strict().nullable().optional()}).strict(),
  z.object({action:z.literal('removeChannel'),...address,channel:text}).strict(),
  z.object({action:z.literal('person'),...address,user:text,member:text}).strict(),
  z.object({action:z.literal('removePerson'),...address,user:text}).strict(),

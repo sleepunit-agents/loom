@@ -1,3 +1,4 @@
+import type { Asker } from '../../policy.js';
 import { randomUUID } from 'node:crypto';
 import { laneFile } from './lane-file.js';
 import { and, eq, max } from 'drizzle-orm';
@@ -106,10 +107,10 @@ export class TriggerEngine {
     const agent = this.agent(t);
     return !!agent && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, agent)).get();
   }
-  /** `member` is whom the trigger's work is for, when that is a member and not the agent itself. It is the
-   * door's to say (shared-tempo-access.ts, recordedTrigger) and never part of what a caller sends. */
-  /** `asked` is who asked for a trigger that names a conversation; the door's to say, like `member`. */
-  set(value: NewTrigger, member?: string, asked?: { kind: 'member' | 'outside' | 'agent'; id: string }): Trigger {
+  /** `member` is whom the trigger's work is for, when that is a member and not the agent itself; `asked` is
+   * who asked for a trigger that names a conversation. Both are the door's to say (shared-tempo-access.ts,
+   * shared-place-triggers.ts) and never part of what a caller sends. */
+  set(value: NewTrigger, member?: string, asked?: Asker): Trigger {
     this.open();
     const v = triggerInput.parse(value);
     if (member !== undefined && v.toKind !== 'agent') throw new Error('Only a trigger that puts an agent to work is for a member');
@@ -152,7 +153,7 @@ export class TriggerEngine {
   }
   /** Change a trigger's words, times, label or wanted model, keeping what the changed parts said before and who changed them. */
   /** `asked` re-stamps who asked, for a trigger that names a conversation whose words, file or times change: the door's to say. */
-  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }, asked?: { kind: 'member' | 'outside' | 'agent'; id: string }): void {
+  edit(id: string, change: TriggerEdit, by: { kind: 'member' | 'agent'; id: string }, asked?: Asker): void {
     this.open();
     const c = triggerEdit.parse(change);
     this.db.transaction(() => {

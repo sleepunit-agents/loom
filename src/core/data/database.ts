@@ -247,7 +247,7 @@ const upgrades: readonly (readonly string[])[] = [
   //    the next one resumes it (core/conversations/sessions.ts).
   // Both tables start empty.
   // And, for mail that starts work in a named conversation (a trigger's firing, a note between bodies):
-  //  - triggers.conversation and who asked (asked_by_kind, asked_by, asked_at): core/tempo/room-triggers.ts.
+  //  - triggers.conversation and who asked (asked_by_kind, asked_by, asked_at): src/shared-place-triggers.ts.
   //  - inbox.on_word_kind, on_word: the person on whose word mail was sent; chain, chain_started_at: the
   //    hand-offs a note has come through.
   //  - bridge_channels.reports_to: where a guest's body may hand a note.
@@ -264,9 +264,9 @@ const upgrades: readonly (readonly string[])[] = [
     "ALTER TABLE inbox ADD COLUMN on_word_kind text CHECK (on_word_kind in ('member', 'outside'))",
     "ALTER TABLE inbox ADD COLUMN on_word text CHECK ((on_word_kind is null) = (on_word is null))",
     "ALTER TABLE inbox ADD COLUMN chain text",
-    "ALTER TABLE inbox ADD COLUMN chain_started_at text CHECK (chain_started_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', chain_started_at) = chain_started_at or strftime('%Y-%m-%dT%H:%M:%fZ', chain_started_at) = chain_started_at, 0)) CHECK ((chain is null) = (chain_started_at is null) and (chain is null or json_valid(chain)))",
+    "ALTER TABLE inbox ADD COLUMN chain_started_at text CHECK (chain_started_at is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', chain_started_at) = chain_started_at or strftime('%Y-%m-%dT%H:%M:%fZ', chain_started_at) = chain_started_at, 0)) CHECK ((chain is null) = (chain_started_at is null) and (chain is null or (json_valid(chain) and json_type(chain) = 'array')))",
     "CREATE TABLE `bridge_sends_rebuilt` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`incoming` text,\n\t`connection` text NOT NULL,\n\t`channel` text NOT NULL,\n\t`thread` text,\n\t`conversation` text,\n\t`text` text NOT NULL,\n\t`state` text NOT NULL,\n\t`created_at` text NOT NULL,\n\tFOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,\n\tCONSTRAINT \"bridge_sends_created_at_utc\" CHECK(\"created_at\" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', \"created_at\") = \"created_at\" or strftime('%Y-%m-%dT%H:%M:%fZ', \"created_at\") = \"created_at\", 0)),\n\tCONSTRAINT \"bridge_sends_state_choice\" CHECK(\"state\" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')),\n\tCONSTRAINT \"bridge_sends_answers_or_placed\" CHECK(coalesce(\"incoming\", \"conversation\") is not null)\n)",
-    "INSERT INTO bridge_sends_rebuilt (id, incoming, connection, channel, thread, text, state, created_at) SELECT id, incoming, connection, channel, thread, text, state, created_at FROM bridge_sends",
+    "INSERT INTO bridge_sends_rebuilt (rowid, id, incoming, connection, channel, thread, text, state, created_at) SELECT rowid, id, incoming, connection, channel, thread, text, state, created_at FROM bridge_sends ORDER BY rowid",
     "DROP TABLE bridge_sends",
     "ALTER TABLE bridge_sends_rebuilt RENAME TO bridge_sends",
     "CREATE TABLE `bridge_send_files` (\n\t`send` text NOT NULL,\n\t`position` integer NOT NULL,\n\t`name` text NOT NULL,\n\t`contents` blob NOT NULL,\n\tPRIMARY KEY(`send`, `position`),\n\tFOREIGN KEY (`send`) REFERENCES `bridge_sends`(`id`) ON UPDATE no action ON DELETE no action\n)",

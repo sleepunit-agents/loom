@@ -84,7 +84,7 @@ export class BridgeSends {
   /** `stopped` is loom's own line after a stop word (STOPPED_LINE): the one post made to a message that
    * was not delivered, addressed like any other to where that message was said. */
   /** A post answers a delivered message (`incoming`) and goes where that message is; or it answers none
-   * and is made in a conversation (`at`), whose place the caller read (shared-room-mail.ts, roomAddress). */
+   * and is made in a conversation (`at`), whose place the caller read (shared-place-mail.ts, placeAddress). */
   queue(input: { id: string; text: string; held?: boolean; stopped?: boolean; files?: readonly SendFile[] } & ({ incoming: string; at?: undefined } | { incoming?: undefined; at: { conversation: string; connection: string; channel: string; thread: string | null } })): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new Error('Reply needs an id and text');

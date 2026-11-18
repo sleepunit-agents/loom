@@ -30,7 +30,7 @@ it('starts no harness for a denial whose later entry would be read as an option'
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.deniedTools = [{ pattern: 'Read,--dangerously-skip-permissions', guestsOnly: false }];
   await expect(f.run(configured, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
 });
-it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a room that is denied the generic tool under it: %s', async pattern => {
+it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a shared place that is denied the generic tool under it: %s', async pattern => {
   // An owner's rule may be for guests only, and may have been stored when the tools server had its old name.
   const f = fixture(), configured = structuredClone(job);
   configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }];

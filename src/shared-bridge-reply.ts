@@ -4,8 +4,9 @@
  * A reply cannot choose another job's conversation or another job's mail. */
 import { createHash } from 'node:crypto';
 import { and,asc,desc,eq,getTableColumns,gte,inArray,isNull } from 'drizzle-orm';
-import { isBridgeVenue,jobWord,roomAddress,roomClosed,ruled } from './shared-room-mail.js';
+import { isBridgeVenue,jobWord,placeAddress,placeClosed,ruled } from './shared-place-mail.js';
 import { conversationPlace } from './pieces/bridges/place.js';
+import { channelTarget } from './core/conversations/handoff.js';
 import { z } from 'zod';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
@@ -40,11 +41,11 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
  };
  /** A job whose mail in its bridge conversation is not a message from the bridge (a trigger's firing, a note
   * from another body of the agent) answers by a post in the conversation itself: there is no message to
-  * answer. Where that is comes from the conversation's place (shared-room-mail.ts). */
+  * answer. Where that is comes from the conversation's place (shared-place-mail.ts). */
  const placed=(viewer:Viewer)=>{
   const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||!isBridgeVenue(found.cv.venue))return;
   const mail=db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),inArray(inbox.source,['trigger','handoff']))).all();
-  const at=mail.length?roomAddress(db,found.cv):undefined;
+  const at=mail.length?placeAddress(db,found.cv):undefined;
   return at?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,at:{conversation:found.cv.id,connection:at.connection,channel:at.channel,thread:at.thread},since:found.job.claimedAt??found.job.queuedAt}:undefined;
  };
  /** Everything posted for what a job took: answers to its messages, and its posts in the conversation since it was claimed. */
@@ -137,13 +138,13 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    ctx.changed('bridge-send',input.id);return {saved:true as const};
   },
  });
- // The agent's own work (a lane: a job with no person behind any of its mail, shared-room-mail.ts jobWord)
+ // The agent's own work (a lane: a job with no person behind any of its mail, shared-place-mail.ts jobWord)
  // posts a finished text straight to a channel the agent has a rule for, with no second body run: the
  // daily post. Through the same queue, so it is split, receipted, held while effects are off and reviewed
  // like every post; the agent's turn is written in the conversation there. A job with anybody behind it
  // hands a note instead (conversation.handoff), and the body there says it.
  const ownWork=(viewer:Viewer)=>{const found=current(viewer);return found&&viewer.kind==='agent'&&viewer.id===found.cv.agent&&jobWord(db,found.job).woke==='own'?found:undefined;};
- operations.register({name:'bridges.post',input:z.object({id:z.uuid(),to:z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict(),
+ operations.register({name:'bridges.post',input:z.object({id:z.uuid(),to:channelTarget,
    text:z.string().min(1).max(MESSAGE_WORDS_MAX),model:z.string().min(1).max(200)}).strict(),output:z.object({saved:z.literal(true),conversation:z.string()}).strict(),write:true,recheckPolicy:true,
   may:viewer=>!!ownWork(viewer),
   inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-bridge-post-receipt-v1\0').update(JSON.stringify([ownWork(actor)?.job.id??null,canonical])).digest('hex'),
@@ -152,8 +153,8 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
    const agent=found.cv.agent;
    if(!ruled(db,agent,input.to))throw new OperationError('invalid','A post goes to a channel this agent has a rule for');
    const place=conversationPlace(input.to.workspace,{channel:input.to.channel,thread:input.to.thread??null,isDm:false},null);
-   const closed=roomClosed(db,{id:'',agent,venue:input.to.platform,place});if(closed)throw new OperationError('invalid',`Nothing can be posted there: ${closed}`);
-   const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=roomAddress(db,cv)!;
+   const closed=placeClosed(db,{id:'',agent,venue:input.to.platform,place});if(closed)throw new OperationError('invalid',`Nothing can be posted there: ${closed}`);
+   const cv=conversations.open({agent,venue:input.to.platform,place,label:input.to.thread??input.to.channel}),at=placeAddress(db,cv)!;
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
    // Its own posts there: each wrote a reply turn of this job's in that conversation.
    const said=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.run,found.job.id),eq(turns.kind,'reply'))).all();

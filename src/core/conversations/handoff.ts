@@ -4,6 +4,7 @@ import {MESSAGE_WORDS_MAX} from './words.js';
  * parent place come from its live conversation, never from caller claims. */
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
+import type {OnWord} from '../../policy.js';
 import {bridgeConnections,inbox} from '../data/schema.js';
 import {operation,OperationError,type Operations} from '../operations/index.js';
 import {bodyOperationDefaults,conversationBodyScope,requireBodyScope,type BodyProof} from './body-scope.js';
@@ -11,19 +12,21 @@ import type {CommsMessages} from './messages.js';
 import {sealHandoff} from './handoff-words.js';
 import {threadTitle} from './title.js';
 import { commsKeepDays } from '../data/comms-days.js';
+/** A channel on a bridge, and a thread in it: the one way a caller names a place nothing has been said in yet. */
+export const channelTarget=z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict();
 /** Where a note to the agent's own body goes: a conversation it has, or a channel (and thread) it has a rule for. */
 const toSelf=z.union([z.object({conversation:z.string().min(1).max(200)}).strict(),
- z.object({platform:z.enum(bridgeConnections.platform.enumValues),workspace:z.string().min(1).max(200),channel:z.string().min(1).max(200),thread:z.string().min(1).max(200).optional()}).strict()]);
+ channelTarget]);
 export type HandoffTo=z.infer<typeof toSelf>;
 /** The composition's rules for a note from one body of an agent to its body in another conversation
- * (src/shared-room-mail.ts, selfHandoff): who may hand to where, on whose word, and by what chain. */
+ * (src/shared-place-mail.ts, selfHandoff): who may hand to where, on whose word, and by what chain. */
 export interface HandoffToSelf{
  /** Resolve and judge the target for this job; throws an OperationError to refuse. Reads only. */
  target(work:{job:{id:string;agent:string;conversation:string|null};cv:{id:string;agent:string;venue:string;place:string;member:string|null}},to:HandoffTo):{
-  conversation?:string;open?:{venue:'discord'|'slack';place:string;label:string};told:string;onWord?:{kind:'member'|'outside';id:string};chain:string[];startedAt:string};
+  conversation?:string;open?:{venue:'discord'|'slack';place:string;label:string};told:string;onWord?:OnWord;chain:string[];startedAt:string};
  /** The person the sending job is working on the word of, if one can be named: a brief to another agent
   * carries it, so the job it starts counts that person as in the room and is never the agent's own work. */
- word(work:{job:{id:string;agent:string;conversation:string|null}}):{kind:'member'|'outside';id:string}|undefined;
+ word(work:{job:{id:string;agent:string;conversation:string|null}}):OnWord|undefined;
  /** Told after a note is written, for the notice a long chain raises. */
  sent(note:{chain:string[];startedAt:string;to:string;agent:string}):void;
 }
@@ -47,17 +50,22 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   // A note to itself is sealed with what the receiving body is told about it: where it came from and by what chain.
   async prepare(input,context){
    const work=input.to?current(context.viewer):undefined;
-   return sealHandoff(service.key,work&&self?`${self.target(work,input.to!).told}\n\n${input.words}`:input.words,service.now(),commsKeepDays(db));},
+   const resolved=work&&self?self.target(work,input.to!):undefined;
+   const sealed=await sealHandoff(service.key,resolved?`${resolved.told}\n\n${input.words}`:input.words,service.now(),commsKeepDays(db));
+   return resolved?{sealed,resolved}:sealed;},
   run(ctx,input,prepared){
    const {job,cv}=requireCurrent(ctx.viewer),sourceId=JSON.stringify([job.id,input.clientId]);
    if(input.to){
     if(!self)throw new OperationError('denied','This program hands no note to an agent\'s own body');
     const before=db.select().from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,cv.agent),eq(inbox.source,'handoff'),eq(inbox.sourceId,sourceId))).get();
     if(before?.conversation)return {conversation:before.conversation,item:before.id};
-    const how=self.target({job,cv},input.to);
+    // Resolved once, when the words were sealed. It is judged again here, and must still be the same: what the
+    // receiving body is told and what the row says cannot disagree.
+    const {sealed,resolved:how}=prepared as {sealed:string;resolved:ReturnType<HandoffToSelf['target']>},again=self.target({job,cv},input.to);
+    if(JSON.stringify([again.conversation,again.open,again.onWord,again.chain])!==JSON.stringify([how.conversation,how.open,how.onWord,how.chain]))throw new OperationError('conflict','The note\'s place or word changed; send it again');
     const target=how.conversation??cvs.open({agent:cv.agent,venue:how.open!.venue,place:how.open!.place,label:how.open!.label}).id;
     const chain=[...how.chain,cv.id];
-    const item=cvs.send({conversation:target,toKind:'agent',to:cv.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:prepared as string,refs:[cv.id],
+    const item=cvs.send({conversation:target,toKind:'agent',to:cv.agent,source:'handoff',sourceId,fromKind:'agent',fromId:cv.agent,words:sealed,refs:[cv.id],
      chain:JSON.stringify(chain),chainStartedAt:how.startedAt,...(how.onWord?{onWordKind:how.onWord.kind,onWord:how.onWord.id}:{})});
     cvs.turn({conversation:target,kind:'message',fromKind:'agent',fromId:cv.agent,outcome:'progressed'});
     self.sent({chain,startedAt:how.startedAt,to:target,agent:cv.agent});

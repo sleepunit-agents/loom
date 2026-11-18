@@ -258,6 +258,8 @@ describe('upgrading a household database', () => {
       { id: 's-3', incoming: 'bi:1', thread: null, text: 'Three', state: 'held', conversation: null }, { id: 's-4', incoming: 'bi:1', thread: null, text: 'Four', state: 'sending', conversation: null },
       { id: 's-5', incoming: 'bi:1', thread: 'th', text: 'Five', state: 'uncertain', conversation: null }, { id: 's-6', incoming: 'bi:1', thread: null, text: 'Six', state: 'dismissed', conversation: null }]);
     expect(old.pragma('foreign_key_check')).toEqual([]);
+    // In the order they were queued: what was said is read back in that order (bridge-history.ts).
+    expect((old.prepare('SELECT id FROM bridge_sends ORDER BY rowid').all() as { id: string }[]).map(row => row.id)).toEqual(['s-1', 's-2', 's-3', 's-4', 's-5', 's-6']);
     // A post that answers no message needs its conversation; one with neither is refused.
     old.prepare("INSERT INTO bridge_sends (id, incoming, connection, channel, conversation, text, state, created_at) VALUES ('s-7', NULL, 'c', 'pond', 'cv-1', 'Seven', 'held', ?)").run(at);
     expect(() => old.prepare("INSERT INTO bridge_sends (id, incoming, connection, channel, text, state, created_at) VALUES ('s-8', NULL, 'c', 'pond', 'Eight', 'held', ?)").run(at)).toThrow('CHECK');

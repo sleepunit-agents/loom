@@ -44,7 +44,7 @@ beforeAll(() => {
   db.insert(s.secrets).values({ name: 'token', description: '', changedAt: at, changedBy: 'owner' }).run();
   db.insert(s.secretRequests).values({ id: 'p-asked', secret: 'token', agent: 'art', why: 'test', state: 'pending', minutes: 5, always: false, askedAt: at }).run();
   db.insert(s.bridgeConnections).values({ id: 'p-mark', platform: 'discord', agent: 'mark', workspace: 'w', botUser: 'bot', tokenSecret: 'token', enabled: true, state: 'connected', stateAt: at }).run();
-  // A message in a room, in each direct conversation, and held with no conversation (a room message and a direct one).
+  // A message in a shared place, in each direct conversation, and held with no conversation (a room message and a direct one).
   for (const [id, conversation, isDm] of [['p-in-room', 'p-bare', false], ['p-in-dm-lee', 'p-dm-lee', true], ['p-in-dm-stranger', 'p-dm-stranger', true], ['p-held-room', null, false], ['p-held-dm', null, true]] as const)
     db.insert(s.bridgeIncoming).values({ id, connection: 'p-mark', channel: 'c', isDm, user: 'u', text: id, postedAt: at, receivedAt: at, state: conversation ? 'delivered' : 'held', conversation }).run();
   const trigger = client.prepare(`INSERT INTO triggers (id,owner_kind,owner,source_kind,lifespan,target_kind,target,to_kind,"to",project,note,enabled,state,created_at,changed_at)

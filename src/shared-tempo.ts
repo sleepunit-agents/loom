@@ -1,6 +1,6 @@
 /** Tempo's installation in the fresh shared program. Callers may supply runtime,
  * notification and provenance adapters; none is derived from operation input. */
-import { asking, roomFiring, roomFull, roomRepeatRefusal, roomTriggerAsker } from './shared-room-triggers.js';
+import { asking, placeFiring, placeFull, sharedPlaceRefusal, placeTriggerAsker } from './shared-place-triggers.js';
 import { conversations as conversationRows } from './core/data/schema.js';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from './core/data/database.js';
@@ -15,7 +15,7 @@ import type { Recipient } from './core/tempo/volume.js';
 import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
 import { tempoCommandAllowed, recordedTrigger } from './shared-tempo-access.js';
-import { ROOM_SCHEDULE_REFUSAL, isHouseholdOwner, mayRunPrivateWork, maySchedule } from './policy.js';
+import { SHARED_PLACE_SCHEDULE_REFUSAL, isHouseholdOwner, mayRunPrivateWork, maySchedule } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { Jobs, agentMailAdmission } from './runtime/jobs.js';
 import { repositoryInstructions } from './core/tempo/repository.js';
@@ -46,7 +46,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // Whom the work is for is on the trigger (`member`, set with it). How far that reaches is judged now:
       // a household owner's work is the whole agent's, anyone else's is narrowed to them, and for a member
       // who has left, lost the agent or left the trigger's project the firing fails.
-      roomFiring: trigger => roomFiring(db, trigger),
+      placeFiring: trigger => placeFiring(db, trigger),
       worksFor(trigger) {
         if (trigger.member === null || trigger.toKind !== 'agent') return undefined;
         const sharing = sharedSharing(db), member = isHouseholdOwner({ kind: 'member', id: trigger.member }, sharing) ? undefined : trigger.member;
@@ -67,9 +67,9 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
     commands: { mailboxReceiptScope:options.mailboxReceiptScope,
       // A trigger that names a conversation is the agent's own mail there and nobody's private work; who asked is recorded with it.
       recorded: (viewer, trigger) => { const recorded = recordedTrigger(db, viewer, trigger);
-        return trigger.conversation ? { trigger: recorded.trigger, asked: roomTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember),
-      placeRefusal: (viewer, trigger, change) => { const work = options.bodyWork?.(viewer); return work && !maySchedule(work.cv, trigger) ? ROOM_SCHEDULE_REFUSAL : roomRepeatRefusal(db, work, trigger, change); },
-      standRefusal: trigger => trigger.conversation ? roomFull(db, trigger.conversation) : undefined,
+        return trigger.conversation ? { trigger: recorded.trigger, asked: placeTriggerAsker(db, viewer, recorded.trigger, options.bodyWork?.(viewer)) } : recorded; }, authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access, options.chatMember),
+      placeRefusal: (viewer, trigger, change) => { const work = options.bodyWork?.(viewer); return work && !maySchedule(work.cv, trigger) ? SHARED_PLACE_SCHEDULE_REFUSAL : sharedPlaceRefusal(db, work, trigger, change); },
+      standRefusal: trigger => trigger.conversation ? placeFull(db, trigger.conversation) : undefined,
       // Changed words, file or times are the changer's: the trigger then runs on their word.
       reasked: (viewer, trigger, change) => { if (!trigger.conversation || (change.instructions === undefined && change.file === undefined && change.times === undefined)) return undefined;
         const agent = db.select({ agent: conversationRows.agent }).from(conversationRows).where(eq(conversationRows.id, trigger.conversation)).get()?.agent;

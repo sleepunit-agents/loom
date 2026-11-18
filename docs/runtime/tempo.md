@@ -39,14 +39,14 @@ agent is paused fires when the agent resumes.
 ## Who may schedule, and from where
 
 Who may set a trigger is `maySetTrigger` in `src/policy.ts`. Where the caller
-is working matters too (`maySchedule`, beside it). A **room** is a Discord or
+is working matters too (`maySchedule`, beside it). A **shared place** is a Discord or
 Slack conversation that is not one member's own: a channel, a thread, a group
 direct message, or a direct message from somebody who is no member. The body
-of a job in a room may set, reword, stop, start and run only a trigger that
-**names its own conversation**. Every other call from a room is refused with
-"A body working in a room cannot schedule work: ask in your own thread, or
+of a job in a shared place may set, reword, stop, start and run only a trigger that
+**names its own conversation**. Every other call from a shared place is refused with
+"A body working in a shared place cannot schedule work: ask in your own thread, or
 have an owner schedule it." A body in one member's own thread or direct
-message is not in a room and is judged by who it is.
+message is not in a shared place and is judged by who it is.
 
 ### A trigger that names a conversation
 
@@ -55,12 +55,12 @@ the trigger puts to work (`triggers.conversation`). Its firing opens no wake.
 It is mail from the schedule in that conversation and starts a job there like
 any message: the conversation's stored session, and the answer posted in the
 conversation as a new message. Words limit, time zone and occurrence ids are
-those of every trigger. The rules are in `src/shared-room-triggers.ts`.
+those of every trigger. The rules are in `src/shared-place-triggers.ts`.
 
 - **Who asked** is recorded with it (`asked_by_kind`, `asked_by`, `asked_at`).
-  Set by a room's body, it is the person whose message started the job that
+  Set by a shared place's body, it is the person whose message started the job that
   set it; when the job's mail is from several people, the one of least reach.
-  Set by a person, it is that member. Set by the agent outside a room, it is
+  Set by a person, it is that member. Set by the agent anywhere else, it is
   the agent. Nobody loom cannot name is ever the asker.
 - **A firing runs on the asker's word.** The mail carries the asker
   (`inbox.on_word_kind`, `on_word`), and the job counts them as in the room at
@@ -75,11 +75,20 @@ those of every trigger. The rules are in `src/shared-room-triggers.ts`.
   out). If not, nothing is delivered, the trigger is stopped, and the agent's
   owners get one notice saying why. **A channel rule that was removed does not
   by itself stop a firing: a mention there would still wake the agent.**
+- **A trigger keeps to its asker.** From a shared place, a body working for
+  anybody but owners or members who have the agent may reword, stop, start
+  and run only a trigger the same person asked for; a body working for those
+  may touch any trigger naming its conversation. Whoever changes a trigger's
+  words, file or times becomes its asker, so a firing never runs one person's
+  words on another's word.
+- **Words only.** From a shared place a trigger carries its own words: naming
+  a `file` of the household's repository is refused on `tempo.set` and
+  `tempo.edit`.
 - **Bounds.** At most 10 triggers stand at once for one conversation
-  (`ROOM_TRIGGERS_MAX`). Set or reworded from a room, a repeating one lists
-  times at least an hour apart (`ROOM_REPEAT_MIN_MS`) and watches no event.
+  (`PLACE_TRIGGERS_MAX`), checked when one is set and when a stopped one is
+  turned back on. Set or reworded from a shared place, a repeating one lists
+  times at least an hour apart (`SHARED_PLACE_REPEAT_MIN_MS`) and watches no event.
 - An owner, and the agent in its own thread, see, reword and stop these like
-  any trigger. A room's body reads its agent's triggers as before, all of
+  any trigger. A shared place's body reads its agent's triggers as before, all of
   them, and can change only its own conversation's (see the accepted
   trade-offs).
-would decide in the room what happens outside it.

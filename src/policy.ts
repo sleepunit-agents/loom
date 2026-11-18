@@ -448,7 +448,7 @@ export const OWN_WORK = 'agent:';
  *  - the agent's own work, done for no member: a terminal session, or a lane (a `wake` conversation with no
  *    member). Written `agent:<id>`, which no member's id can be;
  *  - anything else for no member (a room on a bridge, a handoff with no member): `unknown`. People outside
- *    the household talk to an agent in a room; what is asked there is nobody's account.
+ *    the household talk to an agent in a shared place; what is asked there is nobody's account.
  * A handoff carries the member it was opened for (core/conversations/handoff.ts), so work handed on for a
  * person is still that person's: the first case.
  * `workPrincipal` names the principal; `rulesPerson` says which rules it reads. */
@@ -536,32 +536,23 @@ export function maySetTrigger(v: Viewer, t: TriggerFacts, s: Sharing): boolean {
   if (!authored || t.project && !(Object.hasOwn(s.projects, t.project) && holds(rules.project, v, { id: t.project }, s))) return false;
   return t.toKind && t.to ? holds(recipient, v, { toKind: t.toKind, to: t.to }, s) : owner || own;
 }
-/** What a body may schedule depends on where its job is.
- *
- * A room is a bridge conversation that is not one member's own: a Discord or Slack channel or thread, a
- * group direct message, or a direct message from somebody who is no member. Its body works under the
- * room's limits: the people in it, and the tools an agent's body is not given when a guest is among them.
- * A trigger such a body set for its agent would fire later as the agent's own wake, a job with no room and
- * none of those limits, running words chosen in the room. So a room's body may set, or reword, a trigger
- * only if its firing comes back into that same conversation, as a job with the room's limits. Starting,
- * running and stopping are held to the same triggers: a room's body that could fire its agent's own
- * trigger at will, or stop its scheduled work, would be choosing in the room what happens outside it.
- *
- * Tempo cannot address a conversation: a trigger names an agent or a person, and a firing for an agent
- * opens a wake of its own (core/tempo/tempo.ts). So today no trigger is one a room's body may set, and
- * every one is refused with ROOM_SCHEDULE_REFUSAL. When a trigger can name a conversation, this is where
- * that one case is let through.
- *
- * A body in one member's own thread or direct message is not in a room: maySetTrigger alone decides for
- * it, as for a person and for an agent's own session. */
-export const isRoom = (conversation: { venue: string; member: string | null }): boolean =>
+/** Where a body works limits what it may schedule. A **shared place** is a Discord or Slack conversation
+ * that is not one member's own: a channel, a thread, a group direct message, a direct message from
+ * somebody who is no member. Its body works with whoever is in the room: the people behind its mail, and
+ * the tools a body is not given when one of them is a guest. A trigger it set for its agent's own wake
+ * would later run words chosen there without any of that. So a shared place's body may set, reword, stop,
+ * start and run only a trigger whose firing comes back into that same conversation (`triggers.conversation`),
+ * as a job on its asker's word (src/shared-place-triggers.ts). A body in one member's own thread or direct
+ * message is not in a shared place: maySetTrigger alone decides for it, as for a person and for an
+ * agent's own session. */
+export const isSharedPlace = (conversation: { venue: string; member: string | null }): boolean =>
   (conversation.venue === 'discord' || conversation.venue === 'slack') && conversation.member === null;
-export const ROOM_SCHEDULE_REFUSAL = 'A body working in a room cannot schedule work: ask in your own thread, or have an owner schedule it.';
-/** Whether the body of a job in this conversation may set, reword, stop, start or run this trigger, as far as where it works goes. */
+export const SHARED_PLACE_SCHEDULE_REFUSAL = 'A body working in a shared place cannot schedule work: ask in your own thread, or have an owner schedule it.';
+/** Whether the body of a job in this conversation may set, reword, stop, start or run this trigger, as far as where it works goes: anywhere but a shared place, and there only a trigger that names its own conversation. */
 export function maySchedule(conversation: { id?: string; venue: string; member: string | null }, trigger: { conversation?: string | null }): boolean {
-  return !isRoom(conversation) || (!!conversation.id && trigger.conversation === conversation.id);
+  return !isSharedPlace(conversation) || (!!conversation.id && trigger.conversation === conversation.id);
 }
-/** On whose word a body is working, by least reach (shared-room-mail.ts, jobWord): the agent's own work,
+/** On whose word a body is working, by least reach (shared-place-mail.ts, jobWord): the agent's own work,
  * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has
  * the agent; `others`, when anybody else is: a guest, an unlinked coworker, a member without the agent. */
 export type Woke = 'own' | 'owners' | 'others';
