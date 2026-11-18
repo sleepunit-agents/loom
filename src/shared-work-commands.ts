@@ -2,6 +2,8 @@
  * (workAnswersAllowed); there is no narrower rule per card or per change, because an
  * owner already sees every change. What is checked beyond that is that the card and
  * the change it names still exist; the exact head is checked when the answer runs. */
+import { answerEvidence, ownerWord, type EvidenceSources } from './approval-owner-word.js';
+import { alwaysAsks } from './shared-household-proposals.js';
 import { COMMIT, parseMergeTarget } from './apps/merge-target.js';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
@@ -15,7 +17,7 @@ import { readsRepository, type ChangeRow } from './apps/changes.js';
 
 const id = z.string().trim().min(1);
 export function registerSharedWorkCommands(operations: Operations, db: DataDatabase,
-  service: ReturnType<typeof approvalService>) {
+  service: ReturnType<typeof approvalService>, sources: EvidenceSources) {
   const approval = (id: string) => db.select().from(approvals).where(eq(approvals.id, id)).get();
   const change = (id: string) => db.select().from(changes).where(eq(changes.id, id)).get();
   const answers = changeAnswers(db, service);
@@ -29,19 +31,18 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');
   };
-  const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
-    if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
+  const answerMerge = (ctx: Context, member: string, input: { id: string; head: string; approval: string; allow: boolean; basis?: string }) => {
     // A no is always possible. When the pull request has moved on, closed or gone,
     // there is nothing left to compare the card with: deny the card itself.
     const row = change(input.id);
     if (!input.allow && (!row || row.state !== 'open' || row.headCommit !== input.head)) {
-      try { service.deny(input.approval, ctx.viewer.id); }
+      try { service.deny(input.approval, member, input.basis); }
       catch (error) { if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message)) throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.'); throw error; }
       ctx.changed('approvals', input.approval); if (row) ctx.changed('changes', input.id);
       return;
     }
     currentHead(input);
-    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member: ctx.viewer.id, allow: input.allow }); }
+    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member, allow: input.allow, basis: input.basis }); }
     catch (error) {
       if (error instanceof Error && ['Change is no longer open', 'Change head has changed', 'Approval does not match this change', 'Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
         throw new OperationError('conflict', 'The merge request changed. Open it again.');
@@ -51,36 +52,52 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     ctx.changed('approvals', input.approval); ctx.changed('changes', input.id);
   };
   operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional() }).strict(), output: z.object({ id }).strict(),
+    input: z.object({ id, answer: z.enum(['allow', 'deny']), confirm: z.literal(true).optional(), onWord: ownerWord.optional() }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
-      if (!workAnswersAllowed(db, viewer) || !row) return false;
+      if (!workAnswersAllowed(db, viewer) && !sources.bodyJob(viewer)) return false;
+      answerEvidence(db, sources, viewer, input.onWord);
+      if (!row) return false;
       const merge = mergeTarget(row);
       // A yes to a merge needs its change to still be here; a no is always possible.
       return !merge || input.answer === 'deny' || !!change(merge.id);
+    },
+    async prepare(input, {viewer}) {
+      const proof = answerEvidence(db, sources, viewer, input.onWord);
+      if (proof.sealed) {
+        const words = await sources.words?.(proof.thread, proof.seq);
+        if (!input.onWord || !words?.includes(input.onWord.quote)) throw new OperationError('denied','Those words do not appear in that message.');
+      }
+      return proof.sealed;
     },
     validateReplay(_viewer, input) {
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
       const merge = mergeTarget(row); if (merge && input.answer !== 'deny') currentHead(merge);
     },
-    run(ctx, input) {
-      if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
+    run(ctx, input, prepared) {
+      const proof = answerEvidence(db, sources, ctx.viewer, input.onWord);
+      if (proof.sealed && (!Buffer.isBuffer(prepared) || !proof.sealed.equals(prepared))) throw new OperationError('conflict','The message changed. Read it again.');
+      const basis = proof.basis && (input.answer === 'allow' ? 'Allowed by ' : 'Denied by ') + proof.basis;
       const row = approval(input.id);
       if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
       // A dangerous action cannot be put back, so allowing one takes a second, explicit yes.
-      if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true)
+      if (row.kind === 'dangerous' && input.answer === 'allow' && input.confirm !== true && !basis)
         throw new OperationError('invalid', 'This cannot be undone. To allow it, answer again with confirm set to true.');
       const merge = mergeTarget(row);
-      if (merge) answerMerge(ctx, { ...merge, approval: row.id, allow: input.answer === 'allow' });
+      if (merge) answerMerge(ctx, proof.member, { basis, ...merge, approval: row.id, allow: input.answer === 'allow' });
       else {
-        try { input.answer === 'allow' ? service.allow(input.id, ctx.viewer.id) : service.deny(input.id, ctx.viewer.id); }
+        try { input.answer === 'allow' ? service.allow(input.id, proof.member, basis) : service.deny(input.id, proof.member, basis); }
         catch (error) {
           if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
             throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.');
           throw error;
         }
         ctx.changed('approvals', input.id);
+      }
+      if (basis && proof.through) {
+        const loud = row.kind === 'dangerous' || (row.operation === 'household.change' && alwaysAsks.has(JSON.parse(row.details).change));
+        service.tellAnswer(row, proof.member, proof.through, input.answer, basis, loud);
       }
       return { id: input.id };
     },
@@ -93,7 +110,8 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     },
     validateReplay(_viewer, input) { currentHead(input); },
     run(ctx, input) {
-      answerMerge(ctx, { ...input, allow: input.answer === 'yes' });
+      if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
+      answerMerge(ctx, ctx.viewer.id, { ...input, allow: input.answer === 'yes' });
       return { id: input.id };
     },
   });

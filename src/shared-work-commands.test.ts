@@ -213,3 +213,53 @@ it('projects only the current caller owner status through the real query door an
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
 });
 
+
+it.each(['allow', 'deny'] as const)('records an unverified terminal %s on the owner credential', async answer => {
+  const f = fixture(), card = f.request();
+  const response = await f.send('approvals', { id: card.id, answer,
+    onWord: { venue: 'terminal', quote: 'Go ahead with this one', through: 'art' } });
+  expect(response.status).toBe(200);
+  const event = f.root.services.approvals.record(card.id).find(row => row.event === answer);
+  expect(event?.note).toContain('as told to art at the terminal');
+  expect(event?.note).toContain('Go ahead with this one');
+  expect(event?.note).toContain('unverified');
+  expect(f.root.services.approvals.get(card.id).decidedBy).toBe('sam');
+});
+
+it.each(['command', 'dangerous', 'projectJoin'] as const)('tells the signing owner at the volume for %s', async kind => {
+  const f = fixture();
+  f.root.writes.run(() => f.db.insert(agents).values({
+    id: 'mark', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot',
+  }).run());
+  let card: Approval;
+  if (kind === 'projectJoin') {
+    const response = await f.root.http.request('http://loom/api/household/propose', {
+      method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie },
+      body: JSON.stringify({ id: 'propose', input: { change: 'projectJoin', input: { project: 'pond', agent: 'art' }, why: 'Help with the pond' } }),
+    });
+    expect(response.status).toBe(200);
+    card = f.root.services.approvals.get((await response.json()).value.id);
+    expect(card.kind).toBe('setting');
+  } else {
+    card = f.root.writes.run(() => f.root.services.approvals.request({
+      kind, agent: 'art', target: 'fixture', askedFrom: 'terminal', actingFor: 'sam',
+      what: 'Apply fixture', ask: 'Apply?', why: 'Requested', ifYes: 'Apply', ifNo: 'Wait',
+      ...(kind === 'dangerous' ? {operation: 'fixture.change', changeSummary: 'Before and after'} : {}),
+    })).value;
+  }
+  const quote = 'Apply the fixture';
+  const response = await f.send('approvals', { id: card.id, answer: 'allow', onWord: { venue: 'terminal', through: 'mark', quote } });
+  expect(response.status).toBe(200);
+  const tells = f.db.select().from(inbox).all().filter(item => item.words?.includes(quote));
+  expect(tells).toHaveLength(1);
+  expect(tells[0]).toMatchObject({ toKind: 'person', to: 'sam', member: 'sam', fromId: 'mark',
+    volume: kind === 'command' ? 'dim' : 'full', words: expect.stringContaining(card.what) });
+  expect(f.root.services.approvals.notices().some(notice => notice.what.includes(quote))).toBe(false);
+});
+
+it.each([['',400],['🖐'.repeat(500),200],['a'.repeat(501),400]] as const)('bounds the terminal quote by Unicode characters', async (quote,status) => {
+  const f = fixture(), card = f.request();
+  const response = await f.send('approvals', { id:card.id, answer:'deny', onWord:{venue:'terminal',through:'art',quote} });
+  expect(response.status).toBe(status);
+  expect(f.root.services.approvals.get(card.id).state).toBe(status === 200 ? 'denied' : 'pending');
+});

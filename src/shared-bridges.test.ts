@@ -5,7 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {and,eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {approvals,agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
+import {approvals,approvalRecord,approvalNotices,operationResults,agentModels,agentRunSettings,inboxRefs,agentPeople,conversationSessions,triggers,members,agents,secrets,boxes,jobs,tokens,bridgeConnections,bridgeChannels,bridgePeople,bridgeIncoming,bridgeSends,bridgeSendParts,conversations,inbox,secretChanges,turns,projects,memberAgents} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
 import {wordsKey} from './pieces/comms/crypto.js';
@@ -1644,4 +1644,48 @@ it('writes nothing to the agent\'s status from a body on anybody else\'s word: t
  // On the owner's word the same body writes it.
  onWord(f,'owner');expect((await f.call('conversation','status',{state:'working',work:'Answering the owner'})).status).toBe(200);
  expect(status()).toMatchObject([{state:'working',work:'Answering the owner'}]);
+});
+
+it('answers on the linked bridge account and checks the current receipt, link and private retention on every answer', async () => {
+ const f=fixture();
+ const link={platform:'slack',workspace:'TWORK',user:'UUSER',member:'owner'};
+ f.db.insert(bridgePeople).values(link).run();
+ const incoming=await f.receive();
+ const conversation=incoming.conversation!;
+ f.db.update(jobs).set({conversation}).where(eq(jobs.id,'body')).run();
+ const [item]=f.root.services.conversations.take(conversation,'body');
+ const ask=()=>f.root.services.approvals.request({kind:'command',target:'inspect',agent:'art',what:'Inspect it',why:'Asked',askedFrom:'here',actingFor:'owner',ask:'Inspect?',ifYes:'Inspect',ifNo:'Wait'}).id;
+ const answer=(id:string)=>f.call('approvals','answer',{id,answer:'deny',onWord:{item:item.id,quote:'Hello'}});
+ expect((await answer(ask())).body.ok).toBe(true);
+
+ const pending=ask();
+ const snapshot=()=>({
+  card:f.root.services.approvals.get(pending), record:f.db.select().from(approvalRecord).all(),
+  notices:f.db.select().from(approvalNotices).all(), mail:f.db.select().from(inbox).all(),
+  receipts:f.db.select().from(operationResults).all(),
+ });
+ const refused=async(message:string)=>{
+  const before=snapshot();
+  expect(await answer(pending)).toMatchObject({status:403,body:{ok:false,message}});
+  expect(snapshot()).toEqual(before);
+ };
+ const personRequired='Choose a message written by a person.';
+ for(const flag of ['bot','webhook'] as const){
+  f.db.update(bridgeIncoming).set({[flag]:true}).where(eq(bridgeIncoming.id,incoming.id)).run();
+  await refused(personRequired);
+  f.db.update(bridgeIncoming).set({[flag]:false}).where(eq(bridgeIncoming.id,incoming.id)).run();
+ }
+
+ f.db.insert(members).values({id:'another-owner',role:'owner',joinedAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.update(bridgePeople).set({member:'another-owner'}).run();
+ await refused(personRequired);
+ f.db.delete(bridgePeople).run();
+ await refused(personRequired);
+ f.db.insert(bridgePeople).values(link).run();
+
+ // Date the private receipt before the keep window while its unswept text is still present.
+ f.db.update(conversations).set({direct:true}).where(eq(conversations.id,conversation)).run();
+ f.db.update(bridgeIncoming).set({isDm:true,receivedAt:'2026-01-01T00:00:00.000Z'}).where(eq(bridgeIncoming.id,incoming.id)).run();
+ expect(f.db.select().from(bridgeIncoming).get()?.text).toBe('Hello');
+ await refused('The message’s words are no longer kept.');
 });

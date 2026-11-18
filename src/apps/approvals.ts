@@ -97,12 +97,12 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         return get(id);
       });
     },
-    deny(id: string, member: string) {
+    deny(id: string, member: string, basis?: string) {
       return db.transaction(() => {
         const row = expire(get(id));
         if (row.state !== 'pending' && row.state !== 'allowed') throw new Error('Approval cannot be denied now');
         db.update(approvals).set({ state: 'denied', decidedBy: member, decidedAt: now(), expiresAt: null }).where(eq(approvals.id, id)).run();
-        record(row, 'deny', member);
+        record(row, 'deny', basis ?? member);
         const older = db.select().from(approvals).where(and(eq(approvals.agent, row.agent), eq(approvals.kind, row.kind), eq(approvals.target, row.target), eq(approvals.state, 'allowed'))).all();
         for (const previous of older) {
           db.update(approvals).set({ state: 'denied', overriddenBy: id, expiresAt: null }).where(eq(approvals.id, previous.id)).run();
@@ -161,6 +161,14 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         }
         record(row,'use','Reported step: '+text);
         if (!row.member) db.insert(approvalNotices).values({id:`an-${randomUUID()}`,agent:row.agent,kind:row.kind,target:row.target,what:text,at:now()}).run();
+      });
+    },
+    tellAnswer(row: Approval, member: string, through: string, decision: 'allow' | 'deny', basis: string, full: boolean) {
+      // The quote belongs in the signer's labelled inbox, including when the card is public.
+      mail.send({
+        toKind: 'person', to: member, member, agent: through,
+        fromKind: 'agent', fromId: through, source: 'approval', sourceId: row.id + ':tell:' + decision,
+        words: row.what + ' — ' + basis, refs: [row.id], volume: full ? 'full' : 'dim',
       });
     },
     notices() { return db.select().from(approvalNotices).orderBy(asc(approvalNotices.at), asc(approvalNotices.id)).all(); },

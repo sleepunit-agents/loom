@@ -142,3 +142,49 @@ it('validates the exact conversation approval selection through the shared query
  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:conversationApprovalsQuery,variables:{conversation:f.thread.conversation,offset:0}})});
  const result=await response.json();expect(result.errors).toBeUndefined();expect(result.data.approvals).toHaveLength(2);expect(result.data.approvals).toEqual(expect.arrayContaining([{id},{id:setting.id}]));expect(result.data.inboxItems).toEqual([]);
 });
+
+it.each(['verified','no words','wrong item','wrong writer','wrong quote','generated mail','other word','own work','moved head'] as const)('checks owner mail before answering: %s', async scenario => {
+ const f=await fixture(), id=await f.ask(), second=await f.ask();
+ if(scenario!=='wrong writer') f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+ expect((await f.send('Yes to both changes','word')).status).toBe(200);
+ const delivery=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{}})});
+ expect(delivery.status).toBe(200);
+ const mail=(await delivery.json()).value.items as {id:string;words:string|null}[];
+ const item=mail.find(row=>row.words==='Yes to both changes')!;
+ expect(item).toBeDefined();
+ let evidenceItem=item.id;
+ if(scenario==='wrong item'){
+  const thread=f.root.services.comms!.threads.open({member:'alice',agent:'art',project:'pond',title:'Another job'});
+  const job=f.db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()!;
+  f.db.insert(s.jobs).values({...job,id:'other-job',conversation:thread.conversation}).run();
+  await f.root.services.comms!.send({thread:thread.id,sender:'alice',kind:'message',words:'Yes to both changes'});
+  const [other]=f.root.services.conversations.take(thread.conversation,'other-job');
+  expect(other).toMatchObject({job:'other-job',fromId:'alice'});
+  evidenceItem=other.id;
+ }
+ if(scenario==='generated mail') f.db.update(s.inbox).set({source:'notice'}).where(eq(s.inbox.id,item.id)).run();
+ if(scenario==='other word') f.db.update(s.inbox).set({fromKind:'unknown',fromId:'guest'}).where(eq(s.inbox.id,item.id)).run();
+ if(scenario==='own work'){
+  f.db.update(s.conversations).set({member:null}).where(eq(s.conversations.id,f.thread.conversation)).run();
+  f.db.update(s.inbox).set({source:'trigger',fromKind:'schedule',fromId:null}).where(eq(s.inbox.id,item.id)).run();
+ }
+ if(scenario==='moved head') f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run();
+ const onWord={item:evidenceItem,quote:scenario==='wrong quote'?'fabricated':'Yes to both changes'};
+ const answer=(card:string,decision:string)=>f.call('answer',{id:card,answer:decision,...(scenario==='no words'?{}:{onWord})});
+ const snapshot=()=>({...f.snapshot(),mail:f.db.select().from(s.inbox).all()});
+ const before=snapshot();
+ const result=await (await answer(id,'allow')).json();
+ if(scenario==='verified'){
+  expect(result.ok).toBe(true);
+  expect((await (await answer(second,'deny')).json()).ok).toBe(true);
+  for(const card of [id,second]){
+   const note=f.root.services.approvals.record(card).find(e=>['allow','deny'].includes(e.event))!.note;
+   for(const part of ['alice through art','Yes to both changes',item.id,f.thread.conversation]) expect(note).toContain(part);
+   expect(f.root.services.approvals.get(card).decidedBy).toBe('alice');
+  }
+ }else{
+  const refusals={'no words':'Name the owner’s message and quote their words.','wrong item':'That message is outside this job.','wrong writer':'The writer is not a household owner.','wrong quote':'Those words do not appear in that message.','generated mail':'Choose a message written by a person.','other word':'This job is not working on the owners’ word.','own work':'This job is not working on the owners’ word.','moved head':'The change head moved. Open it again.'};
+  expect(result).toMatchObject({ok:false,message:refusals[scenario]});
+  expect(snapshot()).toEqual(before);
+ }
+});
