@@ -1,7 +1,7 @@
 /** Read-time usage projections. All reads enter through the job's current SQL visibility. */
-import { and, desc, eq, isNull, isNotNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, isNotNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import { GraphQLFloat, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
-import { conversations, inbox, inboxRefs, jobs, jobUsage, terminalRuns } from '../core/data/schema.js';
+import { conversations, inbox, inboxRefs, jobs, jobUsage, programFirings, terminalRuns } from '../core/data/schema.js';
 import { jobUnended } from '../core/data/job-states.js';
 import type { JobSummaries } from './job-summary.js';
 
@@ -16,7 +16,7 @@ const usageType = new GraphQLObjectType({name:'JobUsageMetrics',fields:{
   tools:{type:new GraphQLList(new GraphQLNonNull(toolType))},
 }});
 const recordType = new GraphQLObjectType({name:'JobUsageRecord',fields:{
-  id:requiredText, title:requiredText, runKind:text, state:requiredText, queuedAt:requiredText, retryOf:text, conversation:text,
+  id:requiredText, title:requiredText, runKind:text, state:requiredText, queuedAt:requiredText, retryOf:text, conversation:text, firingId:text, linkedWakeJob:text,
   usage:{type:usageType}, observations:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))},
 }});
 const groupType = new GraphQLObjectType({name:'JobUsageGroup',fields:{
@@ -49,11 +49,11 @@ function rows(s:JobSummaries, filter?:SQL | ((conversation:SQL<string|null>)=>SQ
   // are visible only when the caller can read both the run and that parent.
   const parent = s.db.select({id:jobs.id,conversation:jobs.conversation}).from(jobs).where(s.allowed()).as('terminal_parent');
   const conversation = sql<string|null>`coalesce(${jobs.conversation}, ${parent.conversation})`;
-  const runKind = sql<string|null>`case when ${terminalRuns.job} is null then null
+  const runKind = sql<string|null>`case when ${programFirings.id} is not null then 'program' when ${terminalRuns.job} is null then null
     when ${terminalRuns.job} = ${terminalRuns.parent} then 'main' else 'subagent' end`;
   return s.db.select({id:jobs.id,title:jobs.title,conversation,runKind,label:conversations.label,
-    state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,venue:conversations.venue,place:conversations.place,agent:conversations.agent,member:conversations.member,usage:jobUsage})
-    .from(jobs).leftJoin(terminalRuns,eq(terminalRuns.job,jobs.id)).leftJoin(parent,eq(parent.id,terminalRuns.parent))
+    state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,programFiring:programFirings.id,programTrigger:programFirings.trigger,venue:conversations.venue,place:conversations.place,agent:conversations.agent,member:conversations.member,usage:jobUsage})
+    .from(jobs).leftJoin(programFirings,eq(programFirings.job,jobs.id)).leftJoin(terminalRuns,eq(terminalRuns.job,jobs.id)).leftJoin(parent,eq(parent.id,terminalRuns.parent))
     .leftJoin(conversations,eq(conversations.id,conversation)).leftJoin(jobUsage,eq(jobUsage.job,jobs.id))
     .where(and(s.allowed(),or(isNull(terminalRuns.job),isNotNull(parent.id)),typeof filter === 'function' ? filter(conversation) : filter)).orderBy(desc(sql`julianday(${jobs.queuedAt})`),desc(jobs.id)).all();
 }
@@ -88,7 +88,9 @@ function assignRuns(history:Row[]) {
     if (!family) continue;
     const delivery = family.find(attempt=>attempt.firing)?.firing;
     let run:Run|undefined;
-    if (delivery) {
+    if (row.programFiring && row.programTrigger) {
+      run = {trigger:row.programTrigger,id:row.programFiring};
+    } else if (delivery) {
       const [trigger,id] = JSON.parse(delivery) as [string,string];
       run = {trigger,id};
     } else if (row.venue === 'wake' && row.conversation && row.place && row.place !== 'sweep:' + row.agent) {
@@ -97,7 +99,7 @@ function assignRuns(history:Row[]) {
       run = lastWake.get(row.conversation) ?? {trigger,id:row.conversation};
     }
     if (!run) continue;
-    if (row.venue === 'wake' && row.conversation) lastWake.set(row.conversation,run);
+    if (!row.programFiring && row.venue === 'wake' && row.conversation) lastWake.set(row.conversation,run);
     for (const attempt of family) runs.set(attempt.id,run);
   }
   return runs;
@@ -135,7 +137,43 @@ function conversationHistory(s:JobSummaries,selected:Row[]) {
   const ids = [...new Set(selected.flatMap(row=>row.conversation ? [row.conversation] : []))];
   return ids.length ? rows(s,among(jobs.conversation,ids)) : [];
 }
+/** Only the actual receiving job counts as a wake. Both jobs must pass the viewer's current SQL
+ * policy. Look up mail through its unique (to_kind,to,source,source_id) index, including when one
+ * body took several firings. Keep the comparison out of admission and scheduling. */
+function programUsage(s:JobSummaries, selected:Row[]) {
+  const triggers = new Set(selected.flatMap(row => row.programTrigger ?? []));
+  const linked = new Map<string,string>(), observations = new Map<string,string>();
+  if (!triggers.size) return {linked, observations};
+  const visibleWake = s.db.select({id:jobs.id,conversation:jobs.conversation}).from(jobs)
+    .where(and(s.allowed(),ne(jobs.startedByKind,'terminal'))).as('visible_wake');
+  const firings = s.db.select({trigger:programFirings.trigger, job:programFirings.job, wake:visibleWake.id})
+    .from(programFirings).innerJoin(jobs,eq(jobs.id,programFirings.job))
+    .leftJoin(inbox,and(eq(inbox.toKind,'agent'),eq(inbox.to,jobs.agent),eq(inbox.source,'trigger'),eq(inbox.sourceId,programFirings.id)))
+    .leftJoin(visibleWake,and(eq(visibleWake.id,inbox.job),eq(visibleWake.conversation,jobs.conversation)))
+    .where(and(s.allowed(),eq(programFirings.status,'done'),among(sql`${programFirings.trigger}`,triggers)))
+    .orderBy(desc(sql`julianday(${programFirings.at})`),desc(programFirings.id)).all();
+  const rates = new Map<string,{latest:string; count:number; recent:number; earlier:number}>();
+  for (const firing of firings) {
+    if (firing.wake) linked.set(firing.job,firing.wake);
+    const rate = rates.get(firing.trigger) ?? {latest:firing.job,count:0,recent:0,earlier:0};
+    if (firing.wake) {
+      if (rate.count < 4) rate.recent++;
+      else rate.earlier++;
+    }
+    rate.count++;
+    rates.set(firing.trigger,rate);
+  }
+  for (const {latest,count,recent,earlier} of rates.values()) {
+    const prior = count - 4;
+    if (prior < 4) continue;
+    const before = earlier / prior, now = recent / 4;
+    if (now >= 2 * before && now - before >= 0.5)
+      observations.set(latest,`This trigger woke a body on ${recent} of its last 4 completed program runs, up from ${earlier} of ${prior} earlier runs.`);
+  }
+  return {linked, observations};
+}
 function records(s:JobSummaries, selected:Row[]) {
+  const program = programUsage(s,selected);
   const local = conversationHistory(s,selected);
   const localRuns = assignRuns(local);
   const wanted = new Set(selected.flatMap(row=>localRuns.get(row.id)?.trigger ?? []));
@@ -144,12 +182,13 @@ function records(s:JobSummaries, selected:Row[]) {
   let expensive = new Set<string>();
   if (wanted.size) {
     const peers = s.db.selectDistinct({id:jobs.conversation}).from(jobs)
-      .leftJoin(conversations,eq(conversations.id,jobs.conversation))
+      .leftJoin(programFirings,eq(programFirings.job,jobs.id)).leftJoin(conversations,eq(conversations.id,jobs.conversation))
       .where(and(s.allowed(),sql`(
         (${conversations.venue} = 'wake' and (
           ${among(sql`${conversations.place}`,wanted)} or exists (
             select 1 from json_each(${JSON.stringify([...wanted])}) where
             ${conversations.place} = value || ':for:' || ${conversations.member})))
+        or ${among(sql`${programFirings.trigger}`,wanted)}
         or ${among(sql`json_extract(${firing}, '$[0]')`,wanted)})`)).all();
     const ids = peers.flatMap(row=>row.id ? [row.id] : []);
     const history = ids.length ? rows(s,among(jobs.conversation,ids)) : [];
@@ -161,19 +200,23 @@ function records(s:JobSummaries, selected:Row[]) {
     if ((usage?.largestContext ?? 0) >= 32768 && usage?.toolCalls === 0) observations.push('This job used a large context and made no tool calls.');
     if (row.retryOf) observations.push('This job was a retry.');
     if (expensive.has(row.id)) observations.push('This trigger’s latest run used at least twice its earlier median tokens.');
-    return {...row, observations, usage:usage ? {...usage,totalTokens:total(row),
+    const rate = program.observations.get(row.id);
+    if (rate) observations.push(rate);
+    const firingId = row.programFiring ?? (row.firing ? (JSON.parse(row.firing) as [string,string])[1] : null);
+    return {...row, firingId, linkedWakeJob:program.linked.get(row.id) ?? null, observations, usage:usage ? {...usage,totalTokens:total(row),
       tools:usage.tools && Object.entries(usage.tools).map(([name,count])=>({name,count})),
     } : jobUnended(row.state) ? null : {source:'none'}};
   });
 }
 function rollup(s:JobSummaries,args:Range & {groupBy:string}) {
-  if (!['day','model','conversation','trigger'].includes(args.groupBy)) throw new Error('Expected conversation, trigger, day or model');
+  if (!['day','model','conversation','trigger','firing'].includes(args.groupBy)) throw new Error('Expected conversation, trigger, firing, day or model');
   const groups = new Map<string|null,Row[]>();
   const selected = rows(s,cv=>windowFilter(args,cv));
-  const runs = args.groupBy === 'trigger' ? assignRuns(conversationHistory(s,selected)) : undefined;
+  const runs = args.groupBy === 'trigger' || args.groupBy === 'firing' ? assignRuns(conversationHistory(s,selected)) : undefined;
   for (const row of selected) {
     const key = args.groupBy === 'day' ? row.queuedAt.slice(0,10) : args.groupBy === 'model' ? row.usage?.model ?? null
-      : args.groupBy === 'trigger' ? runs?.get(row.id)?.trigger ?? null : row.conversation;
+      : args.groupBy === 'trigger' ? runs?.get(row.id)?.trigger ?? null
+      : args.groupBy === 'firing' ? runs?.get(row.id)?.id ?? null : row.conversation;
     const group = groups.get(key) ?? [];
     group.push(row);
     groups.set(key,group);
