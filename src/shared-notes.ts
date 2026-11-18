@@ -32,13 +32,18 @@ export function sharedNotes(options:{sources?:MindSources;sharing():Sharing;now(
   if(!context?.viewer||!maySee(context.viewer,{type:'memory',agent:args.agent},options.sharing()))return null;
   const first=args.first??100;if(!Number.isInteger(first)||first<1||first>500)throw new Error('first must be 1 to 500');
   try{return sources.get(args.agent)?.list({prefix:args.prefix??undefined,limit:first})??null;}catch{throw new Error('Notes unavailable');}
- }}},register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void}){
+ }}},
+ /** `addsOnly` names a caller that writes a new note and overwrites none (the body of a job on anybody else's word),
+  * with the words that refuse an overwrite and what loom records as the note's writer in place of the agent alone. */
+ register(operations:Operations,commands:{body(viewer:Viewer):Readonly<{agent:string}>|undefined;hash(words:string):string;committed():void;addsOnly?(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
   const selected=(viewer:Viewer)=>{const own=commands.body(viewer);return own?sources.get(own.agent):undefined;};
   const recover=(ctx:Context)=>{const notes=selected(ctx.viewer),prior=notes&&ctx.receipt?receipt(notes,ctx.receipt,ctx.now):undefined;if(prior)ctx.changed('memory',ctx.viewer.id);return prior;};
   operations.register({name:'memory.noteWrite',write:true,recheckPolicy:true,doors:['http'],input:z.object({path,body:z.string().refine(value=>Buffer.byteLength(value)<=MAX_NOTE_BYTES),lifespan:z.enum(LIFESPAN_NAMES).optional()}).strict(),output:z.object({saved:z.literal(true)}).strict(),inputHash:words=>commands.hash(words),may:viewer=>!!selected(viewer),recover,
    run(ctx,input){const notes=selected(ctx.viewer),identity=ctx.receipt;if(!notes||!identity)throw new OperationError('denied','Authenticated agent required');
     const result=notes.atomicWrite(db=>{const previous=receipt(notes,identity,ctx.now);if(previous)return previous;mindReceipts.expire(db,ctx.now);
-     notes.write(input.path,input.body,{lifespan:input.lifespan,by:ctx.viewer.id});const value={saved:true};
+     const only=commands.addsOnly?.(ctx.viewer);
+     if(only&&notes.read(input.path))throw new OperationError('denied',only.overwrite);
+     notes.write(input.path,input.body,{lifespan:input.lifespan,by:only?.by??ctx.viewer.id});const value={saved:true};
      mindReceipts.save(db,identity,value,identity.expires);return value;
     });commands.committed();ctx.changed('memory',ctx.viewer.id);return result;
    },

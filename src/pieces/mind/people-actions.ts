@@ -1,4 +1,5 @@
 /** Create-only form: one person saved as two cards in two files, both or neither. */
+import type {Viewer} from '../../policy.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
@@ -12,7 +13,9 @@ export type PersonCreator = (db:BetterSqlite3.Database,input:NewPerson,now:numbe
 /** `agent` is the agent a new person's relationship card belongs to, and `relationship` that agent's file.
  * Both may be given as functions: the household's default agent can be changed while the program runs, and
  * each call then reads who it is now. */
-export function installMindPeopleActions(operations:Operations,options:{directory?:string;relationship?:string|(()=>string|undefined);agent?:string|(()=>string|undefined);sharing():Sharing;create:PersonCreator}) {
+export function installMindPeopleActions(operations:Operations,options:{directory?:string;relationship?:string|(()=>string|undefined);agent?:string|(()=>string|undefined);sharing():Sharing;create:PersonCreator;
+  /** Why this caller adds nobody, in words for the caller (the body of a job on anybody else's word), or nothing. */
+  refused?(viewer:Viewer):string|undefined}) {
   const agentNow=()=>typeof options.agent==='function'?options.agent():options.agent;
   // One connection to each file, kept: the directory, and the file of each agent that has been the default.
   const opened=new Map<string,BetterSqlite3.Database>();
@@ -45,6 +48,7 @@ export function installMindPeopleActions(operations:Operations,options:{director
     input:z.object({name:z.string().trim().min(1).max(CARD_NAME_MAX),summary:z.string().trim().max(CARD_SUMMARY_MAX).default(''),channel:z.enum(['','slack','discord','email','phone','github']).default(''),handle:z.string().trim().max(MAX_STRING).default('')}).strict(),output:z.unknown(),
     may:v=>{const agent=agentNow();return mayAct(v,{type:'person'},options.sharing(),'act') && !!agent && mayAct(v,{type:'person',agent},options.sharing(),'act');},
     run(ctx,input){
+      const why=options.refused?.(ctx.viewer);if(why)throw new OperationError('denied',why);
       // Read once: the agent and its file are the same for the whole of this write.
       const agent=agentNow(),sources=current();
       if(sources.length!==2 || !agent) throw new OperationError('not-found','People sources are absent');

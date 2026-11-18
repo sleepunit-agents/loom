@@ -1,4 +1,5 @@
 /** Knowledge's page actions; source effects and retry receipts commit together. */
+import type { Viewer } from '../../policy.js';
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
@@ -21,7 +22,10 @@ export type KnowledgeVerifier = (db: BetterSqlite3.Database, input: { slug: stri
  */
 /** A knowledge page's slug as a command may send it. The page's own rules are the store's. */
 export const pageSlug = z.string().min(1).max(200);
-export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier }) {
+/** `refused` answers why this caller writes nothing here, in words for the caller (the body of a job on anybody else's
+ * word, shared-place-mail.ts), or nothing. Asked first by every write. */
+export function installMindKnowledgeActions(operations: Operations, options: { path?: string; sharing(): Sharing; verify: KnowledgeVerifier; refused?(viewer: Viewer): string | undefined }) {
+  const refuse = (viewer: Viewer) => { const why = options.refused?.(viewer); if (why) throw new OperationError('denied', why); };
   const db = options.path && existsSync(options.path) ? new BetterSqlite3(options.path, { fileMustExist: true, timeout: 0 }) : undefined;
   const recover = (ctx: Context) => {
     if (!db || !ctx.receipt || !mindReceiptsReady(db)) return;
@@ -42,6 +46,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, input) {
+        refuse(ctx.viewer);
         if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
         if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
         const receipt = ctx.receipt;
@@ -69,6 +74,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
       body: z.string().trim().min(1).max(MAX_PAGE_BODY_LENGTH), source: z.string().trim().max(4000).default(''), freshnessAnchor: z.string().trim().min(1).max(200).optional() }), output: z.unknown(), recover,
     may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
     run(ctx, input) {
+      refuse(ctx.viewer);
       if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
       if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
       if (input.source && !/^https?:\/\//.test(input.source)) throw new OperationError('invalid', 'The source must be an http or https link, or empty');
@@ -97,6 +103,7 @@ export function installMindKnowledgeActions(operations: Operations, options: { p
     operations.register(operation({ name, write: true, input, output: z.unknown(), recover,
       may: viewer => mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act'),
       run(ctx, value) {
+        refuse(ctx.viewer);
         if (!db) throw new OperationError('not-found', 'Knowledge store is absent');
         if (!mindReceiptsReady(db)) throw new OperationError('unavailable', 'Knowledge is not prepared for changes');
         const receipt = ctx.receipt;

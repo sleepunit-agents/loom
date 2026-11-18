@@ -25,7 +25,12 @@ const authored=z.string().refine(value=>value.trim().length>0,'Authored text can
 const remember=z.object({category,title:authored.max(200),content:authored.max(MEMORY_CONTENT_MAX),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional(),
  sourcing:z.enum(['observed','relayed','inferred','system']).optional().describe('How the memory was produced: observed first-hand, relayed by someone, inferred, or written by the system.'),provenance:z.string().max(2000).optional().describe('Where it came from: a surface, session, lane or person.')}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
-export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;embedding?():EmbeddingProvider;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void}){
+/** What the composition says of a caller that may only add (the body of a job on anybody else's word,
+ * shared-place-mail.ts): why every other command is refused it, and the stamp loom puts on what it adds. */
+export type AddsOnly=(viewer:Viewer)=>Readonly<{refusal:string;stamp:{who:string;conversation:string|null};line:string}>|undefined;
+/** Where loom records on whose word a memory was written. No caller sets it: it is taken out of what any body sends. */
+const STAMP='written_on_word';
+export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;embedding?():EmbeddingProvider;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void;addsOnly?:AddsOnly}){
  let closed=false;
  const sources=new AgentFiles<AgentSource,{path:string;db:Database.Database}>(()=>options.sources?.agents??[],source=>existsSync(source.memories)?{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})}:undefined);
  const close=()=>{if(closed)return;closed=true;for(const source of sources.end())source.db.close();};
@@ -82,12 +87,26 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   // Publish that fact independently so active readers cannot remain stale.
   options.committed();
  };
- const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit:reserve,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
+ // A caller that may only add is refused every command but `memory.remember`, before anything is reserved or prepared.
+ const refuseAdder=(viewer:Viewer)=>{const only=options.addsOnly?.(viewer);if(only)throw new OperationError('denied',only.refusal);};
+ const adding={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit:reserve,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
+ const base={...adding,admit(ctx:Context){refuseAdder(ctx.viewer);reserve(ctx);}};
+ const unstamped=<T extends Record<string,unknown>|undefined>(metadata:T):T=>{if(!metadata||!(STAMP in metadata))return metadata;const {[STAMP]:_claimed,...rest}=metadata;return rest as T;};
+ /** What is remembered, as loom keeps it. Nobody's own claim of the stamp is kept. From a caller that may only add,
+  * loom writes the stamp, says the same at the head of the words, where every later reader meets it, and records
+  * the memory as relayed from there, whatever the caller said of its source. */
+ const stamped=(viewer:Viewer,input:z.infer<typeof remember>):z.infer<typeof remember>=>{
+  const only=options.addsOnly?.(viewer),metadata=unstamped(input.metadata);
+  if(!only)return {...input,...(metadata?{metadata}:{})};
+  const content=only.line+'\n\n'+input.content;
+  if(content.length>MEMORY_CONTENT_MAX)throw new OperationError('invalid','The memory is too long');
+  return {...input,content,metadata:{...metadata,[STAMP]:only.stamp},sourcing:'relayed',provenance:only.line};
+ };
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};
  const scopedId=z.string().regex(SCOPED_MEMORY_ID);
  const proposalId=z.string().regex(scopedStoreId('proposal'));
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
- operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(input))).ref)]}))});
+operations.register({...adding,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(stamped(viewer,input)))).ref)]}))});
  // Recall is a read: no operation id, no reservation, no receipt. It warms what it finds, which the
  // store records in its own short transaction after the embedding has been computed, so nothing is
  // locked while that runs. Asking twice simply recalls twice.
@@ -112,7 +131,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const person=z.object({slug:z.string().min(1).max(PERSON_CARD_SLUG_MAX),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();
  const project=z.object({slug:z.string().min(1).max(PROJECT_CARD_SLUG_MAX),name:z.string().optional(),status:z.enum(STATUSES).optional(),summary:z.string().optional(),goal:z.string().optional(),where:z.record(z.string(),z.object({value:z.string(),...stamp}).strict().nullable()).optional(),links:z.object({aliases:z.array(z.string()).nullable().optional(),notes:z.array(z.string()).nullable().optional(),epic:z.string().nullable().optional(),repos:z.array(z.string()).nullable().optional(),venues:z.array(z.string()).nullable().optional()}).strict().optional(),merge:z.boolean().optional()}).strict();
  const cardIds=z.object({ids:z.array(z.string().regex(scopedStoreId('person|project')))}).strict();
- const cardBase={...base,admit(ctx:Context){const source=current(ctx.viewer);if(!source||!semanticCardsReady(source.db))throw new OperationError('unavailable','Private cards are not prepared for commands');reserve(ctx);}};
+ const cardBase={...base,admit(ctx:Context){refuseAdder(ctx.viewer);const source=current(ctx.viewer);if(!source||!semanticCardsReady(source.db))throw new OperationError('unavailable','Private cards are not prepared for commands');reserve(ctx);}};
  const withCard=<Store extends {close():void}>(db:Database.Database,viewer:Viewer,kind:'person'|'project',open:(connection:CardConnection)=>Store,change:(store:Store)=>{card:{slug:string}})=>{
   try{const store=open({database:db,actor:author(viewer),now:options.now});try{return {ids:[opaqueCardReference(db,kind,change(store).card.slug)]};}finally{store.close();}}
   catch(error){if(error instanceof CardError)throw new OperationError('invalid',`Invalid ${kind} card`);throw error;}
@@ -141,7 +160,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  operations.register({...base,doors:[...base.doors],name:'memory.update',
   input:target.extend({content:authored.max(MEMORY_CONTENT_MAX).optional(),metadata:remember.shape.metadata,observation:z.enum(OBSERVATIONS).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
-   const row=ownTarget(db,viewer,input.id),result=await backend.update({ref:row.ref,content:input.content,metadata:input.metadata,observation:input.observation});
+   const row=ownTarget(db,viewer,input.id),result=await backend.update({ref:row.ref,content:input.content,metadata:unstamped(input.metadata),observation:input.observation});
    if(!result.updated)throw new OperationError('not-found','Memory is absent');return {ids:[row.uuid]};
   })});
  operations.register({...base,doors:[...base.doors],name:'memory.restoreRevision',

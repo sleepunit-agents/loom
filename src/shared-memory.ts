@@ -1,3 +1,4 @@
+import type {Viewer} from './policy.js';
 import type {EmbeddingProvider} from './backends/types.js';
 import {Notes,notesDbPath} from './notes.js';
 import {sharedNotes} from './shared-notes.js';
@@ -156,13 +157,15 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const notes=sharedNotes({sources,sharing,now:()=>clock.now()});closers.push(notes.close);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:{...queries.fields,...notes.fields},nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,close,
-   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){
-    const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages});closers.push(knowledge.close);
+   /** `held` says what the body of a job on anybody else's word is refused and what loom stamps on what it adds
+    * (shared-root.ts, from shared-place-mail.ts): such a body adds a memory or a new note, and nothing else here. */
+   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>,held?:{knowledge(viewer:Viewer):string|undefined;memory:NonNullable<Parameters<typeof registerSemanticMemory>[1]['addsOnly']>;note(viewer:Viewer):Readonly<{overwrite:string;by:string}>|undefined}){
+    const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,refused:held?.knowledge});closers.push(knowledge.close);
     // The household's default agent, asked each time: it can be changed in Setup while the program runs.
     const agent=()=>householdSettings(db).defaultAgent??undefined;
-    const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:()=>{const id=agent();return id===undefined?undefined:listed.agents.find(a=>a.agent===id)?.memories;},agent,sharing,create:createPersonHalf});closers.push(actions.close);
-    if(commands)notes.register(operations,commands);
-    if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),embedding,...commands}).close);
+    const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:()=>{const id=agent();return id===undefined?undefined:listed.agents.find(a=>a.agent===id)?.memories;},agent,sharing,create:createPersonHalf,refused:held?.knowledge});closers.push(actions.close);
+    if(commands)notes.register(operations,{...commands,addsOnly:held?.note});
+    if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),embedding,...commands,addsOnly:held?.memory}).close);
    },
   };
  }catch(error){close();throw error;}

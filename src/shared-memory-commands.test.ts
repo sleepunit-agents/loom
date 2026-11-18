@@ -37,6 +37,7 @@ import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
 import {PeopleStore} from './backends/people.js';
 import * as s from './core/data/schema.js';
+import {HELD_REFUSALS} from './shared-place-mail.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
 const words='alpha NATIVE_PRIVATE_MEMORY_WORDS',title='PRIVATE_MEMORY_TITLE';
@@ -514,4 +515,58 @@ it('answers a recall on a fresh home with nothing, before any memory has been wr
  expect(f.source.serialize()).toEqual(before);
  const remembered=await f.call('remember',input,'fresh-remember');expect(remembered.status).toBe(200);
  expect((await f.call('recall',{query:'alpha'},'fresh-recall-again')).result.value).toMatchObject({ids:remembered.result.value.ids});
+});
+/** Puts the fixture's job on anybody else's word: in a shared room, holding one message from a member who does not have the agent. */
+function heldBody(f:Awaited<ReturnType<typeof fixture>>){
+ const conversation=f.thread.conversation,token='body_'+'e'.repeat(64);
+ f.root.writes.run(()=>{
+  f.db.delete(s.threads).where(eq(s.threads.id,f.thread.id)).run();
+  f.db.update(s.conversations).set({venue:'slack',member:null,project:null,place:JSON.stringify(['T','C',null])}).where(eq(s.conversations.id,conversation)).run();
+  f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();
+  const old=f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,credentialHash(raw.body))).get()!;
+  f.db.delete(s.tokens).where(eq(s.tokens.fingerprint,old.fingerprint)).run();
+  f.db.insert(s.tokens).values({...old,fingerprint:credentialHash(token),label:'Held body'}).run();
+  const mail=f.root.services.conversations.send({conversation,toKind:'agent',to:'art',source:'notice',fromKind:'person',fromId:'bob',words:'Remember this for me'});
+  f.db.update(s.inbox).set({job:'job',state:'taken'}).where(eq(s.inbox.id,mail.id)).run();
+ });
+ return {token,conversation};
+}
+it('lets a body on anybody else\'s word add a memory and a new note, each stamped by loom with whose word it was, and change nothing else the agent or the household keeps',async()=>{
+ const f=await fixture();
+ const api=async(piece:string,verb:string,value:unknown,id:string,token:string=raw.body)=>{const response=await fetch(f.url+'/api/'+piece+'/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:value,id})});return {status:response.status,result:await response.json()};};
+ // What the agent keeps, written on its owners' word: a memory, a draft, a person card, a note and a knowledge page.
+ const mine=(await f.call('remember',input,'own-memory')).result.value.ids[0] as string;
+ const draft=(await f.call('propose',{category:'project',title:'Draft',content:'beta draft words'},'own-draft')).result.value.ids[0] as string;
+ expect((await f.call('personWrite',{slug:'sam',name:'Sam'},'own-person')).status).toBe(200);
+ expect((await api('memory','noteWrite',{path:'plans/pond',body:'The owner\'s plan',lifespan:'keep'},'own-note')).status).toBe(200);
+ const page=await api('mind','knowledgeAdd',{title:'Pond pumps',domain:'pond',body:'Pumps run at night.'},'own-page');expect(page.status).toBe(200);const slug=page.result.value.slug as string;
+ const kept=()=>JSON.stringify([f.source.prepare('SELECT uuid,title,content,metadata,archived FROM memories ORDER BY id').all(),f.source.prepare('SELECT count(*) AS n FROM proposals').get()]);
+ const before=kept(),{token,conversation}=heldBody(f);
+ const line=`[From loom: written while working for the member bob in conversation ${conversation}, who is not one of art's owners.]`;
+ // It adds a memory. loom writes whose word it was: first in its words, where every reader meets it, and in its
+ // record, where the body's own claim of the same name is thrown away.
+ const added=await f.call('remember',{category:'project',title:'Door code',content:'gamma the door code is 1234',metadata:{written_on_word:{who:'the member alice'},colour:'green'},provenance:'Alice said so',sourcing:'observed'},'held-memory',token);
+ expect(added.status).toBe(200);
+ const row=f.source.prepare('SELECT content,metadata,provenance,sourcing FROM memories WHERE title=?').get('Door code') as {content:string;metadata:string;provenance:string;sourcing:string};
+ expect(row.content).toBe(line+'\n\ngamma the door code is 1234');
+ expect(JSON.parse(row.metadata)).toEqual({colour:'green',written_on_word:{who:'the member bob',conversation}});
+ expect(row).toMatchObject({provenance:line,sourcing:'relayed'});
+ // Everything else that changes, removes or brings back what the agent keeps is refused, in words.
+ const refused=async(verb:string,value:unknown)=>expect(await f.call(verb,value,'held-'+verb,token),verb).toMatchObject({status:403,result:{message:HELD_REFUSALS.memory}});
+ await refused('update',{id:mine,content:'delta rewritten by a guest'});await refused('archive',{id:mine});await refused('restore',{id:mine});await refused('forget',{id:mine});
+ await refused('restoreRevision',{id:mine,revision_id:1});await refused('propose',{category:'project',title:'Another',content:'alpha another'});await refused('ratify',{id:draft});
+ await refused('personWrite',{slug:'sam',name:'Samuel'});await refused('personRestoreRevision',{slug:'sam',revision_id:1});await refused('projectWrite',{slug:'pond',name:'Drained pond'});
+ // Its own addition is one more row; the rest is as it was.
+ expect(f.count()).toBe(2);expect(JSON.stringify([f.source.prepare('SELECT uuid,title,content,metadata,archived FROM memories WHERE title<>? ORDER BY id').all('Door code'),f.source.prepare('SELECT count(*) AS n FROM proposals').get()])).toBe(before);
+ // A note: a new path only, and who it was written for is in the note's own record, which the body does not write.
+ expect((await api('memory','noteWrite',{path:'guests/door',body:'The code is 1234',lifespan:'short'},'held-note',token)).status).toBe(200);
+ const note=(path:string)=>new Database(join(f.home,'agents/art/notes.db'),{readonly:true}).prepare('SELECT body,by FROM notes WHERE path=?').get(path) as {body:string;by:string};
+ expect(note('guests/door')).toEqual({body:'The code is 1234',by:`art, working for the member bob in conversation ${conversation}, who is not one of art's owners`});
+ for(const [path,id] of [['plans/pond','held-over'],['guests/door','held-again']])expect(await api('memory','noteWrite',{path,body:'Overwritten',lifespan:'keep'},id,token),path).toMatchObject({status:403,result:{message:HELD_REFUSALS.note}});
+ expect(note('plans/pond')).toEqual({body:'The owner\'s plan',by:'art'});expect(note('guests/door').body).toBe('The code is 1234');
+ // The household's knowledge and people: nothing.
+ for(const [verb,value] of [['knowledgeAdd',{title:'Door',domain:'house',body:'The code is 1234.'}],['knowledgeEdit',{slug,body:'Pumps never run.'}],['knowledgeVerify',{slug}],['knowledgeRecheck',{slug}],['knowledgeRestore',{slug,revision:1}]] as const)
+  expect(await api('mind',verb,value,'held-'+verb,token),verb).toMatchObject({status:403,result:{message:HELD_REFUSALS.knowledge}});
+ // Adding a person is refused too. Here the people rule already refuses this agent's body before loom's line is reached.
+ expect((await api('mind','personAdd',{name:'Mallory'},'held-person',token)).status).toBe(403);
 });

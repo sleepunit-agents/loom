@@ -127,7 +127,19 @@ export const HELD_REFUSALS = {
   task: `This job is not working for the agent's owners: it makes and changes no task. ${ASK_INSTEAD}`,
   propose: `This job is not working for the agent's owners: it proposes no change to the household. ${ASK_INSTEAD}`,
   approval: `This job is not working for the agent's owners: it asks for no approval, and uses, reports on and withdraws none. ${ASK_INSTEAD}`,
+  memory: 'This job is not working for the agent\'s owners: of what the agent keeps it may only add, a memory with memory.remember or a new note with memory.noteWrite. It changes, archives, restores, forgets, drafts and ratifies nothing, and writes no person or project card.',
+  note: 'This job is not working for the agent\'s owners: it writes a new note and overwrites none. Choose a path no note has.',
+  knowledge: 'This job is not working for the agent\'s owners: it writes nothing to the household\'s knowledge or its people.',
 } as const;
+/** On whose word the body of this job is writing, when that is anybody else's: the person as loom names them and the
+ * conversation, for the stamp loom puts on a memory or a note such a body adds. Nothing for a job on owners' word or
+ * the agent's own work. `line` is the same in words, for where a reader meets the memory. */
+export function writtenOnWord(db: DataDatabase, work: { job: { id: string; agent: string; conversation: string | null } } | undefined): { who: string; conversation: string | null; line: string; by: string } | undefined {
+  if (!work) return undefined;
+  const word = jobWord(db, work.job); if (word.woke !== 'others') return undefined;
+  const who = word.person ? named(word.person) : 'somebody loom cannot name', where = `${who} in conversation ${work.job.conversation}, who is not one of ${work.job.agent}'s owners`;
+  return { who, conversation: work.job.conversation, line: `[From loom: written while working for ${where}.]`, by: `${work.job.agent}, working for ${where}` };
+}
 /** Why the body of this job may not do this: its job works on anybody else's word (jobHeld). The one question for
  * every door such a body is refused at, asked of the job and never of what the body says about itself. Nothing for
  * a caller that is no job's body, and for a job on owners' word or the agent's own work. */

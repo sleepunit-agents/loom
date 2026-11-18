@@ -82,7 +82,7 @@ import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { addressee, holds, mayRunPrivateWork, rules as policyRules, type Viewer } from './policy.js';
 import { canReadSharedConversation, currentMember, sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
-import { askedOnWord, heldRefusal, selfHandoff } from './shared-place-mail.js';
+import { HELD_REFUSALS, askedOnWord, heldRefusal, selfHandoff, writtenOnWord } from './shared-place-mail.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations, lateMailWaits } from './core/conversations/index.js';
@@ -206,10 +206,16 @@ export function sharedRoot(options: {
   // What the body of a job on anybody else's word is refused, asked of the job its credential is bound to and never of
   // what the body says: on such a word a body changes nothing outside its own conversation, except by asking the owners
   // a question (shared-place-mail.ts, heldRefusal).
-  const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return heldRefusal(db,job?{job}:undefined,action);};
+  const bodyJob=(viewer:Viewer)=>{const body=credentials.body(viewer),job=body&&db.select({id:jobRows.id,agent:jobRows.agent,conversation:jobRows.conversation}).from(jobRows).where(eq(jobRows.id,body.job)).get();return job?{job}:undefined;};
+  const held=(action:Parameters<typeof heldRefusal>[2])=>(viewer:Viewer)=>heldRefusal(db,bodyJob(viewer),action);
   registerSharedNotices(operations,db,clock,viewer=>credentials.body(viewer)??credentials.agentSession(viewer),()=>pushes,held('notice'));
   const memoryAgent=(viewer:Viewer)=>{const own=credentials.body(viewer)??credentials.agentSession(viewer);return own&&holds(policyRules.agentItself,viewer,{agent:own.agent},sharedSharing(db))?own:undefined;};
-  memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
+  memory.register(operations,options.commsKey?{body:memoryAgent,hash:words=>options.commsKey!.hash(words),committed:()=>{try{if(memorySignals)memorySignals.changed();else data.changed();}catch{report(new Error('Memory source notification failed'));}}}:undefined,
+    // Of what the agent and the household keep, such a body only adds: a memory, or a new note, each stamped by loom with
+    // whose word it was written on. Everything else in those families is refused it.
+    {knowledge:held('knowledge'),
+     memory:viewer=>{const on=writtenOnWord(db,bodyJob(viewer));return on&&{refusal:HELD_REFUSALS.memory,stamp:{who:on.who,conversation:on.conversation},line:on.line};},
+     note:viewer=>{const on=writtenOnWord(db,bodyJob(viewer));return on&&{overwrite:HELD_REFUSALS.note,by:on.by};}});memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
   // The list of commands is no secret: any current member or agent may read it. Each command still checks its own caller.
