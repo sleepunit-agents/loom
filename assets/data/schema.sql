@@ -670,6 +670,8 @@ CREATE TABLE `approval_record` (
 );
 
 CREATE TABLE `triggers` (
+	`needs` text,
+	`prefers` text,
 	`id` text PRIMARY KEY NOT NULL,
 	`owner_kind` text NOT NULL,
 	`owner` text,
@@ -832,6 +834,7 @@ CREATE TABLE `change_sync` (
 );
 
 CREATE TABLE `boxes` (
+	`slots` integer,
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
 	`owner` text NOT NULL,
@@ -873,6 +876,8 @@ CREATE TABLE `box_facts` (
 );
 
 CREATE TABLE `jobs` (
+	`prefers` text,
+	`placement_decision` text,
 	`id` text PRIMARY KEY NOT NULL,
 	`agent` text NOT NULL,
 	`project` text,
@@ -932,6 +937,7 @@ CREATE TABLE `job_needs` (
 );
 
 CREATE TABLE `agent_run_settings` (
+	`prefers` text,
 	`agent` text PRIMARY KEY NOT NULL,
 	`house_repository` text NOT NULL,
 	`house_file` text NOT NULL,

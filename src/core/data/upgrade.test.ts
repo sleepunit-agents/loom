@@ -316,6 +316,15 @@ describe('upgrading a household database', () => {
     expect(recogniseDataSchema(old)).toBe(dataSchemaNumber);
   });
 
+  it('adds placement fields to a schema 13 household without inventing historical decisions', () => {
+    const old = household(13);
+    upgradeDataSchema(old, () => at);
+    for (const [table, fields] of Object.entries({ triggers: ['needs', 'prefers'], jobs: ['prefers', 'placement_decision'], agent_run_settings: ['prefers'], boxes: ['slots'] })) {
+      const columns = old.prepare(`SELECT name, dflt_value FROM pragma_table_info(?)`).all(table);
+      for (const name of fields) expect(columns).toContainEqual({ name, dflt_value: null });
+    }
+  });
+
   it('refuses a database from a newer program', () => {
     const made = fresh();
     made.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(dataSchemaNumber + 1, at);

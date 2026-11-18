@@ -720,6 +720,8 @@ export const approvalRecord = sqliteTable('approval_record', {
 
 /** One row per trigger. Schedules, lanes, one-off wakes and parked waits are all rows here. */
 export const triggers = sqliteTable('triggers', {
+  needs: text('needs', { mode: 'json' }).$type<string[]>(),
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
   id: text('id').primaryKey().notNull(),
   ownerKind: text('owner_kind', { enum: ["member", "agent", "household"] }).notNull(),
   owner: text('owner'),
@@ -897,6 +899,7 @@ export const changeSync = sqliteTable('change_sync', {
 
 /** One row per machine with a worker on it. */
 export const boxes = sqliteTable('boxes', {
+  slots: integer('slots'),
   id: text('id').primaryKey().notNull(),
   name: text('name').notNull(),
   owner: text('owner').notNull().references((): AnySQLiteColumn => members.id),
@@ -940,6 +943,8 @@ export const boxFacts = sqliteTable('box_facts', {
 
 /** One row per run of an agent. */
 export const jobs = sqliteTable('jobs', {
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
+  placementDecision: text('placement_decision', { mode: 'json' }).$type<{ box: string; outcome: 'taken' | 'passed'; reason: string }[]>(),
   id: text('id').primaryKey().notNull(),
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
   project: text('project').references((): AnySQLiteColumn => projects.id),
@@ -1016,6 +1021,7 @@ export const jobNeeds = sqliteTable('job_needs', {
 
 /** How and where each agent runs. */
 export const agentRunSettings = sqliteTable('agent_run_settings', {
+  prefers: text('prefers', { mode: 'json' }).$type<string[]>(),
   agent: text('agent').primaryKey().notNull().references((): AnySQLiteColumn => agents.id),
   houseRepository: text('house_repository').notNull(),
   houseFile: text('house_file').notNull(),

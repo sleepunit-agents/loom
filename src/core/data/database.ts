@@ -318,6 +318,11 @@ const upgrades: readonly (readonly string[])[] = [
     "CREATE TABLE `terminal_runs` (\n\t`job` text PRIMARY KEY NOT NULL,\n\t`parent` text NOT NULL,\n\t`run_id` text NOT NULL,\n\t`revision` integer NOT NULL,\n\tFOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,\n\tFOREIGN KEY (`parent`) REFERENCES `terminal_sessions`(`job`) ON UPDATE no action ON DELETE no action\n);",
     "CREATE UNIQUE INDEX `terminal_runs_identity` ON `terminal_runs` (`parent`,`run_id`);",
   ],
+  // 14: existing machines have unknown capacity; old jobs have no recorded decision.
+  ['ALTER TABLE boxes ADD COLUMN slots integer',
+   'ALTER TABLE triggers ADD COLUMN needs text', 'ALTER TABLE triggers ADD COLUMN prefers text',
+   'ALTER TABLE agent_run_settings ADD COLUMN prefers text',
+   'ALTER TABLE jobs ADD COLUMN prefers text', 'ALTER TABLE jobs ADD COLUMN placement_decision text'],
 ];
 /** The schema number this program writes: the first shape plus every upgrade since. */
 export const dataSchemaNumber = upgrades.length + 1;
