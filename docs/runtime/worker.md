@@ -1581,3 +1581,5 @@ The body sends usage on its own job credential as soon as its harness returns. T
 Claude Code 2.1.327 prints uncached input, cache reads, and cache writes separately. Loom adds the three for inclusive input tokens. The result supplies aggregate counters. Usage iterations and distinct assistant message IDs supply model-call counts and the largest input sent to one call. Repeated assistant events for a message or tool use count once.
 
 Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. The agy harness supplies no measured counters.
+
+For the GraphQL queries, count definitions and observations, see [Reading job usage](job-usage.md).
