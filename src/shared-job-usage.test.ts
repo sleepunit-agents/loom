@@ -20,3 +20,14 @@ it('accepts one report bound to its credential and preserves it across job compl
   expect((await f.call('usage', report, 'first')).status).toBe(401);
   expect(f.db.select().from(jobUsage).all()).toMatchObject([{ job: 'job', ...report, tokensOut: null }]);
 });
+
+it('rejects contradictory or empty reports and ends normally with unknown counters', async () => {
+  const f = await bodyFixture(clean);
+  for (const report of [
+    { source: 'none', modelCalls: 0 }, { source: 'none', tools: {} },
+    { source: 'report', toolCalls: 3, tools: { Read: 1, Write: 1 } },
+    { source: 'report', wallMs: 5 }, { source: 'transcript', tools: { Read: Number.MAX_SAFE_INTEGER, Write: 1 } },
+  ]) expect((await f.call('usage', report, 'bad')).ok).toBe(false);
+  new Jobs(f.db, () => new Date(f.clock.now()).toISOString()).finish('job', 'box', 0);
+  expect(f.db.select().from(jobUsage).all()).toMatchObject([{ job: 'job', source: 'none', modelCalls: null, toolCalls: null, tools: null }]);
+});
