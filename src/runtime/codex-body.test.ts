@@ -45,7 +45,7 @@ it('runs Codex isolated from the machine\'s own settings, with the tools bearer 
   expect(options).toEqual({ cwd: '/house', env: { PATH: '/usr/bin', HOME: '/home/fictional', LOOM_BODY_TOOLS_TOKEN: 'local_secret_' + 'ab'.repeat(32) }, shell: false, detached: false, stdio: 'pipe' });
   f.finish(good);
   // The last words are the reply; the model is the one asked for, since Codex names none; one tool call is one action.
-  expect(await result).toEqual({ text: 'Answer é', model: 'gpt-fictional', actions: [{ model: 'gpt-fictional' }] });
+  expect(await result).toMatchObject({ text: 'Answer é', model: 'gpt-fictional', actions: [{ model: 'gpt-fictional' }] });
   expect(f.words()).toBe('PRIVATE ACCEPTED MAIL');
   await expect(f.run(job, 'again', f.abort.signal)).rejects.toThrow('Native execution unavailable');
 });

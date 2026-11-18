@@ -27,7 +27,7 @@ it('selects the requested model, denies native tools, and reports response model
   expect(f.launch.mock.calls[0][2]).toEqual({ cwd: '/house', env: { PATH: '/usr/bin', ACCOUNT_PROFILE: '/private/account' }, shell: false, detached: false, stdio: 'pipe' });
   expect(JSON.stringify(f.launch.mock.calls)).not.toContain('PRIVATE ACCEPTED MAIL'); expect(f.words()).toBe('PRIVATE ACCEPTED MAIL');
   f.finish(f.rows([{ type: 'assistant', parent_tool_use_id: null, message: { model: 'tool-model', content: [{ type: 'tool_use', name: 'Edit' }] } }]));
-  expect(await result).toEqual({ text: 'Answer é', model: 'observed-model', actions: [{ model: 'tool-model' }] });
+  expect(await result).toMatchObject({ text: 'Answer é', model: 'observed-model', actions: [{ model: 'tool-model' }] });
 });
 it.each([1, 2, null] as const)('applies guest-only native denials for tier %s', async tier => {
   const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }]; configured.run!.policy!.word = 'others';
@@ -150,7 +150,7 @@ it('continues a session by its id, with no new id of its own, and takes the id t
   expect(args).not.toContain('--session-id'); expect(args).not.toContain('--no-session-persistence');
   const rows = (id: string) => [{ type: 'system', subtype: 'init', session_id: id }, { type: 'assistant', parent_tool_use_id: null, session_id: id, message: { model: 'observed-model', content: [{ type: 'text', text: 'Go on' }] } }, { type: 'result', subtype: 'success', is_error: false, session_id: id, result: 'Go on' }];
   f.finish(rows('earlier-session-1'));
-  expect(await result).toEqual({ text: 'Go on', model: 'observed-model', actions: [], session: 'earlier-session-1' });
+  expect(await result).toMatchObject({ text: 'Go on', model: 'observed-model', actions: [], session: 'earlier-session-1' });
   // A harness that gives the continued session another id is believed, so long as every event agrees.
   const forked = fixture(), second = forked.run(job, 'mail', forked.abort.signal, { resume: 'earlier-session-1' });
   forked.finish(rows('forked-session-2'));

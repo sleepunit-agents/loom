@@ -11,6 +11,7 @@
  *   reach cannot run a Codex body, and a body with denied tools cannot either: Codex has no way to honour them.
  * - Codex's events do not name the model that answered. The reply carries the model the job asked for.
  */
+import { codexUsage } from './harness-usage.js';
 import { z } from 'zod';
 import { BODY_INPUT_BYTES } from './body-input-limit.js';
 import { BODY_TOOLS_SERVER, harnessModel, harnessToolNames, harnessTools, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness } from './body-harness.js';
@@ -55,7 +56,7 @@ export const codexBody: BodyHarness = input => {
       }
       // One thread, one finished turn, and words after it: anything else is not a reply.
       if (started !== 1 || completed !== 1 || rows.at(-1)?.type !== 'turn.completed' || !last) throw harnessUnavailable();
-      return { text: last, model: job.model, actions };
+      return { text: last, model: job.model, actions, usage: codexUsage(rows) };
     } catch { throw harnessUnavailable(); }
     finally { output.fill(0); }
   };

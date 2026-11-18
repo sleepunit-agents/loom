@@ -11,6 +11,7 @@
  * No Root credential enters argv, environment or model input. The outer worker owns the process group,
  * including this child. */
 import {BODY_INPUT_BYTES} from './body-input-limit.js';
+import { claudeUsage } from './harness-usage.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -110,7 +111,7 @@ export const claudeBody: BodyHarness = input => {
       }
       // A configured/requested/init model is never evidence of a response.
       if (!last || result !== last.text) throw harnessUnavailable();
-      return { ...last, actions, ...(keep && session ? { session } : {}) };
+      return { ...last, actions, usage: claudeUsage(rows), ...(keep && session ? { session } : {}) };
     } catch { throw harnessUnavailable(); }
     finally { output.fill(0); }
   };

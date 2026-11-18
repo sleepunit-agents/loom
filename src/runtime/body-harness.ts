@@ -16,7 +16,9 @@ import type { WorkerAssignment } from './worker.js';
 import type { HarnessTraits } from './harness-traits.js';
 import { BODY_EXTENSION_TOOLS_MAX, TOOL_NAME } from './body-model-tools.js';
 
-export interface HarnessReply { text: string; model: string; actions: { model: string }[];
+import type { UsageReport } from './usage-report.js';
+
+export interface HarnessReply { usage?: UsageReport; text: string; model: string; actions: { model: string }[];
   /** The id of the session the harness kept for this run, when it was asked to keep one and did. */
   session?: string }
 /** Asks a harness that can keep its own record of a run to keep it, and to continue an earlier one when
