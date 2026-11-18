@@ -10,7 +10,10 @@ import type { Viewer } from './policy.js';
 import { jobWord } from './shared-place-mail.js';
 import { workAnswersAllowed } from './shared-work-access.js';
 
-const quote = z.string().min(1).refine(value => Array.from(value).length <= 500, 'Quote at most 500 characters.');
+// A lone surrogate could otherwise match just half of a character in the source message.
+const quote = z.string().min(1).refine(value =>
+  value.length <= 1000 && !/\p{Surrogate}/u.test(value) && Array.from(value).length <= 500,
+  'Quote between 1 and 500 complete Unicode characters.');
 export const ownerWord = z.union([
   z.object({ item: z.string().min(1), quote }).strict(),
   z.object({ venue: z.literal('terminal'), through: z.string().min(1), quote }).strict(),

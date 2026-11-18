@@ -257,7 +257,7 @@ it.each(['command', 'dangerous', 'projectJoin'] as const)('tells the signing own
   expect(f.root.services.approvals.notices().some(notice => notice.what.includes(quote))).toBe(false);
 });
 
-it.each([['',400],['🖐'.repeat(500),200],['a'.repeat(501),400]] as const)('bounds the terminal quote by Unicode characters', async (quote,status) => {
+it.each([['',400],['\ud83d',400],['🖐'.repeat(500),200],['a'.repeat(501),400]] as const)('bounds the terminal quote by Unicode characters', async (quote,status) => {
   const f = fixture(), card = f.request();
   const response = await f.send('approvals', { id:card.id, answer:'deny', onWord:{venue:'terminal',through:'art',quote} });
   expect(response.status).toBe(status);
