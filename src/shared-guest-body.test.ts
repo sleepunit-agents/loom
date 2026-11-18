@@ -76,6 +76,7 @@ it('hands a body on anybody else\'s word no file and no secret tool, on a machin
  const result=await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house',reach:'all'}),stdin:async()=>bytes,env:{ACCOUNT_PROFILE:'/account',LOOM_BODY_SCRATCH:'/scratch'},signal:new AbortController().signal,clock,
   fetch:async(url,options)=>root.http.request(String(url),options),schedule:{every:()=>()=>{}},error:errors,saveAttachments,loadMemory:async()=>null,loadBrief:async()=>null});
  expect(result).toBe(0);expect(spawn).toHaveBeenCalledOnce();
+ expect(db.select().from(s.jobUsage).all()).toMatchObject([{job:'guest-job',source:'transcript',toolCalls:0}]);
  // No file is written for it to open.
  expect(saveAttachments).not.toHaveBeenCalled();
  // No file it names is read for a post: its tools were given no reader, and the post is refused before loom's door.
