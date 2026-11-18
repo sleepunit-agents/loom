@@ -21,9 +21,12 @@ function seed(file: string, old: boolean, pendingMail: boolean) {
   const at = new Date(start).toISOString();
   try {
     if (old) {
-      sqlite.exec(readFileSync(new URL('../core/data/shipped-shapes/12.sql', import.meta.url), 'utf8'));
-      const mark = sqlite.prepare('INSERT INTO migrations VALUES (?, ?)');
-      for (let n = 1; n <= 12; n++) mark.run(n, at);
+      // Match createDataSchema: one durable fixture commit, not a disk sync for every index.
+      sqlite.transaction(() => {
+        sqlite.exec(readFileSync(new URL('../core/data/shipped-shapes/12.sql', import.meta.url), 'utf8'));
+        const mark = sqlite.prepare('INSERT INTO migrations VALUES (?, ?)');
+        for (let n = 1; n <= 12; n++) mark.run(n, at);
+      })();
     } else createDataSchema(sqlite);
     const db = dataDatabase(sqlite, () => at);
     db.insert(s.members).values({id:'alice', role:'member', joinedAt:at}).run();
@@ -109,7 +112,7 @@ it.each([
   };
   let tick!: () => void, report: Promise<boolean> | undefined;
   const control = {...http, repositoryInput:undefined,
-    heartbeat(id:string,state:'starting'|'running') { return report = http.heartbeat(id,state); }};
+    heartbeat(id:string,state:'starting'|'running',signal?:AbortSignal) { return report = http.heartbeat(id,state,signal); }};
   const run = workOnce({box:'box',control,executor,signal:abort.signal,now:() => time,
     schedule:{every(_ms,callback){tick=callback; return () => {};}}});
   async function reach(checkpoint: Promise<void>) {
