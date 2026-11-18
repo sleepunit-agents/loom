@@ -1,5 +1,5 @@
 import { newId } from '../../data/id.js';
-import type { TempoActions } from './actions.js';
+import { TempoFiringFailure, type TempoActions } from './actions.js';
 /** Cookie credentials identify the caller. A control supplies only its target. */
 export function tempoActions(request: typeof fetch = fetch): TempoActions {
   // One unconfirmed intent per action. Retain its receipt after an uncertain
@@ -13,8 +13,13 @@ export function tempoActions(request: typeof fetch = fetch): TempoActions {
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: attempt.id, input }) });
     const result: unknown = await response.json();
     if (!response.ok || !result || typeof result !== 'object' || !('ok' in result) || result.ok !== true
-      || !('value' in result) || !result.value || typeof result.value !== 'object'
-      || (action === 'set' ? !('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id : !('saved' in result.value) || result.value.saved !== true)) throw new Error('Tempo could not confirm the change.');
+      || !('value' in result) || !result.value || typeof result.value !== 'object') throw new Error('Tempo could not confirm the change.');
+    if (action === 'runNow' && 'saved' in result.value && result.value.saved === false &&
+      'failed' in result.value && result.value.failed === true && 'reason' in result.value && typeof result.value.reason === 'string') {
+      if (pending.get(action) === attempt) pending.delete(action);
+      throw new TempoFiringFailure(result.value.reason);
+    }
+    if (action === 'set' ? !('id' in result.value) || typeof result.value.id !== 'string' || !result.value.id : !('saved' in result.value) || result.value.saved !== true) throw new Error('Tempo could not confirm the change.');
     if (pending.get(action) === attempt) pending.delete(action);
   }
   return { withdrawMachine: id => call('edit', { id, machine: null }), create: input => call('set', input), runNow: id => call('runNow', { id }), stop: id => call('stop', { id }),

@@ -1,4 +1,4 @@
-import type { TempoActions } from './actions';
+import { TempoFiringFailure, type TempoActions } from './actions';
 import { CreateTrigger } from './create';
 import { useEffect, useRef, useState } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Input, Button } from '../../kit';
@@ -18,16 +18,16 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
   const withdraw = actions.withdrawMachine;
   const busy = useRef(false);
   const [pending, setPending] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<string>();
   const agent = triggerAgent(trigger);
   const paused = !!agent && pauses.some(item => item.agent === agent);
   async function run(action: () => Promise<void>) {
     if (busy.current) return;
     busy.current = true;
     setPending(true);
-    setFailed(false);
+    setFailed(undefined);
     try { await action(); }
-    catch { setFailed(true); }
+    catch (error) { setFailed(error instanceof TempoFiringFailure ? error.message : 'Tempo could not complete that action. Try again.'); }
     finally { busy.current = false; setPending(false); }
   }
   return <section aria-label="Trigger actions" className="grid gap-2">
@@ -40,7 +40,7 @@ function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses
       {agent && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(agent) : actions.pause(agent))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
     </div>
     {pending && <p role="status">Waiting for Tempo…</p>}
-    {failed && <p role="alert">Tempo could not complete that action. Try again.</p>}
+    {failed && <p role="alert">{failed}</p>}
   </section>;
 }
 
@@ -66,8 +66,10 @@ function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapsho
       <div><dt>Set by</dt><dd>{trigger.ownerKind === 'household' ? 'Household' : trigger.owner}</dd></div>
       {trigger.project && <div><dt>Project</dt><dd>{trigger.project}</dd></div>}
       <div><dt>Target</dt><dd>{target(trigger)}</dd></div>
-      {trigger.machine && <div><dt>Requested machine</dt><dd>{trigger.machine}</dd><dt>Approval record</dt><dd>{trigger.machineApproval ?? 'None'}</dd></div>}
+      {trigger.machine && <div><dt>Requested machine</dt><dd>{trigger.machineRow?.name ?? trigger.machine}</dd><dt>Approval record</dt><dd>{trigger.machineApproval ?? 'None'}</dd></div>}
       <div><dt>Enabled</dt><dd>{trigger.enabled ? 'Yes' : 'No'}</dd></div>
+      {trigger.machineApprovalRow?.decidedBy && <div><dt>Allowed by</dt><dd>{trigger.machineApprovalRow.decidedBy}</dd></div>}
+      {trigger.machineApprovalRow?.decidedAt && <div><dt>Allowed at</dt><dd>{time(trigger.machineApprovalRow.decidedAt)}</dd></div>}
       {trigger.lastFiredAt && <div><dt>Last fired</dt><dd>{time(trigger.lastFiredAt)}</dd></div>}
     </dl>
     {trigger.machine && <section aria-label="Machine access">

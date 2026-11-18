@@ -1674,6 +1674,8 @@ export const approvalRecordRelations = relations(approvalRecord, ({ one }) => ({
 }));
 
 export const triggersRelations = relations(triggers, ({ one, many }) => ({
+  machineRow: one(boxes, { fields: [triggers.machine], references: [boxes.id] }),
+  machineApprovalRow: one(approvals, { fields: [triggers.machineApproval], references: [approvals.id] }),
   projectRow: one(projects, { fields: [triggers.project], references: [projects.id], relationName: 'triggers_project' }),
   memberRow: one(members, { fields: [triggers.member], references: [members.id], relationName: 'triggers_member' }),
   triggerLogByTrigger: many(triggerLog, { relationName: 'trigger_log_trigger' }),
