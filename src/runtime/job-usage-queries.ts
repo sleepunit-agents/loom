@@ -1,7 +1,7 @@
 /** Read-time usage projections. All reads enter through the job's current SQL visibility. */
-import { and, desc, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, isNotNull, or, sql, type SQL } from 'drizzle-orm';
 import { GraphQLFloat, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
-import { conversations, inbox, inboxRefs, jobs, jobUsage } from '../core/data/schema.js';
+import { conversations, inbox, inboxRefs, jobs, jobUsage, terminalRuns } from '../core/data/schema.js';
 import { jobUnended } from '../core/data/job-states.js';
 import type { JobSummaries } from './job-summary.js';
 
@@ -16,7 +16,7 @@ const usageType = new GraphQLObjectType({name:'JobUsageMetrics',fields:{
   tools:{type:new GraphQLList(new GraphQLNonNull(toolType))},
 }});
 const recordType = new GraphQLObjectType({name:'JobUsageRecord',fields:{
-  id:requiredText, title:requiredText, state:requiredText, queuedAt:requiredText, retryOf:text, conversation:text,
+  id:requiredText, title:requiredText, runKind:text, state:requiredText, queuedAt:requiredText, retryOf:text, conversation:text,
   usage:{type:usageType}, observations:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))},
 }});
 const groupType = new GraphQLObjectType({name:'JobUsageGroup',fields:{
@@ -29,12 +29,12 @@ function instant(value:string|null|undefined) {
   if (!/(?:Z|[+-]\d\d:\d\d)$/i.test(value) || !Number.isFinite(Date.parse(value))) throw new Error('Expected a timestamp with a time zone');
   return new Date(value).toISOString();
 }
-function windowFilter(args:Range) {
+function windowFilter(args:Range, conversation:SQL<string|null>) {
   const from = instant(args.from), to = instant(args.to);
   if (from && to && from >= to) throw new Error('from must precede to');
   return and(from ? sql`julianday(${jobs.queuedAt}) >= julianday(${from})` : undefined,
     to ? sql`julianday(${jobs.queuedAt}) < julianday(${to})` : undefined,
-    args.conversation === null ? isNull(jobs.conversation) : args.conversation !== undefined ? eq(jobs.conversation,args.conversation) : undefined);
+    args.conversation === null ? isNull(conversation) : args.conversation !== undefined ? eq(conversation,args.conversation) : undefined);
 }
 
 // Tempo writes the trigger id as a reference and the unique firing id as the source of its mail.
@@ -44,11 +44,18 @@ const firing = sql<string|null>`(select json_array(${inboxRefs.ref}, ${inbox.sou
     and substr(${inbox.sourceId},1,length(${inboxRefs.ref})+1) = ${inboxRefs.ref} || ':'
   order by ${inbox.at}, ${inbox.id}, length(${inboxRefs.ref}) desc limit 1)`;
 
-function rows(s:JobSummaries, filter?:SQL) {
-  return s.db.select({id:jobs.id,title:jobs.title,conversation:jobs.conversation,label:conversations.label,
+function rows(s:JobSummaries, filter?:SQL | ((conversation:SQL<string|null>)=>SQL|undefined)) {
+  // A terminal's simultaneous child jobs point at the parent run. Its conversation and words
+  // are visible only when the caller can read both the run and that parent.
+  const parent = s.db.select({id:jobs.id,conversation:jobs.conversation}).from(jobs).where(s.allowed()).as('terminal_parent');
+  const conversation = sql<string|null>`coalesce(${jobs.conversation}, ${parent.conversation})`;
+  const runKind = sql<string|null>`case when ${terminalRuns.job} is null then null
+    when ${terminalRuns.job} = ${terminalRuns.parent} then 'main' else 'subagent' end`;
+  return s.db.select({id:jobs.id,title:jobs.title,conversation,runKind,label:conversations.label,
     state:jobs.state,queuedAt:jobs.queuedAt,retryOf:jobs.retryOf,firing,venue:conversations.venue,place:conversations.place,agent:conversations.agent,member:conversations.member,usage:jobUsage})
-    .from(jobs).leftJoin(conversations,eq(conversations.id,jobs.conversation)).leftJoin(jobUsage,eq(jobUsage.job,jobs.id))
-    .where(and(s.allowed(),filter)).orderBy(desc(sql`julianday(${jobs.queuedAt})`),desc(jobs.id)).all();
+    .from(jobs).leftJoin(terminalRuns,eq(terminalRuns.job,jobs.id)).leftJoin(parent,eq(parent.id,terminalRuns.parent))
+    .leftJoin(conversations,eq(conversations.id,conversation)).leftJoin(jobUsage,eq(jobUsage.job,jobs.id))
+    .where(and(s.allowed(),or(isNull(terminalRuns.job),isNotNull(parent.id)),typeof filter === 'function' ? filter(conversation) : filter)).orderBy(desc(sql`julianday(${jobs.queuedAt})`),desc(jobs.id)).all();
 }
 type Row = ReturnType<typeof rows>[number];
 function plus(a:number|null,b:number|null) {
@@ -162,7 +169,7 @@ function records(s:JobSummaries, selected:Row[]) {
 function rollup(s:JobSummaries,args:Range & {groupBy:string}) {
   if (!['day','model','conversation','trigger'].includes(args.groupBy)) throw new Error('Expected conversation, trigger, day or model');
   const groups = new Map<string|null,Row[]>();
-  const selected = rows(s,windowFilter(args));
+  const selected = rows(s,cv=>windowFilter(args,cv));
   const runs = args.groupBy === 'trigger' ? assignRuns(conversationHistory(s,selected)) : undefined;
   for (const row of selected) {
     const key = args.groupBy === 'day' ? row.queuedAt.slice(0,10) : args.groupBy === 'model' ? row.usage?.model ?? null
@@ -187,7 +194,7 @@ export function jobUsageFields(s:JobSummaries, canRead:()=>boolean) {
   return {
     jobUsage:{type:recordType,args:{id:requiredText},resolve:(_:unknown,{id}:{id:string})=>canRead() ? records(s,rows(s,eq(jobs.id,id)))[0] ?? null : null},
     conversationJobUsage:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(recordType))),args:{conversation:text,...range},
-      resolve:(_:unknown,args:Range)=>canRead() ? records(s,rows(s,windowFilter({...args,conversation:args.conversation ?? null}))) : []},
+      resolve:(_:unknown,args:Range)=>canRead() ? records(s,rows(s,cv=>windowFilter({...args,conversation:args.conversation ?? null},cv))) : []},
     jobUsageRollup:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(groupType))),args:{from:requiredText,to:requiredText,groupBy:requiredText,conversation:text},
       resolve:(_:unknown,args:Range & {groupBy:string})=>canRead() ? rollup(s,args) : []},
   };

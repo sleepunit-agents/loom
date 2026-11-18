@@ -59,7 +59,7 @@ it('fails closed for absent or invalid policies and never offers private executi
   f.policy({ jobs: () => undefined as never });
   expect(() => f.summaries.current('art')).toThrow('SQL visibility required');
   f.policy({ jobs: () => sql`true` });
-  expect(Object.keys(f.summaries.current('art')[0])).toEqual(['id', 'agent', 'title', 'state', 'box', 'queuedAt']);
+  expect(Object.keys(f.summaries.current('art')[0])).toEqual(['id', 'agent', 'title', 'kind', 'state', 'box', 'queuedAt']);
 });
 
 it('constrains the single SQL read before fetching rows and never reads machine metadata', async () => {
@@ -156,4 +156,37 @@ it('keeps ordinary sweep work outside trigger totals', async () => {
   const schema = new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
   expect(await graphql({schema,source:'{jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"trigger"){key jobCount}}'}))
     .toEqual({data:{jobUsageRollup:[{key:null,jobCount:1}]}});
+});
+
+it('hides a silent terminal at fifteen minutes without ending or stopping its work', async () => {
+  const f = fixture(), now = Date.parse(f.at);
+  f.db.insert(conversations).values({id:'cv',agent:'art',venue:'loom',place:'cv',label:'Terminal',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+  f.add('terminal','running',{conversation:'cv',startedByKind:'terminal',heardAt:f.at,box:'attic'});
+  const view=(time:number)=>new JobSummaries(f.db,()=>({jobs:()=>sql`true`}),()=>time).current('art');
+  expect(view(now+899999).map(job=>job.id)).toEqual(['terminal']);
+  expect(view(now+900000)).toEqual([]);
+  const {Jobs}=await import('./jobs.js');
+  const jobs=new Jobs(f.db,()=>new Date(now+900000).toISOString());
+  expect(jobs.sweep()).toEqual([]);
+  expect(()=>jobs.stop('terminal','owner','stop')).toThrow();
+  expect(()=>jobs.heartbeat('terminal','attic','running')).toThrow();
+  expect(jobs.get('terminal').state).toBe('running');
+});
+
+it('groups terminal main and subagent usage under their visible parent conversation',async()=>{
+  const f=fixture();
+  const {terminalRuns,terminalSessions}=await import('../core/data/schema.js');
+  f.db.insert(conversations).values({id:'cv',agent:'art',venue:'loom',place:'term',label:'Terminal',startedAt:f.at,lastAt:f.at,turnCount:0}).run();
+  f.add('main','running',{conversation:'cv',member:'owner',startedByKind:'terminal'});
+  f.add('child','done',{title:'Inspect parser',member:'owner',startedByKind:'terminal'});
+  f.db.insert(terminalSessions).values({job:'main',sessionId:'s',machine:'attic',agent:'art',member:'owner',harness:'claude',cwd:'/work'}).run();
+  f.db.insert(terminalRuns).values([{job:'main',parent:'main',runId:'main',revision:1},{job:'child',parent:'main',runId:'sub1',revision:1}]).run();
+  for(const [id,n] of [['main',4],['child',7]] as const) f.db.insert(jobUsage).values({job:id,source:'report',tokensIn:n,tokensOut:0}).run();
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields(f.summaries)})});
+  const query='{conversationJobUsage(conversation:"cv"){id title runKind usage{totalTokens}} jobUsageRollup(from:"2026-11-14T00:00:00Z",to:"2026-11-15T00:00:00Z",groupBy:"conversation"){key totalTokens}}';
+  expect(await graphql({schema,source:query})).toEqual({data:{conversationJobUsage:[
+    {id:'main',title:'main',runKind:'main',usage:{totalTokens:4}},
+    {id:'child',title:'Inspect parser',runKind:'subagent',usage:{totalTokens:7}}],jobUsageRollup:[{key:'cv',totalTokens:11}]}});
+  f.policy({jobs:fields=>sql`${fields.id} != 'main'`});
+  expect((await graphql({schema,source:query})).data?.jobUsageRollup).toEqual([]);
 });

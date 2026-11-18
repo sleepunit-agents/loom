@@ -52,12 +52,21 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     ctx.changed('approvals', input.approval); ctx.changed('changes', input.id);
   };
   function resolveEvidence(viewer: Context['viewer'], word: z.infer<typeof ownerWord> | undefined, prepared: unknown) {
-    const matches = evidenceCandidates(db, sources, viewer, word).filter(candidate => {
-      if (!candidate.sealed) return true;
+    const candidates = evidenceCandidates(db, sources, viewer, word);
+    const terminal = word && 'venue' in word;
+    let unreadable = false;
+    const matches = candidates.filter(candidate => {
+      if (!candidate.sealed) return !terminal;
       const opened = prepared instanceof Map && prepared.get(candidate.item);
-      if (!opened || opened.thread !== candidate.thread || opened.seq !== candidate.seq || !candidate.sealed.equals(opened.sealed)) throw new OperationError('conflict','The message changed. Read it again.');
+      if (!opened || opened.thread !== candidate.thread || opened.seq !== candidate.seq || !candidate.sealed.equals(opened.sealed)) {
+        if (!terminal) throw new OperationError('conflict','The message changed. Read it again.');
+        unreadable = true;
+        return false;
+      }
+      if (opened.matches === null) unreadable = true;
       return opened.matches;
     });
+    if (terminal && (unreadable || matches.length !== 1)) return candidates.find(candidate => !candidate.sealed)!;
     if (!matches.length) throw new OperationError('denied','Those words do not appear in that message.');
     if (matches.length > 1) throw new OperationError('denied','Those words appear in more than one message. Quote a longer passage.');
     return matches[0];
@@ -76,18 +85,20 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
       return !merge || input.answer === 'deny' || !!change(merge.id);
     },
     async prepare(input, {viewer}) {
-      const opened = new Map<string, { sealed: Buffer; thread: string; seq: number; matches: boolean }>();
+      const opened = new Map<string, { sealed: Buffer; thread: string; seq: number; matches: boolean | null }>();
       for (const proof of evidenceCandidates(db, sources, viewer, input.onWord)) {
         if (!proof.sealed) continue;
-        const words = await sources.words?.(proof.thread, proof.seq);
-        if (words == null) throw new OperationError('denied','Those words do not appear in that message.');
-        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches: !!input.onWord && words.includes(input.onWord.quote) });
+        const terminal = input.onWord && 'venue' in input.onWord;
+        const read = sources.words?.(proof.thread, proof.seq);
+        const words = await (terminal ? read?.catch(() => null) : read);
+        if (words == null && !terminal) throw new OperationError('denied','Those words do not appear in that message.');
+        opened.set(proof.item, { sealed: proof.sealed, thread: proof.thread, seq: proof.seq, matches: words == null ? null : !!input.onWord && words.includes(input.onWord.quote) });
       }
       return opened;
     },
-    prepareReplay: input => !!input.onWord && !('venue' in input.onWord) && input.onWord.item === undefined,
+    prepareReplay: input => !!input.onWord && ('venue' in input.onWord || input.onWord.item === undefined),
     validateReplay(viewer, input, prepared) {
-      if (prepared instanceof Map && input.onWord && !('venue' in input.onWord) && input.onWord.item === undefined) {
+      if (prepared instanceof Map && input.onWord && ('venue' in input.onWord || input.onWord.item === undefined)) {
         const proof = resolveEvidence(viewer, input.onWord, prepared);
         const basis = decisionBasis(input.answer, proof.basis);
         if (!service.record(input.id).some(event => event.event === input.answer && event.note === basis))

@@ -71,7 +71,7 @@ for (const revoked of ['project', 'owned-agent', 'household-owner'] as const) it
 });
 it('offers only Home summary columns and does not accept raw execution fields', async () => {
   const f = fixture(), body = await (await f.post('house', '{ __type(name:"CurrentJobSummary") { fields { name } } }')).json();
-  expect(body.data.__type.fields.map((field: { name: string }) => field.name).sort()).toEqual(['agent', 'box', 'id', 'queuedAt', 'state', 'title']);
+  expect(body.data.__type.fields.map((field: { name: string }) => field.name).sort()).toEqual(['agent', 'box', 'id', 'kind', 'queuedAt', 'state', 'title']);
   const invalid = await (await f.post('house', '{ currentJobs(agent:"art") { brief logTail account build } }')).json();
   expect(invalid.errors).toHaveLength(4); expect(invalid.data).toBeUndefined();
 });

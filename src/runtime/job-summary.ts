@@ -1,16 +1,25 @@
 /** Home's current-job projection. The outside composition supplies its current
  * jobs SQL policy; this module never invents sharing rules or reads credentials. */
-import { and, asc, desc, eq, getTableColumns, inArray, is, SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, inArray, is, ne, or, isNotNull, sql, SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import type { DataDatabase } from '../core/data/database.js';
 import type { QueryVisibility } from '../core/data/queries.js';
-import { jobs } from '../core/data/schema.js';
+import { jobs, terminalRuns } from '../core/data/schema.js';
 import { unendedJobStates } from '../core/data/job-states.js';
 import { jobUsageFields } from './job-usage-queries.js';
 import { exitStage } from './job-exit.js';
 
+import { terminalSilenceMs } from '../core/conversations/terminal-sessions.js';
+export function nextTerminalDeadline(db: DataDatabase, now: number) {
+  const cutoff = new Date(now - terminalSilenceMs).toISOString();
+  const found = db.select({at: jobs.heardAt}).from(jobs).where(and(eq(jobs.startedByKind, 'terminal'),
+    isNotNull(jobs.conversation), inArray(jobs.state, unendedJobStates), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))
+    .orderBy(asc(sql`julianday(${jobs.heardAt})`)).limit(1).get();
+  return found?.at ? Date.parse(found.at) + terminalSilenceMs : undefined;
+}
+
 export class JobSummaries {
-  constructor(readonly db: DataDatabase, readonly visibility: () => QueryVisibility) {}
+  constructor(readonly db: DataDatabase, readonly visibility: () => QueryVisibility, readonly now = Date.now, readonly observed?: () => void) {}
   allowed() {
     const allowed = this.visibility().jobs?.(getTableColumns(jobs));
     if (!is(allowed, SQL)) throw new Error('SQL visibility required for jobs');
@@ -18,19 +27,25 @@ export class JobSummaries {
   }
   current(agent: string) {
     const allowed = this.allowed();
+    this.observed?.();
+    const cutoff = new Date(this.now() - terminalSilenceMs).toISOString();
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title,
+      kind: sql<string>`case when ${jobs.startedByKind} = 'terminal' then 'terminal' else 'job' end`,
       state: jobs.state, box: jobs.box, queuedAt: jobs.queuedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates)))
+      .where(and(allowed, eq(jobs.agent, agent), inArray(jobs.state, unendedJobStates),
+        or(ne(jobs.startedByKind, 'terminal'), and(isNotNull(jobs.conversation), sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`))))
       .orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
   }
   /** An agent's jobs, ended ones included, newest first. Same visibility as current(). */
   history(agent: string, first = 20) {
     const allowed = this.allowed();
+    const visibleParents = this.db.select({id:jobs.id}).from(jobs).where(allowed);
+    const visibleRuns = this.db.select({id:terminalRuns.job}).from(terminalRuns).where(inArray(terminalRuns.parent,visibleParents));
     return this.db.select({ id: jobs.id, agent: jobs.agent, title: jobs.title, state: jobs.state, box: jobs.box,
       conversation: jobs.conversation, project: jobs.project, brief: jobs.brief, model: jobs.model,
       startedByKind: jobs.startedByKind, startedBy: jobs.startedBy, retryOf: jobs.retryOf, exitCode: jobs.exitCode, exitBy: jobs.exitBy, logTail: jobs.logTail,
       endedBy: jobs.endedBy, endedReason: jobs.endedReason, endedNote: jobs.endedNote, queuedAt: jobs.queuedAt, claimedAt: jobs.claimedAt, heardAt: jobs.heardAt, endedAt: jobs.endedAt }).from(jobs)
-      .where(and(allowed, eq(jobs.agent, agent))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
+      .where(and(allowed, eq(jobs.agent, agent), or(ne(jobs.startedByKind,'terminal'),inArray(jobs.id,visibleRuns)))).orderBy(desc(jobs.queuedAt), desc(jobs.id)).limit(Math.min(Math.max(first, 1), 100)).all()
       // Where a failed job failed, read from its exit code and whose code it is: what a private conversation's job keeps.
       .map(row => ({ ...row, exitStage: exitStage(row.exitCode, row.exitBy) ?? null }));
   }
@@ -44,6 +59,7 @@ const job = new GraphQLObjectType({ name: 'JobRecord', fields: {
   queuedAt: { type: new GraphQLNonNull(GraphQLString) }, claimedAt: text, heardAt: text, endedAt: text,
 } });
 const currentJob = new GraphQLObjectType({ name: 'CurrentJobSummary', fields: {
+  kind: text,
   id: { type: new GraphQLNonNull(GraphQLString) },
   agent: { type: new GraphQLNonNull(GraphQLString) },
   title: { type: new GraphQLNonNull(GraphQLString) },

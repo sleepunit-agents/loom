@@ -26,7 +26,7 @@ import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
 import { sqlVisibility } from './policy-sql.js';
-import { JobSummaries, jobSummaryFields } from './runtime/job-summary.js';
+import { JobSummaries, jobSummaryFields, nextTerminalDeadline } from './runtime/job-summary.js';
 
 // One explicit public read projection, shared by the outside doors and programme catalogue.
 export const sharedQueryTables = ['boxes', 'boxAgents', 'boxFacts', 'agentRunSettings', 'agentBoxes', 'agentHousePorts', 'agentHouseSecrets', 'agentPeople', 'agentDeniedTools', 'tasks', 'taskComments', 'taskLinks', 'projects', 'projectMembers', 'agents', 'agentStatus', 'agentModels',
@@ -43,7 +43,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   };
   const live = new DataLive(measure);
   const bridges = new BridgeQueries(db, () => clock.now());
-  let activityRead = false;
+  let activityRead = false, currentJobsRead = false;
   const ownFields = { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
     const visibility = bridgeSecretsVisibility(viewer);
     return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
@@ -52,8 +52,9 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   let stopped = false;
   const schedule = () => {
     cancelDeadline?.(); cancelDeadline = undefined;
-    if (stopped || !activityRead) return;
-    const at = bridges.nextDeadline();
+    if (stopped) return;
+    const deadlines = [activityRead ? bridges.nextDeadline() : undefined, currentJobsRead ? nextTerminalDeadline(db, clock.now()) : undefined];
+    const at = deadlines.filter((time): time is number => time !== undefined).sort((a,b) => a-b)[0];
     if (at !== undefined) cancelDeadline = clock.at(at, () => { live.changed(); schedule(); });
   };
   // Start deadline scans only after an actual activity selection succeeds.
@@ -69,7 +70,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
   }):emptyProgram, records!==undefined?{}:{ ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // A job's title, brief and log tail are words of its conversation; it is read by the jobs rule in policy.ts.
-    ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer)), () => canReadUsage(viewer)),
+    ...jobSummaryFields(new JobSummaries(db, () => talkVisibility(viewer), () => clock.now(), () => { if (!currentJobsRead) { currentJobsRead = true; schedule(); } }), () => canReadUsage(viewer)),
   });};
   // Refuse unsupported extensions before admitting any HTTP/socket work.
   assertReadSchema(schema({ kind: 'member', id: '' }, true));

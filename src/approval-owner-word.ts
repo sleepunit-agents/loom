@@ -1,9 +1,10 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import { terminalSilenceMs } from './core/conversations/terminal-sessions.js';
 import { ageLimit, wordsKept } from './core/conversations/retention.js';
 import { commsKeepDays } from './core/data/comms-days.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, bridgeConnections, bridgeIncoming, bridgePeople, conversations, inbox, inboxRefs, messages } from './core/data/schema.js';
+import { agents, boxes, jobs, threads, terminalSessions, bridgeConnections, bridgeIncoming, bridgePeople, conversations, inbox, inboxRefs, messages } from './core/data/schema.js';
 import { OperationError } from './core/operations/index.js';
 import { incomingId, parseInboxSourceId } from './pieces/bridges/keys.js';
 import type { Viewer } from './policy.js';
@@ -44,7 +45,25 @@ export function evidenceCandidates(db: DataDatabase, sources: EvidenceSources, v
     if (!('venue' in word)) refused('A terminal answer names the agent and quotes the owner.');
     const agent = db.select({ id: agents.id }).from(agents).where(eq(agents.id, word.through)).get();
     if (!agent) refused('Name an agent in this household.');
-    return [{
+    const now = sources.now();
+    const cutoff = new Date(Date.parse(now) - terminalSilenceMs).toISOString();
+    const retained = word.quote.trim() ? db.select({row:messages, conversation:threads.conversation, machine:terminalSessions.machine})
+      .from(terminalSessions).innerJoin(jobs,eq(jobs.id,terminalSessions.job))
+      .innerJoin(boxes,eq(boxes.id,terminalSessions.machine))
+      .innerJoin(threads,eq(threads.id,terminalSessions.thread))
+      .innerJoin(conversations,eq(conversations.id,threads.conversation))
+      .innerJoin(messages,and(eq(messages.thread,threads.id),eq(messages.run,terminalSessions.job)))
+      .where(and(eq(terminalSessions.member,viewer.id),eq(terminalSessions.agent,agent.id),eq(boxes.owner,viewer.id),isNull(boxes.revokedAt),
+        eq(conversations.member,viewer.id),eq(conversations.agent,agent.id),eq(conversations.venue,'terminal'),
+        eq(jobs.state,'running'),sql`julianday(${jobs.heardAt}) > julianday(${cutoff})`,isNull(threads.archivedAt),
+        eq(messages.sender,viewer.id),eq(messages.kind,'message'),isNotNull(messages.words))).all() : [];
+    const days = commsKeepDays(db);
+    const candidates: Evidence[] = retained.flatMap(({row,conversation,machine}) =>
+      row.words && wordsKept(row,days,now) ? [{
+        member:viewer.id, through:agent.id, item:JSON.stringify([row.thread,row.seq]), sealed:row.words, thread:row.thread, seq:row.seq,
+        basis:`${viewer.id} as told to ${agent.id} at the terminal: “${word.quote}” (conversation ${conversation}, turn ${row.seq}, machine ${machine})`,
+      }] : []);
+    return [...candidates, {
       member: viewer.id, through: agent.id,
       basis: `${viewer.id} as told to ${agent.id} at the terminal (unverified): “${word.quote}”`,
     }];
