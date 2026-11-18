@@ -1507,3 +1507,17 @@ presence implementation here. See `src/pieces/bridges/presence.ts`.
 ### A body can answer a card on a household owner's quoted word
 
 The bound job, its admitted mail, current household role and venue account link establish the writer. A stolen linked chat account is a stolen approval. Loom verifies the quoted substring. With `onWord: {quote}`, exactly one eligible message must contain the quote. If several match, quote a longer passage. The agent interprets assent, scope and which cards the words cover. A mistaken or compromised agent with eligible mail could misattribute the decision. Each quote survives message retention on the card's permanent record and is visible to readers of that card. The owner gets an Inbox item with the quote. A terminal attribution cites a unique retained owner turn in an open terminal session when the words can be verified. Otherwise the owner's credential supplies an unverified attestation.
+
+### Programs on the clock
+
+The trusted unit is a named executable in an agent's built house. The clock fixes its arguments
+and allowed aliases. Only the container worker implements this protocol. Reusing the normal job,
+machine and bridge records lets operators trace a firing from claim through an optional wake or
+post. A lost completion can replay the committed receipt. Automatically running the executable
+again could repeat an external action that Loom cannot observe. The next scheduled firing is the
+next opportunity to run. The at-most-once guarantee covers Loom's queued effects. A bridge that
+loses a downstream delivery acknowledgement keeps its existing uncertain-delivery semantics.
+
+Program code can access its granted inputs and the container network. Output scanning guards
+against accidental credential disclosure. A house author trusted to receive a secret remains
+responsible for how the executable uses it.

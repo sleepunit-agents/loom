@@ -561,6 +561,8 @@ it.each(['ok', 'quiet', 'unruled post', 'invalid output'] as const)('applies a p
   expect(mail).toHaveLength(wake?1:0);
   if(wake)expect(mail[0]).toMatchObject({conversation:cv.id,words:'Review the data\n\nProgram output (untrusted data):\n{"count":7}'});
   expect(f.db.select().from(triggerLog).where(eq(triggerLog.event,'program')).all()).toMatchObject([{note:wake?'Woke art · posted · 1000 ms · Daily complete':success?'Did not wake · 1000 ms · Daily complete':'Failed · 1000 ms · Program did not complete.'}]);
+  const alerts = f.db.select().from(inbox).where(eq(inbox.sourceId,'program-failure:job')).all();
+  expect(alerts).toHaveLength(success?0:1);
   const sends = f.db.select().from(bridgeSends).all();
   expect(sends).toHaveLength(wake?1:0);
   if(wake)expect(sends[0]).toMatchObject({state:'held',channel:'CROOM'});

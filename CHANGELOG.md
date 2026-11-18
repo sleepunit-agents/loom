@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Tempo can schedule a named house program and record its decision, pass data to a wake, queue a ruled channel post, and keep small state between firings. Schema 15 retains existing schedules and job usage.
+
 - Tempo lanes can require or prefer machine facts. Agent run settings can prefer facts for ordinary jobs. Placement falls back immediately when a preferred machine is unavailable, and job history explains the claim. Schema 14 preserves existing households.
 
 - Claimed jobs and active bodies tolerate temporary Loom outages. Worker reports and replay-safe body calls retry for up to two minutes. Restarting the server gives claimed jobs a fresh reporting interval, including jobs still starting.

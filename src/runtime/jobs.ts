@@ -491,6 +491,13 @@ export class Jobs {
         const decision = state === 'done' ? (woke ? 'Woke ' + job.agent : 'Did not wake') : state[0].toUpperCase() + state.slice(1);
         const note = [decision, posted && 'posted', wallMs !== null && wallMs + ' ms', line].filter(Boolean).join(' · ');
         this.db.insert(triggerLog).values({trigger: firing.trigger, at: ended.endedAt ?? this.now(), event: 'program', note}).run();
+        if (state === 'failed' || state === 'lost') {
+          for (const member of agentsPeople(job.agent, sharedSharing(this.db))) {
+            this.mail.send({toKind:'person', to:member, member, agent:job.agent, source:'notice',
+              sourceId:'program-failure:'+job.id, fromKind:'schedule', fromId:firing.trigger,
+              words:`Scheduled program ${firing.program.name} for ${job.agent} ${state}.`, refs:[firing.trigger,job.id]});
+          }
+        }
       }
       if (state !== 'done') this.db.update(programFirings).set({ status: 'failed', line: 'Program did not complete.' })
         .where(and(eq(programFirings.job, job.id), eq(programFirings.status, 'pending'))).run();

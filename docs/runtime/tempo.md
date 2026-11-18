@@ -198,3 +198,29 @@ result. A nonzero exit fails the attempt and discards its output. The required f
 occur together. A successful quiet watch returns `{"version":1,"wake":false}`.
 Granting a program name does not grant a secret. The worker needs the intersection of the
 frozen alias list, the agent's configured house aliases and the current startup grants.
+
+Set an agent-owned time trigger targeting its own inbox. Supply `program: {name, args,
+timeoutMs, secrets}`, and the usual `times`, `days`, `needs`, `prefers` and wake instructions.
+Only an owner or the agent doing its own work may set one. A firing snapshots the descriptor
+and the last state. Set `readStateFrom` to read another program trigger in the same agent and
+project. A result always updates its own trigger. Omitting state keeps the previous value.
+Use a dated draft in state when an older producer result should expire.
+
+Stdout accepts 16 KiB including whitespace. Payload and state each accept 8 KiB of serialized
+JSON, up to 32 levels deep. A line accepts 1,024 characters on one line. A post has a channel
+ID of 1–200 characters and text of 1–4,000 characters. The channel must resolve to one ruled
+Slack or Discord destination for the agent. Extra fields, extra stdout, malformed UTF-8,
+credentials found in the result, or a nonzero exit fail the attempt. The worker discards stderr.
+The payload reaches the wake as explicitly labeled, JSON-encoded program data.
+
+Tempo records start, elapsed running time, the outcome and the supplied line. Each program job
+has zero model calls and tokens. Its wake uses ordinary inbox admission in the same conversation.
+A run requesting a post queues it through the bridge. Delivery then follows the bridge's normal
+held, sent and uncertain-delivery handling. Replay of the finish receipt cannot enqueue a second
+post or wake. Invalid results apply no effects. Loom reports a failed or lost job and waits for
+the next firing. It never re-executes an uncertain program attempt automatically.
+
+Overlapping firings are skipped. Set `programPeriod: "day"` to admit at most one attempt per
+household calendar date, including failed or quiet attempts. Leave it unset for a frequent
+watch. The trigger details show the latest outcome and its retained state. The scoped query
+`tempoProgram(id: String!)` returns the descriptor and state to the owner or the agent.
