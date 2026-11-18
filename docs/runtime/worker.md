@@ -1648,3 +1648,32 @@ Claude Code 2.1.327 prints uncached input, cache reads, and cache writes separat
 Codex CLI 0.162.1 reports inclusive input, cached input, cache writes, and output on `turn.completed`. Its ephemeral JSON stream identifies completed tool items but does not give per-call context or the number of model calls. A Codex turn can contain several calls. These two values stay unknown. agy 1.5.11 reports input, output, and cache read tokens on its result. Its completed tool steps supply the tool names and counts. Its turn count does not establish a model-call count. A prompt run with an isolated, unsigned-in home returned an authentication error with explicit zero token counts.
 
 For the GraphQL queries, count definitions and observations, see [Reading job usage](job-usage.md).
+
+## Reading a machine from a house
+
+A worker opts in by listing fixed diagnostics in its JSON configuration. On an existing hosting worker, add the following fields alongside its normal container settings.
+
+```json
+{
+  "reads": ["unit-state", "unit-journal", "failed-units", "restarting-units", "disk", "memory", "swap", "load", "uptime", "boots", "worker-log"],
+  "journalUnits": [{"scope":"user","unit":"art-chain-check.service"}]
+}
+```
+
+For a dedicated inspection worker, enroll the machine as report-only and run the worker as an unprivileged Linux user with this configuration, substituting the enrolled machine ID, Loom URL and worker token file.
+
+```json
+{
+  "url": "https://loom.example",
+  "box": "ENROLLED_MACHINE_ID",
+  "tokenFile": "/run/credentials/loom-worker/worker-token",
+  "reportOnly": true,
+  "reads": ["disk", "memory", "swap", "load", "uptime", "boots", "failed-units", "restarting-units", "unit-state", "proxmox-vms", "proxmox-containers", "zpool", "zfs"]
+}
+```
+
+The report-only program reports health and polls for diagnostics. It never constructs a job executor. Both modes poll every three seconds when reads are configured. The server considers an offer stale after 15 seconds. Only installed, executable utilities are advertised. Filesystem and service permissions can still refuse an invocation. A Proxmox installation that restricts pct or qm to root cannot supply those reads through this worker. There is no privileged helper. Running with a root UID or effective, permitted or ambient Linux capabilities disables reads. Each command runs under setpriv with no-new-privileges and empty inheritable and ambient capability sets.
+
+A current job calls the named tool `machine_read` with the enrolled machine ID, a read name and its arguments. The underlying operation is `machine.read`. A machine that hosts the agent is eligible. Its owner can also grant inspection on the machine page. Loom checks the job's word, credential and current machine grant before dispatch and delivery. One request per machine can wait at a time, for up to 30 seconds. The executable has four seconds and at most 16,384 output bytes. A refused result contains a reason. A successful result identifies the machine and read and wraps output in an array of untrusted lines.
+
+Read names, arguments and disclosure limits are in [Machine reads](machine-reads.md).

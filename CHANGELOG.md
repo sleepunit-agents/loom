@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- House jobs can request fixed, audited diagnostics from opted-in machine workers. A report-only worker can answer without hosting jobs. Schema 15 adds explicit inspection grants and read history.
+
 - Tempo lanes can require or prefer machine facts. Agent run settings can prefer facts for ordinary jobs. Placement falls back immediately when a preferred machine is unavailable, and job history explains the claim. Schema 14 preserves existing households.
 
 - Claimed jobs and active bodies tolerate temporary Loom outages. Worker reports and replay-safe body calls retry for up to two minutes. Restarting the server gives claimed jobs a fresh reporting interval, including jobs still starting.
