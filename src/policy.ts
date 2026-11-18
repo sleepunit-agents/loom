@@ -226,10 +226,12 @@ const asksToJoin: Rule = any(agentItself, householdOwner);
  *  - a standing answer: a secret rule, the household default, or a grant made for the agent and no one job;
  *  - an owner's own answer to a request for one job.
  * A standing answer is about the agent: a secret a household owner has said the agent may have is the
- * agent's to use, in its own work and in work it does for anyone. Whether the agent may do a piece of work
- * for a person is a separate question, and it is not asked through the secret (the owner's ruling,
- * 2026-11-17: "you have permission to have the key, the ask is different: can I perform this task for
- * allison"). So a rule or the household default answers a request from any of the agent's bodies.
+ * agent's to use, in its own work and in work it does for its owners, whichever of them the work is for (the
+ * owner's ruling, 2026-11-17: "you have permission to have the key, the ask is different: can I perform this
+ * task for allison"). So a rule or the household default answers a request from such a body.
+ * Not from a body working on anybody else's word: that job runs with loom's tools only (loomToolsOnly) and is
+ * handed no secret at all. That is asked of the job, where its mail is known (shared-secret-inputs.ts,
+ * shared-secret-agent-commands.ts), and not of the viewer here.
  * A body whose member has left the household or lost the agent gets nothing (agentItself).
  *
  * The worker's own hand-off is asked for apart: a worker fetches the house's repository with the agent's
@@ -559,6 +561,18 @@ export function maySchedule(woke: Woke, conversation: { id?: string; venue: stri
  * with no person behind it; `owners`, when everybody behind it is a household owner or a member who has
  * the agent; `others`, when anybody else is: a guest, an unlinked coworker, a member without the agent. */
 export type Woke = 'own' | 'owners' | 'others';
+/** What a job may use, by the word it works on. The one statement: a job whose word is anybody else's (not
+ * the agent's own work, not its owners') runs with loom's tools only. Its harness is given no shell, no
+ * files, no web and no helpers of its own, whatever the machine gives its bodies; a harness that cannot be
+ * held so does not run it; it is handed no secret, at start or on request; and no file goes to it or from
+ * it. Everything that decides one of those asks here: the body (runtime/harness-traits.ts, on the word the
+ * dispatcher handed it), the secrets door (shared-secret-inputs.ts, shared-secret-agent-commands.ts) and a
+ * post's files (shared-bridge-reply.ts). The agent's own list of tools a body is not given
+ * (agentDeniedTools) applies on top and can only take more away. An owner cannot yet give a named outside
+ * person more than this (docs/accepted-tradeoffs.md). */
+export function loomToolsOnly(woke: Woke): boolean {
+  return woke === 'others';
+}
 /** A person mail is sent on the word of: a household member, or an outside account by the key loom knows it by. */
 export type OnWord = { kind: 'member' | 'outside'; id: string };
 /** Who asked for a trigger that names a conversation: such a person, or the agent itself. */

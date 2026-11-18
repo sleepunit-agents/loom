@@ -129,7 +129,7 @@ it('reads a stored denial as the entries a harness would take it for, in one pla
  expect(denialEntries('a)b c')).toEqual(['a)b','c']);
  expect(denialEntries(' , ')).toEqual([]);
  // What a job's body is not given is those entries, each once: what a harness is handed needs no further splitting.
- const policy=(people:WorkerRunPolicy['people'])=>({people,deniedTools:[{pattern:'Bash, Read',guestsOnly:false},{pattern:'Read mcp__loom__forget',guestsOnly:true}]});
+ const policy=(people:WorkerRunPolicy['people'])=>({word:people.length?'others' as const:'owners' as const,people,deniedTools:[{pattern:'Bash, Read',guestsOnly:false},{pattern:'Read mcp__loom__forget',guestsOnly:true}]});
  expect(deniedTools(policy([]))).toEqual(['Bash','Read']);
  expect(deniedTools(policy([{kind:'unknown',person:null,tier:null}]))).toEqual(['Bash','Read','mcp__loom__forget']);
  expect(deniedTools(undefined)).toEqual([]);
@@ -137,7 +137,7 @@ it('reads a stored denial as the entries a harness would take it for, in one pla
 
 it('denies every named tool in a shared place that is denied a generic tool, however the denial was written',()=>{
  const named=bodyNamedToolNames().map(name=>harnessToolPrefix+name);
- const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
+ const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({word:'owners',people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
  expect(harnessToolPrefix).toBe('mcp__loom__');
  expect(denied('Bash','Write')).toEqual(['Bash','Write']);
  expect(denied('mcp__loom__remember')).toEqual(['mcp__loom__remember']);
@@ -159,7 +159,7 @@ it('denies every named tool in a shared place that is denied a generic tool, how
 
 it('keeps a denial stored under the tools server\'s old name in force, in every form the store accepts',()=>{
  const named=bodyNamedToolNames().map(name=>harnessToolPrefix+name);
- const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
+ const denied=(...stored:string[])=>bodyDeniedTools(deniedTools({word:'owners',people:[],deniedTools:stored.map(pattern=>({pattern,guestsOnly:false}))}));
  const every=['request_secret','use_secret','loom_commands','loom_command','loom_query',...bodyNamedToolNames()].map(name=>harnessToolPrefix+name);
  // The old entry stays as written (it names nothing now) and the tool it took away is named as it is called today.
  expect(denied('mcp__loom_secrets__use_secret')).toEqual(['mcp__loom_secrets__use_secret','mcp__loom__use_secret']);

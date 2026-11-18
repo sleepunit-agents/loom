@@ -27,15 +27,28 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
   * extraTools, the body is also served the named tools a terminal session has (body-named-tools.ts). */
  agent?:string;
  /** Whether the body was given its identity in its first words; `identity` then does not repeat it. */
- identityHanded?:boolean}){
+ identityHanded?:boolean;
+ /** False for a body held to loom's tools because its job works on anybody else's word (policy.ts,
+  * loomToolsOnly): `request_secret` and `use_secret` are then not served and not listed. loom's door refuses
+  * such a job the same things (shared-secret-inputs.ts, shared-secret-agent-commands.ts). */
+ secrets?:boolean;
+ /** The other secret values this body holds: the ones it was started with (body-secrets.ts). They are looked
+  * for wherever a used secret's value is. */
+ alsoSecret?():readonly Buffer[]}){
+ const secretTools=input.secrets!==false;
  const generic=bodyModelTools(input.extraTools);
- const extensions=bodyModelTools([...generic,...(input.agent?bodyNamedTools({agent:input.agent,generic,identityHanded:input.identityHanded}):[])]),allowedTools=Object.freeze(['request_secret','use_secret',...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
+ const extensions=bodyModelTools([...generic,...(input.agent?bodyNamedTools({agent:input.agent,generic,identityHanded:input.identityHanded}):[])]),allowedTools=Object.freeze([...(secretTools?['request_secret','use_secret']:[]),...extensions.map(tool=>tool.name)].map(name=>harnessToolPrefix+name));
  const clock=input.clock??systemClock,stop=new AbortController(),signal=AbortSignal.any([input.signal,stop.signal]);
  const entropy=randomBytes(32);let bearer:string;try{bearer='Bearer local_secret_'+entropy.toString('hex');}finally{entropy.fill(0);}
  const expected=Buffer.from(bearer),active=new Set<Promise<Response>>();
  let authority:string|undefined,closed=false,waiting=0,retained=0,closing:Promise<void>|undefined,config:Buffer|undefined;
  const exposed:Buffer[]=[];
- const allowsReply=(text:string)=>{const bytes=Buffer.from(text);try{return !exposed.some(value=>bytes.includes(value));}finally{bytes.fill(0);}};
+ // No secret this body was handed is said by it: not in its answer (the body program asks allowsReply), and
+ // not in anything it sends through a tool, which is how a post (bridges.say, bridges.post) and a reply of its
+ // own making (bridges.reply) leave. Every text in a tool call is looked at, whatever the command.
+ const allowsReply=(text:string)=>{const bytes=Buffer.from(text);try{return ![...exposed,...(input.alsoSecret?.()??[])].some(value=>value.length>0&&bytes.includes(value));}finally{bytes.fill(0);}};
+ const allowsCall=(value:unknown,depth=0):boolean=>typeof value==='string'?allowsReply(value):!value||typeof value!=='object'?true
+  :depth<32&&Object.entries(value).every(([key,inner])=>allowsReply(key)&&allowsCall(inner,depth+1));
  const metadata=(signal:AbortSignal)=>bodyConversationClient({...input,clock,signal});
  // Validate the fixed Root origin/identity before binding a local listener.
  const check=metadata(signal);check.close();if(signal.aborted)throw unavailable();
@@ -59,6 +72,7 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
    try{const current=AbortSignal.any([signal,request.signal,callSignal]);if(current.aborted)throw unavailable();const result=await work(current);if(current.aborted||closed)throw unavailable();return result;}
    catch{return failed();}
   };
+  if(secretTools){
   server.registerTool('request_secret',{description:'Request a credential for this agent/job with a reason and duration. Reuse the UUID when retrying this same request. A pending result waits in the owner Inbox; pass its id to use_secret to wait for the decision.',inputSchema:agentSecretRequest},(args,extra)=>run(async signal=>{
    const client=metadata(signal);try{return{content:[{type:'text',text:JSON.stringify(await client.requestSecret(args))}]};}finally{client.close();}
   },extra.mcpReq.signal));
@@ -82,7 +96,8 @@ export async function bodySecretTools(input:{url:string;token:string;job:string;
     return{content:[{type:'text',text:JSON.stringify({encoding:'base64',value:encoded})}]};
    }finally{value?.fill(0);privateInput.close();client.close();if(waitingHere){waiting--;input.waiting?.(waiting>0);}}
   },extra.mcpReq.signal));
-  for(const tool of extensions)server.registerTool(tool.name,{description:tool.description,inputSchema:tool.inputSchema},(args,extra)=>run(signal=>tool.execute(args,signal),extra.mcpReq.signal));
+  }
+  for(const tool of extensions)server.registerTool(tool.name,{description:tool.description,inputSchema:tool.inputSchema},(args,extra)=>run(async signal=>{if(!allowsCall(args))throw unavailable();return tool.execute(args,signal);},extra.mcpReq.signal));
   try{await server.connect(transport);if(closed||signal.aborted)throw unavailable();const response=await transport.handleRequest(bounded);if(closed||signal.aborted){await response.body?.cancel();return new Response(null,{status:403});}return response;}
   catch{return new Response(null,{status:503});}
   finally{await transport.close();await server.close();}

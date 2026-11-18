@@ -13,6 +13,10 @@ export interface WorkerRunPolicy {
   /** The inbox items `people` was read from, at claim. Mail the body takes that is not among them arrived
    * later and its sender was never looked up. Absent from a loom older than this field. */
   mail?: string[];
+  /** On whose word the job works, by least reach (shared-place-mail.ts, jobWord), read at claim from the mail
+   * the job is offered. Anybody else's holds the body to loom's tools (policy.ts, loomToolsOnly). Absent from
+   * a loom older than this field, and then read as anybody else's: closed, not open. */
+  word?: 'own' | 'owners' | 'others';
 }
 export interface WorkerRunOptions {
   policy?: WorkerRunPolicy;

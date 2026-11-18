@@ -8,7 +8,7 @@ import type { HarnessSpawn } from './body-harness.js';
 import type { WorkerAssignment } from './worker.js';
 import { bodyNamedToolNames } from './body-named-tools.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'gpt-fictional', account: 'sub', harness: 'codex', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
-  run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [] } } };
+  run: { nestedContainers: false, gpu: false, ports: [], policy: { word: 'owners', people: [], deniedTools: [] } } };
 const bearer = 'Bearer local_secret_' + 'ab'.repeat(32);
 const toolsFile = () => Buffer.from(JSON.stringify({ mcpServers: { loom: { type: 'http', url: 'http://127.0.0.1:4242', headers: { Authorization: bearer }, timeout: 1 } } }));
 const good = [{ type: 'thread.started', thread_id: 't' }, { type: 'turn.started' },
@@ -62,11 +62,11 @@ it.each(['failed turn', 'error event', 'no final turn', 'two threads', 'no words
 });
 it('does not start without full reach, with tools it cannot deny, for another harness, or with a malformed tools file', async () => {
   for (const [input, changed] of [[{ reach: 'loom' as const }, job], [{ reach: undefined }, job], [{}, { ...job, harness: 'claude' }],
-    [{}, { ...job, run: { ...job.run!, policy: { people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: false }] } } }]] as const) {
+    [{}, { ...job, run: { ...job.run!, policy: { word: 'owners', people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: false }] } } }]] as const) {
     const f = fixture(input); await expect(f.run(changed, 'mail', f.abort.signal)).rejects.toThrow('Native execution unavailable'); expect(f.launch).not.toHaveBeenCalled();
   }
   // A denial that only applies to guests does not stop a body with no guests in the room.
-  const f = fixture(), result = f.run({ ...job, run: { ...job.run!, policy: { people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: true }] } } }, 'mail', f.abort.signal); f.finish(good); await result;
+  const f = fixture(), result = f.run({ ...job, run: { ...job.run!, policy: { word: 'owners', people: [], deniedTools: [{ pattern: 'Bash(*)', guestsOnly: true }] } } }, 'mail', f.abort.signal); f.finish(good); await result;
   expect(() => fixture({ mcpConfig: Buffer.from('{"mcpServers":{"loom":{"url":"https://elsewhere.example","headers":{"Authorization":"' + bearer + '"}}}}') })).toThrow('Native execution unavailable');
   expect(() => fixture({ mcpTools: ['Bash'] })).toThrow('Native execution unavailable');
   expect(() => fixture({ mcpConfig: undefined })).toThrow('Native execution unavailable');

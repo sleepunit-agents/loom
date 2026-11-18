@@ -9,7 +9,7 @@ import {nativeClaudeFixture as fixture} from '../../test/fixtures/native-claude.
 import type { WorkerAssignment } from './worker.js';
 import { bodyNamedToolNames } from './body-named-tools.js';
 const job: WorkerAssignment = { id: 'j', box: 'b', agent: 'art', conversation: 'cv', model: 'requested-model', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' },
-  run: { nestedContainers: false, gpu: false, ports: [], policy: { people: [], deniedTools: [{ pattern: 'Read', guestsOnly: false }, { pattern: 'Bash(*)', guestsOnly: true }] } } };
+  run: { nestedContainers: false, gpu: false, ports: [], policy: { word: 'owners', people: [], deniedTools: [{ pattern: 'Read', guestsOnly: false }, { pattern: 'Bash(*)', guestsOnly: true }] } } };
 
 it('selects the requested model, denies native tools, and reports response models instead of init/request/usage guesses', async () => {
   const f = fixture(), result = f.run(job, 'PRIVATE ACCEPTED MAIL', f.abort.signal); f.env.ACCOUNT_PROFILE = '/changed';
@@ -22,7 +22,7 @@ it('selects the requested model, denies native tools, and reports response model
   expect(await result).toEqual({ text: 'Answer é', model: 'observed-model', actions: [{ model: 'tool-model' }] });
 });
 it.each([1, 2, null] as const)('applies guest-only native denials for tier %s', async tier => {
-  const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }];
+  const f = fixture(), configured = structuredClone(job); configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier }]; configured.run!.policy!.word = 'others';
   const result = f.run(configured, 'mail', f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-3)).toEqual(['--disallowedTools', 'Read', 'Bash(*)']); f.finish(f.rows()); await result;
 });
 it('starts no harness for a denial whose later entry would be read as an option', async () => {
@@ -33,7 +33,7 @@ it('starts no harness for a denial whose later entry would be read as an option'
 it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__loom__loom_query', 'Read mcp__loom_secrets__loom_command'])('denies every named tool in a shared place that is denied the generic tool under it: %s', async pattern => {
   // An owner's rule may be for guests only, and may have been stored when the tools server had its old name.
   const f = fixture(), configured = structuredClone(job);
-  configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }];
+  configured.run!.policy!.people = [{ kind: 'outside', person: 'outside-key', tier: 1 }]; configured.run!.policy!.word = 'others';
   configured.run!.policy!.deniedTools = [{ pattern, guestsOnly: true }];
   const result = f.run(configured, 'mail', f.abort.signal), args = f.launch.mock.calls[0][1], denied = args.slice(args.indexOf('--disallowedTools') + 1);
   // Each entry is its own argument, so the harness has nothing left to split; the generic tool is named as it is called now.
@@ -43,7 +43,7 @@ it.each(['mcp__loom__loom_command', 'mcp__loom_secrets__loom_query', 'Bash,mcp__
   expect(denied).toEqual(expect.arrayContaining(['mcp__loom__remember', 'mcp__loom__forget', 'mcp__loom__task_close', 'mcp__loom__recall']));
   f.finish(f.rows()); await result;
   // The same rule with no guest in the room denies nothing.
-  const g = fixture(), household = structuredClone(configured); household.run!.policy!.people = [];
+  const g = fixture(), household = structuredClone(configured); household.run!.policy!.people = []; household.run!.policy!.word = 'owners';
   const quiet = g.run(household, 'mail', g.abort.signal); expect(g.launch.mock.calls[0][1]).not.toContain('--disallowedTools'); g.finish(g.rows()); await quiet;
 });
 it.each(['requested-only', 'mismatch', 'foreign-session', 'error', 'synthetic', 'subagent', 'aborted', 'invalid-json', 'invalid-utf8', 'overflow'] as const)('refuses %s native output without a guessed response', async mode => {
@@ -78,9 +78,9 @@ it('does not classify authenticated household people as guests from a missing ou
   const result = f.run(configured,'mail',f.abort.signal); expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']); f.finish(f.rows()); await result;
 });
 
-it('keeps guest-only tools available for an outside sender with configured tier three',async()=>{
- const f=fixture(),configured=structuredClone(job);configured.run!.policy!.people=[{kind:'outside',person:'outside-key',tier:3}];
- const result=f.run(configured,'mail',f.abort.signal);expect(f.launch.mock.calls[0][1].slice(-2)).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await result;
+it('goes by the job\'s word and not by a tier: an outside sender of tier three is anybody else, and guest-only denials apply',async()=>{
+ const f=fixture(),configured=structuredClone(job);configured.run!.policy!.people=[{kind:'outside',person:'outside-key',tier:3}];configured.run!.policy!.word='others';
+ const result=f.run(configured,'mail',f.abort.signal);expect(f.launch.mock.calls[0][1].slice(-3)).toEqual(['--disallowedTools','Read','Bash(*)']);f.finish(f.rows());await result;
 });
 
 it('erases original native stdout/stderr buffers and late output after cancellation',async()=>{

@@ -4,7 +4,9 @@
  * - Claude Code reads its tools file from a path, so the file goes in on file descriptor 3 (see
  *   runHarnessChild): the tools endpoint's bearer is in no argument, environment variable or file.
  * - It can be held to loom's tools only, and it honours the tools a body is not given, so it runs on any
- *   machine and for any job.
+ *   machine and for any job. A job on anybody else's word is held so on every machine (harness-traits.ts,
+ *   bodyReach): permission mode `dontAsk` with loom's tools listed, where a job for owners on a machine of
+ *   full reach runs with `bypassPermissions`.
  * - Its events name the model that answered. The reply carries that model, never the one asked for.
  * No Root credential enters argv, environment or model input. The outer worker owns the process group,
  * including this child. */
@@ -16,7 +18,7 @@ import { join, normalize, sep } from 'node:path';
 import { filesUnfollowed, listUnfollowed } from './unfollowed.js';
 import { HarnessResumeUnavailable, harnessModel, harnessToolNames, harnessToolPrefix, harnessUnavailable, runHarnessChild, type BodyHarness, type Harness, type HarnessSpawn } from './body-harness.js';
 import { SESSION_ID } from '../core/conversations/session-limit.js';
-import { deniedTools } from './harness-traits.js';
+import { bodyReach, deniedTools } from './harness-traits.js';
 import { bodyDeniedTools } from './body-named-tools.js';
 
 /** What marks an event of the model's own in the harness's output. */
@@ -43,6 +45,8 @@ export const claudeBody: BodyHarness = input => {
       || !words.trim() || words.includes('\0') || Buffer.byteLength(words) > BODY_INPUT_BYTES){control?.fill(0);throw harnessUnavailable();}
     // With the named tools a denied generic tool takes with it, and old server names read as the present one.
     const denied = bodyDeniedTools(deniedTools(job.run?.policy));
+    // The reach this job's body really has: loom's tools only on anybody else's word, whatever the machine gives (bodyReach).
+    const reach = bodyReach(input.reach ?? 'loom', job.run?.policy);
     if (denied.some(pattern => !pattern.trim() || pattern.trim().startsWith('-') || /[\0\r\n]/.test(pattern))){control?.fill(0);throw harnessUnavailable();}
     // Asked to keep a session, Claude Code writes its transcript under its own directory (sessionFiles below)
     // and can continue one by id. Otherwise nothing is written, as before. A continued session keeps its id
@@ -53,8 +57,9 @@ export const claudeBody: BodyHarness = input => {
     const args = ['-p', '--model', job.model, ...(resume ? ['--resume', resume] : ['--session-id', session!]),
       '--output-format', 'stream-json', '--verbose', ...(keep ? [] : ['--no-session-persistence']),
       // With full reach nothing asks and nothing is listed: everything is allowed except what is denied below.
-      '--permission-mode', input.reach==='all'?'bypassPermissions':'dontAsk', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', control?'/dev/fd/3':'{"mcpServers":{}}',
-      ...(control&&input.reach!=='all'?['--allowedTools',...allowed]:[]),
+      // Held to loom's tools, nothing is allowed that is not listed: no shell, no files, no web, no helpers.
+      '--permission-mode', reach==='all'?'bypassPermissions':'dontAsk', '--setting-sources', '', '--strict-mcp-config', '--mcp-config', control?'/dev/fd/3':'{"mcpServers":{}}',
+      ...(control&&reach!=='all'?['--allowedTools',...allowed]:[]),
       ...(denied.length ? ['--disallowedTools', ...denied] : [])];
     let output: Buffer;
     try { output = await runHarnessChild({ command: input.command, args, cwd: input.cwd, env, words, signal, spawn: input.spawn, control,
