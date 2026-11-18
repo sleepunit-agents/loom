@@ -725,3 +725,19 @@ it('judges the thread of a channel target before any conversation is opened: non
  expect((await note(discord)).status).toBe(200);expect((await post(discord)).status).toBe(200);
  expect((await note({...slack,thread:'1794432000.000001'})).status).toBe(200);
 });
+
+it('queues no answer to a firing or a note once the conversation\'s channel is filtered out, and says why',async()=>{
+ const {f,cv}=await sharedPlace(()=>false);
+ f.root.writes.run(()=>{f.db.update(inbox).set({state:'done'}).where(eq(inbox.job,'body')).run();f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();f.db.update(jobs).set({conversation:cv}).where(eq(jobs.id,'other')).run();
+  const fired=f.root.services.conversations.send({conversation:cv,toKind:'agent',to:'art',source:'trigger',sourceId:'tr:now',fromKind:'schedule',words:'Post the numbers',onWordKind:'outside',onWord:GUEST});
+  f.db.update(inbox).set({job:'other',state:'taken'}).where(eq(inbox.id,fired.id)).run();
+  // After the firing arrived the owner filtered the channel out: a message there would no longer be heard.
+  f.db.insert(bridgeChannelFilters).values({connection:'connection',rule:'ignore',channel:'CROOM'}).run();});
+ const closed={status:400,body:{message:'Nothing can be posted there: its channel is filtered out'}};
+ expect(await f.call('bridges','reply',{id:randomUUID(),text:'The numbers',model:'observed'},token.other)).toMatchObject(closed);
+ expect(await f.call('bridges','say',{id:randomUUID(),text:'Working'},token.other)).toMatchObject(closed);
+ expect(f.db.select().from(bridgeSends).all()).toEqual([]);
+ f.root.writes.run(()=>f.db.delete(bridgeChannelFilters).run());
+ expect((await f.call('bridges','reply',{id:randomUUID(),text:'The numbers',model:'observed'},token.other)).status).toBe(200);
+ expect(f.db.select().from(bridgeSends).all()).toMatchObject([{incoming:null,conversation:cv,state:'held'}]);
+});

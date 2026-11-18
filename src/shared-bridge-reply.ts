@@ -41,12 +41,13 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
  };
  /** A job whose mail in its bridge conversation is not a message from the bridge (a trigger's firing, a note
   * from another body of the agent) answers by a post in the conversation itself: there is no message to
-  * answer. Where that is comes from the conversation's place (shared-place-mail.ts). */
+  * answer. Where that is comes from the conversation's place (shared-place-mail.ts), and whether anything may
+  * be posted there now from the rules a message arriving there is admitted by (placeClosed): `closed` says why not. */
  const placed=(viewer:Viewer)=>{
   const found=current(viewer);if(!found||viewer.kind!=='agent'||viewer.id!==found.cv.agent||!isBridgeVenue(found.cv.venue))return;
   const mail=db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.toKind,'agent'),eq(inbox.to,found.cv.agent),eq(inbox.conversation,found.cv.id),eq(inbox.job,found.job.id),inArray(inbox.state,['taken','done']),inArray(inbox.source,['trigger','handoff']))).all();
   const at=mail.length?placeAddress(db,found.cv):undefined;
-  return at?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,at:{conversation:found.cv.id,connection:at.connection,channel:at.channel,thread:at.thread},since:found.job.claimedAt??found.job.queuedAt}:undefined;
+  return at?{agent:found.cv.agent,job:found.job.id,conversation:found.cv.id,at:{conversation:found.cv.id,connection:at.connection,channel:at.channel,thread:at.thread},since:found.job.claimedAt??found.job.queuedAt,closed:placeClosed(db,found.cv)}:undefined;
  };
  /** Everything posted for what a job took: answers to its messages, and its posts in the conversation since it was claimed. */
  const posted=(took:readonly string[],place?:{conversation:string;since:string})=>[
@@ -57,6 +58,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   inputHash:(canonical,{actor,input})=>createHash('sha256').update('loom-shared-bridge-reply-receipt-v1\0').update(JSON.stringify([input.incoming?target(actor,input.incoming)??null:placed(actor)?.job??null,canonical])).digest('hex'),
   run(ctx,input){
    const place=input.incoming?undefined:placed(ctx.viewer),bound=input.incoming?target(ctx.viewer,input.incoming):place;if(!bound)throw new OperationError('denied','Current bridge body required');
+   if(place?.closed)throw new OperationError('invalid',`Nothing can be posted there: ${place.closed}`);
    const existing=db.select({id:bridgeSends.id}).from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
    try{sends.queue({id:input.id,text:input.text,held:!effectsAllowed(),...(input.incoming?{incoming:input.incoming}:{at:place!.at})});}catch{throw new OperationError('invalid','Bridge reply could not be queued');}
    // The reply is the answer to everything this job took in the conversation before it, as a thread reply
@@ -129,6 +131,7 @@ export function registerSharedBridgeReply(operations:Operations,db:DataDatabase,
   inputHash:(canonical,{actor})=>createHash('sha256').update('loom-shared-bridge-say-receipt-v1\0').update(JSON.stringify([speaking(actor)?.job??null,canonical])).digest('hex'),
   run(ctx,input){
    const bound=speaking(ctx.viewer);if(!bound)throw new OperationError('denied','Current bridge body required');
+   if(!bound.incoming&&bound.place?.closed)throw new OperationError('invalid',`Nothing can be posted there: ${bound.place.closed}`);
    // Counted over everything posted for what this job took, the reply included, so a body that loops cannot flood a channel.
    const said=posted(bound.took,bound.place&&{conversation:bound.place.conversation,since:bound.place.since});
    if(!said.some(send=>send.id===input.id)&&said.length>=BRIDGE_POSTS_PER_JOB)throw new OperationError('conflict',`A job posts at most ${BRIDGE_POSTS_PER_JOB} messages for the mail it took`);
