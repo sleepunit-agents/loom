@@ -26,7 +26,7 @@ it('orders conversations by reported tokens and opens the selected jobs in the s
 });
 
 it('uses selections and argument types served by the runtime',async()=>{
-  const {parse,validate,GraphQLSchema,GraphQLObjectType}=await import('graphql/index.js');
+  const {parse,validate,GraphQLSchema,GraphQLObjectType}=await import('../../../../node_modules/graphql/index.js');
   const {jobSummaryFields}=await import('../../../../src/runtime/job-summary');
   const {conversationsQuery,jobsQuery}=await import('./index');
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:jobSummaryFields({} as never)})});
