@@ -77,15 +77,19 @@ attempts wait five seconds.
 The worker sends job heartbeats every 15 seconds during a build, while waiting for
 an account, and while a body runs. A heartbeat that says the job is inactive ends
 local work immediately. When the server cannot be reached, the worker keeps the
-slot and measures 120 seconds from the first unanswered heartbeat attempt. An
-answered heartbeat clears that timer. Each heartbeat gets a fresh operation id
+slot for up to 120 seconds from the first unanswered heartbeat attempt. It makes
+a final probe with a one-second deadline. A delayed response cannot extend the
+slot beyond 136 seconds from the dispatch of the last acknowledged heartbeat.
+An answered heartbeat resets the window. Each heartbeat gets a fresh operation id
 so the worker always checks the job's current state. Started and finish reports
 use the same id across attempts so a lost response cannot start or finish a job twice.
 
 On startup the server gives previously claimed jobs a full 120 seconds to report.
 Each sweep measures silence from the later of server startup and the last job
 report. The first sweep strictly past 120 seconds of observed silence marks a job
-lost and records the elapsed seconds. The usual retry policy then applies. Queue
+lost and records the elapsed seconds. A successor to a lost claim can start after
+the usual retry delay and at least 151 seconds from the previous claim’s last report.
+This gives the previous worker time to stop during a network partition. Queue
 deadlines still use their original timestamps.
 
 With the updated worker and body already running, an active job on a healthy
@@ -1467,7 +1471,7 @@ without a receipt, so an ambiguous recall is reported to the caller. Private sec
 value reads and confirmations likewise have no replay guarantee.
 
 Body calls back off from one second to at most ten seconds between attempts,
-with a total budget of 120 seconds. An exhausted tool call returns an error to
+for 120 seconds. A final attempt gets at most one further second. An exhausted tool call returns an error to
 the model naming the interval. Lost contact during required body reporting ends
 the body with exit 20. Best-effort final usage keeps its shorter delivery budget. Current Root policy,
 input validation and receipts remain authoritative. A command name cannot change

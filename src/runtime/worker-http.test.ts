@@ -56,10 +56,10 @@ describe('worker operation client', () => {
     expect(fetcher.mock.calls[0][1]?.body).toEqual(fetcher.mock.calls[1][1]?.body);
     bootstrap.erase?.();
   });
-  it('ceases claiming authority when Loom explicitly rejects the heartbeat', async () => {
-    expect(await client(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: false, code: 'denied', message: 'Not permitted' }, { status: 403 }))).heartbeat('j1', 'running')).toBe(false);
+  it.each([401, 403])('ceases claiming authority when Loom explicitly rejects the heartbeat (HTTP %i)', async status => {
+    expect(await client(vi.fn<typeof fetch>().mockResolvedValue(Response.json({ ok: false, code: 'denied', message: 'Not permitted' }, { status }))).heartbeat('j1', 'running')).toBe(false);
   });
-  it.each([200, 403, 429, 500])('treats an unrecognized heartbeat reply (HTTP %i) as unanswered', async status => {
+  it.each([200, 401, 403, 429, 500])('treats an unrecognized heartbeat reply (HTTP %i) as unanswered', async status => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('malformed', { status }));
     await expect(client(fetcher).heartbeat('j1', 'running')).rejects.toThrow('Worker heartbeat failed');
   });
@@ -89,7 +89,21 @@ describe('worker operation client', () => {
       const refused = expect(finished).rejects.toThrow(/^Worker finish failed; outcome may be uncertain$/);
       await vi.advanceTimersByTimeAsync(300_000); await refused;
       expect(gaveUp.length).toBeGreaterThan(0);
-      expect(Math.max(...gaveUp)).toBe(SILENCE_MS);
+      expect(Math.max(...gaveUp)).toBe(SILENCE_MS + 1000);
+    } finally { vi.useRealTimers(); }
+  });
+  it('delivers a finish with one receipt when Loom returns in the last second', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    try {
+      const fetcher = vi.fn<typeof fetch>(async () => {
+        if (performance.now() < SILENCE_MS - 1) throw Error('offline');
+        return response({ ok: true });
+      });
+      const control = httpWorkerControl({ url: 'https://loom.example', token: 'synthetic', signal: new AbortController().signal,
+        fetch: fetcher, pause: ms => new Promise(resolve => setTimeout(resolve, ms)) });
+      const pending = control.finish('j1', 0, 'done', 'body'); void pending.catch(() => {});
+      await vi.advanceTimersByTimeAsync(SILENCE_MS); await pending;
+      expect(new Set(fetcher.mock.calls.map(([, init]) => init?.body)).size).toBe(1);
     } finally { vi.useRealTimers(); }
   });
   it('rejects an oversized body and cancels its stream', async () => {

@@ -11,3 +11,6 @@ export const SILENCE_MS = 120_000;
 /** How often the worker and the body report. Several reports fit in the silence interval, so one that is
  * dropped does not end anything. */
 export const REPORT_MS = 15_000;
+
+/** Maximum time for one last request when a contact window ends. */
+export const CONTACT_PROBE_MS = 1_000;

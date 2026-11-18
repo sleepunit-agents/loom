@@ -34,7 +34,7 @@ describe('worker work plane', () => {
     f.control.repositoryInput = vi.fn(() => input.promise);
     const run = f.run(); await flush();
     expect(f.executor.build).not.toHaveBeenCalled();
-    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting');
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting', expect.any(AbortSignal));
     input.resolve(bytes); await flush();
     expect(f.executor.build).toHaveBeenCalledWith(job, expect.any(AbortSignal), bytes);
     expect(bytes.toString()).toBe('PRIVATE_REPOSITORY_INPUT');
@@ -53,12 +53,12 @@ describe('worker work plane', () => {
   it('builds before launching, acknowledges actual spawn, reports real exit and bounds logs', async () => {
     const f = fixture(), run = f.run(); await flush();
     expect(f.executor.start).not.toHaveBeenCalled();
-    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting');
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenCalledWith('j', 'starting', expect.any(AbortSignal));
     f.built.resolve('image:sha'); await flush();
     expect(f.executor.start).toHaveBeenCalledWith(job, 'image:sha', expect.any(AbortSignal));
     expect(f.control.started).not.toHaveBeenCalled(); expect(f.body.release).not.toHaveBeenCalled();
-    f.spawned.resolve(); await flush(); expect(f.control.started).toHaveBeenCalledWith('j', 'image:sha');
-    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'running');
+    f.spawned.resolve(); await flush(); expect(f.control.started).toHaveBeenCalledWith('j', 'image:sha', expect.any(AbortSignal));
+    f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'running', expect.any(AbortSignal));
     f.exited.resolve({ exitCode: 17, logTail: 'x'.repeat(20_000) });
     expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 17, 'x'.repeat(16_384), 'runner');
     expect(f.body.stop).toHaveBeenCalled(); expect(f.disposed).toHaveBeenCalledOnce();
@@ -129,6 +129,30 @@ describe('worker work plane', () => {
     f.built.resolve('image'); f.spawned.resolve(); await flush(); vi.mocked(f.control.heartbeat).mockResolvedValue(true);
     f.exited.resolve({ exitCode: 0, logTail: 'done' }); expect(await run).toBe('finished');
   });
+  it('probes between periodic heartbeats after a 116-second outage', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture(), run = f.run(); await flush();
+      vi.mocked(f.control.heartbeat).mockRejectedValue(Error('offline'));
+      f.clock.ms = REPORT_MS; f.pulse(); await flush();
+      await vi.advanceTimersByTimeAsync(116_000);
+      f.clock.ms = REPORT_MS + SILENCE_MS;
+      vi.mocked(f.control.heartbeat).mockResolvedValue(true);
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(f.control.heartbeat).toHaveBeenCalledTimes(2);
+      expect(f.executor.build.mock.calls[0][1].aborted).toBe(false);
+      f.built.resolve('image'); f.spawned.resolve(); await flush();
+      f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
+    } finally { vi.useRealTimers(); }
+  });
+  it('caps a stalled first heartbeat from the last acknowledged dispatch', async () => {
+    const f = fixture(), run = f.run(); await flush();
+    const pending = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValue(pending.promise);
+    f.clock.ms = REPORT_MS; f.pulse(); await flush();
+    f.clock.ms = REPORT_MS + SILENCE_MS + 1000; f.pulse(); await flush();
+    const stopped = f.executor.build.mock.calls[0][1].aborted;
+    pending.resolve(true); f.abort.abort(); await run; expect(stopped).toBe(true);
+  });
   it('gives the job up once no report has been answered for so long that loom has taken it for lost', async () => {
     for (const phase of ['building', 'running'] as const) {
       const f = fixture(), run = f.run(); await flush();
@@ -149,7 +173,7 @@ describe('worker work plane', () => {
     f.clock.ms = REPORT_MS; f.pulse(); await flush();
     const retry = deferred<boolean>(); vi.mocked(f.control.heartbeat).mockReturnValue(retry.promise);
     f.clock.ms = SILENCE_MS - REPORT_MS; f.pulse(); await flush();
-    f.clock.ms = REPORT_MS + SILENCE_MS; f.pulse(); await flush();
+    f.clock.ms = REPORT_MS + SILENCE_MS + 1000; f.pulse(); await flush();
     expect(f.body.stop).toHaveBeenCalled();
     retry.resolve(true); expect(await run).toBe('abandoned');
     expect(f.control.finish).not.toHaveBeenCalled();
@@ -261,7 +285,7 @@ it('enrolls only after build/spawn and hands the private token only after runnin
   vi.mocked(f.body.release).mockImplementation(async input => { expect(input?.token.toString()).toBe('body_'+'a'.repeat(64)); });
   const run = f.run(); await flush(); expect(f.control.enrollBody).not.toHaveBeenCalled();
   f.built.resolve('image'); await flush(); expect(f.control.enrollBody).not.toHaveBeenCalled(); f.spawned.resolve(); await flush();
-  expect(f.control.enrollBody).toHaveBeenCalledExactlyOnceWith('j', expect.any(AbortSignal)); f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'starting');
+  expect(f.control.enrollBody).toHaveBeenCalledExactlyOnceWith('j', expect.any(AbortSignal)); f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'starting', expect.any(AbortSignal));
   enrolled.resolve({ origin: 'https://loom.example', job: 'j', token }); await flush(); expect(f.control.started).toHaveBeenCalledOnce(); expect(f.body.release).not.toHaveBeenCalled(); expect(token[0]).not.toBe(0);
   ack.resolve(); await flush(); expect(f.body.release).toHaveBeenCalledOnce(); expect(token.every(byte => byte === 0)).toBe(true);
   f.exited.resolve({ exitCode: 0, logTail: 'body_'+'a'.repeat(64) }); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 0, '', 'body');

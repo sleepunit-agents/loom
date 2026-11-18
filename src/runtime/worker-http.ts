@@ -9,7 +9,7 @@ import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 import type { SignInReason } from './account-signin-reasons.js';
-import { SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, SILENCE_MS } from './silence.js';
 import { mintBodyToken } from './body-token.js';
 import { DOOR_REQUEST_BYTES } from '../core/data/door-limit.js';
 export const workerAssignment = z.object({
@@ -56,19 +56,27 @@ function operationCaller(input: WorkerHttpOptions) {
     const signal = AbortSignal.any([input.signal, deadline.signal]);
     let response: Response | undefined;
     if (onAbort) { signal.addEventListener('abort', onAbort, { once: true }); if (signal.aborted) onAbort(); }
+    let rejectAbort!: () => void;
+    const stopped = new Promise<never>((_, reject) => {
+      rejectAbort = () => reject(new WorkerOperationFailure(name, deadline.signal.aborted));
+      signal.addEventListener('abort', rejectAbort, { once: true });
+    });
     try {
+      if (signal.aborted) throw new WorkerOperationFailure(name, false);
       const body = JSON.stringify({ id, input: args });
       if (Buffer.byteLength(body, 'utf8') > DOOR_REQUEST_BYTES) throw new Error('Worker request exceeded limit');
       try {
-        response = await (input.fetch ?? fetch)(new URL(`/api/runtime/${name}`, base), {
+        const flight = (input.fetch ?? fetch)(new URL(`/api/runtime/${name}`, base), {
           method: 'POST', redirect: 'error', signal,
           headers: { authorization: `Bearer ${input.token}`, 'content-type': 'application/json' },
           body,
         });
+        void flight.then(late => { if (signal.aborted) void late.body?.cancel().catch(() => {}); }, () => {});
+        response = await Promise.race([flight, stopped]);
       } catch (error) { throw new WorkerOperationFailure(name, true, !signal.aborted && connectionRefused(error)); }
       // Only a parsed refusal from Loom says this worker has lost authority. A gateway
       // can return its own page (including a 403) while Loom is starting.
-      if (!response.ok && !(name === 'heartbeat' && response.status === 403)) {
+      if (!response.ok && !(name === 'heartbeat' && (response.status === 401 || response.status === 403))) {
         throw new WorkerOperationFailure(name, response.status === 408 || response.status === 429 || response.status >= 500);
       }
       if (!response.body) throw new WorkerOperationFailure(name, false);
@@ -77,14 +85,14 @@ function operationCaller(input: WorkerHttpOptions) {
       let size = 0;
       try {
         while (true) {
-          const { done, value } = await reader.read().catch(() => { throw new WorkerOperationFailure(name, true); });
+          const { done, value } = await Promise.race([reader.read(), stopped]).catch(() => { throw new WorkerOperationFailure(name, true); });
           if (done) break;
           size += value.byteLength;
           // An answer to a worker is small: it reads no more of one than it may send.
           if (size > DOOR_REQUEST_BYTES) throw new Error('Worker response exceeded limit');
           chunks.push(value);
         }
-      } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
       if (signal.aborted) throw new Error('Worker request cancelled');
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (!response.ok) {
@@ -98,8 +106,9 @@ function operationCaller(input: WorkerHttpOptions) {
       throw new WorkerOperationFailure(name, deadline.signal.aborted);
     } finally {
       clearTimeout(timer);
+      signal.removeEventListener('abort', rejectAbort);
       if (onAbort) signal.removeEventListener('abort', onAbort);
-      if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
+      if (response?.body && !response.body.locked) void response.body.cancel().catch(() => {});
     }
   }
   return call;
@@ -109,11 +118,15 @@ async function reportWithRetry<T>(input: WorkerHttpOptions, name: string, attemp
   const start = performance.now(), id = randomUUID();
   const pause = input.pause ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
   const remaining = () => SILENCE_MS - (performance.now() - start);
-  while (!input.signal.aborted && remaining() > 0) {
-    try { return await attempt(id, remaining()); }
+  while (!input.signal.aborted) {
+    const left = remaining(), final = left <= 0;
+    const withinMs = final ? left + CONTACT_PROBE_MS : left;
+    if (withinMs <= 0) break;
+    try { return await attempt(id, withinMs); }
     catch (error) {
       if (!(error instanceof WorkerOperationFailure) || !error.temporary || input.signal.aborted ||
         (name === 'enrollBody' && !error.beforeDelivery)) throw error;
+      if (final) break;
       const wait = Math.min(2_000, remaining());
       if (wait > 0) {
         try { await pause(wait, input.signal); } catch { throw error; }
@@ -193,9 +206,14 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
       });
     },
     next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
-    started: async (job, build) => { await reportWithRetry(input, 'started', (id, remaining) => call('started', { job, build }, ack, undefined, id, remaining)); },
-    heartbeat: async (job, state) => {
-      try { return (await call('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active; }
+    started: async (job, build, signal) => {
+      const options = signal ? { ...input, signal: AbortSignal.any([input.signal, signal]) } : input;
+      const report = operationCaller(options);
+      await reportWithRetry(options, 'started', (id, remaining) => report('started', { job, build }, ack, undefined, id, remaining));
+    },
+    heartbeat: async (job, state, signal) => {
+      const beat = signal ? operationCaller({ ...input, signal: AbortSignal.any([input.signal, signal]) }) : call;
+      try { return (await beat('heartbeat', { job, state }, z.object({ active: z.boolean() }))).active; }
       catch (error) { if (error instanceof WorkerOperationFailure && error.denied) return false; throw error; }
     },
     // The body has already ended, so nothing is lost by asking again, and one dropped reply should not turn

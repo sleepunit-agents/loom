@@ -1,5 +1,5 @@
 import type { Clock } from '../core/clock.js';
-import { SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, SILENCE_MS } from './silence.js';
 
 export const BODY_CONTACT_MS = SILENCE_MS;
 export const BODY_CONTACT_MESSAGE = `Loom is still unavailable after ${BODY_CONTACT_MS / 1000} seconds. The outcome of a write may be uncertain.`;
@@ -14,15 +14,18 @@ export const temporaryStatus = (status: number) => status === 408 || status === 
 export async function retryBodyContact<T>(clock: Clock, signal: AbortSignal, refused: () => Error,
   attempt: (remaining: number) => Promise<T>, budget = BODY_CONTACT_MS): Promise<T> {
   const end = clock.now() + budget;
+  const hardEnd = budget === BODY_CONTACT_MS ? end + CONTACT_PROBE_MS : end;
   let delay = 1_000;
   for (;;) {
     if (signal.aborted) throw refused();
-    const remaining = end - clock.now();
+    const now = clock.now(), final = now >= end;
+    const remaining = (final ? hardEnd : end) - now;
     if (remaining <= 0) throw budget === BODY_CONTACT_MS ? new BodyContactExpired() : refused();
     try { return await attempt(remaining); }
     catch (error) {
       if (signal.aborted) throw refused();
       if (!(error instanceof BodyTransportFailure)) throw error;
+      if (final) throw new BodyContactExpired();
     }
     const wake = Math.min(end, clock.now() + delay);
     if (clock.now() < wake) await new Promise<void>((resolve, reject) => {

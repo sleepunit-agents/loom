@@ -44,3 +44,32 @@ it('retries a command when Loom answers that it is still starting',async()=>{
  await vi.advanceTimersByTimeAsync(1000);
  expect(await pending).toEqual({ok:true,value:'ready'});client.close();
 });
+
+it.each([116000,119999])('saves the required status with its original receipt after Loom returns at %i ms',async recovery=>{
+ vi.useFakeTimers();
+ const start=Date.now(), fetcher=vi.fn<typeof fetch>(async()=>{
+  if(Date.now()-start<recovery)throw Error('offline');
+  return Response.json({ok:true,value:{saved:true,stopRequested:false}});
+ });
+ const client=bodyConversationClient({...options(),job:'job',conversation:'room',fetch:fetcher});
+ const pending=client.status({state:'working',work:'Reading'});void pending.catch(()=>{});
+ await vi.advanceTimersByTimeAsync(120000);
+ expect(await pending).toMatchObject({saved:true});
+ expect(new Set(fetcher.mock.calls.map(([,init])=>init?.body)).size).toBe(1);
+ client.close();
+});
+
+it('aborts an unanswered final status probe after one second',async()=>{
+ vi.useFakeTimers();
+ const start=Date.now();
+ let probe:AbortSignal|undefined;
+ const fetcher:typeof fetch=async (_url,init)=>{
+  if(Date.now()-start<120000)throw Error('offline');
+  probe=init!.signal!;return new Promise(()=>{});
+ };
+ const client=bodyConversationClient({...options(),job:'job',conversation:'room',fetch:fetcher});
+ const refused=expect(client.status({state:'working',work:'Reading'})).rejects.toThrow(/120 seconds/);
+ await vi.advanceTimersByTimeAsync(120999);expect(probe?.aborted).toBe(false);
+ await vi.advanceTimersByTimeAsync(1);await refused;expect(probe?.aborted).toBe(true);
+ client.close();
+});

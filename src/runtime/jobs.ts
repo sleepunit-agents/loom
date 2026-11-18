@@ -14,7 +14,7 @@ import { Conversations, lateMailWaits } from '../core/conversations/index.js';
 import type { AdmitInbox } from '../core/tempo/settle.js';
 import { BODY_EXIT, LOOM_EXIT, type WorkerExitBy } from './job-exit.js';
 import { claimedJobStates, jobUnended, unendedJobStates } from '../core/data/job-states.js';
-import { SILENCE_MS } from './silence.js';
+import { CONTACT_PROBE_MS, REPORT_MS, SILENCE_MS } from './silence.js';
 import { LOG_TAIL_MAX } from './log-tail.js';
 
 export type Job = typeof jobs.$inferSelect;
@@ -346,7 +346,7 @@ export class Jobs {
   }
 
   /** Queue the next attempt of work whose last attempt ended with a reason to run again, if it has any left. */
-  private retry(before: Job, at: string): Job | undefined {
+  private retry(before: Job, at: string, earliest = -Infinity): Job | undefined {
     const unconfirmed = and(eq(inbox.job, before.id), eq(inbox.state, 'waiting'));
     // Once a body has started, only mail it left unconfirmed is a reason to run again.
     if (before.state !== 'starting' && !this.db.select({ id: inbox.id }).from(inbox).where(unconfirmed).get()) return undefined;
@@ -358,8 +358,10 @@ export class Jobs {
       if (depth >= JOB_RETRIES) return undefined;
     }
     const { id: _id, ...snapshot } = before;
+    const backoff = (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth];
+    const retryAt = new Date(Math.max(earliest, Date.parse(at) + backoff)).toISOString();
     const retry = this.db.insert(jobs).values({ ...snapshot, brief: this.keepText(before) ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
-      retryOf: before.id, retryAt: new Date(Date.parse(at) + (before.state === 'starting' ? START_RETRY_MS : RUN_RETRY_MS)[depth]).toISOString(), queuedAt: at,
+      retryOf: before.id, retryAt, queuedAt: at,
       claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, exitBy: null, logTail: null, endedNote: null,
     }).returning().get();
     for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, before.id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
@@ -419,7 +421,11 @@ export class Jobs {
           const asked = this.endIfStopAsked(job, { endedNote });
           if (asked) return asked;
           const ended = this.end(job, 'lost', { endedAt: at, endedNote });
-          this.retry(job, at);
+          // Under a partition, the worker discovers silence on its next pulse, then
+          // gets a full interval and a last probe. Avoid starting its successor while
+          // the earlier slot can still be executing. A late sweep adds no extra wait.
+          const lastReport = Date.parse(job.heardAt ?? job.claimedAt ?? job.queuedAt);
+          this.retry(job, at, lastReport + silenceMs + 2 * REPORT_MS + CONTACT_PROBE_MS);
           return ended;
         });
       const unplaced = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).all()

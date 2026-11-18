@@ -166,6 +166,12 @@ it('tries a job lost while starting again, with its mail, and says in which stat
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: retry.id });
   expect(working(f)).toEqual([retry.id]);
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(retry.id);
+  // A worker may only discover the outage on its next pulse. Give it time to reap
+  // the old attempt before allowing another worker to claim the replacement.
+  f.tick(30_998);
+  expect(f.runtime.claim(retry.id, 'worker')).toBeUndefined();
+  f.tick(1);
+  expect(f.runtime.claim(retry.id, 'worker')?.state).toBe('starting');
 });
 it('records a Comms Stop the same way whether the worker\'s heartbeat or the body\'s own exit brings the news', () => {
   for (const how of ['heartbeat while starting', 'body exit'] as const) {

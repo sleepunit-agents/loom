@@ -75,7 +75,7 @@ it('fetches the house, finds its image, and runs the worker\'s own body program 
   expect(f.engine.build).not.toHaveBeenCalled(); expect(f.source.context).not.toHaveBeenCalled();
   expect(f.engine.attach).toHaveBeenCalledWith(id, expect.any(AbortSignal));
   expect(f.engine.json.mock.calls.map(call => call[1])).toEqual(['/containers/create?name=loom-unique', `/containers/${id}/json`, `/containers/${id}/start`, `/containers/${id}/wait?condition=not-running`]);
-  expect(control.started).toHaveBeenCalledWith('job', built); expect(f.writes).toEqual([]);
+  expect(control.started).toHaveBeenCalledWith('job', built, expect.any(AbortSignal)); expect(f.writes).toEqual([]);
   // The image by the id it was inspected under; its node, the worker's body program, the harness's body
   // file, the image's working directory. No environment but where scratch files go: the rest is the image's.
   expect(f.engine.json.mock.calls[0][2]).toEqual({ Image: imageId, Entrypoint: ['/usr/local/bin/node'], Cmd: ['/opt/loom/dist/body.js', '/etc/loom/body/harness.json'], WorkingDir: '/home/agent/repo',
@@ -1098,7 +1098,7 @@ it('still runs a house whose Housefile does not start from the core, when its im
   const control = controlFor(job), run = once(f, control); await flush();
   // The build is given the core's name like every build; a Housefile that names it nowhere leaves it unused.
   expect(new URL(f.engine.build.mock.calls[1][0], 'http://engine').searchParams.get('dockerfile')).toBe('house/Housefile');
-  expect(control.started).toHaveBeenCalledExactlyOnceWith('job', built);
+  expect(control.started).toHaveBeenCalledExactlyOnceWith('job', built, expect.any(AbortSignal));
   f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); expect(await run).toBe('finished'); expect(control.finish).toHaveBeenCalledExactlyOnceWith('job', 0, '', 'body');
 });
 it('is not made when the directory it is installed in has no definition of the core house', () => {
