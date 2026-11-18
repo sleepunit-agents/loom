@@ -4,12 +4,12 @@ import {useDataQuery} from '../../data/graphql';
 export const conversationsQuery = `query UsageConversations($from:String!, $to:String!) {
   jobUsageRollup(from:$from,to:$to,groupBy:"conversation"){key title totalTokens jobCount retryCount}
 }`;
-export const jobsQuery = `query UsageJobs($from:String!, $to:String!, $conversation:String!) {
+export const jobsQuery = `query UsageJobs($from:String!, $to:String!, $conversation:String) {
   conversationJobUsage(from:$from,to:$to,conversation:$conversation){id title observations usage{
     harness model source tokensIn tokensOut cacheRead cacheWritten modelCalls toolCalls tools{name count} largestContext wallMs
   }}
 }`;
-interface Group {key:string; title:string|null; totalTokens:number|null; jobCount:number; retryCount:number}
+interface Group {key:string|null; title:string|null; totalTokens:number|null; jobCount:number; retryCount:number}
 const metrics = {
   tokensIn:'Input tokens',tokensOut:'Output tokens',cacheRead:'Cache read',cacheWritten:'Cache written',
   modelCalls:'Model calls',toolCalls:'Tool calls',largestContext:'Largest context',wallMs:'Wall time (ms)',
@@ -21,7 +21,7 @@ interface Job {id:string;title:string|null;observations:string[];usage:Measureme
 interface Range {from:string;to:string}
 const format=(value:number|null|undefined)=>value==null?'Unknown':value.toLocaleString();
 
-function Jobs({range,conversation}:{range:Range;conversation:string}) {
+function Jobs({range,conversation}:{range:Range;conversation:string|null}) {
   const {status,data}=useDataQuery<{conversationJobUsage:Job[]}>(jobsQuery,{...range,conversation});
   if(status!=='live'||!data)return <p>{status==='loading'?'Loading jobs…':'Job usage unavailable.'}</p>;
   return <table><caption>Jobs in this conversation</caption><thead><tr>
@@ -30,19 +30,19 @@ function Jobs({range,conversation}:{range:Range;conversation:string}) {
   </tr></thead><tbody>{data.conversationJobUsage.map(({id,title,usage,observations})=><tr key={id}>
     <th scope="row">{title||id}</th><td>{usage?.harness??'Unknown'}</td><td>{usage?.model??'Unknown'}</td>
     {(Object.keys(metrics) as (keyof typeof metrics)[]).map(key=><td key={key}>{format(usage?.[key])}</td>)}
-    <td>{usage?.tools?.map(tool=>tool.name+' × '+format(tool.count)).join(', ')??'Unknown'}</td>
+    <td>{usage?.tools ? usage.tools.map(tool=>tool.name+' × '+format(tool.count)).join(', ')||'None' : 'Unknown'}</td>
     <td>{usage?.source??'none'}</td><td>{observations.join(' ')}</td>
   </tr>)}</tbody></table>;
 }
 function Conversations({range}:{range:Range}) {
-  const [open,setOpen]=useState<string>();
+  const [open,setOpen]=useState<string|null>();
   const {status,data}=useDataQuery<{jobUsageRollup:Group[]}>(conversationsQuery,{...range});
   if(status!=='live'||!data)return <p>{status==='loading'?'Loading conversations…':'Conversation usage unavailable.'}</p>;
   if(!data.jobUsageRollup.length)return <p>No jobs in this period.</p>;
-  const groups=[...data.jobUsageRollup].sort((a,b)=>(b.totalTokens??-1)-(a.totalTokens??-1)||a.key.localeCompare(b.key));
+  const groups=[...data.jobUsageRollup].sort((a,b)=>(b.totalTokens??-1)-(a.totalTokens??-1)||(a.key??'').localeCompare(b.key??''));
   return <table><thead><tr><th>Conversation</th><th>Reported tokens</th><th>Jobs</th><th>Retries</th></tr></thead>
-    <tbody>{groups.map(g=><Fragment key={g.key}><tr><th scope="row"><button aria-expanded={open===g.key}
-      onClick={()=>setOpen(open===g.key?undefined:g.key)}>{g.title||g.key}</button></th>
+    <tbody>{groups.map(g=><Fragment key={JSON.stringify(g.key)}><tr><th scope="row"><button aria-expanded={open===g.key}
+      onClick={()=>setOpen(open===g.key?undefined:g.key)}>{g.title||g.key||'Jobs without a conversation'}</button></th>
       <td>{format(g.totalTokens)}</td><td>{format(g.jobCount)}</td><td>{format(g.retryCount)}</td></tr>
       {open===g.key&&<tr><td colSpan={4}><Jobs conversation={g.key} range={range}/></td></tr>}
     </Fragment>)}</tbody></table>;
