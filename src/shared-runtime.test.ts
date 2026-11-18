@@ -510,3 +510,21 @@ it('tells of a job a poll ended because no harness can hold it, so the mail that
   // Its end is told like any job's end, which is what offers the waiting message to admission again.
   expect(f.ended.mock.calls.map(call => call[0])).toContain(job.id);
 });
+
+it('keeps a machine assignment out of the legacy worker poll even after a capability report', async () => {
+  const f = fixture();
+  const marked = f.send('wake', 'machine-alert');
+  f.db.update(jobs).set({ machine: 'worker' }).where(eq(jobs.id, marked.id)).run();
+  f.db.insert(boxFacts).values({ box: 'worker', fact: 'loom:machine-bodies', fromOwner: false }).run();
+
+  // A downgraded worker authenticates as the same machine and omits facts on this poll.
+  const response = await f.call('next', {}, 'old-worker-poll');
+  expect(await response.json()).toEqual({ ok: true, value: null });
+  expect(f.db.select().from(jobs).where(eq(jobs.id, marked.id)).get()).toMatchObject({
+    state: 'failed', machine: 'worker', claimedAt: null,
+  });
+  const ordinary = f.send('loom', 'ordinary');
+  expect(await (await f.call('next', {}, 'another-old-worker-poll')).json()).toMatchObject({
+    ok: true, value: { id: ordinary.id, box: 'worker' },
+  });
+});
