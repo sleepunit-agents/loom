@@ -1,5 +1,5 @@
 /** Real CLI/default listener, with only fictional prepared stores and keys. */
-import {afterEach,beforeEach,expect,it,vi} from 'vitest';
+import {afterEach,beforeAll,beforeEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {generateX25519Identity} from 'age-encryption';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync,chmodSync,symlinkSync} from 'node:fs';
@@ -10,7 +10,8 @@ import {once} from 'node:events';
 import {pathToFileURL} from 'node:url';
 import {WebSocket} from 'ws';
 import {createServer} from 'node:http';
-import {createDataSchema,dataSchemaNumber} from './core/data/database.js';
+import {dataImage} from '../test/fixtures/data-image.js';
+import {dataSchemaNumber} from './core/data/database.js';
 import {members,agents,memberAgents,household} from './core/data/schema.js';
 import {requestLocalLink} from './core/signin/operator.js';
 import {FakeClock} from './core/clock.js';
@@ -23,14 +24,19 @@ import {ProjectsStore} from './backends/projects.js';
 const cleanups:Array<()=>unknown|Promise<unknown>>=[];
 beforeEach(()=>{vi.stubEnv('LOOM_WORKER_SOCKET',undefined);vi.stubEnv('LOOM_PUBLIC_URL',undefined);});
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();vi.unstubAllEnvs();});
+let householdImage:Buffer;
+beforeAll(()=>{
+ householdImage=dataImage(db=>{
+  const at='2026-11-15T12:00:00.000Z';
+  db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'peer',role:'member',joinedAt:at}]).run();
+  db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();
+  db.insert(household).values({defaultAgent:'fiction',timezone:'Asia/Tokyo'}).run();
+ });
+});
 async function fixture(){
  const home=mkdtempSync(join(tmpdir(),'loom-default-fiction-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
- const database=join(home,'app.db'),client=new Database(database),db=createDataSchema(client);
- const at='2026-11-15T12:00:00.000Z';
- db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'peer',role:'member',joinedAt:at}]).run();
- db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
- db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();
- db.insert(household).values({defaultAgent:'fiction',timezone:'Asia/Tokyo'}).run();client.close();
+ const database=join(home,'app.db');writeFileSync(database,householdImage,{mode:0o600});
  const webRoot=join(home,'public');mkdirSync(webRoot);writeFileSync(join(webRoot,'next.html'),'<main>SHARED FICTIONAL ENTRY</main>');
  const commsKey=join(home,'comms.key');writeFileSync(commsKey,await generateX25519Identity(),{mode:0o600});
  const common=join(home,'commons'),agent=join(home,'agents/fiction');
@@ -95,7 +101,7 @@ it('upgrades a household installed at an earlier schema number, and refuses an i
  const app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});await app.close();
  const upgraded=new Database(known,{readonly:true});
  try{expect(upgraded.prepare('SELECT max(number) AS number FROM migrations').get()).toEqual({number:dataSchemaNumber});expect(upgraded.prepare('SELECT id,removed_at FROM members').all()).toEqual([{id:'owner',removed_at:null}]);}finally{upgraded.close();}
-},30_000);
+});
 it('releases the adapter, database, source listeners and home ownership after bind failure and on repeated close',async()=>{
  const f=await fixture(),module=join(f.home,'adapters.mjs');
  writeFileSync(module,"import {writeFileSync} from 'node:fs';import {join} from 'node:path';export let client,closed=0;export default ({db,home})=>{client=db.$client;return {close(){closed++;writeFileSync(join(home,'adapter-closed'),String(client.prepare('SELECT count(*) AS n FROM members').get().n));}}};",{mode:0o600});
